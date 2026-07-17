@@ -1,0 +1,4 @@
+game_id,league,season,week,season_type,kickoff,home_team,away_team,neutral_site,surface,roof,home_score,away_score
+2023_01_KC_DET,nfl,2023,1,REG,2023-09-07 20:20:00,DET,KC,False,fieldturf,outdoors,21,20
+2023_02_KC_JAX,nfl,2023,2,REG,2023-09-17 13:00:00,JAX,KC,False,grass,outdoors,9,17
+2099_01_AAA_BBB,nfl,2099,1,REG,2099-09-05 20:20:00,AAA,BBB,False,grass,outdoors,,

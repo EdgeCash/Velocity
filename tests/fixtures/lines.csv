@@ -1,0 +1,6 @@
+line_id,game_id,book,market,side,price,point,timestamp,is_closing
+L1,2023_01_KC_DET,bookA,spread,home,-110,4.0,2023-09-04 12:00:00,False
+L2,2023_01_KC_DET,bookA,spread,home,-110,3.5,2023-09-07 18:00:00,False
+L3,2023_01_KC_DET,bookA,spread,home,-105,4.5,2023-09-07 21:00:00,True
+L4,2023_01_KC_DET,bookA,total,over,-110,53.5,2023-09-07 18:00:00,False
+L5,2023_01_KC_DET,bookA,moneyline,home,165,,2023-09-07 19:00:00,False

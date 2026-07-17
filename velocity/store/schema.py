@@ -1,0 +1,95 @@
+"""Canonical table schemas for the Velocity data store.
+
+These define the *minimum* contract every ingest adapter must satisfy. Extra
+columns are allowed (nflverse play-by-play has hundreds), but the columns
+declared here must be present, correctly typed, and coercible. Validating
+against these schemas at the store boundary is how we keep every downstream
+layer honest.
+
+The ``kickoff`` / ``timestamp`` columns are the point-in-time anchors: no
+feature may use a row whose anchor is at or after the kickoff it predicts
+(see :mod:`velocity.store.pit`).
+"""
+
+from __future__ import annotations
+
+import pandera.pandas as pa
+from pandera.typing import Series
+
+LEAGUES = ["nfl", "ncaaf"]
+SEASON_TYPES = ["PRE", "REG", "POST"]
+MARKETS = ["spread", "total", "moneyline"]
+
+
+class Games(pa.DataFrameModel):
+    """One row per game. ``home_score``/``away_score`` are null until played."""
+
+    game_id: Series[str] = pa.Field(unique=True)
+    league: Series[str] = pa.Field(isin=LEAGUES)
+    season: Series[int] = pa.Field(ge=1999, le=2100)
+    week: Series[int] = pa.Field(ge=0, le=25)
+    season_type: Series[str] = pa.Field(isin=SEASON_TYPES)
+    kickoff: Series[pa.DateTime] = pa.Field()
+    home_team: Series[str] = pa.Field()
+    away_team: Series[str] = pa.Field()
+    neutral_site: Series[bool] = pa.Field()
+    roof: Series[str] = pa.Field(nullable=True)
+    surface: Series[str] = pa.Field(nullable=True)
+    home_score: Series[float] = pa.Field(nullable=True, ge=0)
+    away_score: Series[float] = pa.Field(nullable=True, ge=0)
+
+    class Config:
+        coerce = True
+
+
+class Plays(pa.DataFrameModel):
+    """One row per play. The canonical minimum; adapters may add columns."""
+
+    play_id: Series[str] = pa.Field()
+    game_id: Series[str] = pa.Field()
+    season: Series[int] = pa.Field(ge=1999, le=2100)
+    week: Series[int] = pa.Field(ge=0, le=25)
+    posteam: Series[str] = pa.Field(nullable=True)
+    defteam: Series[str] = pa.Field(nullable=True)
+    play_type: Series[str] = pa.Field(nullable=True)
+    down: Series[float] = pa.Field(nullable=True, ge=1, le=4)
+    yards_gained: Series[float] = pa.Field(nullable=True)
+    epa: Series[float] = pa.Field(nullable=True)
+    success: Series[bool] = pa.Field(nullable=True)
+
+    class Config:
+        coerce = True
+
+
+class Players(pa.DataFrameModel):
+    """One row per player-season roster entry."""
+
+    player_id: Series[str] = pa.Field()
+    player_name: Series[str] = pa.Field()
+    position: Series[str] = pa.Field(nullable=True)
+    team: Series[str] = pa.Field(nullable=True)
+    season: Series[int] = pa.Field(ge=1999, le=2100)
+
+    class Config:
+        coerce = True
+
+
+class Lines(pa.DataFrameModel):
+    """One row per observed line. ``timestamp`` is the point-in-time anchor.
+
+    ``price`` is American odds. ``point`` is the spread/total number and is
+    null for moneyline markets.
+    """
+
+    line_id: Series[str] = pa.Field()
+    game_id: Series[str] = pa.Field()
+    book: Series[str] = pa.Field()
+    market: Series[str] = pa.Field(isin=MARKETS)
+    side: Series[str] = pa.Field()
+    price: Series[int] = pa.Field()
+    point: Series[float] = pa.Field(nullable=True)
+    timestamp: Series[pa.DateTime] = pa.Field()
+    is_closing: Series[bool] = pa.Field()
+
+    class Config:
+        coerce = True
