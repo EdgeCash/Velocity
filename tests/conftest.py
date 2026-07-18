@@ -22,3 +22,9 @@ def lines() -> pd.DataFrame:
     df = pd.read_csv(FIXTURES / "lines.csv")
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
+
+
+@pytest.fixture
+def plays() -> pd.DataFrame:
+    """Frozen synthetic play-by-play (see ``tests/fixtures/_generate.py``)."""
+    return pd.read_csv(FIXTURES / "nfl_plays.csv")
