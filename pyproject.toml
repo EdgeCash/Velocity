@@ -21,6 +21,10 @@ dev = [
     "pre-commit>=3.8",
     "pandas-stubs>=2.1",
 ]
+# Live data providers (network). Not needed for the offline test suite.
+ingest = [
+    "nfl_data_py>=0.3",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -48,7 +52,7 @@ no_implicit_optional = true
 files = ["velocity"]
 
 [[tool.mypy.overrides]]
-module = ["duckdb", "pandera.*"]
+module = ["duckdb", "pandera.*", "nfl_data_py"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

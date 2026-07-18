@@ -1,0 +1,6 @@
+play_id,game_id,season,week,posteam,defteam,play_type,down,yards_gained,epa,success
+1,2023_01_KC_DET,2023,1,KC,DET,pass,1,8,0.45,1.0
+2,2023_01_KC_DET,2023,1,KC,DET,run,2,3,-0.10,0.0
+3,2023_01_KC_DET,2023,1,DET,KC,pass,3,12,0.80,1.0
+4,2023_01_KC_DET,2023,1,DET,KC,run,1,2,-0.05,0.0
+5,2023_01_KC_DET,2023,1,,,,,,,
