@@ -49,6 +49,15 @@ evaluation.
 - **Wagering / CLV:** if `lines` is present, the walk-forward prices bets against
   it; otherwise it reports projection calibration only.
 
+## What's committed today
+
+- `nfl/plays.parquet` + `nfl/games.parquet` — 2021–2025 nflfastR play-by-play
+  (EPA) and games with closing lines. See `docs/BACKTEST_NFL.md`.
+- `ncaaf/games.parquet` — 2015–2024 CFBD games **with closing betting lines**
+  (`scripts/pull_cfbd_lines.py`), the primary NCAAF backtest input.
+- `ncaaf/boxscores_2002_2025.parquet` — 2002–2025 box scores (no lines), longer
+  projection-only history. See `docs/BACKTEST_NCAAF.md`.
+
 ## Adding your files
 
 Drop them in the folders above. If the column names don't match the target

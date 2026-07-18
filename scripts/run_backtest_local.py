@@ -20,10 +20,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from velocity.backtest.engine import BacktestConfig, walk_forward
+from velocity.features.scores import fit_scores_ratings
 from velocity.features.team import fit_ratings, team_pace
 from velocity.ingest.local import load_games, load_plays, read_data_file
 from velocity.models.game_ncaaf import NCAAFGameModel, NCAAFModelConfig
 from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
 from velocity.store.schema import Lines
 
@@ -64,18 +66,34 @@ def _ncaaf_factory(n_sims: int):
     return factory
 
 
-def run(league: str, data_dir: str, n_sims: int, min_train_games: int) -> dict[str, float]:
+def _scores_factory(n_sims: int, league: str):
+    # College games are higher-variance than the NFL; widen the sim accordingly.
+    sim = (
+        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
+        if league == "ncaaf"
+        else SimConfig(n_sims=n_sims)
+    )
+
+    def factory(train_games: pd.DataFrame) -> ScoresGameModel:
+        return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
+
+    return factory
+
+
+def run(
+    league: str,
+    data_dir: str,
+    n_sims: int,
+    min_train_games: int,
+    rating: str = "epa",
+) -> dict[str, float]:
     folder = Path(data_dir)
     games_path = _find(folder, "games")
-    plays_path = _find(folder, "plays")
-    if games_path is None or plays_path is None:
+    if games_path is None:
         found = [p.name for p in folder.glob("*") if p.suffix in (".csv", ".parquet", ".pq")]
-        raise SystemExit(
-            f"need games and plays files in {folder}/ (see datasets/README.md). Found: {found}"
-        )
-
+        raise SystemExit(f"need a games file in {folder}/ (see datasets/README.md). Found: {found}")
     games = load_games(games_path, league=league)
-    plays = load_plays(plays_path)
+
     lines_path = _find(folder, "lines")
     if lines_path is not None:
         raw_lines = read_data_file(lines_path)
@@ -84,9 +102,18 @@ def run(league: str, data_dir: str, n_sims: int, min_train_games: int) -> dict[s
     else:
         lines = _empty_lines()
 
-    factory = _nfl_factory(n_sims) if league == "nfl" else _ncaaf_factory(n_sims)
+    if rating == "scores":
+        # Schedule-only rating: the games themselves are the training frame.
+        train_frame = games
+        factory = _scores_factory(n_sims, league)
+    else:
+        plays_path = _find(folder, "plays")
+        if plays_path is None:
+            raise SystemExit(f"--rating epa needs a plays file in {folder}/ (see the README)")
+        train_frame = load_plays(plays_path)
+        factory = _nfl_factory(n_sims) if league == "nfl" else _ncaaf_factory(n_sims)
     result = walk_forward(
-        games, plays, lines, factory, BacktestConfig(min_train_games=min_train_games)
+        games, train_frame, lines, factory, BacktestConfig(min_train_games=min_train_games)
     )
     metrics = dict(result.metrics)
     metrics.update(_ats_vs_close(result.projections, games))
@@ -134,9 +161,13 @@ def main() -> None:
     parser.add_argument("--data", required=True, help="folder with games/plays[/lines] files")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-train-games", type=int, default=20)
+    parser.add_argument(
+        "--rating", choices=["epa", "scores"], default="epa",
+        help="epa needs a plays file; scores fits on games only",
+    )
     args = parser.parse_args()
 
-    metrics = run(args.league, args.data, args.n_sims, args.min_train_games)
+    metrics = run(args.league, args.data, args.n_sims, args.min_train_games, args.rating)
     print(f"=== Local backtest: {args.league.upper()} from {args.data} ===")
     for key, value in metrics.items():
         print(f"  {key:22s} {value:.4f}")
