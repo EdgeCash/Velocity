@@ -61,8 +61,10 @@ class TeamRatings:
 
         Excludes the league intercept, so this is the efficiency edge above (or
         below) an average matchup — the quantity a scoring model scales by pace.
+        A team not seen in the fit (e.g. early in a walk-forward season) defaults
+        to league average (0.0).
         """
-        return self.offense[off_team] + self.defense[def_team]
+        return self.offense.get(off_team, 0.0) + self.defense.get(def_team, 0.0)
 
     def expected_epa(self, off_team: str, def_team: str) -> float:
         """Absolute expected EPA/play for the matchup, including the intercept."""
