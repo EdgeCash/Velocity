@@ -1,4 +1,4 @@
-"""NFL ingest adapter — nflverse (``nfl_data_py``) → canonical store.
+"""NFL ingest adapter — nflverse → canonical store.
 
 nflverse is the free, deep source for NFL data: schedules, play-by-play with EPA
 back to 1999, and weekly rosters. This adapter normalizes those three feeds onto
@@ -6,10 +6,11 @@ the canonical :class:`~velocity.store.schema.Games`,
 :class:`~velocity.store.schema.Plays` and :class:`~velocity.store.schema.Players`
 schemas.
 
-The provider column names it depends on are declared as constants below, so if
-nflverse changes a field there is a single place to update. The ``normalize_*``
-functions are pure and offline-testable; ``load_*`` fetch live data and are thin
-by design (a fetch plus the matching normalize).
+Live data is fetched **directly** from nflverse's public files (a CSV for
+schedules, parquet for play-by-play and rosters) rather than via ``nfl_data_py``,
+which pins an incompatible ``pandas<2``. Fetching the files ourselves keeps the
+project on modern pandas and avoids the dependency entirely. The ``normalize_*``
+functions are pure and offline-testable; ``load_*`` fetch and hand off to them.
 
 nflverse marks playoff games with distinct ``game_type`` codes (WC/DIV/CON/SB);
 we collapse those to the canonical ``POST`` season type. Kickoff is assembled
@@ -19,12 +20,26 @@ anchor.
 
 from __future__ import annotations
 
+import io
+import urllib.request
 from collections.abc import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
 
 from velocity.store.schema import Games, Players, Plays
+
+# nflverse public data locations. Schedules live in the git tree (served by the
+# raw CDN); play-by-play and rosters are release assets addressed per season.
+NFLVERSE_SCHEDULE_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
+NFLVERSE_PBP_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{year}.parquet"
+)
+NFLVERSE_ROSTER_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "weekly_rosters/roster_weekly_{year}.parquet"
+)
+_FETCH_TIMEOUT = 180
 
 # nflverse game_type → canonical season_type.
 GAME_TYPE_TO_SEASON_TYPE = {
@@ -132,31 +147,34 @@ def normalize_rosters(raw: pd.DataFrame) -> pd.DataFrame:
     return Players.validate(out)
 
 
-def _import_nfl_data_py():  # type: ignore[no-untyped-def]
-    """Lazily import ``nfl_data_py``, with a helpful error if it is absent."""
-    try:
-        import nfl_data_py  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - exercised only without the dep
-        raise ImportError(
-            "nfl_data_py is required for live NFL ingest; install it with "
-            "`pip install 'velocity[ingest]'`"
-        ) from exc
-    return nfl_data_py
+def _read_url_bytes(url: str) -> bytes:  # pragma: no cover - network
+    with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
+        return resp.read()
 
 
-def load_schedules(years: Iterable[int]) -> pd.DataFrame:
-    """Fetch and normalize nflverse schedules for ``years`` (network)."""
-    nfl = _import_nfl_data_py()
-    return normalize_schedules(nfl.import_schedules(list(years)))
+def _read_parquet_url(url: str) -> pd.DataFrame:  # pragma: no cover - network
+    return pd.read_parquet(io.BytesIO(_read_url_bytes(url)))
 
 
-def load_pbp(years: Iterable[int]) -> pd.DataFrame:
+def load_schedules(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch and normalize nflverse schedules for ``years`` (network).
+
+    Reads the nflverse games CSV (all seasons) and filters to ``years``.
+    """
+    raw = pd.read_csv(NFLVERSE_SCHEDULE_URL, low_memory=False)
+    raw = raw[raw["season"].isin(set(years))]
+    return normalize_schedules(raw)
+
+
+def load_pbp(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
     """Fetch and normalize nflverse play-by-play for ``years`` (network)."""
-    nfl = _import_nfl_data_py()
-    return normalize_pbp(nfl.import_pbp_data(list(years)))
+    frames = [_read_parquet_url(NFLVERSE_PBP_URL.format(year=year)) for year in years]
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return normalize_pbp(combined)
 
 
-def load_rosters(years: Iterable[int]) -> pd.DataFrame:
+def load_rosters(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
     """Fetch and normalize nflverse weekly rosters for ``years`` (network)."""
-    nfl = _import_nfl_data_py()
-    return normalize_rosters(nfl.import_weekly_rosters(list(years)))
+    frames = [_read_parquet_url(NFLVERSE_ROSTER_URL.format(year=year)) for year in years]
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return normalize_rosters(combined)
