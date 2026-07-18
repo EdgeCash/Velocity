@@ -18,3 +18,8 @@ htmlcov/
 data/
 *.parquet
 *.duckdb
+
+# ...except committed reference datasets under datasets/ (opt back in).
+# These are the real NFL/NCAAF inputs the local harness reads.
+!datasets/
+!datasets/**
