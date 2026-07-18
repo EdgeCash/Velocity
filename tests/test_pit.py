@@ -7,7 +7,6 @@ class of test in the whole suite.
 from __future__ import annotations
 
 import pandas as pd
-
 from velocity.store.pit import available_as_of, closing_line, lines_before_kickoff
 
 

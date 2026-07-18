@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pandas as pd
-
 from velocity.store.io import query, read_table, write_table
 from velocity.store.schema import Games
 

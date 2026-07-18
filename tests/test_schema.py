@@ -5,8 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from pandera.errors import SchemaError
-
-from velocity.store.schema import Games, Lines
+from velocity.store.schema import Games, Lines, Plays
 
 
 def test_games_fixture_validates(games: pd.DataFrame) -> None:
@@ -17,6 +16,11 @@ def test_games_fixture_validates(games: pd.DataFrame) -> None:
 def test_lines_fixture_validates(lines: pd.DataFrame) -> None:
     validated = Lines.validate(lines)
     assert len(validated) == len(lines)
+
+
+def test_plays_fixture_validates(plays: pd.DataFrame) -> None:
+    validated = Plays.validate(plays)
+    assert len(validated) == len(plays)
 
 
 def test_unplayed_game_allows_null_scores(games: pd.DataFrame) -> None:
