@@ -44,7 +44,10 @@ src = ["velocity", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 
 [tool.mypy]
-python_version = "3.11"
+# Target 3.12 for type analysis: newer numpy stubs use PEP 695 `type` statements
+# that mypy rejects under a 3.11 target. Runtime 3.11 support is proven by the
+# pytest matrix; our code uses no 3.12-only syntax.
+python_version = "3.12"
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
