@@ -1,49 +1,63 @@
-# Data access — what's reachable and what needs unblocking
+# Data access — what's reachable, and how to get EPA data flowing
 
-**Status:** the model runs end-to-end on real NFL data *except* play-by-play,
-which is blocked by network egress policy. This doc records the exact state so an
-admin can open the one gap.
+**Status:** the model runs end-to-end on real NFL data *except* play-by-play
+(EPA), which is not reachable from this managed sandbox. This doc records the
+accurate root cause and the real ways to unblock it.
 
-## Probe results (from the managed remote environment)
+## Probe results
 
 | Data | Host | Result |
 |---|---|---|
 | Schedules + final scores + closing lines | `raw.githubusercontent.com` | ✅ `200` — reachable |
-| Play-by-play (EPA) | `github.com/nflverse/nflverse-data/releases/download/…` | ❌ `403` — egress-blocked |
-| Weekly rosters | `github.com/nflverse/nflverse-data/releases/download/…` | ❌ `403` — egress-blocked |
-| Release CDN (redirect target) | `objects.githubusercontent.com` | ✅ `404` — host reachable, just needs the signed URL |
-| GitHub API (nflverse) | `api.github.com` | ❌ scoped to this repo only |
+| Play-by-play (EPA) | `github.com/nflverse/nflverse-data/releases/download/…` | ❌ `403` |
+| Weekly rosters | `github.com/nflverse/nflverse-data/releases/download/…` | ❌ `403` |
 
-The play-by-play and roster files are GitHub **release assets**. A request to
-`github.com/.../releases/download/...` returns `302` to a signed
-`objects.githubusercontent.com` URL — and that CDN host is already reachable. The
-egress policy blocks the `github.com` hop before the redirect, so the whole chain
-fails with `403`.
+## Root cause — it is *not* the network access level
 
-## The ask
+The release-asset CDN hosts (`github.com`, `objects.githubusercontent.com`,
+`release-assets.githubusercontent.com`) are **already in the default Trusted
+allowlist**, so raising the environment's network level to "Full" would change
+nothing. The block comes from the **GitHub proxy**, which (per the
+[Claude Code on the web docs](https://code.claude.com/docs/en/claude-code-on-the-web#github-proxy)):
 
-To enable the full **EPA** projection path, allow outbound HTTPS to:
+> limits GitHub API and release-asset requests to **repositories attached to the
+> session**, regardless of the environment's network access level. Setup scripts
+> that download release assets from **unattached repositories return a 403**.
+> Committed files from public repositories are fetched through
+> `raw.githubusercontent.com`…
 
-- **`github.com`** — specifically the `/*/releases/download/*` paths (this is the
-  only blocked hop; it redirects to the already-allowed CDN), **or**
-- if `github.com` can't be broadly allowed, the release-asset CDN
-  **`objects.githubusercontent.com`** *plus* whatever host issues the signed
-  redirect.
+That is exactly what we see: schedules are a **committed file** (reachable), while
+the play-by-play/roster parquet are **release assets on an unattached repo**
+(`nflverse/nflverse-data`) → `403`. Attaching that repo via `add_repo` is the
+intended mechanism, but it is a third-party org outside this session's GitHub
+scope (`edgecash/velocity`), so it needs a one-time authorization grant first.
 
-No credentials are needed — these are public files.
+## Ways to get EPA data (any one works)
 
-## What already works without any change
+1. **Commit the parquet into an attached repo.** Download
+   `play_by_play_<year>.parquet` from nflverse and commit it onto a branch of
+   `edgecash/velocity`; it is then served from `raw.githubusercontent.com` (a
+   committed file in an attached repo), which is already allowlisted. Read it
+   with `pd.read_parquet(<raw url>)` → `normalize_pbp`.
+2. **Run locally.** Move the session to a terminal with `claude --teleport`; a
+   normal machine has full internet, so `velocity.ingest.nfl.load_pbp` fetches
+   nflverse directly with no changes.
+3. **Authorize the repo.** Have an admin grant `nflverse/nflverse-data` access to
+   the Claude GitHub connection (Claude GitHub settings), then `add_repo` attaches
+   it and the proxy serves its release assets.
+
+## What already works without any of the above
 
 - `velocity.ingest.nfl.load_schedules` fetches the games CSV from
   `raw.githubusercontent.com` and normalizes real seasons.
 - `scripts/run_real_backtest.py` runs a real walk-forward on that schedule data
-  with the schedule-only **scores** ratings.
+  with the schedule-only **scores** ratings (calibration error ≈ 0.025 on 2023).
 
-## What flips on once egress opens
+## The one-line swap once play-by-play is available
 
 `velocity.ingest.nfl.load_pbp` already targets the release-asset URLs directly
-(no `nfl_data_py`). Swapping the backtest's model factory from the scores ratings
-to the EPA ratings is a one-line change:
+(no `nfl_data_py`). Switching the backtest from the scores ratings to the EPA
+ratings is a one-line factory change:
 
 ```python
 # scores-only (works today):
