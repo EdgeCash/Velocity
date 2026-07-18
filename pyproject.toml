@@ -52,7 +52,7 @@ no_implicit_optional = true
 files = ["velocity"]
 
 [[tool.mypy.overrides]]
-module = ["duckdb", "pandera.*", "nfl_data_py"]
+module = ["duckdb", "pandera.*", "nfl_data_py", "cfbd"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

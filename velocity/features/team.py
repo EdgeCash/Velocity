@@ -123,3 +123,30 @@ def fit_ratings(
         n_plays=n_plays,
         teams=tuple(teams),
     )
+
+
+def team_pace(plays: pd.DataFrame) -> dict[str, float]:
+    """Offensive plays per game for each team.
+
+    Pace varies enormously in college football (tempo offenses vs. ground-and-
+    pound), so totals modeling needs team-specific pace rather than a league
+    constant. Computed as each team's offensive plays divided by its distinct
+    games in the sample.
+    """
+    df = plays.dropna(subset=["posteam", "game_id"])
+    grouped = df.groupby("posteam")
+    plays_per_team = grouped.size()
+    games_per_team = grouped["game_id"].nunique()
+    pace = plays_per_team / games_per_team
+    return {str(team): float(p) for team, p in pace.items()}
+
+
+def matchup_pace(pace: dict[str, float], home: str, away: str, league_pace: float) -> float:
+    """Expected combined offensive plays per team for a matchup.
+
+    Each team's pace is averaged with its opponent's (both teams face the same
+    game clock), falling back to the league average for teams not yet seen.
+    """
+    home_pace = pace.get(home, league_pace)
+    away_pace = pace.get(away, league_pace)
+    return 0.5 * (home_pace + away_pace)

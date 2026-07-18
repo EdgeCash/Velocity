@@ -1,0 +1,7 @@
+id,game_id,season,week,offense,defense,play_type,down,distance,yards_gained,ppa
+1001,401550883,2023,1,Georgia,UT Martin,Rush,1,10,6,0.32
+1002,401550883,2023,1,Georgia,UT Martin,Pass Reception,2,4,15,0.55
+1003,401550883,2023,1,UT Martin,Georgia,Rush,1,10,1,-0.21
+1004,401550883,2023,1,UT Martin,Georgia,Pass Incompletion,2,9,0,-0.44
+1005,401550883,2023,1,Georgia,UT Martin,Penalty,7,99,0,not_a_number
+1006,,2023,1,Georgia,UT Martin,Timeout,,,,

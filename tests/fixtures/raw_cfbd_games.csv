@@ -1,0 +1,6 @@
+id,season,week,season_type,start_date,home_team,away_team,home_points,away_points,neutral_site,grass
+401550883,2023,1,regular,2023-09-02T23:30:00.000Z,Georgia,UT Martin,48,7,False,True
+401551786,2023,1,regular,2023-09-03T00:00:00.000Z,Alabama,Middle Tennessee,56,7,True,False
+401525434,2024,1,postseason,2024-01-08T00:30:00.000Z,Michigan,Washington,34,13,True,True
+401999999,2024,1,regular,2024-08-31T16:00:00.000Z,Ohio State,Akron,,,False,False
+401888888,2023,,regular,,,Bad Team,,,,
