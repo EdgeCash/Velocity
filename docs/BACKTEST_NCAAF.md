@@ -50,6 +50,25 @@ disagreements — is signal, not a lucky cut. Selective NCAAF **totals** clear t
 vig. This is the design's thesis made concrete (§9): *edges live in NCAAF and soft
 totals, not marquee sides.*
 
+## Robustness — is the totals edge consistent across seasons?
+
+Splitting the selective totals bets (|edge| ≥ 4) by season, the edge is **real but
+not bulletproof — positive in 7 of 10 seasons**, and not driven by one lucky year:
+
+| Season | O/U win rate | Bets | | Season | O/U win rate | Bets |
+|---|---|---|---|---|---|---|
+| 2015 | 54.5% ✅ | 253 | | 2020 | 55.6% ✅ | 340 |
+| 2016 | 53.4% ✅ | 386 | | 2021 | 53.6% ✅ | 504 |
+| 2017 | 49.0% ❌ | 455 | | 2022 | 51.9% ❌ | 903 |
+| 2018 | 48.6% ❌ | 484 | | 2023 | 53.5% ✅ | 860 |
+| 2019 | 53.0% ✅ | 534 | | 2024 | 55.2% ✅ | 752 |
+
+Overall 52.8% on 5,471 bets. The season-to-season swing (48.6% → 55.6%) is the
+honest reality: even a genuine edge has losing stretches, which is exactly why the
+staking discipline (fractional Kelly, caps) exists. 7-of-10 positive across a
+decade — including four of the last five seasons — is a credible signal worth
+sharpening, not a finished bankroll.
+
 ## Honest caveats
 
 - The edge is **thin** (53% vs 52.4% break-even) and measured with **fixed sim
