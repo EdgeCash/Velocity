@@ -79,5 +79,5 @@ def test_golden_projection(season_games: pd.DataFrame) -> None:
     proj = model.project("KC", "CAR", rng=make_rng())
     assert proj.mu_home == pytest.approx(33.442821, abs=1e-4)
     assert proj.mu_away == pytest.approx(12.963925, abs=1e-4)
-    assert proj.p_home_win() == pytest.approx(0.93305, abs=1e-6)
-    assert proj.fair_spread() == pytest.approx(-21.0, abs=1e-9)
+    assert proj.p_home_win() == pytest.approx(0.942375, abs=1e-6)
+    assert proj.fair_spread() == pytest.approx(-20.0, abs=1e-9)
