@@ -1,0 +1,5 @@
+game_id,season,game_type,week,gameday,gametime,home_team,away_team,home_score,away_score,location,roof,surface
+2023_01_KC_DET,2023,REG,1,2023-09-07,20:20,DET,KC,21,20,Home,outdoors,fieldturf
+2023_22_SF_KC,2023,SB,22,2024-02-11,18:30,SF,KC,22,25,Neutral,closed,grass
+2023_00_LAR_LAC,2023,PRE,0,2023-08-12,21:00,LAC,LAR,34,17,Home,dome,matrixturf
+2024_01_AAA_BBB,2024,REG,1,2024-09-05,20:20,AAA,BBB,,,Home,outdoors,grass
