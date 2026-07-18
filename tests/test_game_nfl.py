@@ -74,6 +74,6 @@ def test_golden_projection(model: NFLGameModel) -> None:
     proj = model.project("KC", "DET", rng=make_rng())
     assert proj.mu_home == pytest.approx(33.923641, abs=1e-4)
     assert proj.mu_away == pytest.approx(22.900267, abs=1e-4)
-    assert proj.p_home_win() == pytest.approx(0.79335, abs=1e-6)
+    assert proj.p_home_win() == pytest.approx(0.803925, abs=1e-6)
     assert proj.fair_spread() == pytest.approx(-11.0, abs=1e-9)
     assert proj.fair_total() == pytest.approx(57.0, abs=1e-9)

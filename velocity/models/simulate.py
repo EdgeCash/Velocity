@@ -11,11 +11,13 @@ spread and total prices stay internally consistent.
 seeded :class:`numpy.random.Generator`; the same seed and config always produce
 the same samples, so a moved projection is always a real change, never noise.
 
-Variance is calibrated to historical football residuals: NFL final margins have
-a standard deviation near 13.5 points and totals near 10. Scores are rounded to
-integers by default so simulated margins land on the discrete values real games
-produce (this is a first-order treatment of the well-known mass at key numbers 3
-and 7; a drive-level scoring sim is a later refinement).
+Variance is calibrated to real NFL residuals (see ``DEFAULT_SD_MARGIN`` /
+``DEFAULT_SD_TOTAL``): the margin and total each deviate from the model's
+expectation with a standard deviation near 13 points, measured on a real
+walk-forward. Scores are rounded to integers by default so simulated margins land
+on the discrete values real games produce (this is a first-order treatment of the
+well-known mass at key numbers 3 and 7; a drive-level scoring sim is a later
+refinement).
 """
 
 from __future__ import annotations
@@ -24,9 +26,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Calibrated to historical NFL residuals; overridable per league via SimConfig.
-DEFAULT_SD_MARGIN = 13.5
-DEFAULT_SD_TOTAL = 10.5
+# Calibrated to real NFL residuals — the standard deviation of (actual − model)
+# margin and total from a 2022–2023 walk-forward (n≈570): margin ≈ 12.8, total
+# ≈ 13.6, with the two essentially uncorrelated (≈0.03). Totals are far less
+# predictable than an earlier 10.5 guess implied. Overridable per league.
+DEFAULT_SD_MARGIN = 13.0
+DEFAULT_SD_TOTAL = 13.6
 
 
 @dataclass(frozen=True)

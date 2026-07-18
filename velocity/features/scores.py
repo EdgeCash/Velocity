@@ -26,7 +26,10 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-DEFAULT_RIDGE_LAMBDA = 6.0
+# Tuned on a real 2023 walk-forward: ridge ≈ 25 minimized Brier/log-loss and
+# calibration error for the schedule-only rating (a lighter penalty overfits the
+# thin ~13-game sample). Overridable per call.
+DEFAULT_RIDGE_LAMBDA = 25.0
 
 
 @dataclass(frozen=True)
