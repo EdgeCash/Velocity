@@ -28,3 +28,11 @@ def lines() -> pd.DataFrame:
 def plays() -> pd.DataFrame:
     """Frozen synthetic play-by-play (see ``tests/fixtures/_generate.py``)."""
     return pd.read_csv(FIXTURES / "nfl_plays.csv")
+
+
+@pytest.fixture
+def market() -> pd.DataFrame:
+    """Frozen two-sided line archive (open + close, two books) for one game."""
+    df = pd.read_csv(FIXTURES / "nfl_market.csv")
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    return df

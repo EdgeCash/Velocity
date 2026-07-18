@@ -1,0 +1,25 @@
+line_id,game_id,book,market,side,price,point,timestamp,is_closing
+M01,2023_01_KC_DET,bookA,spread,home,-110,7.0,2023-09-05 12:00:00,False
+M02,2023_01_KC_DET,bookA,spread,away,-110,-7.0,2023-09-05 12:00:00,False
+M03,2023_01_KC_DET,bookA,total,over,-110,48.5,2023-09-05 12:00:00,False
+M04,2023_01_KC_DET,bookA,total,under,-110,48.5,2023-09-05 12:00:00,False
+M05,2023_01_KC_DET,bookA,moneyline,home,200,,2023-09-05 12:00:00,False
+M06,2023_01_KC_DET,bookA,moneyline,away,-235,,2023-09-05 12:00:00,False
+M07,2023_01_KC_DET,bookB,spread,home,-110,7.5,2023-09-05 12:00:00,False
+M08,2023_01_KC_DET,bookB,spread,away,-110,-7.5,2023-09-05 12:00:00,False
+M09,2023_01_KC_DET,bookB,total,over,-108,49.0,2023-09-05 12:00:00,False
+M10,2023_01_KC_DET,bookB,total,under,-112,49.0,2023-09-05 12:00:00,False
+M11,2023_01_KC_DET,bookB,moneyline,home,205,,2023-09-05 12:00:00,False
+M12,2023_01_KC_DET,bookB,moneyline,away,-240,,2023-09-05 12:00:00,False
+M13,2023_01_KC_DET,bookA,spread,home,-110,6.5,2023-09-07 20:00:00,True
+M14,2023_01_KC_DET,bookA,spread,away,-110,-6.5,2023-09-07 20:00:00,True
+M15,2023_01_KC_DET,bookA,total,over,-120,50.5,2023-09-07 20:00:00,True
+M16,2023_01_KC_DET,bookA,total,under,100,50.5,2023-09-07 20:00:00,True
+M17,2023_01_KC_DET,bookA,moneyline,home,180,,2023-09-07 20:00:00,True
+M18,2023_01_KC_DET,bookA,moneyline,away,-210,,2023-09-07 20:00:00,True
+M19,2023_01_KC_DET,bookB,spread,home,-112,6.5,2023-09-07 20:00:00,True
+M20,2023_01_KC_DET,bookB,spread,away,-108,-6.5,2023-09-07 20:00:00,True
+M21,2023_01_KC_DET,bookB,total,over,-118,50.5,2023-09-07 20:00:00,True
+M22,2023_01_KC_DET,bookB,total,under,-102,50.5,2023-09-07 20:00:00,True
+M23,2023_01_KC_DET,bookB,moneyline,home,185,,2023-09-07 20:00:00,True
+M24,2023_01_KC_DET,bookB,moneyline,away,-215,,2023-09-07 20:00:00,True
