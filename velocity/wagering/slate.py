@@ -50,6 +50,11 @@ class SlateConfig:
     starting_bankroll: float = 100.0
     group_cap_fraction: float = 0.10
     staking: StakingConfig = field(default_factory=StakingConfig)
+    # Backtest excludes the closing observation from entry candidates so CLV is
+    # measured against a line we did *not* bet. A live slate has no separate close
+    # yet (all we have is the current snapshot), so it must keep every observation
+    # as a candidate; CLV is measured later against the true closing snapshot.
+    exclude_closing: bool = True
 
 
 def model_probability(
@@ -97,10 +102,12 @@ def build_slate(
     config = config or SlateConfig()
     pre = pit.lines_before_kickoff(lines, games)
     closing = pit.closing_line(lines, games)
-    # We bet *before* the close and measure CLV against it, so the closing
-    # observation itself is never an entry candidate — otherwise "betting the
-    # close" would report ~0 CLV and make the metric meaningless.
-    entries = pre[~pre["line_id"].isin(set(closing["line_id"]))]
+    # Backtest excludes the closing observation so CLV is measured against a line
+    # we did *not* bet (else "betting the close" reports ~0 CLV). A live snapshot
+    # is the only board, so nothing is excluded — CLV is measured later, against
+    # the real closing snapshot from the archive.
+    excluded = set(closing["line_id"]) if config.exclude_closing else set()
+    entries = pre[~pre["line_id"].isin(excluded)]
     log = BetLog()
 
     for game_id, proj in projections.items():

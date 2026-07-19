@@ -1,0 +1,107 @@
+"""Live slate runner — today's board → staked bet recommendations.
+
+Ties the whole system together: fit the projection model on committed history,
+pull the current board from The Odds API (or a saved snapshot for offline runs),
+and run the identical wagering engine the backtest used to produce a staked slate
+of recommended bets, plus any games it couldn't resolve to the model's teams.
+
+    # offline, from a saved Odds API /odds payload:
+    python scripts/run_live_slate.py --league nfl --data datasets/nfl \
+        --snapshot-file snap.json
+
+    # live (needs THE_ODDS_API in the environment):
+    THE_ODDS_API=... python scripts/run_live_slate.py --league nfl --data datasets/nfl
+
+This does not place bets — it prints the slate for a human to act on. CLV is
+measured later, against the closing snapshot from the archive.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import pandas as pd
+from velocity.features.scores import fit_scores_ratings
+from velocity.ingest.local import load_games
+from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
+from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
+from velocity.models.simulate import SimConfig
+from velocity.util.seed import make_rng
+from velocity.wagering.live import build_live_slate, slate_to_frame
+from velocity.wagering.slate import SlateConfig
+
+
+def _find_games(folder: Path) -> Path:
+    for ext in (".parquet", ".pq", ".csv"):
+        candidate = folder / f"games{ext}"
+        if candidate.exists():
+            return candidate
+    raise SystemExit(f"need a games file in {folder}/ to fit the model")
+
+
+def _load_snapshot(args: argparse.Namespace) -> object:
+    if args.snapshot_file:
+        return json.loads(Path(args.snapshot_file).read_text())
+    from velocity.ingest.theoddsapi import TheOddsAPIClient  # network path
+
+    client = TheOddsAPIClient.from_env()
+    return client.odds_payload(args.league)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
+    parser.add_argument("--league", choices=["nfl", "ncaaf"], required=True)
+    parser.add_argument("--data", required=True, help="folder with a games file to fit the model")
+    parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
+    parser.add_argument("--n-sims", type=int, default=10_000)
+    parser.add_argument("--min-edge", type=float, default=0.02)
+    parser.add_argument("--bankroll", type=float, default=100.0)
+    args = parser.parse_args()
+
+    games = load_games(_find_games(Path(args.data)), league=args.league)
+    sim = (
+        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
+        if args.league == "ncaaf"
+        else SimConfig(n_sims=args.n_sims)
+    )
+    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+
+    payload = _load_snapshot(args)
+    lines = normalize_odds_events(payload)
+    events = extract_events(payload)
+    print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
+    if events.empty:
+        print("no games on the board (off-season or empty snapshot)")
+        return
+
+    def project(home: str, away: str):
+        return model.project(home, away, rng=make_rng())
+
+    log, unresolved = build_live_slate(
+        events,
+        lines,
+        project,
+        model.ratings.teams,
+        SlateConfig(exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll),
+    )
+
+    frame = slate_to_frame(log)
+    if frame.empty:
+        print("no bets cleared the edge threshold.")
+    else:
+        frame = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
+        with pd.option_context("display.width", 140, "display.max_columns", None):
+            print(f"\n{len(frame)} recommended bets (stake as % of {args.bankroll:.0f} bankroll):")
+            print(frame.to_string(index=False))
+        print(f"\ntotal staked: {frame['stake'].sum():.2f} ({frame['stake_pct'].sum():.1f}%)")
+
+    if unresolved:
+        print(f"\n{len(unresolved)} game(s) skipped — teams not in the model's universe:")
+        for u in unresolved:
+            print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
+
+
+if __name__ == "__main__":
+    main()

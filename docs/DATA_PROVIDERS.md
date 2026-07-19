@@ -115,6 +115,38 @@ callable — swapping the historical archive for the live feed is a config chang
 not a rewrite. CLV is then the live snapshot vs the closing snapshot from the
 archive.
 
+## The live slate runner (`scripts/run_live_slate.py`)
+
+The end of the pipeline: today's board → staked recommendations, running the
+*same* wagering engine the backtest proved. It fits the projection model on
+committed history, pulls one live snapshot (The Odds API `/odds`, or a saved JSON
+via `--snapshot-file` for offline runs), and calls
+[`build_live_slate`](../velocity/wagering/live.py):
+
+1. **Side canonicalization** — a provider names spread/moneyline sides by team and
+   totals by Over/Under; the engine speaks home/away/over/under. Because each
+   event names its own home/away teams in the same snapshot, this is an exact
+   per-game lookup (`canonicalize_sides`).
+2. **Team resolution** — the provider spells a team ("Kansas City Chiefs")
+   differently from the ratings key ("KC"). `resolve_team` bridges that with an
+   NFL alias table plus a normalized fallback, and returns `None` rather than
+   guess — an unmatched game is **skipped and reported**, never silently
+   mis-projected.
+3. **Live-mode slate** — `build_slate(..., exclude_closing=False)` keeps every
+   observation as a candidate (a live snapshot is the only board), then de-vigs,
+   measures edge, and stakes with the existing fractional-Kelly + group-cap logic.
+
+The result prints as a table of recommended bets (market, side, point, book,
+price, model probability, stake) plus the list of unresolved games. It does **not**
+place bets — a human acts on the slate. CLV is measured later, against the closing
+snapshot from the archive.
+
+    # offline, from a saved Odds API payload:
+    python scripts/run_live_slate.py --league ncaaf --data datasets/ncaaf \
+        --snapshot-file snap.json
+    # live:
+    THE_ODDS_API=... python scripts/run_live_slate.py --league nfl --data datasets/nfl
+
 ## Security
 
 - Keys are read from the environment only — never a literal, never committed.
