@@ -35,7 +35,13 @@ an Action, not from a checkout.
   Actions-only, the live client is **verified in CI** by running the collector
   workflow manually (`workflow_dispatch`), not from the dev sandbox.
 - **FantasyPros** supplies consensus player projections that feed the props model
-  (`velocity/models/props.py`) as a prior/blend against our own numbers.
+  (`velocity/models/props.py`) as a prior/blend against our own numbers. Built in
+  `velocity/ingest/fantasypros.py`: `normalize_projections` is deliberately
+  **tolerant** (we have no pinned FP schema) — it discovers the player list and
+  stat keys at runtime and melts them into a long `(player, stat, value)` frame,
+  tagged with season/week/source, rather than hard-coding field names. The live
+  shape is confirmed by the CI dry-run (`workflow_dispatch --inspect` dumps the
+  raw first-player JSON to the run log).
 
 ## BettingPros ingest (`velocity/ingest/bettingpros.py`)
 
@@ -89,6 +95,16 @@ prints the remaining monthly credits each run. Live `/odds` for 2 leagues × 3
 markets is ≈6 credits/run → ~4.3k/month, well under 100k; true historical backfill
 uses the pricier `/historical` endpoint on demand. Same rules as the BP collector:
 never commits, `artifacts/` gitignored, empty boards succeed.
+
+## The FantasyPros collector (`scripts/collect_fantasypros.py` + workflow)
+
+`.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).
+It snapshots consensus projections for both leagues into `artifacts/fp/*.parquet`
+(long `(player, stat, value)` rows tagged `league` + `collected_at`) and uploads a
+**private Actions artifact**. The manual dispatch runs with `--inspect`, which
+prints the raw top-level keys and first-player JSON to the log — that's how we
+verify the `FP_API_KEY` secret and tighten the tolerant normalizer against the
+real response. Same rules: never commits, `artifacts/` gitignored.
 
 ## How this plugs into the stack
 
