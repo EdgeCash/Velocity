@@ -152,6 +152,36 @@ def normalize_odds_events(
     return Lines.validate(df[_LINES_COLUMNS])
 
 
+def extract_events(payload: Any) -> pd.DataFrame:
+    """Pull per-event metadata (id, kickoff, teams) from an odds payload.
+
+    Companion to :func:`normalize_odds_events`: the same ``/odds`` response that
+    carries the lines also names each event's home/away team and commence time.
+    Returns a frame ``[game_id, kickoff, home_team, away_team, sport_key]`` — the
+    games side of a live slate, internally consistent with the lines (same event
+    ids and provider team names).
+    """
+    rows: list[dict[str, object]] = []
+    for event in unwrap(payload):
+        event_id = event.get("id")
+        if event_id is None:
+            continue
+        rows.append(
+            {
+                "game_id": str(event_id),
+                "kickoff": event.get("commence_time"),
+                "home_team": event.get("home_team"),
+                "away_team": event.get("away_team"),
+                "sport_key": event.get("sport_key"),
+            }
+        )
+    df = pd.DataFrame(rows, columns=["game_id", "kickoff", "home_team", "away_team", "sport_key"])
+    if not df.empty:
+        ts = pd.to_datetime(df["kickoff"], errors="coerce", utc=True)
+        df["kickoff"] = ts.dt.tz_localize(None)
+    return df
+
+
 def unwrap(payload: Any) -> list[dict]:
     """Return the events list from either a live array or a historical ``{data: …}``.
 
@@ -207,10 +237,10 @@ class TheOddsAPIClient:
         data, _ = self._get("sports")
         return list(data or [])
 
-    def odds(  # pragma: no cover - network
+    def odds_payload(  # pragma: no cover - network
         self, league: str, markets: str = "h2h,spreads,totals"
-    ) -> pd.DataFrame:
-        """Live game lines for ``league`` → a canonical ``Lines`` frame (snapshot, not closing)."""
+    ) -> Any:
+        """Raw ``/odds`` payload for ``league`` — carries both lines and event metadata."""
         data, meta = self._get(
             f"sports/{self.sport_key(league)}/odds",
             regions=self.regions,
@@ -218,7 +248,13 @@ class TheOddsAPIClient:
             oddsFormat=self.odds_format,
         )
         self.remaining = meta.get("remaining")
-        return normalize_odds_events(unwrap(data), is_closing=False)
+        return data
+
+    def odds(  # pragma: no cover - network
+        self, league: str, markets: str = "h2h,spreads,totals"
+    ) -> pd.DataFrame:
+        """Live game lines for ``league`` → a canonical ``Lines`` frame (snapshot, not closing)."""
+        return normalize_odds_events(unwrap(self.odds_payload(league, markets)), is_closing=False)
 
     def historical_odds(
         self, league: str, date: str, markets: str = "h2h,spreads,totals"
