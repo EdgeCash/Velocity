@@ -1,0 +1,67 @@
+name: Collect FantasyPros projections
+
+# FantasyPros consensus projections feed the props model as an external prior.
+# This snapshots them into a PRIVATE Actions artifact — nothing is committed
+# (public repo, paid data). Because we don't have a pinned FantasyPros schema,
+# the manual dispatch runs with --inspect so its log shows the raw response
+# shape, doubling as the in-CI verification of the FP_API_KEY secret and the
+# way we tighten the tolerant normalizer.
+
+on:
+  schedule:
+    # Weekly (Tue 12:00 UTC): projections refresh on a weekly cadence, not hourly.
+    - cron: "0 12 * * 2"
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Projection season"
+        required: true
+        default: "2026"
+      week:
+        description: "Week (0 = full-season)"
+        required: false
+        default: "0"
+
+concurrency:
+  group: collect-fp
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot projections
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot FantasyPros projections
+        env:
+          FP_API_KEY: ${{ secrets.FP_API_KEY }}
+        run: |
+          python scripts/collect_fantasypros.py \
+            --season ${{ github.event.inputs.season || '2026' }} \
+            --week ${{ github.event.inputs.week || '0' }} \
+            --out artifacts/fp \
+            --inspect
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fp-projections-${{ github.run_id }}
+          path: artifacts/fp/*.parquet
+          if-no-files-found: warn
+          retention-days: 30
