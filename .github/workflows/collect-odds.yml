@@ -1,0 +1,65 @@
+name: Collect The Odds API lines
+
+# The Odds API is the feed with real history — the source of the closing-line
+# archive for CLV and the market backtest. This snapshots the live board on a
+# schedule (cheap: 1 credit per market per region) into a PRIVATE Actions
+# artifact. Nothing is committed: the repo is public and paid odds must not land
+# in it.
+#
+# Triggering this manually (workflow_dispatch) is also the in-CI verification
+# that the THE_ODDS_API secret works — the dev sandbox can't see the secret, so
+# this run is where the live client is proven end-to-end.
+
+on:
+  schedule:
+    # Hourly. Live /odds for 2 leagues × 3 markets ≈ 6 credits/run → ~4.3k/month,
+    # well under the 100k budget. Tighten toward kickoff windows if wanted.
+    - cron: "30 * * * *"
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Leagues to snapshot (space-separated)"
+        required: false
+        default: "nfl ncaaf"
+
+concurrency:
+  group: collect-odds
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot game lines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot The Odds API lines
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          python scripts/collect_theoddsapi.py \
+            --out artifacts/odds \
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: odds-lines-${{ github.run_id }}
+          path: artifacts/odds/*.parquet
+          if-no-files-found: warn
+          retention-days: 30

@@ -25,7 +25,15 @@ an Action, not from a checkout.
 - **The Odds API** is the one with real **history**, so it is the source for the
   closing-line archive that powers CLV measurement and the market-facing backtest.
   Its 100k monthly credits are the budget to spend deliberately (historical pulls
-  cost more per call than live).
+  cost more per call than live). Built in `velocity/ingest/theoddsapi.py`:
+  `normalize_odds_events` flattens the `events → bookmakers → markets → outcomes`
+  JSON onto the canonical `Lines` schema (markets `h2h`/`spreads`/`totals` →
+  `moneyline`/`spread`/`total`; prices requested American so they land as
+  integers; `unwrap` accepts both the live array and the historical `{data: …}`
+  wrapper). `TheOddsAPIClient.from_env()` reads `THE_ODDS_API`; `odds()` is a live
+  snapshot, `historical_odds(date)` is the closing/CLV pull. Because the key is
+  Actions-only, the live client is **verified in CI** by running the collector
+  workflow manually (`workflow_dispatch`), not from the dev sandbox.
 - **FantasyPros** supplies consensus player projections that feed the props model
   (`velocity/models/props.py`) as a prior/blend against our own numbers.
 
@@ -71,6 +79,16 @@ failure — the job still writes an (empty) artifact so the schedule keeps runni
 At 3-hour cadence the collector uses ≈48 BP calls/day, far under the 5k/day cap;
 tighten the cron toward kickoff windows in-season if closer-to-close snapshots
 are wanted for CLV.
+
+## The Odds API collector (`scripts/collect_theoddsapi.py` + workflow)
+
+`.github/workflows/collect-odds.yml` runs hourly (and on manual dispatch). It
+snapshots the live board for both leagues into `artifacts/odds/*.parquet` (tagged
+`league` + `collected_at`), uploads it as a **private Actions artifact**, and
+prints the remaining monthly credits each run. Live `/odds` for 2 leagues × 3
+markets is ≈6 credits/run → ~4.3k/month, well under 100k; true historical backfill
+uses the pricier `/historical` endpoint on demand. Same rules as the BP collector:
+never commits, `artifacts/` gitignored, empty boards succeed.
 
 ## How this plugs into the stack
 
