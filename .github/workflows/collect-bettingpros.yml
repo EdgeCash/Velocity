@@ -1,0 +1,62 @@
+name: Collect BettingPros lines
+
+# BettingPros has no historical archive — a line exists only while it is live —
+# so we build line history by snapshotting the current board on a schedule and
+# storing each snapshot as a PRIVATE Actions artifact. Nothing is committed: the
+# repo is public and paid line data must never land in it.
+
+on:
+  schedule:
+    # Every 3 hours. In-season this captures line movement toward close; in the
+    # off-season the snapshot is small (or empty) and the job still succeeds.
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      sports:
+        description: "Sports to snapshot (space-separated)"
+        required: false
+        default: "NFL NCAAF"
+
+concurrency:
+  group: collect-bp
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot game lines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot BettingPros lines
+        env:
+          BP_API_KEY: ${{ secrets.BP_API_KEY }}
+          BP_USER_ID: ${{ secrets.BP_USER_ID }}
+          BP_USER_KEY: ${{ secrets.BP_USER_KEY }}
+        run: |
+          python scripts/collect_bettingpros.py \
+            --out artifacts/bp \
+            --sports ${{ github.event.inputs.sports || 'NFL NCAAF' }}
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bp-lines-${{ github.run_id }}
+          path: artifacts/bp/*.parquet
+          if-no-files-found: warn
+          retention-days: 30

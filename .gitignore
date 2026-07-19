@@ -19,6 +19,11 @@ data/
 *.parquet
 *.duckdb
 
+# Paid provider snapshots (BettingPros / The Odds API / FantasyPros). These are
+# public-repo-forbidden by ToS and leak our edge — they live only in private
+# Actions artifacts, never in git, in any format.
+artifacts/
+
 # ...except committed reference datasets under datasets/ (opt back in).
 # These are the real NFL/NCAAF inputs the local harness reads.
 !datasets/
