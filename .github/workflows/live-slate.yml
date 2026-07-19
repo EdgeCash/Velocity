@@ -1,0 +1,79 @@
+name: Live slate
+
+# The launch job: on game days, fit the model on committed history, pull the
+# current board from The Odds API, and produce a staked slate of recommended
+# bets for both leagues — persisted as a PRIVATE Actions artifact (the slate is
+# derived from paid odds, so it never lands in the public repo). Off-season runs
+# find an empty board and succeed, writing an empty slate.
+#
+# Read the slate from the run's artifact (or the job log). This does not place
+# bets — a human acts on it. Tune the cron to the real game-day windows.
+
+on:
+  schedule:
+    # Game-day windows (UTC). NCAAF is Saturday; NFL is Thu/Sun/Mon. 16:00 and
+    # 22:00 bracket afternoon/evening kickoffs so the board is close to final.
+    - cron: "0 16,22 * * 4,6,0,1"
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Leagues to run (space-separated)"
+        required: false
+        default: "nfl ncaaf"
+      min_edge:
+        description: "Minimum edge to bet"
+        required: false
+        default: "0.02"
+      bankroll:
+        description: "Bankroll for stake sizing"
+        required: false
+        default: "100"
+
+concurrency:
+  group: live-slate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  slate:
+    name: build staked slate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Build slates
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
+            echo "::group::${league} slate"
+            python scripts/run_live_slate.py \
+              --league "${league}" \
+              --data "datasets/${league}" \
+              --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
+              --bankroll ${{ github.event.inputs.bankroll || '100' }} \
+              --out artifacts/slate
+            echo "::endgroup::"
+          done
+
+      - name: Upload slates (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: slate-${{ github.run_id }}
+          path: artifacts/slate/*.parquet
+          if-no-files-found: warn
+          retention-days: 60

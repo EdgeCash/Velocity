@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -58,7 +59,11 @@ def main() -> None:
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
     parser.add_argument("--bankroll", type=float, default=100.0)
+    parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     args = parser.parse_args()
+
+    now = datetime.now(UTC)
+    generated_at = pd.Timestamp(now).tz_localize(None)
 
     games = load_games(_find_games(Path(args.data)), league=args.league)
     sim = (
@@ -72,35 +77,46 @@ def main() -> None:
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
     print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
+
+    frame = pd.DataFrame()
+    unresolved: list[dict[str, str]] = []
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
-        return
-
-    def project(home: str, away: str):
-        return model.project(home, away, rng=make_rng())
-
-    log, unresolved = build_live_slate(
-        events,
-        lines,
-        project,
-        model.ratings.teams,
-        SlateConfig(exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll),
-    )
-
-    frame = slate_to_frame(log)
-    if frame.empty:
-        print("no bets cleared the edge threshold.")
     else:
-        frame = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
-        with pd.option_context("display.width", 140, "display.max_columns", None):
-            print(f"\n{len(frame)} recommended bets (stake as % of {args.bankroll:.0f} bankroll):")
-            print(frame.to_string(index=False))
-        print(f"\ntotal staked: {frame['stake'].sum():.2f} ({frame['stake_pct'].sum():.1f}%)")
+        def project(home: str, away: str):
+            return model.project(home, away, rng=make_rng())
 
-    if unresolved:
-        print(f"\n{len(unresolved)} game(s) skipped — teams not in the model's universe:")
-        for u in unresolved:
-            print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
+        log, unresolved = build_live_slate(
+            events,
+            lines,
+            project,
+            model.ratings.teams,
+            SlateConfig(
+                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
+            ),
+        )
+        frame = slate_to_frame(log)
+        if frame.empty:
+            print("no bets cleared the edge threshold.")
+        else:
+            frame = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
+            with pd.option_context("display.width", 140, "display.max_columns", None):
+                print(f"\n{len(frame)} recommended bets (stake as % of {args.bankroll:.0f}):")
+                print(frame.to_string(index=False))
+            print(f"\ntotal staked: {frame['stake'].sum():.2f} ({frame['stake_pct'].sum():.1f}%)")
+
+        if unresolved:
+            print(f"\n{len(unresolved)} game(s) skipped — teams not in the model's universe:")
+            for u in unresolved:
+                print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
+
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        persisted = frame.assign(league=args.league, generated_at=generated_at)
+        dest = out_dir / f"slate_{args.league}_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+        persisted.to_parquet(dest, index=False)
+        print(f"\nwrote {len(persisted)} slate rows to {dest}")
 
 
 if __name__ == "__main__":
