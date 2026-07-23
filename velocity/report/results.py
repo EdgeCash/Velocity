@@ -17,13 +17,14 @@ are dropped (they simply stay ungraded).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import pandas as pd
 
 from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
 
 
-def _pair_key(away: str, home: str, when: object, codes: list[str],
+def _pair_key(away: str, home: str, when: Any, codes: list[str],
               aliases: Mapping[str, str]) -> tuple[str, str, object] | None:
     """``(away_code, home_code, date)`` key, or ``None`` if a team doesn't resolve."""
     a = resolve_team(str(away), codes, dict(aliases))
