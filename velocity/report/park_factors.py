@@ -72,3 +72,13 @@ PARK_FACTORS: dict[str, ParkFactor] = {
 def park_for(team_code: str | None) -> ParkFactor | None:
     """The home park's factor for a team code, or ``None`` if unknown."""
     return None if team_code is None else PARK_FACTORS.get(team_code)
+
+
+def park_hr_factors() -> dict[str, float]:
+    """The per-park HR factors as multipliers (100 → 1.0), keyed by team code.
+
+    This is the model-facing view of the table: :func:`simulate_baseball.simulate_game`
+    scales both lineups' home-run rate by the home park's factor, so a Coors game
+    (110 → 1.10) projects more runs and an Oracle game (90 → 0.90) fewer.
+    """
+    return {code: pf.hr / 100.0 for code, pf in PARK_FACTORS.items()}

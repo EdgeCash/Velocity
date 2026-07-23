@@ -88,6 +88,21 @@ def test_all_thirty_clubs_resolve() -> None:
     assert resolve_team("Springfield Isotopes", codes, MLB_TEAM_ALIASES) is None
 
 
+def test_park_hr_factor_lifts_the_home_park_total() -> None:
+    """A hitter's park at the home venue prices the total over a neutral one."""
+    teams = {"LAD": _team("lad", AVG_BAT), "SF": _team("sf", AVG_BAT)}
+    cfg = BaseballSimConfig(n_sims=4000)
+    neutral = MLBGameModel(teams=teams, config=cfg, seed=7)
+    coors = MLBGameModel(teams=teams, config=cfg, seed=7, park_hr_factors={"LAD": 1.12})
+
+    base = neutral.project_full("LAD", "SF")
+    boosted = coors.project_full("LAD", "SF")
+    assert boosted.fair_total() >= base.fair_total()
+    assert boosted.mu_home + boosted.mu_away > base.mu_home + base.mu_away
+    # A home team not in the map projects unchanged (neutral default).
+    assert coors.park_hr_factors.get("SF", 1.0) == 1.0
+
+
 def test_end_to_end_live_slate_logs_a_staked_bet() -> None:
     payload = json.loads((FIXTURES / "theoddsapi_mlb.json").read_text())
     events = extract_events(payload)

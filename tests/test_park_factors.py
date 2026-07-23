@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from velocity.report.park_factors import PARK_FACTORS, park_for
+import pytest
+from velocity.report.park_factors import PARK_FACTORS, park_for, park_hr_factors
 from velocity.wagering.live import MLB_TEAM_ALIASES
 
 
@@ -22,3 +23,11 @@ def test_lookup_and_lean() -> None:
 def test_unknown_code_is_none() -> None:
     assert park_for(None) is None
     assert park_for("XXX") is None
+
+
+def test_hr_factors_are_multipliers() -> None:
+    factors = park_hr_factors()
+    assert set(factors) == set(PARK_FACTORS)
+    assert factors["COL"] == pytest.approx(1.10)  # Coors 110 → 1.10
+    assert factors["SF"] == pytest.approx(0.90)  # Oracle 90 → 0.90
+    assert factors["ATH"] == pytest.approx(1.00)  # neutral 100 → 1.0

@@ -105,12 +105,14 @@ def assemble_model(
     aliases: Mapping[str, str] | None = None,
     config: BaseballSimConfig | None = None,
     seed: int = 0,
+    park_hr_factors: Mapping[str, float] | None = None,
 ) -> tuple[MLBGameModel, list[str]]:
     """Build an :class:`MLBGameModel` keyed by rating code from parsed lineups.
 
     Each club's provider name is resolved to a rating code via ``aliases``; the
     model's teams use those keys, matching what the slate resolver produces.
-    Returns the model plus any team names that did not resolve.
+    ``park_hr_factors`` (home-park HR multipliers by code) makes each game's total
+    park-aware. Returns the model plus any team names that did not resolve.
     """
     # Local import keeps the models layer from importing wagering at module load.
     from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
@@ -133,7 +135,11 @@ def assemble_model(
                 continue
             teams[code] = _build_team(order, pitcher_id, batters, pitchers)
 
-    return MLBGameModel(teams=teams, config=config, seed=seed), unresolved
+    model = MLBGameModel(
+        teams=teams, config=config, seed=seed,
+        park_hr_factors=dict(park_hr_factors or {}),
+    )
+    return model, unresolved
 
 
 def build_live_mlb(
@@ -150,6 +156,7 @@ def build_live_mlb(
     """
     from velocity.ingest.mlb import load_lineups, load_player_stats
     from velocity.models.simulate_baseball import DEFAULT_HFA
+    from velocity.report.park_factors import park_hr_factors
     from velocity.wagering.props_slate import build_name_index
 
     batting = load_player_stats(season, "bat")
@@ -157,7 +164,10 @@ def build_live_mlb(
     batters, pitchers = build_player_pools(batting, pitching)
     names = build_name_index(batting, pitching)
     config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA)
-    model, _ = assemble_model(load_lineups(date), batters, pitchers, config=config, seed=seed)
+    model, _ = assemble_model(
+        load_lineups(date), batters, pitchers,
+        config=config, seed=seed, park_hr_factors=park_hr_factors(),
+    )
     return model, names
 
 
