@@ -53,8 +53,9 @@ def test_full_game_prices_are_mutually_consistent() -> None:
     assert proj.p_home_win() + proj.p_away_win() == pytest.approx(1.0)
     # the run line at 0 is exactly the moneyline (baseball has no ties),
     assert proj.prob_home_cover(0.0) == pytest.approx(proj.p_home_win())
-    # the fair total sits near a coin flip and the over is monotonic in the number.
-    assert proj.prob_over(proj.fair_total()) == pytest.approx(0.5, abs=0.06)
+    # the fair total is the median: over-prob brackets 0.5 across it (discrete runs
+    # put real push mass on the median itself), and the over is monotonic.
+    assert proj.prob_over(proj.fair_total() - 1.0) >= 0.5 >= proj.prob_over(proj.fair_total() + 1.0)
     assert proj.prob_over(proj.fair_total() + 3.0) < proj.prob_over(proj.fair_total())
 
 

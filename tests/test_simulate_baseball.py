@@ -156,8 +156,25 @@ def test_all_strikeout_batter_has_zero_total_bases() -> None:
     assert (res.batter_hits["whiff"] == 0).all()
 
 
+def test_home_field_advantage_favors_home() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = lambda hfa: BaseballSimConfig(n_sims=4000, hfa=hfa)  # noqa: E731
+    neutral = simulate_game(home, away, np.random.default_rng(7), cfg(0.0)).full
+    with_hfa = simulate_game(home, away, np.random.default_rng(7), cfg(0.02)).full
+    # HFA tilts the win probability toward home and lifts home's run share...
+    assert with_hfa.p_home_win() > neutral.p_home_win()
+    assert with_hfa.home_score.mean() > neutral.home_score.mean()
+    assert with_hfa.away_score.mean() < neutral.away_score.mean()
+    # ...while leaving the total roughly unchanged (a margin shift, not more runs).
+    neutral_total = (neutral.home_score + neutral.away_score).mean()
+    hfa_total = (with_hfa.home_score + with_hfa.away_score).mean()
+    assert abs(hfa_total - neutral_total) < 0.5
+
+
 def test_config_validation() -> None:
     with pytest.raises(ValueError, match="n_sims"):
         BaseballSimConfig(n_sims=0)
     with pytest.raises(ValueError, match="max_innings"):
         BaseballSimConfig(max_innings=8)
+    with pytest.raises(ValueError, match="hfa"):
+        BaseballSimConfig(hfa=1.5)

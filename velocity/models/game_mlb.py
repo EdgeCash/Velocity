@@ -25,6 +25,7 @@ import numpy as np
 from velocity.features.baseball import DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR, DEFAULT_PIT_PRIOR
 from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate_baseball import (
+    DEFAULT_HFA,
     BaseballSimConfig,
     BaseballSimResult,
     Team,
@@ -121,5 +122,5 @@ def league_average_model(
         ]
         pitcher = pitcher_from_rates(f"{code}_p", DEFAULT_PIT_PRIOR)
         teams[code] = Team(lineup=lineup, pitcher=pitcher)
-    config = BaseballSimConfig(n_sims=n_sims, starter_outs=starter_outs)
+    config = BaseballSimConfig(n_sims=n_sims, starter_outs=starter_outs, hfa=DEFAULT_HFA)
     return MLBGameModel(teams=teams, config=config, seed=seed)
