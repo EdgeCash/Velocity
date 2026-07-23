@@ -75,16 +75,27 @@ class Team:
 
 @dataclass(frozen=True)
 class BaseballSimConfig:
-    """Simulation size and the extra-innings safety cap."""
+    """Simulation size, the extra-innings cap, and the starter workload cap.
+
+    ``starter_outs`` bounds how long a starting pitcher's stats accrue: once a
+    starter has recorded that many outs, later innings no longer credit his
+    strikeout/out props (a league-average bullpen finishes, at the same rates, so
+    the run distribution is unchanged). ``None`` means a complete game — leave it
+    unset for run/side/total pricing; set it (~18 = six innings) for realistic
+    pitcher counting props.
+    """
 
     n_sims: int = 10_000
     max_innings: int = 30
+    starter_outs: int | None = None
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
             raise ValueError("n_sims must be positive")
         if self.max_innings < 9:
             raise ValueError("max_innings must be at least 9")
+        if self.starter_outs is not None and self.starter_outs <= 0:
+            raise ValueError("starter_outs must be positive when set")
 
 
 @dataclass(frozen=True)
@@ -102,8 +113,10 @@ class BaseballSimResult:
     f5: GameSim
     batter_total_bases: Mapping[str, np.ndarray] = field(default_factory=dict)
     batter_hits: Mapping[str, np.ndarray] = field(default_factory=dict)
+    batter_home_runs: Mapping[str, np.ndarray] = field(default_factory=dict)
     batter_strikeouts: Mapping[str, np.ndarray] = field(default_factory=dict)
     pitcher_strikeouts: Mapping[str, np.ndarray] = field(default_factory=dict)
+    pitcher_outs: Mapping[str, np.ndarray] = field(default_factory=dict)
 
 
 def batter_from_rates(
@@ -239,6 +252,7 @@ def _accumulate(
     lineup: Sequence[Batter],
     bat_tb: dict[str, float],
     bat_h: dict[str, float],
+    bat_hr: dict[str, float],
     bat_k: dict[str, float],
 ) -> int:
     """Fold a half-inning's events into per-batter tallies; return pitcher K count."""
@@ -251,6 +265,8 @@ def _accumulate(
         elif outcome in _HIT_OUTCOMES:
             bat_h[pid] += 1
             bat_tb[pid] += _TOTAL_BASES[outcome]
+            if outcome == HR:
+                bat_hr[pid] += 1
     return pitcher_k
 
 
@@ -282,11 +298,12 @@ def simulate_game(
     all_batters = [b for t in (home, away) for b in t.lineup]
     bat_tb: dict[str, np.ndarray] = {b.player_id: np.zeros(n, np.int64) for b in all_batters}
     bat_h: dict[str, np.ndarray] = {pid: np.zeros(n, np.int64) for pid in bat_tb}
+    bat_hr: dict[str, np.ndarray] = {pid: np.zeros(n, np.int64) for pid in bat_tb}
     bat_k: dict[str, np.ndarray] = {pid: np.zeros(n, np.int64) for pid in bat_tb}
-    pit_k: dict[str, np.ndarray] = {
-        home.pitcher.player_id: np.zeros(n, np.int64),
-        away.pitcher.player_id: np.zeros(n, np.int64),
-    }
+    pitchers = (home.pitcher.player_id, away.pitcher.player_id)
+    pit_k: dict[str, np.ndarray] = {pid: np.zeros(n, np.int64) for pid in pitchers}
+    pit_outs: dict[str, np.ndarray] = {pid: np.zeros(n, np.int64) for pid in pitchers}
+    cap = config.starter_outs
 
     for s in range(n):
         away_runs = home_runs = 0
@@ -294,8 +311,10 @@ def simulate_game(
         away_idx = home_idx = 0
         g_tb = dict.fromkeys(bat_tb, 0.0)
         g_h = dict.fromkeys(bat_tb, 0.0)
+        g_hr = dict.fromkeys(bat_tb, 0.0)
         g_k = dict.fromkeys(bat_tb, 0.0)
-        g_pit_k = {home.pitcher.player_id: 0, away.pitcher.player_id: 0}
+        g_pit_k = dict.fromkeys(pitchers, 0)
+        g_pit_outs = dict.fromkeys(pitchers, 0)
 
         inning = 1
         while True:
@@ -305,7 +324,11 @@ def simulate_game(
             away_runs += top.runs
             if inning <= 5:
                 away_f5_runs += top.runs
-            g_pit_k[home.pitcher.player_id] += _accumulate(top.events, away.lineup, g_tb, g_h, g_k)
+            hp = home.pitcher.player_id
+            k_recorded = _accumulate(top.events, away.lineup, g_tb, g_h, g_hr, g_k)
+            if cap is None or g_pit_outs[hp] < cap:  # starter still in the game
+                g_pit_k[hp] += k_recorded
+                g_pit_outs[hp] += top.outs
 
             # Bottom half — home bats, unless it is the 9th+ and home already leads.
             home_bats = not (inning >= 9 and home_runs > away_runs)
@@ -316,9 +339,11 @@ def simulate_game(
                 home_runs += bottom.runs
                 if inning <= 5:
                     home_f5_runs += bottom.runs
-                g_pit_k[away.pitcher.player_id] += _accumulate(
-                    bottom.events, home.lineup, g_tb, g_h, g_k
-                )
+                ap = away.pitcher.player_id
+                k_recorded = _accumulate(bottom.events, home.lineup, g_tb, g_h, g_hr, g_k)
+                if cap is None or g_pit_outs[ap] < cap:
+                    g_pit_k[ap] += k_recorded
+                    g_pit_outs[ap] += bottom.outs
 
             decided = inning >= 9 and away_runs != home_runs
             if decided or inning >= config.max_innings:
@@ -332,15 +357,19 @@ def simulate_game(
         for pid in bat_tb:
             bat_tb[pid][s] = g_tb[pid]
             bat_h[pid][s] = g_h[pid]
+            bat_hr[pid][s] = g_hr[pid]
             bat_k[pid][s] = g_k[pid]
-        for pid in g_pit_k:
+        for pid in pitchers:
             pit_k[pid][s] = g_pit_k[pid]
+            pit_outs[pid][s] = g_pit_outs[pid]
 
     return BaseballSimResult(
         full=GameSim(home_score=home_final.astype(float), away_score=away_final.astype(float)),
         f5=GameSim(home_score=home_f5.astype(float), away_score=away_f5.astype(float)),
         batter_total_bases=bat_tb,
         batter_hits=bat_h,
+        batter_home_runs=bat_hr,
         batter_strikeouts=bat_k,
         pitcher_strikeouts=pit_k,
+        pitcher_outs=pit_outs,
     )
