@@ -208,6 +208,12 @@ def main() -> None:
         parquet = out_dir / f"slate_{args.league}_{stamp}.parquet"
         persisted.to_parquet(parquet, index=False)
         print(f"\nwrote {len(persisted)} slate rows to {parquet}")
+        # Persist the game→teams+kickoff map so a later grader can join StatsAPI
+        # finals (a different id space) back onto these Odds-API game ids.
+        if not events.empty:
+            games_cols = ["game_id", "home_team", "away_team", "kickoff"]
+            games_map = events[games_cols].assign(league=args.league)
+            games_map.to_parquet(out_dir / f"games_{args.league}_{stamp}.parquet", index=False)
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
         if args.league == "mlb" and not events.empty:
             _write_cards(out_dir, stamp, args, events, projections, canonical, now,
