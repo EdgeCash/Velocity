@@ -9,9 +9,10 @@ name: Live slate (MLB)
 
 on:
   schedule:
-    # Daily, UTC. ~19:00 brackets afternoon games and ~23:00 the evening slate,
-    # each a couple hours after lineups post so the board and starters are set.
-    - cron: "0 19,23 * * *"
+    # Two daily info windows, in Central time (CDT, UTC-5, in effect all MLB
+    # season): 09:00 CT (14:00 UTC) catches the morning board, and 16:00 CT
+    # (21:00 UTC) runs after evening-game lineups and props post.
+    - cron: "0 14,21 * * *"
   workflow_dispatch:
     inputs:
       min_edge:
