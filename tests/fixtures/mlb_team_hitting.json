@@ -1,0 +1,36 @@
+{
+  "stats": [
+    {
+      "splits": [
+        {
+          "team": {"id": 119, "name": "Los Angeles Dodgers"},
+          "stat": {
+            "gamesPlayed": 100, "plateAppearances": 3800, "atBats": 3400,
+            "runs": 500, "homeRuns": 180, "strikeOuts": 760, "baseOnBalls": 380,
+            "avg": ".262", "obp": ".338", "slg": ".442", "ops": ".780"
+          }
+        },
+        {
+          "team": {"id": 115, "name": "Colorado Rockies"},
+          "stat": {
+            "gamesPlayed": 100, "plateAppearances": 3750, "atBats": 3450,
+            "runs": 450, "homeRuns": 150, "strikeOuts": 900, "baseOnBalls": 300,
+            "avg": ".255", "obp": ".318", "slg": ".422", "ops": ".740"
+          }
+        },
+        {
+          "team": {"id": 137, "name": "San Francisco Giants"},
+          "stat": {
+            "gamesPlayed": 100, "plateAppearances": 3700, "atBats": 3350,
+            "runs": 400, "homeRuns": 120, "strikeOuts": 740, "baseOnBalls": 370,
+            "avg": ".244", "obp": ".312", "slg": ".388", "ops": ".700"
+          }
+        },
+        {
+          "team": {"id": null, "name": "American League"},
+          "stat": {"ops": ".999"}
+        }
+      ]
+    }
+  ]
+}

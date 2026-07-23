@@ -1,0 +1,31 @@
+{
+  "stats": [
+    {
+      "splits": [
+        {
+          "team": {"id": 119, "name": "Los Angeles Dodgers"},
+          "stat": {
+            "gamesPlayed": 100, "era": "3.50", "whip": "1.10",
+            "strikeoutsPer9Inn": "9.50", "inningsPitched": "900.0",
+            "strikeOuts": 950, "runs": 380
+          }
+        },
+        {
+          "team": {"id": 137, "name": "San Francisco Giants"},
+          "stat": {
+            "gamesPlayed": 100, "era": "4.00", "whip": "1.25",
+            "inningsPitched": "895.0", "strikeOuts": 796, "runs": 420
+          }
+        },
+        {
+          "team": {"id": 115, "name": "Colorado Rockies"},
+          "stat": {
+            "gamesPlayed": 100, "era": "5.20", "whip": "1.45",
+            "strikeoutsPer9Inn": "7.50", "inningsPitched": "890.0",
+            "strikeOuts": 741, "runs": 540
+          }
+        }
+      ]
+    }
+  ]
+}
