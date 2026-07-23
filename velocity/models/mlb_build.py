@@ -51,15 +51,22 @@ def _avg_pitcher(player_id: str) -> Pitcher:
 
 
 def build_player_pools(
-    batting_stats: pd.DataFrame, pitching_stats: pd.DataFrame, config: RateConfig | None = None
+    batting_stats: pd.DataFrame,
+    pitching_stats: pd.DataFrame,
+    config: RateConfig | None = None,
+    hands: Mapping[str, Mapping[str, str | None]] | None = None,
 ) -> tuple[dict[str, Batter], dict[str, Pitcher]]:
     """Project season stats (Phase M2) into ``{player_id: Batter/Pitcher}`` pools.
 
     ``batting_stats`` / ``pitching_stats`` are ``BaseballStats`` frames (role
     ``bat`` / ``pit``). Batters carry both the PA-outcome vector and the
-    ball-in-play profile; pitchers carry the PA-outcome vector.
+    ball-in-play profile; pitchers carry the PA-outcome vector. ``hands`` (from
+    :func:`velocity.ingest.mlb_people.normalize_player_hands`, ``{id: {bat, pit}}``)
+    tags each with a batting side / throwing hand for the platoon matchup; a player
+    absent from it stays ``None`` (platoon-neutral).
     """
     config = config or RateConfig()
+    hands = hands or {}
     pa = project_pa_rates(batting_stats, config).set_index("player_id")
     bip = project_bip_profile(batting_stats, config).set_index("player_id")
 
@@ -70,11 +77,16 @@ def build_player_pools(
             bip_vec = np.array([bip.loc[pid, o] for o in BIP_OUTCOMES], dtype=float)
         else:  # a batter with no balls in play — fall back to the league profile
             bip_vec = np.array([DEFAULT_BIP_PRIOR[o] for o in BIP_OUTCOMES], dtype=float)
-        batters[str(pid)] = Batter(player_id=str(pid), pa=pa_vec, bip=bip_vec)
+        bat_hand = hands.get(str(pid), {}).get("bat")
+        batters[str(pid)] = Batter(player_id=str(pid), pa=pa_vec, bip=bip_vec, hand=bat_hand)
 
     ppa = project_pa_rates(pitching_stats, config).set_index("player_id")
     pitchers: dict[str, Pitcher] = {
-        str(pid): Pitcher(str(pid), np.array([ppa.loc[pid, o] for o in PA_OUTCOMES], dtype=float))
+        str(pid): Pitcher(
+            str(pid),
+            np.array([ppa.loc[pid, o] for o in PA_OUTCOMES], dtype=float),
+            hand=hands.get(str(pid), {}).get("pit"),
+        )
         for pid in ppa.index
     }
     return batters, pitchers
@@ -175,16 +187,34 @@ def build_live_mlb(
     """
     from velocity.ingest.mlb import load_lineups, load_player_stats
     from velocity.ingest.mlb_bullpen import load_team_bullpen
-    from velocity.models.simulate_baseball import DEFAULT_HFA, DEFAULT_TTO_PENALTY
+    from velocity.ingest.mlb_people import load_player_hands
+    from velocity.models.simulate_baseball import (
+        DEFAULT_HFA,
+        DEFAULT_PLATOON_GAP,
+        DEFAULT_TTO_PENALTY,
+    )
     from velocity.report.park_factors import run_environment_maps
     from velocity.wagering.props_slate import build_name_index
 
     batting = load_player_stats(season, "bat")
     pitching = load_player_stats(season, "pit")
-    batters, pitchers = build_player_pools(batting, pitching)
+    lineups = list(load_lineups(date))
+    # Handedness for just the players in today's games (lineups + probable starters).
+    ids: set[str] = set()
+    for g in lineups:
+        ids.update(g.home_lineup)
+        ids.update(g.away_lineup)
+        ids.update(p for p in (g.home_pitcher_id, g.away_pitcher_id) if p)
+    try:
+        hands = load_player_hands(ids)
+    except Exception as exc:  # noqa: BLE001 - hands are optional; platoon stays neutral
+        print(f"player hands skipped ({exc}); platoon neutral")
+        hands = {}
+    batters, pitchers = build_player_pools(batting, pitching, hands=hands)
     names = build_name_index(batting, pitching)
     config = config or BaseballSimConfig(
-        n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA, tto_penalty=DEFAULT_TTO_PENALTY
+        n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA,
+        tto_penalty=DEFAULT_TTO_PENALTY, platoon_gap=DEFAULT_PLATOON_GAP,
     )
     # Park-static run environment; the runner folds today's weather in before pricing.
     hr_factors, run_env_tilts = run_environment_maps()
@@ -194,7 +224,7 @@ def build_live_mlb(
         print(f"bullpen rates skipped ({exc}); using the starter stand-in")
         bullpens = {}
     model, _ = assemble_model(
-        load_lineups(date), batters, pitchers,
+        lineups, batters, pitchers,
         config=config, seed=seed, park_hr_factors=hr_factors,
         run_env_tilts=run_env_tilts, bullpens=bullpens,
     )

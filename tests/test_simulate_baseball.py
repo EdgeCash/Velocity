@@ -287,6 +287,55 @@ def test_tto_zero_penalty_is_identity() -> None:
     assert base.home_score.tolist() == same.home_score.tolist()
 
 
+def _handed_team(prefix: str, bat_hand: str, pit_hand: str) -> Team:
+    from velocity.models.simulate_baseball import Batter, Pitcher
+
+    lineup = [
+        Batter(f"{prefix}{i}",
+               batter_from_rates(f"{prefix}{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR).pa,
+               batter_from_rates(f"{prefix}{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR).bip,
+               hand=bat_hand)
+        for i in range(9)
+    ]
+    pitcher = Pitcher(f"{prefix}_p", pitcher_from_rates(f"{prefix}_p", DEFAULT_PIT_PRIOR).pa,
+                      hand=pit_hand)
+    return Team(lineup=lineup, pitcher=pitcher)
+
+
+def test_platoon_same_hand_suppresses_offense() -> None:
+    """A lefty lineup scores less against a LHP than against a RHP."""
+    lefties_home = _handed_team("h", "L", "R")  # home hits, faces away pitcher
+    cfg = BaseballSimConfig(n_sims=4000, platoon_gap=0.06)
+
+    vs_lhp = simulate_game(lefties_home, _handed_team("a", "R", "L"),
+                           np.random.default_rng(61), cfg).full
+    vs_rhp = simulate_game(lefties_home, _handed_team("a", "R", "R"),
+                           np.random.default_rng(61), cfg).full
+    # The lefty home lineup scores fewer runs facing the lefty starter.
+    assert vs_lhp.home_score.mean() < vs_rhp.home_score.mean()
+
+
+def test_platoon_switch_hitter_never_disadvantaged() -> None:
+    switch = _handed_team("h", "S", "R")
+    lefty = _handed_team("h2", "L", "R")
+    cfg = BaseballSimConfig(n_sims=4000, platoon_gap=0.06)
+    away_lhp = _handed_team("a", "R", "L")
+    sw = simulate_game(switch, away_lhp, np.random.default_rng(62), cfg).full
+    lf = simulate_game(lefty, away_lhp, np.random.default_rng(62), cfg).full
+    # Switch hitters take the opposite side vs the LHP; the lefties don't.
+    assert sw.home_score.mean() > lf.home_score.mean()
+
+
+def test_platoon_neutral_without_hands_or_gap() -> None:
+    home, away = _avg_team("h"), _avg_team("a")  # hands are None
+    cfg_gap = BaseballSimConfig(n_sims=1500, platoon_gap=0.06)
+    cfg_off = BaseballSimConfig(n_sims=1500)
+    a = simulate_game(home, away, np.random.default_rng(8), cfg_gap).full
+    b = simulate_game(home, away, np.random.default_rng(8), cfg_off).full
+    # No batter/pitcher hands → the platoon tilt is inert regardless of the gap.
+    assert a.home_score.tolist() == b.home_score.tolist()
+
+
 def test_config_validation() -> None:
     with pytest.raises(ValueError, match="n_sims"):
         BaseballSimConfig(n_sims=0)
@@ -296,3 +345,5 @@ def test_config_validation() -> None:
         BaseballSimConfig(hfa=1.5)
     with pytest.raises(ValueError, match="tto_penalty"):
         BaseballSimConfig(tto_penalty=(1.5, 0.0))
+    with pytest.raises(ValueError, match="platoon_gap"):
+        BaseballSimConfig(platoon_gap=1.0)

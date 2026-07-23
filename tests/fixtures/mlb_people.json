@@ -1,0 +1,9 @@
+{
+  "people": [
+    {"id": 660271, "fullName": "Shohei Ohtani", "batSide": {"code": "L"}, "pitchHand": {"code": "R"}},
+    {"id": 605141, "fullName": "Mookie Betts", "batSide": {"code": "R"}, "pitchHand": {"code": "R"}},
+    {"id": 571448, "fullName": "Switchy McGee", "batSide": {"code": "S"}, "pitchHand": {"code": "L"}},
+    {"id": 999002, "fullName": "No Bat Side", "pitchHand": {"code": "L"}},
+    {"fullName": "No Id Skipped", "batSide": {"code": "R"}}
+  ]
+}
