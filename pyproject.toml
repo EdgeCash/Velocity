@@ -44,6 +44,11 @@ src = ["velocity", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 
+[tool.ruff.lint.per-file-ignores]
+# The card renderer is HTML/CSS string templating: long inline style and markup
+# lines are inherent and clearer unwrapped than split mid-tag.
+"velocity/report/card_html.py" = ["E501"]
+
 [tool.mypy]
 # Target 3.12 for type analysis: newer numpy stubs use PEP 695 `type` statements
 # that mypy rejects under a 3.11 target. Runtime 3.11 support is proven by the

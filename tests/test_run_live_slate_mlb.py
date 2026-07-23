@@ -48,6 +48,11 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     assert len(written) == 1
     frame = pd.read_parquet(written[0])
     assert "league" in frame.columns  # persisted with league/generated_at tags
+    # The matchup-cards HTML page is emitted alongside the parquet (offline: no
+    # StatsAPI context, so it renders from projections + board with TBD starters).
+    cards = list(out.glob("cards_mlb_*.html"))
+    assert len(cards) == 1
+    assert "Velocity" in cards[0].read_text()
 
 
 def test_runner_empty_board_succeeds(tmp_path: Path) -> None:
