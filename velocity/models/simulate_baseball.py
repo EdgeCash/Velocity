@@ -182,6 +182,21 @@ def _tilt_offense(dist: np.ndarray, factor: float) -> np.ndarray:
     return tilted / tilted.sum()
 
 
+def _scale_hr(dist: np.ndarray, factor: float) -> np.ndarray:
+    """Scale a matchup's home-run outcome by ``factor`` and renormalize.
+
+    ``factor`` is a multiplicative HR park factor (1.0 = neutral, >1 a hitter's
+    park); the mass moved on/off HR is absorbed proportionally across the other
+    outcomes by the renormalization, so the distribution still sums to 1. Applied
+    to both lineups in a game, since both bat in the home park.
+    """
+    if factor == 1.0:
+        return dist
+    scaled = dist.copy()
+    scaled[HR] = scaled[HR] * factor
+    return scaled / scaled.sum()
+
+
 def matchup_distribution(batter: Batter, pitcher: Pitcher) -> np.ndarray:
     """The eight-way per-PA outcome distribution for a batter vs a pitcher.
 
@@ -306,6 +321,8 @@ def simulate_game(
     away: Team,
     rng: np.random.Generator,
     config: BaseballSimConfig | None = None,
+    *,
+    park_hr_factor: float = 1.0,
 ) -> BaseballSimResult:
     """Simulate ``config.n_sims`` games and return priced distributions + stats.
 
@@ -314,18 +331,27 @@ def simulate_game(
     across innings. The home team does not bat in the ninth when already ahead;
     ninth-and-later home half-innings end on a walk-off; ties go to ghost-runner
     extra innings up to ``config.max_innings``.
+
+    ``park_hr_factor`` is the home park's multiplicative HR factor (1.0 = neutral),
+    applied to both lineups' home-run rate — a hitter's park (>1) lifts the total,
+    a pitcher's park (<1) suppresses it.
     """
     config = config or BaseballSimConfig()
     n = config.n_sims
 
-    # Home-field advantage: lift the home lineup's offense and trim the away
-    # lineup's by the same tilt (the home team bats the bottom half of innings).
+    # Park then home-field advantage. The park HR factor scales both lineups (both
+    # bat here); HFA then lifts the home lineup's reach-base outcomes and trims the
+    # away lineup's (the home team bats the bottom half of innings).
     hfa = config.hfa
     away_cum = [
-        np.cumsum(_tilt_offense(matchup_distribution(b, home.pitcher), -hfa)) for b in away.lineup
+        np.cumsum(_tilt_offense(_scale_hr(matchup_distribution(b, home.pitcher), park_hr_factor),
+                                -hfa))
+        for b in away.lineup
     ]
     home_cum = [
-        np.cumsum(_tilt_offense(matchup_distribution(b, away.pitcher), hfa)) for b in home.lineup
+        np.cumsum(_tilt_offense(_scale_hr(matchup_distribution(b, away.pitcher), park_hr_factor),
+                                hfa))
+        for b in home.lineup
     ]
 
     home_final = np.zeros(n, dtype=np.int64)

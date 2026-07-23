@@ -70,6 +70,7 @@ class MLBGameModel:
     teams: Mapping[str, Team]
     config: BaseballSimConfig = field(default_factory=BaseballSimConfig)
     seed: int = 0
+    park_hr_factors: Mapping[str, float] = field(default_factory=dict)
 
     @property
     def known_teams(self) -> list[str]:
@@ -77,7 +78,10 @@ class MLBGameModel:
 
     def project(self, home_key: str, away_key: str) -> MLBProjection:
         rng = np.random.default_rng(self.seed)
-        result = simulate_game(self.teams[home_key], self.teams[away_key], rng, self.config)
+        park = self.park_hr_factors.get(home_key, 1.0)
+        result = simulate_game(
+            self.teams[home_key], self.teams[away_key], rng, self.config, park_hr_factor=park
+        )
         full = GameProjection(
             home_team=home_key,
             away_team=away_key,
@@ -105,15 +109,16 @@ def league_average_model(
     n_sims: int = 10_000,
     starter_outs: int = 18,
     seed: int = 0,
+    park_hr_factors: Mapping[str, float] | None = None,
 ) -> MLBGameModel:
     """An :class:`MLBGameModel` where every club is a league-average team.
 
     A baseline so the live runner executes end-to-end today: it resolves any
-    matchup and produces a valid (if uninformative — every team is identical, so
-    edges are near zero) slate. Replacing these with real per-team lineups and
-    the shrunk rates from :mod:`velocity.features.baseball`, fetched from StatsAPI
-    at lineup release, is the remaining live-data wiring; the orchestration around
-    it is already proven.
+    matchup and produces a valid slate. Every lineup is identical, so team edges
+    are near zero — but ``park_hr_factors`` (the home park's HR multiplier by team
+    code) still tilts each game's total by venue, so e.g. a Coors game prices over
+    a neutral one. Replacing the identical lineups with real per-team rates from
+    StatsAPI is the remaining data wiring; the orchestration is already proven.
     """
     teams: dict[str, Team] = {}
     for code in team_codes:
@@ -123,4 +128,6 @@ def league_average_model(
         pitcher = pitcher_from_rates(f"{code}_p", DEFAULT_PIT_PRIOR)
         teams[code] = Team(lineup=lineup, pitcher=pitcher)
     config = BaseballSimConfig(n_sims=n_sims, starter_outs=starter_outs, hfa=DEFAULT_HFA)
-    return MLBGameModel(teams=teams, config=config, seed=seed)
+    return MLBGameModel(
+        teams=teams, config=config, seed=seed, park_hr_factors=dict(park_hr_factors or {})
+    )

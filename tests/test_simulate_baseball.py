@@ -171,6 +171,35 @@ def test_home_field_advantage_favors_home() -> None:
     assert abs(hfa_total - neutral_total) < 0.5
 
 
+def test_park_hr_factor_moves_the_total() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=4000)
+    neutral = simulate_game(home, away, np.random.default_rng(11), cfg).full
+    hitter = simulate_game(home, away, np.random.default_rng(11), cfg, park_hr_factor=1.15).full
+    pitcher = simulate_game(home, away, np.random.default_rng(11), cfg, park_hr_factor=0.85).full
+
+    def total(sim):  # noqa: ANN001, ANN202
+        return (sim.home_score + sim.away_score).mean()
+
+    def margin(sim):  # noqa: ANN001, ANN202
+        return (sim.home_score - sim.away_score).mean()
+
+    # A hitter's park lifts the total, a pitcher's park suppresses it...
+    assert total(hitter) > total(neutral) > total(pitcher)
+    # ...symmetrically for both lineups (both bat in the home park), so the margin
+    # is roughly unchanged — this is a total effect, not a home edge.
+    assert abs(margin(hitter) - margin(neutral)) < 0.4
+
+
+def test_neutral_park_factor_is_identity() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=1500)
+    base = simulate_game(home, away, np.random.default_rng(3), cfg).full
+    same = simulate_game(home, away, np.random.default_rng(3), cfg, park_hr_factor=1.0).full
+    assert base.home_score.tolist() == same.home_score.tolist()
+    assert base.away_score.tolist() == same.away_score.tolist()
+
+
 def test_config_validation() -> None:
     with pytest.raises(ValueError, match="n_sims"):
         BaseballSimConfig(n_sims=0)

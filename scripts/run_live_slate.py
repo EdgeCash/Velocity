@@ -80,7 +80,11 @@ def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     codes = sorted(set(MLB_TEAM_ALIASES.values()))
     config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
     if args.snapshot_file:
-        return league_average_model(codes, n_sims=args.n_sims)
+        from velocity.report.park_factors import park_hr_factors
+
+        return league_average_model(
+            codes, n_sims=args.n_sims, park_hr_factors=park_hr_factors()
+        )
     try:
         from velocity.models.mlb_build import build_live_mlb_model
 
