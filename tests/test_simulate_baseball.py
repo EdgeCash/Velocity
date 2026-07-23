@@ -246,6 +246,36 @@ def test_tto_concentrated_in_later_innings() -> None:
     assert full_delta > f5_delta  # the penalty lands more on the back of the game
 
 
+def test_bullpen_swaps_in_after_the_cap() -> None:
+    """A dominant bullpen suppresses runs after the starter is pulled — a back-of-
+    game effect, so the full game moves but F5 (starter innings) barely does."""
+    import dataclasses
+
+    from velocity.models.simulate_baseball import Pitcher
+
+    # A shutdown bullpen: all strikeouts (no baserunners → no runs allowed).
+    lights_out = Pitcher("pen", np.array([1.0, 0.0, 0.0, 0.0, 0.0]))
+    home, away = _avg_team("h"), _avg_team("a")
+    # Give the HOME team a lights-out bullpen; it faces the AWAY lineup late.
+    home_pen = dataclasses.replace(home, bullpen=lights_out)
+    cfg = BaseballSimConfig(n_sims=4000, starter_outs=18)
+
+    base = simulate_game(home, away, np.random.default_rng(51), cfg)
+    penned = simulate_game(home_pen, away, np.random.default_rng(51), cfg)
+    # Away scoring falls once the shutdown pen takes over (full game)...
+    assert penned.full.away_score.mean() < base.full.away_score.mean()
+    # ...while the first five innings (starter's) are essentially unchanged.
+    assert penned.f5.away_score.mean() == pytest.approx(base.f5.away_score.mean(), abs=0.15)
+
+
+def test_no_bullpen_is_identity() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=1500, starter_outs=18)
+    a = simulate_game(home, away, np.random.default_rng(9), cfg).full
+    b = simulate_game(home, away, np.random.default_rng(9), cfg).full
+    assert a.home_score.tolist() == b.home_score.tolist()
+
+
 def test_tto_zero_penalty_is_identity() -> None:
     home, away = _avg_team("h"), _avg_team("a")
     cfg = BaseballSimConfig(n_sims=1500, starter_outs=18)

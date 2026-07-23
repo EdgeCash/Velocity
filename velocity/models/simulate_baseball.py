@@ -80,10 +80,16 @@ class Pitcher:
 
 @dataclass(frozen=True)
 class Team:
-    """A batting order (nine batters) and the starting pitcher."""
+    """A batting order (nine batters), the starting pitcher, and (optional) bullpen.
+
+    ``bullpen`` is a single aggregate reliever whose rates take over once the
+    starter passes the out cap. ``None`` falls back to the starter's own fresh
+    (first-time-through) rates as the reliever stand-in — the pre-bullpen behavior.
+    """
 
     lineup: Sequence[Batter]
     pitcher: Pitcher
+    bullpen: Pitcher | None = None
 
 
 @dataclass(frozen=True)
@@ -335,19 +341,21 @@ def _accumulate(
 
 def _tier_cum(
     tiers: Sequence[Sequence[np.ndarray]],
+    relief: Sequence[np.ndarray],
     pitcher_outs: int,
     pitcher_bf: int,
     cap: int | None,
     lineup_len: int,
 ) -> Sequence[np.ndarray]:
-    """Pick the times-through-the-order tier for the pitcher currently on the mound.
+    """Pick the matchup for the pitcher currently on the mound.
 
-    Once the starter passes ``cap`` outs he is 'pulled' and the fresh reliever
-    stand-in uses tier 0 (no penalty). Otherwise the tier is the number of times
-    the starter has been through the order so far (capped at the top tier).
+    Once the starter passes ``cap`` outs he is 'pulled' and the opposing lineup
+    faces ``relief`` (the bullpen, or the starter's fresh tier-0 rates when no
+    bullpen is supplied). Otherwise the tier is the number of times the starter has
+    been through the order so far (capped at the top tier).
     """
     if cap is not None and pitcher_outs >= cap:
-        return tiers[0]
+        return relief
     return tiers[min(pitcher_bf // lineup_len, len(tiers) - 1)]
 
 
@@ -395,8 +403,19 @@ def simulate_game(
         bases = [_base(b, opp, hfa_sign) for b in lineup]
         return [[np.cumsum(_tilt_offense(base, d)) for base in bases] for d in tto_deltas]
 
+    def _relief(
+        lineup: Sequence[Batter], opp: Team, hfa_sign: float, tier0: list[np.ndarray]
+    ) -> list[np.ndarray]:
+        # The bullpen faces the lineup fresh (no TTO); with no bullpen, the starter's
+        # own tier-0 rates stand in — the pre-bullpen behavior.
+        if opp.bullpen is None:
+            return tier0
+        return [np.cumsum(_base(b, opp.bullpen, hfa_sign)) for b in lineup]
+
     away_tiers = _tiers(away.lineup, home.pitcher, -1.0)
     home_tiers = _tiers(home.lineup, away.pitcher, 1.0)
+    away_relief = _relief(away.lineup, home, -1.0, away_tiers[0])
+    home_relief = _relief(home.lineup, away, 1.0, home_tiers[0])
     away_len, home_len = len(away.lineup), len(home.lineup)
 
     home_final = np.zeros(n, dtype=np.int64)
@@ -430,7 +449,9 @@ def simulate_game(
         inning = 1
         while True:
             # Top half — away bats vs the home pitcher (TTO tier by his batters faced).
-            away_cum = _tier_cum(away_tiers, g_pit_outs[hp], g_pit_bf[hp], cap, away_len)
+            away_cum = _tier_cum(
+                away_tiers, away_relief, g_pit_outs[hp], g_pit_bf[hp], cap, away_len
+            )
             top = simulate_half_inning(away_cum, away_idx, rng)
             away_idx = top.next_index
             away_runs += top.runs
@@ -446,7 +467,9 @@ def simulate_game(
             home_bats = not (inning >= 9 and home_runs > away_runs)
             if home_bats:
                 runs_to_win = (away_runs - home_runs + 1) if inning >= 9 else None
-                home_cum = _tier_cum(home_tiers, g_pit_outs[ap], g_pit_bf[ap], cap, home_len)
+                home_cum = _tier_cum(
+                    home_tiers, home_relief, g_pit_outs[ap], g_pit_bf[ap], cap, home_len
+                )
                 bottom = simulate_half_inning(home_cum, home_idx, rng, runs_to_win=runs_to_win)
                 home_idx = bottom.next_index
                 home_runs += bottom.runs

@@ -72,6 +72,25 @@ def test_assemble_model_keys_by_code_with_fallbacks() -> None:
     assert model.project_full("LAD", "SF").p_home_win() > 0.0
 
 
+def test_bullpen_is_attached_by_code() -> None:
+    from velocity.models.mlb_build import bullpens_from_rates
+
+    lineups = normalize_lineups(_load("mlb_lineups.json"))
+    batters, pitchers = build_player_pools(
+        normalize_player_stats(_load("mlb_hitting.json"), "bat"),
+        normalize_player_stats(_load("mlb_pitching.json"), "pit"),
+    )
+    # A high-K reliever rate for LAD only; SF gets none (starter stand-in).
+    pens = bullpens_from_rates(
+        {"LAD": {"k": 0.30, "bb": 0.07, "hbp": 0.01, "hr": 0.03, "in_play": 0.59}}
+    )
+    model, _ = assemble_model(lineups, batters, pitchers, bullpens=pens)
+    lad_pen = model.teams["LAD"].bullpen
+    assert lad_pen is not None and lad_pen.player_id == "LAD_pen"
+    assert np.isclose(lad_pen.pa[0], 0.30)  # the reliever K rate
+    assert model.teams["SF"].bullpen is None  # no pen → falls back in the sim
+
+
 def test_unresolved_team_is_reported() -> None:
     from velocity.ingest.mlb import GameLineups
 
