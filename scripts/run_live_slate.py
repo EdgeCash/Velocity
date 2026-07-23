@@ -145,6 +145,7 @@ def main() -> None:
 
     frame = pd.DataFrame()
     projections: dict = {}
+    canonical = pd.DataFrame()
     unresolved: list[dict[str, str]] = []
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
@@ -189,6 +190,8 @@ def main() -> None:
         persisted.to_parquet(parquet, index=False)
         print(f"\nwrote {len(persisted)} slate rows to {parquet}")
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
+        if args.league == "mlb" and not events.empty:
+            _write_cards(out_dir, stamp, args, events, projections, canonical, now, generated_at)
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
@@ -218,6 +221,42 @@ def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
         print(f"wrote workbook to {dest}")
     except Exception as exc:  # noqa: BLE001 - the workbook is a convenience, never fatal
         print(f"workbook export skipped: {exc}")
+
+
+def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
+    out_dir: Path,
+    stamp: str,
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    canonical: pd.DataFrame,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Render the per-game matchup cards to an HTML page (best-effort, MLB only).
+
+    The team records, starter lines, and CDN logo/headshot ids come from a live
+    StatsAPI context fetch; an offline run (or a failed fetch) still renders the
+    cards from the projections and board, minus the descriptive header.
+    """
+    try:
+        from velocity.report.card_html import write_cards_html
+        from velocity.report.cards import build_cards
+
+        contexts = []
+        if not args.snapshot_file:
+            from velocity.ingest.mlb_context import load_context
+
+            try:
+                contexts = load_context(now.strftime("%Y-%m-%d"))
+            except Exception as exc:  # noqa: BLE001 - context is header decoration
+                print(f"card context fetch skipped: {exc}")
+        cards = build_cards(events, projections, canonical, contexts, aliases=MLB_TEAM_ALIASES)
+        dest = out_dir / f"cards_{args.league}_{stamp}.html"
+        write_cards_html(dest, cards, league=args.league, generated_at=str(generated_at))
+        print(f"wrote {len(cards)} matchup cards to {dest}")
+    except Exception as exc:  # noqa: BLE001 - the cards page is a convenience, never fatal
+        print(f"cards export skipped: {exc}")
 
 
 def _mlb_prop_slate(  # pragma: no cover - network

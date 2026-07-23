@@ -1,0 +1,68 @@
+{
+  "dates": [
+    {
+      "date": "2026-07-23",
+      "games": [
+        {
+          "gamePk": 745804,
+          "teams": {
+            "away": {
+              "leagueRecord": {"wins": 58, "losses": 44},
+              "team": {"id": 137, "name": "San Francisco Giants"},
+              "probablePitcher": {
+                "id": 592791,
+                "fullName": "Logan Webb",
+                "pitchHand": {"code": "R"},
+                "stats": [
+                  {
+                    "group": {"displayName": "pitching"},
+                    "stats": {"wins": 9, "losses": 6, "era": "2.94", "whip": "1.08"}
+                  }
+                ]
+              }
+            },
+            "home": {
+              "leagueRecord": {"wins": 64, "losses": 38},
+              "team": {"id": 119, "name": "Los Angeles Dodgers"},
+              "probablePitcher": {
+                "id": 808967,
+                "fullName": "Yoshinobu Yamamoto",
+                "pitchHand": {"code": "R"},
+                "stats": [
+                  {"group": {"displayName": "fielding"}, "stats": {"errors": 0}},
+                  {
+                    "group": {"displayName": "pitching"},
+                    "stats": {"wins": 11, "losses": 3, "era": "2.51", "whip": "0.99"}
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "gamePk": 745820,
+          "teams": {
+            "away": {
+              "leagueRecord": {"wins": 55},
+              "team": {"id": 147, "name": "New York Yankees"},
+              "probablePitcher": {
+                "id": 543037,
+                "fullName": "Gerrit Cole",
+                "pitchHand": {"code": "R"},
+                "stats": []
+              }
+            },
+            "home": {
+              "leagueRecord": {"wins": 49, "losses": 53},
+              "team": {"id": 111, "name": "Boston Red Sox"}
+            }
+          }
+        },
+        {
+          "gamePk": null,
+          "teams": {"away": {}, "home": {}}
+        }
+      ]
+    }
+  ]
+}

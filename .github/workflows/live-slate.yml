@@ -77,5 +77,6 @@ jobs:
           path: |
             artifacts/slate/*.parquet
             artifacts/slate/*.xlsx
+            artifacts/slate/*.html
           if-no-files-found: warn
           retention-days: 60
