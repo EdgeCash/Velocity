@@ -16,8 +16,11 @@ from __future__ import annotations
 import pandera.pandas as pa
 from pandera.typing import Series
 
-LEAGUES = ["nfl", "ncaaf"]
+LEAGUES = ["nfl", "ncaaf", "mlb"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
+# Game-level markets shared by every league. MLB's derivative markets (run line,
+# and first-5-innings segments) are added with the MLB wagering phase; see
+# docs/BUILD_MLB.md. Until then MLB uses the same three game markets as football.
 MARKETS = ["spread", "total", "moneyline"]
 
 

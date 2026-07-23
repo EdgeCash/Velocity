@@ -1,0 +1,45 @@
+[
+  {
+    "id": "evt-mlb-001",
+    "sport_key": "baseball_mlb",
+    "commence_time": "2026-07-24T02:10:00Z",
+    "home_team": "Los Angeles Dodgers",
+    "away_team": "San Francisco Giants",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-07-24T01:55:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Los Angeles Dodgers", "price": -155},
+              {"name": "San Francisco Giants", "price": 132}
+            ]
+          },
+          {
+            "key": "spreads",
+            "outcomes": [
+              {"name": "Los Angeles Dodgers", "price": 118, "point": -1.5},
+              {"name": "San Francisco Giants", "price": -140, "point": 1.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "outcomes": [
+              {"name": "Over", "price": -105, "point": 8.5},
+              {"name": "Under", "price": -115, "point": 8.5}
+            ]
+          },
+          {
+            "key": "batter_total_bases",
+            "outcomes": [
+              {"name": "Over", "price": -120, "point": 1.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
