@@ -26,6 +26,7 @@ from velocity.features.baseball import DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR, DEF
 from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate_baseball import (
     DEFAULT_HFA,
+    DEFAULT_TTO_PENALTY,
     BaseballSimConfig,
     BaseballSimResult,
     Team,
@@ -71,6 +72,7 @@ class MLBGameModel:
     config: BaseballSimConfig = field(default_factory=BaseballSimConfig)
     seed: int = 0
     park_hr_factors: Mapping[str, float] = field(default_factory=dict)
+    run_env_tilts: Mapping[str, float] = field(default_factory=dict)
 
     @property
     def known_teams(self) -> list[str]:
@@ -79,8 +81,10 @@ class MLBGameModel:
     def project(self, home_key: str, away_key: str) -> MLBProjection:
         rng = np.random.default_rng(self.seed)
         park = self.park_hr_factors.get(home_key, 1.0)
+        tilt = self.run_env_tilts.get(home_key, 0.0)
         result = simulate_game(
-            self.teams[home_key], self.teams[away_key], rng, self.config, park_hr_factor=park
+            self.teams[home_key], self.teams[away_key], rng, self.config,
+            park_hr_factor=park, run_env_tilt=tilt,
         )
         full = GameProjection(
             home_team=home_key,
@@ -110,6 +114,7 @@ def league_average_model(
     starter_outs: int = 18,
     seed: int = 0,
     park_hr_factors: Mapping[str, float] | None = None,
+    run_env_tilts: Mapping[str, float] | None = None,
 ) -> MLBGameModel:
     """An :class:`MLBGameModel` where every club is a league-average team.
 
@@ -127,7 +132,12 @@ def league_average_model(
         ]
         pitcher = pitcher_from_rates(f"{code}_p", DEFAULT_PIT_PRIOR)
         teams[code] = Team(lineup=lineup, pitcher=pitcher)
-    config = BaseballSimConfig(n_sims=n_sims, starter_outs=starter_outs, hfa=DEFAULT_HFA)
+    config = BaseballSimConfig(
+        n_sims=n_sims, starter_outs=starter_outs, hfa=DEFAULT_HFA,
+        tto_penalty=DEFAULT_TTO_PENALTY,
+    )
     return MLBGameModel(
-        teams=teams, config=config, seed=seed, park_hr_factors=dict(park_hr_factors or {})
+        teams=teams, config=config, seed=seed,
+        park_hr_factors=dict(park_hr_factors or {}),
+        run_env_tilts=dict(run_env_tilts or {}),
     )

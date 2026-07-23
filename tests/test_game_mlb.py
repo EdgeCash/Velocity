@@ -103,6 +103,35 @@ def test_park_hr_factor_lifts_the_home_park_total() -> None:
     assert coors.park_hr_factors.get("SF", 1.0) == 1.0
 
 
+def test_run_env_tilt_lifts_the_home_total() -> None:
+    """A positive run-environment tilt at the home venue prices the total up."""
+    teams = {"LAD": _team("lad", AVG_BAT), "SF": _team("sf", AVG_BAT)}
+    cfg = BaseballSimConfig(n_sims=4000)
+    neutral = MLBGameModel(teams=teams, config=cfg, seed=7)
+    tilted = MLBGameModel(teams=teams, config=cfg, seed=7, run_env_tilts={"LAD": 0.05})
+    base = neutral.project_full("LAD", "SF")
+    boosted = tilted.project_full("LAD", "SF")
+    assert boosted.mu_home + boosted.mu_away > base.mu_home + base.mu_away
+    # A home team not in the map is neutral.
+    assert tilted.run_env_tilts.get("SF", 0.0) == 0.0
+
+
+def test_league_average_model_is_tto_and_park_aware() -> None:
+    """The production baseline carries the TTO penalty and a park/run environment."""
+    from velocity.models.game_mlb import league_average_model
+    from velocity.models.simulate_baseball import DEFAULT_TTO_PENALTY
+    from velocity.report.park_factors import run_environment_maps
+
+    hr, tilt = run_environment_maps()
+    model = league_average_model(
+        ["LAD", "SF", "COL"], n_sims=300, park_hr_factors=hr, run_env_tilts=tilt
+    )
+    assert model.config.tto_penalty == DEFAULT_TTO_PENALTY
+    # Coors carries a hitter's HR factor + a non-HR tilt; a neutral-ish park less so.
+    assert model.park_hr_factors["COL"] > 1.0
+    assert model.run_env_tilts["COL"] != 0.0
+
+
 def test_end_to_end_live_slate_logs_a_staked_bet() -> None:
     payload = json.loads((FIXTURES / "theoddsapi_mlb.json").read_text())
     events = extract_events(payload)

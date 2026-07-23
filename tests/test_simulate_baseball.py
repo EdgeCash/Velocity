@@ -200,6 +200,63 @@ def test_neutral_park_factor_is_identity() -> None:
     assert base.away_score.tolist() == same.away_score.tolist()
 
 
+def test_run_env_tilt_moves_the_total_symmetrically() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=4000)
+    neutral = simulate_game(home, away, np.random.default_rng(21), cfg).full
+    up = simulate_game(home, away, np.random.default_rng(21), cfg, run_env_tilt=0.05).full
+    down = simulate_game(home, away, np.random.default_rng(21), cfg, run_env_tilt=-0.05).full
+
+    def total(sim):  # noqa: ANN001, ANN202
+        return (sim.home_score + sim.away_score).mean()
+
+    def margin(sim):  # noqa: ANN001, ANN202
+        return (sim.home_score - sim.away_score).mean()
+
+    assert total(up) > total(neutral) > total(down)  # a run-env tilt moves the total
+    assert abs(margin(up) - margin(neutral)) < 0.4  # symmetric — not a home edge
+
+
+def test_tto_penalty_raises_the_total() -> None:
+    """The times-through-the-order penalty lets tiring starters allow more runs."""
+    home, away = _avg_team("h"), _avg_team("a")
+    base = BaseballSimConfig(n_sims=4000, starter_outs=18)
+    tto = BaseballSimConfig(n_sims=4000, starter_outs=18, tto_penalty=(0.05, 0.10))
+    no_tto = simulate_game(home, away, np.random.default_rng(31), base).full
+    with_tto = simulate_game(home, away, np.random.default_rng(31), tto).full
+    total = lambda s: (s.home_score + s.away_score).mean()  # noqa: E731
+    assert total(with_tto) > total(no_tto)
+
+
+def test_tto_concentrated_in_later_innings() -> None:
+    """The penalty escalates through the order, so it grows the full-minus-F5 gap.
+
+    F5 (starter's first ~2 turns) moves little; the full game (2nd/3rd turn) moves
+    more — exactly the F5-vs-full split the penalty is meant to fix.
+    """
+    home, away = _avg_team("h"), _avg_team("a")
+    base = BaseballSimConfig(n_sims=5000, starter_outs=18)
+    tto = BaseballSimConfig(n_sims=5000, starter_outs=18, tto_penalty=(0.05, 0.10))
+    b = simulate_game(home, away, np.random.default_rng(41), base)
+    t = simulate_game(home, away, np.random.default_rng(41), tto)
+    full = lambda r: (r.full.home_score + r.full.away_score).mean()  # noqa: E731
+    f5 = lambda r: (r.f5.home_score + r.f5.away_score).mean()  # noqa: E731
+    full_delta = full(t) - full(b)
+    f5_delta = f5(t) - f5(b)
+    assert full_delta > f5_delta  # the penalty lands more on the back of the game
+
+
+def test_tto_zero_penalty_is_identity() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=1500, starter_outs=18)
+    base = simulate_game(home, away, np.random.default_rng(5), cfg).full
+    same = simulate_game(
+        home, away, np.random.default_rng(5),
+        BaseballSimConfig(n_sims=1500, starter_outs=18, tto_penalty=(0.0, 0.0)),
+    ).full
+    assert base.home_score.tolist() == same.home_score.tolist()
+
+
 def test_config_validation() -> None:
     with pytest.raises(ValueError, match="n_sims"):
         BaseballSimConfig(n_sims=0)
@@ -207,3 +264,5 @@ def test_config_validation() -> None:
         BaseballSimConfig(max_innings=8)
     with pytest.raises(ValueError, match="hfa"):
         BaseballSimConfig(hfa=1.5)
+    with pytest.raises(ValueError, match="tto_penalty"):
+        BaseballSimConfig(tto_penalty=(1.5, 0.0))
