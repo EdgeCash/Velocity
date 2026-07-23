@@ -1,0 +1,163 @@
+"""MLB Monte Carlo (Phase M3) — the per-PA baseball engine.
+
+Pins the properties the wagering stack will trust: determinism under seed, a
+correct base-out state machine (an all-strikeout inning scores nothing in exactly
+three outs), a discrete right-skewed run distribution calibrated to a realistic
+MLB run environment, first-5-innings runs bounded by the full game, and internal
+stat consistency (a pitcher's strikeouts equal the strikeouts of the batters he
+faces). The full real-data holdout calibration is an acceptance check, run on
+committed history, not part of this offline gate.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from velocity.features.baseball import DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR, DEFAULT_PIT_PRIOR
+from velocity.models.simulate_baseball import (
+    N_OUTCOMES,
+    BaseballSimConfig,
+    Team,
+    batter_from_rates,
+    combine_matchup,
+    matchup_distribution,
+    pitcher_from_rates,
+    simulate_game,
+    simulate_half_inning,
+)
+
+
+def _avg_team(prefix: str) -> Team:
+    lineup = [
+        batter_from_rates(f"{prefix}{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR) for i in range(9)
+    ]
+    return Team(lineup=lineup, pitcher=pitcher_from_rates(f"{prefix}_p", DEFAULT_PIT_PRIOR))
+
+
+def _sim(seed: int, n: int):
+    """Simulate ``n`` games between two league-average teams under ``seed``."""
+    return simulate_game(
+        _avg_team("h"), _avg_team("a"), np.random.default_rng(seed), BaseballSimConfig(n_sims=n)
+    )
+
+
+# --- matchup math -----------------------------------------------------------
+
+
+def test_combine_matchup_sums_to_one() -> None:
+    b = np.array([DEFAULT_BAT_PRIOR[o] for o in ["k", "bb", "hbp", "hr", "in_play"]])
+    p = np.array([DEFAULT_PIT_PRIOR[o] for o in ["k", "bb", "hbp", "hr", "in_play"]])
+    assert combine_matchup(b, p).sum() == pytest.approx(1.0)
+
+
+def test_league_average_batter_yields_pitcher_rates() -> None:
+    from velocity.models.simulate_baseball import _LEAGUE_PA_VEC
+
+    pitcher = np.array([0.30, 0.05, 0.01, 0.05, 0.59])
+    out = combine_matchup(_LEAGUE_PA_VEC, pitcher)
+    # A league-average batter can't shift the matchup off the pitcher's rates.
+    assert np.allclose(out, pitcher / pitcher.sum())
+
+
+def test_matchup_distribution_is_a_distribution() -> None:
+    dist = matchup_distribution(
+        batter_from_rates("b", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR),
+        pitcher_from_rates("p", DEFAULT_PIT_PRIOR),
+    )
+    assert dist.shape == (N_OUTCOMES,)
+    assert (dist >= 0).all()
+    assert dist.sum() == pytest.approx(1.0)
+
+
+# --- half-inning state machine ----------------------------------------------
+
+
+def test_all_strikeout_inning_scores_nothing_in_three_outs() -> None:
+    all_k = np.zeros(N_OUTCOMES)
+    all_k[0] = 1.0  # 100% strikeout
+    cum = [np.cumsum(all_k)] * 9
+    result = simulate_half_inning(cum, start_index=0, rng=np.random.default_rng(1))
+    assert result.runs == 0
+    assert result.outs == 3
+    assert result.next_index == 3  # exactly three batters faced
+    assert all(outcome == 0 for _, outcome in result.events)
+
+
+def test_bases_loaded_walk_forces_a_run() -> None:
+    all_walk = np.zeros(N_OUTCOMES)
+    all_walk[1] = 1.0  # 100% walk — loads the bases, then forces runs in
+    cum = [np.cumsum(all_walk)] * 9
+    # Walk-off after 4 walks: 3 to load the bases, the 4th forces a run.
+    result = simulate_half_inning(cum, 0, np.random.default_rng(1), runs_to_win=1)
+    assert result.runs == 1
+    assert result.outs == 0  # ended on the run, not on outs
+    assert result.next_index == 4
+
+
+# --- full game --------------------------------------------------------------
+
+
+def test_determinism_under_seed() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=200)
+    r1 = simulate_game(home, away, np.random.default_rng(42), cfg)
+    r2 = simulate_game(home, away, np.random.default_rng(42), cfg)
+    assert np.array_equal(r1.full.home_score, r2.full.home_score)
+    assert np.array_equal(r1.full.away_score, r2.full.away_score)
+    assert np.array_equal(r1.pitcher_strikeouts["h_p"], r2.pitcher_strikeouts["h_p"])
+
+
+def test_runs_are_discrete_and_non_negative() -> None:
+    res = _sim(3, 500)
+    for scores in (res.full.home_score, res.full.away_score):
+        assert (scores >= 0).all()
+        assert np.array_equal(scores, np.round(scores))
+
+
+def test_run_distribution_is_right_skewed() -> None:
+    res = _sim(5, 3000)
+    total = res.full.home_score + res.full.away_score
+    # Baseball run totals pile up low with a long high tail: mean exceeds median.
+    assert total.mean() > np.median(total)
+
+
+def test_run_environment_is_realistic() -> None:
+    """Analytic/sanity calibration: league-average inputs → a real MLB run rate."""
+    res = _sim(11, 2500)
+    total = (res.full.home_score + res.full.away_score).mean()
+    per_team = res.full.away_score.mean()
+    assert 8.0 <= total <= 10.5  # recent MLB ~8.6–9.5 runs/game
+    assert 4.0 <= per_team <= 5.3
+    assert 0.44 <= res.full.p_home_win() <= 0.56  # no HFA modeled → ~coin flip
+
+
+def test_f5_runs_bounded_by_full_game() -> None:
+    res = _sim(9, 800)
+    # First-5-innings runs can never exceed the final; F5 is a prefix of the game.
+    assert (res.f5.home_score <= res.full.home_score).all()
+    assert (res.f5.away_score <= res.full.away_score).all()
+
+
+def test_pitcher_strikeouts_match_batters_faced() -> None:
+    """Internal consistency: the home pitcher's Ks are the away batters' Ks."""
+    res = _sim(2, 400)
+    away_batter_k = sum(res.batter_strikeouts[f"a{i}"] for i in range(9))
+    assert np.array_equal(res.pitcher_strikeouts["h_p"], away_batter_k)
+
+
+def test_all_strikeout_batter_has_zero_total_bases() -> None:
+    all_k_bat = {"k": 1.0, "bb": 0.0, "hbp": 0.0, "hr": 0.0, "in_play": 0.0}
+    whiffer = batter_from_rates("whiff", all_k_bat, DEFAULT_BIP_PRIOR)
+    home = Team([whiffer] * 9, pitcher_from_rates("h_p", DEFAULT_PIT_PRIOR))
+    res = simulate_game(
+        home, _avg_team("a"), np.random.default_rng(4), BaseballSimConfig(n_sims=200)
+    )
+    assert (res.batter_total_bases["whiff"] == 0).all()
+    assert (res.batter_hits["whiff"] == 0).all()
+
+
+def test_config_validation() -> None:
+    with pytest.raises(ValueError, match="n_sims"):
+        BaseballSimConfig(n_sims=0)
+    with pytest.raises(ValueError, match="max_innings"):
+        BaseballSimConfig(max_innings=8)
