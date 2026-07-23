@@ -9,6 +9,9 @@ of recommended bets, plus any games it couldn't resolve to the model's teams.
     python scripts/run_live_slate.py --league nfl --data datasets/nfl \
         --snapshot-file snap.json
 
+    # MLB needs no committed dataset (the model is simulated from lineups):
+    python scripts/run_live_slate.py --league mlb --snapshot-file snap.json
+
     # live (needs THE_ODDS_API in the environment):
     THE_ODDS_API=... python scripts/run_live_slate.py --league nfl --data datasets/nfl
 
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,10 +31,12 @@ import pandas as pd
 from velocity.features.scores import fit_scores_ratings
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
+from velocity.models.game_mlb import league_average_model
+from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
 from velocity.util.seed import make_rng
-from velocity.wagering.live import build_live_slate, slate_to_frame
+from velocity.wagering.live import MLB_TEAM_ALIASES, build_live_slate, slate_to_frame
 from velocity.wagering.slate import SlateConfig
 
 
@@ -51,10 +57,39 @@ def _load_snapshot(args: argparse.Namespace) -> object:
     return client.odds_payload(args.league)
 
 
+def _build_projection(
+    args: argparse.Namespace,
+) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None]:
+    """Return ``(project, known_teams, aliases)`` for the requested league.
+
+    Football fits the scores ratings from a committed games file; MLB simulates
+    from lineups, so it needs no ``--data`` — it uses the league-average baseline
+    until real per-team lineups/rates are wired in.
+    """
+    if args.league == "mlb":
+        model = league_average_model(sorted(set(MLB_TEAM_ALIASES.values())), n_sims=args.n_sims)
+        return model.project_full, model.known_teams, MLB_TEAM_ALIASES
+
+    if not args.data:
+        raise SystemExit(f"--data is required for {args.league} (a folder with a games file)")
+    games = load_games(_find_games(Path(args.data)), league=args.league)
+    sim = (
+        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
+        if args.league == "ncaaf"
+        else SimConfig(n_sims=args.n_sims)
+    )
+    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+
+    def project(home: str, away: str) -> GameProjection:
+        return model.project(home, away, rng=make_rng())
+
+    return project, list(model.ratings.teams), None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
-    parser.add_argument("--league", choices=["nfl", "ncaaf"], required=True)
-    parser.add_argument("--data", required=True, help="folder with a games file to fit the model")
+    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb"], required=True)
+    parser.add_argument("--data", help="folder with a games file to fit the model (nfl/ncaaf)")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
@@ -65,13 +100,7 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
-    games = load_games(_find_games(Path(args.data)), league=args.league)
-    sim = (
-        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
-        if args.league == "ncaaf"
-        else SimConfig(n_sims=args.n_sims)
-    )
-    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+    project, known_teams, aliases = _build_projection(args)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
@@ -83,17 +112,15 @@ def main() -> None:
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
     else:
-        def project(home: str, away: str):
-            return model.project(home, away, rng=make_rng())
-
         log, unresolved = build_live_slate(
             events,
             lines,
             project,
-            model.ratings.teams,
+            known_teams,
             SlateConfig(
                 exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
             ),
+            aliases=aliases,
         )
         frame = slate_to_frame(log)
         if frame.empty:

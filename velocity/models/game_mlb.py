@@ -17,16 +17,19 @@ helpers; team totals read straight off the per-team score samples.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
 
+from velocity.features.baseball import DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR, DEFAULT_PIT_PRIOR
 from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate_baseball import (
     BaseballSimConfig,
     BaseballSimResult,
     Team,
+    batter_from_rates,
+    pitcher_from_rates,
     simulate_game,
 )
 
@@ -93,3 +96,30 @@ class MLBGameModel:
     def project_full(self, home_key: str, away_key: str) -> GameProjection:
         """The full-game :class:`GameProjection` — the callable ``build_live_slate`` wants."""
         return self.project(home_key, away_key).full
+
+
+def league_average_model(
+    team_codes: Iterable[str],
+    *,
+    n_sims: int = 10_000,
+    starter_outs: int = 18,
+    seed: int = 0,
+) -> MLBGameModel:
+    """An :class:`MLBGameModel` where every club is a league-average team.
+
+    A baseline so the live runner executes end-to-end today: it resolves any
+    matchup and produces a valid (if uninformative — every team is identical, so
+    edges are near zero) slate. Replacing these with real per-team lineups and
+    the shrunk rates from :mod:`velocity.features.baseball`, fetched from StatsAPI
+    at lineup release, is the remaining live-data wiring; the orchestration around
+    it is already proven.
+    """
+    teams: dict[str, Team] = {}
+    for code in team_codes:
+        lineup = [
+            batter_from_rates(f"{code}{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR) for i in range(9)
+        ]
+        pitcher = pitcher_from_rates(f"{code}_p", DEFAULT_PIT_PRIOR)
+        teams[code] = Team(lineup=lineup, pitcher=pitcher)
+    config = BaseballSimConfig(n_sims=n_sims, starter_outs=starter_outs)
+    return MLBGameModel(teams=teams, config=config, seed=seed)
