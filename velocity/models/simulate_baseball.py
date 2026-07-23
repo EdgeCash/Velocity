@@ -58,24 +58,43 @@ DEFAULT_HFA = 0.02
 # wOBA-point-per-turn decay of a tiring starter. First-order; calibration-pending.
 DEFAULT_TTO_PENALTY = (0.03, 0.06)
 
+# Platoon: the full reach-base gap between the same- and opposite-handed matchup
+# (see BaseballSimConfig.platoon_gap). Regressed to the league coefficient — a
+# handedness effect, not per-player splits. First-order; calibration-pending.
+DEFAULT_PLATOON_GAP = 0.05
+# Share of a league-average batter's PAs that come against same-handed pitching;
+# the split is centered on this so an average-exposure batter stays neutral and
+# only a handedness-skewed matchup (e.g. a lefty lineup vs a LHP) moves.
+_SAME_HAND_SHARE = 0.28
+
 _LEAGUE_PA_VEC = np.array([LEAGUE_PA_RATE[o] for o in PA_OUTCOMES], dtype=float)
 
 
 @dataclass(frozen=True)
 class Batter:
-    """A batter's projected rates: five PA outcomes + the ball-in-play profile."""
+    """A batter's projected rates: five PA outcomes + the ball-in-play profile.
+
+    ``hand`` is the batting side (``"L"``/``"R"``/``"S"`` for switch; ``None`` if
+    unknown) — used only for the platoon matchup, never for the rates themselves.
+    """
 
     player_id: str
     pa: np.ndarray  # PA_OUTCOMES order (k, bb, hbp, hr, in_play), sums to 1
     bip: np.ndarray  # BIP_OUTCOMES order (single, double, triple, out_bip), sums to 1
+    hand: str | None = None
 
 
 @dataclass(frozen=True)
 class Pitcher:
-    """A pitcher's projected five PA outcome rates (K/BB/HBP/HR/in-play)."""
+    """A pitcher's projected five PA outcome rates (K/BB/HBP/HR/in-play).
+
+    ``hand`` is the throwing side (``"L"``/``"R"``; ``None`` if unknown or an
+    aggregate like a bullpen, which carries no single handedness).
+    """
 
     player_id: str
     pa: np.ndarray  # PA_OUTCOMES order, sums to 1
+    hand: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +135,13 @@ class BaseballSimConfig:
     stand-in resets to no penalty. ``(0.0, 0.0)`` (the default) disables it; the
     production model sets ``DEFAULT_TTO_PENALTY``. It requires ``starter_outs`` to
     be set to have a pull point; with no cap the penalty escalates and holds.
+
+    ``platoon_gap`` is the full reach-base gap between the same- and opposite-handed
+    batter-vs-pitcher matchup, split around a league-average exposure so an
+    average batter stays neutral and a handedness-skewed matchup moves (a lefty
+    lineup vs a LHP scores a touch less). Applied only against a pitcher with a
+    known hand (a bullpen aggregate has none). ``0.0`` (the default) disables it;
+    the production model sets ``DEFAULT_PLATOON_GAP``.
     """
 
     n_sims: int = 10_000
@@ -123,6 +149,7 @@ class BaseballSimConfig:
     starter_outs: int | None = None
     hfa: float = 0.0
     tto_penalty: tuple[float, float] = (0.0, 0.0)
+    platoon_gap: float = 0.0
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -135,6 +162,8 @@ class BaseballSimConfig:
             raise ValueError("hfa must be in (-1, 1)")
         if any(not 0.0 <= p < 1.0 for p in self.tto_penalty):
             raise ValueError("tto_penalty entries must be in [0, 1)")
+        if not 0.0 <= self.platoon_gap < 1.0:
+            raise ValueError("platoon_gap must be in [0, 1)")
 
 
 @dataclass(frozen=True)
@@ -218,6 +247,20 @@ def _scale_hr(dist: np.ndarray, factor: float) -> np.ndarray:
     scaled = dist.copy()
     scaled[HR] = scaled[HR] * factor
     return scaled / scaled.sum()
+
+
+def _platoon_delta(bat_hand: str | None, pit_hand: str | None, gap: float) -> float:
+    """Reach-base tilt for a batter-vs-pitcher handedness matchup (0 if unknown).
+
+    A switch hitter always takes the opposite side, so he's never at the platoon
+    disadvantage. The tilt is centered on a league-average exposure so an
+    average batter is neutral: opposite-handed gets ``+gap·same_share`` and
+    same-handed ``−gap·(1−same_share)``.
+    """
+    if gap == 0.0 or bat_hand is None or pit_hand is None:
+        return 0.0
+    same = bat_hand != "S" and bat_hand == pit_hand
+    return -gap * (1.0 - _SAME_HAND_SHARE) if same else gap * _SAME_HAND_SHARE
 
 
 def matchup_distribution(batter: Batter, pitcher: Pitcher) -> np.ndarray:
@@ -392,11 +435,13 @@ def simulate_game(
     # the park HR factor, the symmetric run-environment tilt, and the home-field
     # tilt; the tier then adds the starter's TTO penalty on top.
     hfa = config.hfa
+    gap = config.platoon_gap
     tto_deltas = (0.0, config.tto_penalty[0], config.tto_penalty[1])
 
     def _base(b: Batter, opp: Pitcher, hfa_sign: float) -> np.ndarray:
         d = _scale_hr(matchup_distribution(b, opp), park_hr_factor)  # park + weather HR
         d = _tilt_offense(d, run_env_tilt)  # non-HR run environment (symmetric)
+        d = _tilt_offense(d, _platoon_delta(b.hand, opp.hand, gap))  # handedness matchup
         return _tilt_offense(d, hfa_sign * hfa)  # home-field advantage
 
     def _tiers(lineup: Sequence[Batter], opp: Pitcher, hfa_sign: float) -> list[list[np.ndarray]]:

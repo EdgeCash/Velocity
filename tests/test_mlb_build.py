@@ -72,6 +72,18 @@ def test_assemble_model_keys_by_code_with_fallbacks() -> None:
     assert model.project_full("LAD", "SF").p_home_win() > 0.0
 
 
+def test_hands_attach_to_pools() -> None:
+    batters, pitchers = build_player_pools(
+        normalize_player_stats(_load("mlb_hitting.json"), "bat"),
+        normalize_player_stats(_load("mlb_pitching.json"), "pit"),
+        hands={"660271": {"bat": "L", "pit": None}, "477132": {"bat": None, "pit": "L"}},
+    )
+    assert batters["660271"].hand == "L"  # Ohtani bats left
+    assert pitchers["477132"].hand == "L"  # Kershaw throws left
+    # A player absent from the hands map stays platoon-neutral.
+    assert batters["605141"].hand is None
+
+
 def test_bullpen_is_attached_by_code() -> None:
     from velocity.models.mlb_build import bullpens_from_rates
 
