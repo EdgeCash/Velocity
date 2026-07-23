@@ -85,6 +85,7 @@ def _build_team(
     pitcher_id: str | None,
     batters: Mapping[str, Batter],
     pitchers: Mapping[str, Pitcher],
+    bullpen: Pitcher | None = None,
 ) -> Team:
     """One club's :class:`Team`, filling any gap with a league-average stand-in."""
     lineup: list[Batter] = [batters.get(pid) or _avg_batter(pid) for pid in order]
@@ -94,7 +95,16 @@ def _build_team(
     pitcher = pitchers.get(pitcher_id) if pitcher_id else None
     if pitcher is None:
         pitcher = _avg_pitcher(pitcher_id or "unknown")
-    return Team(lineup=lineup, pitcher=pitcher)
+    return Team(lineup=lineup, pitcher=pitcher, bullpen=bullpen)
+
+
+def bullpens_from_rates(
+    rate_map: Mapping[str, Mapping[str, float]],
+) -> dict[str, Pitcher]:
+    """Turn ``{team_code: PA-rate dict}`` (from mlb_bullpen) into reliever Pitchers."""
+    return {
+        code: pitcher_from_rates(f"{code}_pen", rates) for code, rates in rate_map.items()
+    }
 
 
 def assemble_model(
@@ -107,14 +117,17 @@ def assemble_model(
     seed: int = 0,
     park_hr_factors: Mapping[str, float] | None = None,
     run_env_tilts: Mapping[str, float] | None = None,
+    bullpens: Mapping[str, Pitcher] | None = None,
 ) -> tuple[MLBGameModel, list[str]]:
     """Build an :class:`MLBGameModel` keyed by rating code from parsed lineups.
 
     Each club's provider name is resolved to a rating code via ``aliases``; the
     model's teams use those keys, matching what the slate resolver produces.
     ``park_hr_factors`` (home-park HR multipliers) and ``run_env_tilts`` (the non-HR
-    run-environment tilt) by code make each game's total park/weather-aware. Returns
-    the model plus any team names that did not resolve.
+    run-environment tilt) by code make each game's total park/weather-aware;
+    ``bullpens`` (a reliever :class:`Pitcher` by code) finishes each game with the
+    real pen instead of the league-average stand-in. Returns the model plus any team
+    names that did not resolve.
     """
     # Local import keeps the models layer from importing wagering at module load.
     from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
@@ -122,6 +135,7 @@ def assemble_model(
     alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
     codes = list(alias_map.values())
     config = config or BaseballSimConfig()
+    pen_by_code = dict(bullpens or {})
 
     teams: dict[str, Team] = {}
     unresolved: list[str] = []
@@ -135,7 +149,9 @@ def assemble_model(
             if code is None:
                 unresolved.append(team_name)
                 continue
-            teams[code] = _build_team(order, pitcher_id, batters, pitchers)
+            teams[code] = _build_team(
+                order, pitcher_id, batters, pitchers, pen_by_code.get(code)
+            )
 
     model = MLBGameModel(
         teams=teams, config=config, seed=seed,
@@ -158,6 +174,7 @@ def build_live_mlb(
     to a model player id.
     """
     from velocity.ingest.mlb import load_lineups, load_player_stats
+    from velocity.ingest.mlb_bullpen import load_team_bullpen
     from velocity.models.simulate_baseball import DEFAULT_HFA, DEFAULT_TTO_PENALTY
     from velocity.report.park_factors import run_environment_maps
     from velocity.wagering.props_slate import build_name_index
@@ -171,9 +188,15 @@ def build_live_mlb(
     )
     # Park-static run environment; the runner folds today's weather in before pricing.
     hr_factors, run_env_tilts = run_environment_maps()
+    try:  # real per-team bullpen; degrade to the starter stand-in if the feed fails
+        bullpens = bullpens_from_rates(load_team_bullpen(season))
+    except Exception as exc:  # noqa: BLE001 - unofficial feed; the sim falls back cleanly
+        print(f"bullpen rates skipped ({exc}); using the starter stand-in")
+        bullpens = {}
     model, _ = assemble_model(
         load_lineups(date), batters, pitchers,
-        config=config, seed=seed, park_hr_factors=hr_factors, run_env_tilts=run_env_tilts,
+        config=config, seed=seed, park_hr_factors=hr_factors,
+        run_env_tilts=run_env_tilts, bullpens=bullpens,
     )
     return model, names
 
