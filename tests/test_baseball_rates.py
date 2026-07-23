@@ -105,8 +105,8 @@ def test_bip_known_value() -> None:
         }]
     )
     bip = project_bip_profile(stats)
-    # in_play = 600 - 100 - 50 - 0 - 30 = 420; single = (120 + 200*0.222) / (420 + 200).
-    assert bip.loc[0, "single"] == pytest.approx((120 + 200 * 0.222) / 620.0)
+    # in_play = 600 - 100 - 50 - 0 - 30 = 420; single = (120 + 200*0.212) / (420 + 200).
+    assert bip.loc[0, "single"] == pytest.approx((120 + 200 * 0.212) / 620.0)
 
 
 def test_park_factor_neutral_is_identity() -> None:

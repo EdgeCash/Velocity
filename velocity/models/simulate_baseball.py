@@ -44,6 +44,13 @@ K, BB, HBP, HR, SINGLE, DOUBLE, TRIPLE, OUT_BIP = range(8)
 N_OUTCOMES = 8
 _TOTAL_BASES = {SINGLE: 1, DOUBLE: 2, TRIPLE: 3, HR: 4}
 _HIT_OUTCOMES = frozenset({SINGLE, DOUBLE, TRIPLE, HR})
+# The reach-base outcomes (everything but a strikeout or a ball-in-play out),
+# scaled by the home-field tilt.
+_REACH_OUTCOMES = [BB, HBP, HR, SINGLE, DOUBLE, TRIPLE]
+
+# Home-field advantage the production MLB model uses (see BaseballSimConfig.hfa),
+# tuned so equal teams give home ~a 53-54% win probability — the MLB norm.
+DEFAULT_HFA = 0.02
 
 _LEAGUE_PA_VEC = np.array([LEAGUE_PA_RATE[o] for o in PA_OUTCOMES], dtype=float)
 
@@ -83,11 +90,18 @@ class BaseballSimConfig:
     the run distribution is unchanged). ``None`` means a complete game — leave it
     unset for run/side/total pricing; set it (~18 = six innings) for realistic
     pitcher counting props.
+
+    ``hfa`` is home-field advantage as a small relative tilt of each batter's
+    reach-base outcomes: the home lineup's are scaled up by ``hfa`` and the away
+    lineup's down by ``hfa``, so home scores a touch more and away a touch less —
+    a margin shift toward home with the total roughly unchanged. ``0.0`` (the
+    default) is a neutral, symmetric game; the production model sets ``DEFAULT_HFA``.
     """
 
     n_sims: int = 10_000
     max_innings: int = 30
     starter_outs: int | None = None
+    hfa: float = 0.0
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -96,6 +110,8 @@ class BaseballSimConfig:
             raise ValueError("max_innings must be at least 9")
         if self.starter_outs is not None and self.starter_outs <= 0:
             raise ValueError("starter_outs must be positive when set")
+        if not -1.0 < self.hfa < 1.0:
+            raise ValueError("hfa must be in (-1, 1)")
 
 
 @dataclass(frozen=True)
@@ -149,6 +165,21 @@ def combine_matchup(
     if total <= 0:  # pragma: no cover - degenerate inputs
         return league / league.sum()
     return raw / total
+
+
+def _tilt_offense(dist: np.ndarray, factor: float) -> np.ndarray:
+    """Scale a matchup's reach-base outcomes by ``1 + factor`` and renormalize.
+
+    ``factor > 0`` lifts offense (more baserunners and power, fewer outs);
+    ``factor < 0`` suppresses it. Outs (K, in-play out) are untouched, so a
+    positive tilt raises run expectancy and a negative one lowers it. ``0`` is the
+    identity.
+    """
+    if factor == 0.0:
+        return dist
+    tilted = dist.copy()
+    tilted[_REACH_OUTCOMES] = tilted[_REACH_OUTCOMES] * (1.0 + factor)
+    return tilted / tilted.sum()
 
 
 def matchup_distribution(batter: Batter, pitcher: Pitcher) -> np.ndarray:
@@ -287,8 +318,15 @@ def simulate_game(
     config = config or BaseballSimConfig()
     n = config.n_sims
 
-    away_cum = [np.cumsum(matchup_distribution(b, home.pitcher)) for b in away.lineup]
-    home_cum = [np.cumsum(matchup_distribution(b, away.pitcher)) for b in home.lineup]
+    # Home-field advantage: lift the home lineup's offense and trim the away
+    # lineup's by the same tilt (the home team bats the bottom half of innings).
+    hfa = config.hfa
+    away_cum = [
+        np.cumsum(_tilt_offense(matchup_distribution(b, home.pitcher), -hfa)) for b in away.lineup
+    ]
+    home_cum = [
+        np.cumsum(_tilt_offense(matchup_distribution(b, away.pitcher), hfa)) for b in home.lineup
+    ]
 
     home_final = np.zeros(n, dtype=np.int64)
     away_final = np.zeros(n, dtype=np.int64)

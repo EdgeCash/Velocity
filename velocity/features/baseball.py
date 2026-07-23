@@ -52,8 +52,8 @@ _PA_PRIORS = {"bat": DEFAULT_BAT_PRIOR, "pit": DEFAULT_PIT_PRIOR}
 # common denominator when a batter's and a pitcher's rates are merged. Sums to 1.
 LEAGUE_PA_RATE = {"k": 0.225, "bb": 0.0825, "hbp": 0.011, "hr": 0.035, "in_play": 0.6465}
 # League conditional hit-type split of a ball in play; sums to 1. The hit share
-# is league BABIP (~.298): of balls in play, ~30% fall for hits.
-DEFAULT_BIP_PRIOR = {"single": 0.222, "double": 0.068, "triple": 0.008, "out_bip": 0.702}
+# is league BABIP (~.285): of balls in play, ~28-29% fall for hits.
+DEFAULT_BIP_PRIOR = {"single": 0.212, "double": 0.065, "triple": 0.008, "out_bip": 0.715}
 
 
 @dataclass(frozen=True)

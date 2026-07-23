@@ -35,7 +35,7 @@ from velocity.models.game_mlb import league_average_model
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
-from velocity.models.simulate_baseball import BaseballSimConfig
+from velocity.models.simulate_baseball import DEFAULT_HFA, BaseballSimConfig
 from velocity.util.seed import make_rng
 from velocity.wagering.live import MLB_TEAM_ALIASES, build_live_slate, slate_to_frame
 from velocity.wagering.slate import SlateConfig
@@ -67,7 +67,7 @@ def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     runs.
     """
     codes = sorted(set(MLB_TEAM_ALIASES.values()))
-    config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+    config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
     if args.snapshot_file:
         return league_average_model(codes, n_sims=args.n_sims)
     try:
@@ -186,10 +186,9 @@ def _mlb_prop_slate(  # pragma: no cover - network
     try:
         from velocity.ingest.theoddsapi import TheOddsAPIClient
         from velocity.models.mlb_build import build_live_mlb
-        from velocity.models.simulate_baseball import BaseballSimConfig
         from velocity.wagering.props_slate import mlb_prop_slate, prop_slate_to_frame
 
-        sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+        sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
         model, name_to_id = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=sim_config)
         prop_lines = TheOddsAPIClient.from_env().player_props("mlb")
         log, unresolved = mlb_prop_slate(

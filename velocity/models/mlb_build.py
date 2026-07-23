@@ -149,13 +149,14 @@ def build_live_mlb(
     to a model player id.
     """
     from velocity.ingest.mlb import load_lineups, load_player_stats
+    from velocity.models.simulate_baseball import DEFAULT_HFA
     from velocity.wagering.props_slate import build_name_index
 
     batting = load_player_stats(season, "bat")
     pitching = load_player_stats(season, "pit")
     batters, pitchers = build_player_pools(batting, pitching)
     names = build_name_index(batting, pitching)
-    config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18)
+    config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA)
     model, _ = assemble_model(load_lineups(date), batters, pitchers, config=config, seed=seed)
     return model, names
 
