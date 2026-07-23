@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import urllib.request
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -256,3 +257,71 @@ def load_player_stats(season: int, role: str) -> pd.DataFrame:  # pragma: no cov
         f"&season={season}&sportId=1&playerPool=all&limit=2000"
     )
     return normalize_player_stats(_get_json(url), role)
+
+
+@dataclass(frozen=True)
+class GameLineups:
+    """One game's probable starters and batting orders (player ids), by side.
+
+    Fields may be empty early — a starter not yet announced leaves the pitcher id
+    ``None``; an unposted lineup leaves the tuple empty. Downstream team assembly
+    fills those gaps with league-average players, so a partial board still runs.
+    """
+
+    game_id: str
+    home_team: str
+    away_team: str
+    home_pitcher_id: str | None
+    away_pitcher_id: str | None
+    home_lineup: tuple[str, ...]
+    away_lineup: tuple[str, ...]
+
+
+def _player_ids(players: Any) -> tuple[str, ...]:
+    """Pull the ordered player ids from a StatsAPI lineup player array."""
+    return tuple(
+        str(p["id"])
+        for p in (players or [])
+        if isinstance(p, Mapping) and p.get("id") is not None
+    )
+
+
+def normalize_lineups(payload: Mapping[str, Any]) -> list[GameLineups]:
+    """Flatten a StatsAPI ``/schedule?hydrate=lineups,probablePitcher`` payload.
+
+    Walks ``dates → games`` and pulls each side's probable-pitcher id and batting
+    order. A game missing a ``gamePk`` or either team name is dropped; missing
+    pitchers/lineups become ``None``/empty rather than raising.
+    """
+    out: list[GameLineups] = []
+    for date in payload.get("dates") or []:
+        for game in date.get("games") or []:
+            game_pk = game.get("gamePk")
+            teams = game.get("teams") or {}
+            home = teams.get("home") or {}
+            away = teams.get("away") or {}
+            home_team = (home.get("team") or {}).get("name")
+            away_team = (away.get("team") or {}).get("name")
+            if game_pk is None or not home_team or not away_team:
+                continue
+            lineups = game.get("lineups") or {}
+            home_pitcher = (home.get("probablePitcher") or {}).get("id")
+            away_pitcher = (away.get("probablePitcher") or {}).get("id")
+            out.append(
+                GameLineups(
+                    game_id=str(game_pk),
+                    home_team=str(home_team),
+                    away_team=str(away_team),
+                    home_pitcher_id=None if home_pitcher is None else str(home_pitcher),
+                    away_pitcher_id=None if away_pitcher is None else str(away_pitcher),
+                    home_lineup=_player_ids(lineups.get("homePlayers")),
+                    away_lineup=_player_ids(lineups.get("awayPlayers")),
+                )
+            )
+    return out
+
+
+def load_lineups(date: str) -> list[GameLineups]:  # pragma: no cover - network
+    """Fetch and normalize probable lineups for a date (ISO ``YYYY-MM-DD``)."""
+    url = f"{_STATSAPI}/schedule?sportId=1&date={date}&hydrate=lineups,probablePitcher"
+    return normalize_lineups(_get_json(url))

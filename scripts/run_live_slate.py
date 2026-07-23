@@ -35,6 +35,7 @@ from velocity.models.game_mlb import league_average_model
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
+from velocity.models.simulate_baseball import BaseballSimConfig
 from velocity.util.seed import make_rng
 from velocity.wagering.live import MLB_TEAM_ALIASES, build_live_slate, slate_to_frame
 from velocity.wagering.slate import SlateConfig
@@ -57,6 +58,30 @@ def _load_snapshot(args: argparse.Namespace) -> object:
     return client.odds_payload(args.league)
 
 
+def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    """The MLB model: real StatsAPI lineups/rates when live, else the baseline.
+
+    An offline run (``--snapshot-file``) uses the league-average baseline — no
+    network. A live run builds today's model from StatsAPI (season stats + probable
+    lineups), falling back to the baseline if that fetch fails so the slate still
+    runs.
+    """
+    codes = sorted(set(MLB_TEAM_ALIASES.values()))
+    config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+    if args.snapshot_file:
+        return league_average_model(codes, n_sims=args.n_sims)
+    try:
+        from velocity.models.mlb_build import build_live_mlb_model
+
+        now = datetime.now(UTC)
+        model = build_live_mlb_model(now.strftime("%Y-%m-%d"), now.year, config=config)
+        print(f"built MLB model from StatsAPI lineups ({len(model.known_teams)} clubs)")
+        return model
+    except Exception as exc:  # noqa: BLE001 - any live-data failure degrades gracefully
+        print(f"warning: live lineup build failed ({exc}); using league-average baseline")
+        return league_average_model(codes, n_sims=args.n_sims)
+
+
 def _build_projection(
     args: argparse.Namespace,
 ) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None]:
@@ -67,7 +92,7 @@ def _build_projection(
     until real per-team lineups/rates are wired in.
     """
     if args.league == "mlb":
-        model = league_average_model(sorted(set(MLB_TEAM_ALIASES.values())), n_sims=args.n_sims)
+        model = _mlb_model(args)
         return model.project_full, model.known_teams, MLB_TEAM_ALIASES
 
     if not args.data:
