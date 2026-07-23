@@ -177,24 +177,19 @@ def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFram
     return out[out["side"].notna()].reset_index(drop=True)
 
 
-def build_live_slate(
+def project_board(
     events: pd.DataFrame,
-    lines: pd.DataFrame,
     project: Callable[[str, str], GameProjection],
     known_teams: Iterable[str],
-    config: SlateConfig | None = None,
     aliases: dict[str, str] | None = None,
-) -> tuple[BetLog, list[dict[str, str]]]:
-    """Run the wagering engine on one live snapshot; return the log and any skips.
+) -> tuple[dict[str, GameProjection], list[dict[str, str]]]:
+    """Resolve each event's teams and project it; return ``{game_id: proj}`` + skips.
 
-    ``project(home_key, away_key)`` builds a :class:`GameProjection` from the
-    fitted model. ``known_teams`` is the model's rating universe (e.g.
-    ``ratings.teams``). Games whose teams don't resolve are skipped and returned
-    in the second element so the caller can surface them.
+    Factored out of :func:`build_live_slate` so a caller can reuse the very same
+    projections (e.g. for a report) without simulating twice. A game whose teams
+    don't resolve is skipped and reported.
     """
-    config = config or SlateConfig(exclude_closing=False)
     known = list(known_teams)
-
     projections: dict[str, GameProjection] = {}
     unresolved: list[dict[str, str]] = []
     for event in events.to_dict("records"):
@@ -212,6 +207,26 @@ def build_live_slate(
             )
             continue
         projections[gid] = project(home, away)
+    return projections, unresolved
+
+
+def build_live_slate(
+    events: pd.DataFrame,
+    lines: pd.DataFrame,
+    project: Callable[[str, str], GameProjection],
+    known_teams: Iterable[str],
+    config: SlateConfig | None = None,
+    aliases: dict[str, str] | None = None,
+) -> tuple[BetLog, list[dict[str, str]]]:
+    """Run the wagering engine on one live snapshot; return the log and any skips.
+
+    ``project(home_key, away_key)`` builds a :class:`GameProjection` from the
+    fitted model. ``known_teams`` is the model's rating universe (e.g.
+    ``ratings.teams``). Games whose teams don't resolve are skipped and returned
+    in the second element so the caller can surface them.
+    """
+    config = config or SlateConfig(exclude_closing=False)
+    projections, unresolved = project_board(events, project, known_teams, aliases)
 
     canonical = canonicalize_sides(lines, events)
     canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
@@ -233,9 +248,12 @@ def slate_to_frame(log: BetLog) -> pd.DataFrame:
             "book": bet.book,
             "price": bet.price,
             "p_model": round(bet.p_model, 4),
+            "p_fair": None if bet.p_fair is None else round(bet.p_fair, 4),
+            "edge": None if bet.p_fair is None else round(bet.p_model - bet.p_fair, 4),
             "stake": round(bet.stake, 4),
         }
         for bet in log
     ]
-    cols = ["game_id", "market", "side", "point", "book", "price", "p_model", "stake"]
+    cols = ["game_id", "market", "side", "point", "book", "price", "p_model",
+            "p_fair", "edge", "stake"]
     return pd.DataFrame(rows, columns=cols)

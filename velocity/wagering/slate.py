@@ -167,6 +167,7 @@ def build_slate(
                     timestamp=info["timestamp"],
                     closing_price=close[0] if close else None,
                     closing_point=close[1] if close else None,
+                    p_fair=info.get("p_fair"),
                 )
             )
 

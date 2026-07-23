@@ -53,6 +53,7 @@ class Bet:
     closing_price: float | None = None
     closing_point: float | None = None
     player: str | None = None  # set for player props; None for game markets
+    p_fair: float | None = None  # de-vigged market probability at entry (edge = p_model - p_fair)
 
     @property
     def net_payout(self) -> float:

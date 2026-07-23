@@ -117,6 +117,7 @@ def build_prop_slate(
                     point=info["point"],
                     timestamp=info["timestamp"],
                     player=info["player"],
+                    p_fair=info.get("p_fair"),
                 )
             )
     return log, unresolved
@@ -195,6 +196,7 @@ def _best_prop(
                 "point": point,
                 "timestamp": row["timestamp"],
                 "p_model": p_model,
+                "p_fair": p_fair,
                 "ev": signal.ev,
             }
     return best
@@ -212,9 +214,12 @@ def prop_slate_to_frame(log: BetLog) -> pd.DataFrame:
             "book": bet.book,
             "price": bet.price,
             "p_model": round(bet.p_model, 4),
+            "p_fair": None if bet.p_fair is None else round(bet.p_fair, 4),
+            "edge": None if bet.p_fair is None else round(bet.p_model - bet.p_fair, 4),
             "stake": round(bet.stake, 4),
         }
         for bet in log
     ]
-    cols = ["game_id", "player", "market", "side", "point", "book", "price", "p_model", "stake"]
+    cols = ["game_id", "player", "market", "side", "point", "book", "price",
+            "p_model", "p_fair", "edge", "stake"]
     return pd.DataFrame(rows, columns=cols)

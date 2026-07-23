@@ -36,9 +36,20 @@ from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
 from velocity.models.simulate_baseball import DEFAULT_HFA, BaseballSimConfig
+from velocity.report.slate_xlsx import (
+    export_slate_workbook,
+    plays_display,
+    projections_display,
+    props_display,
+)
 from velocity.util.seed import make_rng
-from velocity.wagering.live import MLB_TEAM_ALIASES, build_live_slate, slate_to_frame
-from velocity.wagering.slate import SlateConfig
+from velocity.wagering.live import (
+    MLB_TEAM_ALIASES,
+    canonicalize_sides,
+    project_board,
+    slate_to_frame,
+)
+from velocity.wagering.slate import SlateConfig, build_slate
 
 
 def _find_games(folder: Path) -> Path:
@@ -133,47 +144,80 @@ def main() -> None:
     print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
 
     frame = pd.DataFrame()
+    projections: dict = {}
     unresolved: list[dict[str, str]] = []
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
     else:
-        log, unresolved = build_live_slate(
-            events,
-            lines,
-            project,
-            known_teams,
-            SlateConfig(
-                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
-            ),
-            aliases=aliases,
+        cfg = SlateConfig(
+            exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
         )
-        frame = slate_to_frame(log)
+        # Project once, then price off those projections (reused for the workbook).
+        projections, unresolved = project_board(events, project, known_teams, aliases)
+        canonical = canonicalize_sides(lines, events)
+        canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
+        games_min = events[["game_id", "kickoff"]].copy()
+        games_min["game_id"] = games_min["game_id"].astype(str)
+        frame = slate_to_frame(build_slate(projections, canonical, games_min, cfg))
+
         if frame.empty:
             print("no bets cleared the edge threshold.")
         else:
-            frame = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
-            with pd.option_context("display.width", 140, "display.max_columns", None):
-                print(f"\n{len(frame)} recommended bets (stake as % of {args.bankroll:.0f}):")
-                print(frame.to_string(index=False))
-            print(f"\ntotal staked: {frame['stake'].sum():.2f} ({frame['stake_pct'].sum():.1f}%)")
+            shown = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
+            with pd.option_context("display.width", 160, "display.max_columns", None):
+                print(f"\n{len(shown)} recommended bets (stake as % of {args.bankroll:.0f}):")
+                print(shown.to_string(index=False))
+            print(f"\ntotal staked: {frame['stake'].sum():.2f}")
 
         if unresolved:
             print(f"\n{len(unresolved)} game(s) skipped — teams not in the model's universe:")
             for u in unresolved:
                 print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
 
+    # MLB player-prop slate — live only (props need the StatsAPI model + a live
+    # prop board); the offline snapshot path prices game markets only.
+    props_frame = None
+    if args.league == "mlb" and not args.snapshot_file and not events.empty:
+        props_frame = _mlb_prop_slate(args, events, now, generated_at)
+
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
         persisted = frame.assign(league=args.league, generated_at=generated_at)
-        dest = out_dir / f"slate_{args.league}_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
-        persisted.to_parquet(dest, index=False)
-        print(f"\nwrote {len(persisted)} slate rows to {dest}")
+        parquet = out_dir / f"slate_{args.league}_{stamp}.parquet"
+        persisted.to_parquet(parquet, index=False)
+        print(f"\nwrote {len(persisted)} slate rows to {parquet}")
+        _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
 
-    # MLB player-prop slate — live only (props need the StatsAPI model + a live
-    # prop board); the offline snapshot path prices game markets only.
-    if args.league == "mlb" and not args.snapshot_file and not events.empty:
-        _mlb_prop_slate(args, events, now, generated_at)
+
+def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
+    out_dir: Path,
+    stamp: str,
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    frame: pd.DataFrame,
+    props_frame: pd.DataFrame | None,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Write the slate as a formatted workbook alongside the parquet (best-effort)."""
+    try:
+        proj_disp = projections_display(projections, events)
+        plays_disp = plays_display(frame, events, args.bankroll)
+        props_disp = (
+            props_display(props_frame, events, args.bankroll)
+            if props_frame is not None and not props_frame.empty
+            else None
+        )
+        dest = out_dir / f"slate_{args.league}_{stamp}.xlsx"
+        export_slate_workbook(
+            dest, proj_disp, plays_disp, props_disp,
+            league=args.league, generated_at=str(generated_at), bankroll=args.bankroll,
+        )
+        print(f"wrote workbook to {dest}")
+    except Exception as exc:  # noqa: BLE001 - the workbook is a convenience, never fatal
+        print(f"workbook export skipped: {exc}")
 
 
 def _mlb_prop_slate(  # pragma: no cover - network
@@ -181,8 +225,8 @@ def _mlb_prop_slate(  # pragma: no cover - network
     events: pd.DataFrame,
     now: datetime,
     generated_at: pd.Timestamp,
-) -> None:
-    """Build and persist the MLB prop slate from live StatsAPI + Odds API props."""
+) -> pd.DataFrame | None:
+    """Build and persist the MLB prop slate; return its frame (or None on failure)."""
     try:
         from velocity.ingest.theoddsapi import TheOddsAPIClient
         from velocity.models.mlb_build import build_live_mlb
@@ -191,7 +235,7 @@ def _mlb_prop_slate(  # pragma: no cover - network
         sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
         model, name_to_id = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=sim_config)
         prop_lines = TheOddsAPIClient.from_env().player_props("mlb")
-        log, unresolved = mlb_prop_slate(
+        log, _ = mlb_prop_slate(
             model,
             events,
             prop_lines,
@@ -209,8 +253,10 @@ def _mlb_prop_slate(  # pragma: no cover - network
             dest = Path(args.out) / f"slate_mlb_props_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
             frame.assign(league="mlb", generated_at=generated_at).to_parquet(dest, index=False)
             print(f"wrote {len(frame)} prop rows to {dest}")
+        return frame
     except Exception as exc:  # noqa: BLE001 - prop slate is best-effort; never break the game slate
         print(f"prop slate skipped: {exc}")
+        return None
 
 
 if __name__ == "__main__":
