@@ -14,11 +14,27 @@ feature may use a row whose anchor is at or after the kickoff it predicts
 from __future__ import annotations
 
 import pandera.pandas as pa
+from pandera.pandas import Field
 from pandera.typing import Series
 
-LEAGUES = ["nfl", "ncaaf"]
+LEAGUES = ["nfl", "ncaaf", "mlb"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
+# Game-level markets shared by every league. MLB's derivative markets (run line,
+# and first-5-innings segments) are added with the MLB wagering phase; see
+# docs/BUILD_MLB.md. Until then MLB uses the same three game markets as football.
 MARKETS = ["spread", "total", "moneyline"]
+# Baseball player roles for :class:`BaseballStats`.
+BASEBALL_ROLES = ["bat", "pit"]
+# Player-prop markets (canonical stat keys, matching props_mlb.BaseballProps).
+PROP_MARKETS = [
+    "pitcher_strikeouts",
+    "pitcher_outs",
+    "total_bases",
+    "hits",
+    "home_runs",
+    "strikeouts",
+]
+PROP_SIDES = ["over", "under"]
 
 
 class Games(pa.DataFrameModel):
@@ -74,6 +90,37 @@ class Players(pa.DataFrameModel):
         coerce = True
 
 
+class BaseballStats(pa.DataFrameModel):
+    """One row per player-season, per role — the rate inputs the MLB model consumes.
+
+    Counting stats over plate appearances (``pa`` is batters faced for pitchers),
+    left as counts here; the projection phase turns them into shrunk per-PA rates
+    (see docs/BUILD_MLB.md, Phase M2). Every count is nullable so a partial or
+    messy provider extract still validates rather than crashing the ingest.
+
+    Pitchers reliably own K/BB/HBP/HR; the single/double/triple breakdown of balls
+    in play is not part of the season pitching split, so those are left null for
+    ``pit`` rows (BABIP is handled separately downstream).
+    """
+
+    player_id: Series[str] = Field()
+    player_name: Series[str] = Field()
+    team: Series[str] = Field(nullable=True)
+    season: Series[int] = Field(ge=1999, le=2100)
+    role: Series[str] = Field(isin=BASEBALL_ROLES)
+    pa: Series[float] = Field(nullable=True, ge=0)
+    k: Series[float] = Field(nullable=True, ge=0)
+    bb: Series[float] = Field(nullable=True, ge=0)
+    hbp: Series[float] = Field(nullable=True, ge=0)
+    singles: Series[float] = Field(nullable=True, ge=0)
+    doubles: Series[float] = Field(nullable=True, ge=0)
+    triples: Series[float] = Field(nullable=True, ge=0)
+    hr: Series[float] = Field(nullable=True, ge=0)
+
+    class Config:
+        coerce = True
+
+
 class Lines(pa.DataFrameModel):
     """One row per observed line. ``timestamp`` is the point-in-time anchor.
 
@@ -90,6 +137,29 @@ class Lines(pa.DataFrameModel):
     point: Series[float] = pa.Field(nullable=True)
     timestamp: Series[pa.DateTime] = pa.Field()
     is_closing: Series[bool] = pa.Field()
+
+    class Config:
+        coerce = True
+
+
+class PropLines(pa.DataFrameModel):
+    """One row per observed player-prop line (an over/under on a player stat).
+
+    Like :class:`Lines` but keyed by ``player`` and ``market`` (the stat), with a
+    two-way ``side`` (``over``/``under``). ``point`` is the prop line and is always
+    present.
+    """
+
+    line_id: Series[str] = Field()
+    game_id: Series[str] = Field()
+    book: Series[str] = Field()
+    market: Series[str] = Field(isin=PROP_MARKETS)
+    player: Series[str] = Field()
+    side: Series[str] = Field(isin=PROP_SIDES)
+    price: Series[int] = Field()
+    point: Series[float] = Field()
+    timestamp: Series[pa.DateTime] = Field()
+    is_closing: Series[bool] = Field()
 
     class Config:
         coerce = True

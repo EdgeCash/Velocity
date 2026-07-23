@@ -1,0 +1,46 @@
+[
+  {
+    "id": "evt-mlb-001",
+    "sport_key": "baseball_mlb",
+    "commence_time": "2026-07-24T02:10:00Z",
+    "home_team": "Los Angeles Dodgers",
+    "away_team": "San Francisco Giants",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-07-24T01:55:00Z",
+        "markets": [
+          {
+            "key": "pitcher_strikeouts",
+            "outcomes": [
+              {"name": "Over", "description": "Clayton Kershaw", "price": -115, "point": 4.5},
+              {"name": "Under", "description": "Clayton Kershaw", "price": -105, "point": 4.5}
+            ]
+          },
+          {
+            "key": "batter_total_bases",
+            "outcomes": [
+              {"name": "Over", "description": "Shohei Ohtani", "price": -120, "point": 0.5},
+              {"name": "Under", "description": "Shohei Ohtani", "price": 100, "point": 0.5}
+            ]
+          },
+          {
+            "key": "batter_hits",
+            "outcomes": [
+              {"name": "Over", "description": "Unknown Guy", "price": -110, "point": 0.5},
+              {"name": "Under", "description": "Unknown Guy", "price": -110, "point": 0.5}
+            ]
+          },
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Los Angeles Dodgers", "price": -155},
+              {"name": "San Francisco Giants", "price": 132}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

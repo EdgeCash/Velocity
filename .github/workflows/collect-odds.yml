@@ -14,11 +14,13 @@ on:
   schedule:
     # Hourly. Live /odds for 2 leagues × 3 markets ≈ 6 credits/run → ~4.3k/month,
     # well under the 100k budget. Tighten toward kickoff windows if wanted.
+    # The scheduled snapshot stays football-only (nfl ncaaf); MLB is captured via
+    # manual dispatch below so it doesn't change the year-round credit spend.
     - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
       leagues:
-        description: "Leagues to snapshot (space-separated)"
+        description: "Leagues to snapshot (space-separated), e.g. 'nfl ncaaf' or 'mlb'"
         required: false
         default: "nfl ncaaf"
 

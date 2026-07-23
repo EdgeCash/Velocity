@@ -1,0 +1,73 @@
+name: Live slate (MLB)
+
+# MLB plays a full slate almost every day, so it gets its own daily schedule
+# rather than riding the football (Thu/Sat/Sun/Mon) windows. It fits no committed
+# dataset — the model is simulated from lineups — so there is no --data. The staked
+# slate is written to a PRIVATE Actions artifact (derived from paid odds; never in
+# the public repo). Off-day/empty boards find nothing and succeed with an empty
+# slate. This does not place bets — a human acts on it.
+
+on:
+  schedule:
+    # Daily, UTC. ~19:00 brackets afternoon games and ~23:00 the evening slate,
+    # each a couple hours after lineups post so the board and starters are set.
+    - cron: "0 19,23 * * *"
+  workflow_dispatch:
+    inputs:
+      min_edge:
+        description: "Minimum edge to bet"
+        required: false
+        default: "0.02"
+      bankroll:
+        description: "Bankroll for stake sizing"
+        required: false
+        default: "100"
+      n_sims:
+        description: "Monte Carlo simulations per game"
+        required: false
+        default: "10000"
+
+concurrency:
+  group: live-slate-mlb
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  slate:
+    name: build staked MLB slate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Build MLB slate
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          python scripts/run_live_slate.py \
+            --league mlb \
+            --n-sims ${{ github.event.inputs.n_sims || '10000' }} \
+            --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
+            --bankroll ${{ github.event.inputs.bankroll || '100' }} \
+            --out artifacts/slate
+
+      - name: Upload slate (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: slate-mlb-${{ github.run_id }}
+          path: artifacts/slate/*.parquet
+          if-no-files-found: warn
+          retention-days: 60

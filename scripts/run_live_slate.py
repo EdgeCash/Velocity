@@ -9,6 +9,9 @@ of recommended bets, plus any games it couldn't resolve to the model's teams.
     python scripts/run_live_slate.py --league nfl --data datasets/nfl \
         --snapshot-file snap.json
 
+    # MLB needs no committed dataset (the model is simulated from lineups):
+    python scripts/run_live_slate.py --league mlb --snapshot-file snap.json
+
     # live (needs THE_ODDS_API in the environment):
     THE_ODDS_API=... python scripts/run_live_slate.py --league nfl --data datasets/nfl
 
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,10 +31,13 @@ import pandas as pd
 from velocity.features.scores import fit_scores_ratings
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
+from velocity.models.game_mlb import league_average_model
+from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
+from velocity.models.simulate_baseball import BaseballSimConfig
 from velocity.util.seed import make_rng
-from velocity.wagering.live import build_live_slate, slate_to_frame
+from velocity.wagering.live import MLB_TEAM_ALIASES, build_live_slate, slate_to_frame
 from velocity.wagering.slate import SlateConfig
 
 
@@ -51,10 +58,63 @@ def _load_snapshot(args: argparse.Namespace) -> object:
     return client.odds_payload(args.league)
 
 
+def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    """The MLB model: real StatsAPI lineups/rates when live, else the baseline.
+
+    An offline run (``--snapshot-file``) uses the league-average baseline — no
+    network. A live run builds today's model from StatsAPI (season stats + probable
+    lineups), falling back to the baseline if that fetch fails so the slate still
+    runs.
+    """
+    codes = sorted(set(MLB_TEAM_ALIASES.values()))
+    config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+    if args.snapshot_file:
+        return league_average_model(codes, n_sims=args.n_sims)
+    try:
+        from velocity.models.mlb_build import build_live_mlb_model
+
+        now = datetime.now(UTC)
+        model = build_live_mlb_model(now.strftime("%Y-%m-%d"), now.year, config=config)
+        print(f"built MLB model from StatsAPI lineups ({len(model.known_teams)} clubs)")
+        return model
+    except Exception as exc:  # noqa: BLE001 - any live-data failure degrades gracefully
+        print(f"warning: live lineup build failed ({exc}); using league-average baseline")
+        return league_average_model(codes, n_sims=args.n_sims)
+
+
+def _build_projection(
+    args: argparse.Namespace,
+) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None]:
+    """Return ``(project, known_teams, aliases)`` for the requested league.
+
+    Football fits the scores ratings from a committed games file; MLB simulates
+    from lineups, so it needs no ``--data`` — it uses the league-average baseline
+    until real per-team lineups/rates are wired in.
+    """
+    if args.league == "mlb":
+        model = _mlb_model(args)
+        return model.project_full, model.known_teams, MLB_TEAM_ALIASES
+
+    if not args.data:
+        raise SystemExit(f"--data is required for {args.league} (a folder with a games file)")
+    games = load_games(_find_games(Path(args.data)), league=args.league)
+    sim = (
+        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
+        if args.league == "ncaaf"
+        else SimConfig(n_sims=args.n_sims)
+    )
+    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+
+    def project(home: str, away: str) -> GameProjection:
+        return model.project(home, away, rng=make_rng())
+
+    return project, list(model.ratings.teams), None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
-    parser.add_argument("--league", choices=["nfl", "ncaaf"], required=True)
-    parser.add_argument("--data", required=True, help="folder with a games file to fit the model")
+    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb"], required=True)
+    parser.add_argument("--data", help="folder with a games file to fit the model (nfl/ncaaf)")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
@@ -65,13 +125,7 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
-    games = load_games(_find_games(Path(args.data)), league=args.league)
-    sim = (
-        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
-        if args.league == "ncaaf"
-        else SimConfig(n_sims=args.n_sims)
-    )
-    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+    project, known_teams, aliases = _build_projection(args)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
@@ -83,17 +137,15 @@ def main() -> None:
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
     else:
-        def project(home: str, away: str):
-            return model.project(home, away, rng=make_rng())
-
         log, unresolved = build_live_slate(
             events,
             lines,
             project,
-            model.ratings.teams,
+            known_teams,
             SlateConfig(
                 exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
             ),
+            aliases=aliases,
         )
         frame = slate_to_frame(log)
         if frame.empty:
@@ -117,6 +169,49 @@ def main() -> None:
         dest = out_dir / f"slate_{args.league}_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
         persisted.to_parquet(dest, index=False)
         print(f"\nwrote {len(persisted)} slate rows to {dest}")
+
+    # MLB player-prop slate — live only (props need the StatsAPI model + a live
+    # prop board); the offline snapshot path prices game markets only.
+    if args.league == "mlb" and not args.snapshot_file and not events.empty:
+        _mlb_prop_slate(args, events, now, generated_at)
+
+
+def _mlb_prop_slate(  # pragma: no cover - network
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Build and persist the MLB prop slate from live StatsAPI + Odds API props."""
+    try:
+        from velocity.ingest.theoddsapi import TheOddsAPIClient
+        from velocity.models.mlb_build import build_live_mlb
+        from velocity.models.simulate_baseball import BaseballSimConfig
+        from velocity.wagering.props_slate import mlb_prop_slate, prop_slate_to_frame
+
+        sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+        model, name_to_id = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=sim_config)
+        prop_lines = TheOddsAPIClient.from_env().player_props("mlb")
+        log, unresolved = mlb_prop_slate(
+            model,
+            events,
+            prop_lines,
+            name_to_id,
+            config=SlateConfig(
+                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
+            ),
+        )
+        frame = prop_slate_to_frame(log)
+        print(f"\n=== MLB props — {len(prop_lines)} lines, {len(frame)} recommended ===")
+        if not frame.empty:
+            with pd.option_context("display.width", 160, "display.max_columns", None):
+                print(frame.to_string(index=False))
+        if args.out:
+            dest = Path(args.out) / f"slate_mlb_props_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+            frame.assign(league="mlb", generated_at=generated_at).to_parquet(dest, index=False)
+            print(f"wrote {len(frame)} prop rows to {dest}")
+    except Exception as exc:  # noqa: BLE001 - prop slate is best-effort; never break the game slate
+        print(f"prop slate skipped: {exc}")
 
 
 if __name__ == "__main__":

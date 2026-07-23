@@ -1,0 +1,35 @@
+{
+  "dates": [
+    {
+      "date": "2026-07-23",
+      "games": [
+        {
+          "gamePk": 745900,
+          "teams": {
+            "home": {
+              "team": {"id": 119, "name": "Los Angeles Dodgers"},
+              "probablePitcher": {"id": 477132, "fullName": "Clayton Kershaw"}
+            },
+            "away": {
+              "team": {"id": 137, "name": "San Francisco Giants"},
+              "probablePitcher": {"id": 700001, "fullName": "Away Starter"}
+            }
+          },
+          "lineups": {
+            "homePlayers": [
+              {"id": 660271, "fullName": "Shohei Ohtani"},
+              {"id": 605141, "fullName": "Mookie Betts"},
+              {"id": 900001}, {"id": 900002}, {"id": 900003},
+              {"id": 900004}, {"id": 900005}, {"id": 900006}, {"id": 900007}
+            ],
+            "awayPlayers": [
+              {"id": 800001}, {"id": 800002}, {"id": 800003},
+              {"id": 800004}, {"id": 800005}, {"id": 800006},
+              {"id": 800007}, {"id": 800008}, {"id": 800009}
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
