@@ -1,0 +1,19 @@
+{
+  "stats": [
+    {
+      "type": {"displayName": "season"},
+      "group": {"displayName": "pitching"},
+      "splits": [
+        {
+          "season": "2026",
+          "player": {"id": 477132, "fullName": "Clayton Kershaw"},
+          "team": {"id": 119, "name": "Los Angeles Dodgers"},
+          "stat": {
+            "battersFaced": 600, "strikeOuts": 180, "baseOnBalls": 40,
+            "hitByPitch": 6, "hits": 140, "homeRuns": 18
+          }
+        }
+      ]
+    }
+  ]
+}

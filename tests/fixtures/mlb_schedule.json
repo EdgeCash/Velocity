@@ -1,0 +1,38 @@
+{
+  "dates": [
+    {
+      "date": "2026-07-22",
+      "games": [
+        {
+          "gamePk": 745804,
+          "gameDate": "2026-07-23T02:10:00Z",
+          "season": "2026",
+          "gameType": "R",
+          "status": {"abstractGameState": "Final"},
+          "teams": {
+            "away": {"team": {"id": 137, "name": "San Francisco Giants"}, "score": 3},
+            "home": {"team": {"id": 119, "name": "Los Angeles Dodgers"}, "score": 5}
+          },
+          "venue": {"name": "Dodger Stadium"}
+        },
+        {
+          "gamePk": 745820,
+          "gameDate": "2026-07-30T23:05:00Z",
+          "season": "2026",
+          "gameType": "R",
+          "status": {"abstractGameState": "Preview"},
+          "teams": {
+            "away": {"team": {"id": 147, "name": "New York Yankees"}},
+            "home": {"team": {"id": 111, "name": "Boston Red Sox"}}
+          },
+          "venue": {"name": "Fenway Park"}
+        },
+        {
+          "gamePk": null,
+          "gameDate": "2026-07-30T23:05:00Z",
+          "teams": {"away": {}, "home": {}}
+        }
+      ]
+    }
+  ]
+}

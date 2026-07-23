@@ -1,0 +1,39 @@
+{
+  "stats": [
+    {
+      "type": {"displayName": "season"},
+      "group": {"displayName": "hitting"},
+      "splits": [
+        {
+          "season": "2026",
+          "player": {"id": 660271, "fullName": "Shohei Ohtani"},
+          "team": {"id": 119, "name": "Los Angeles Dodgers"},
+          "stat": {
+            "plateAppearances": 500, "strikeOuts": 110, "baseOnBalls": 70,
+            "hitByPitch": 5, "hits": 150, "doubles": 30, "triples": 5, "homeRuns": 40
+          }
+        },
+        {
+          "season": "2026",
+          "player": {"id": 605141, "fullName": "Mookie Betts"},
+          "team": {"id": 119, "name": "Los Angeles Dodgers"},
+          "stat": {
+            "plateAppearances": 480, "strikeOuts": 70, "baseOnBalls": 60,
+            "hitByPitch": 3, "hits": 140, "doubles": 28, "triples": 3, "homeRuns": 22
+          }
+        },
+        {
+          "season": "2026",
+          "player": {"fullName": "No Id Player"},
+          "stat": {"plateAppearances": 10}
+        },
+        {
+          "season": "2026",
+          "player": {"id": 999001, "fullName": "Malformed Stat"},
+          "team": {"name": "Test Team"},
+          "stat": {"plateAppearances": "NA", "strikeOuts": null, "hits": 5, "homeRuns": 1}
+        }
+      ]
+    }
+  ]
+}
