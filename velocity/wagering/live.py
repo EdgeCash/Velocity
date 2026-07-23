@@ -72,6 +72,42 @@ NFL_TEAM_ALIASES: dict[str, str] = {
     "washington commanders": "WAS",
 }
 
+# Full team name (normalized) → the key the MLB ratings use. Unlike NCAAF's 250+
+# teams, MLB is a fixed 30, so an exact alias table gives full coverage.
+MLB_TEAM_ALIASES: dict[str, str] = {
+    "arizona diamondbacks": "ARI",
+    "atlanta braves": "ATL",
+    "baltimore orioles": "BAL",
+    "boston red sox": "BOS",
+    "chicago cubs": "CHC",
+    "chicago white sox": "CWS",
+    "cincinnati reds": "CIN",
+    "cleveland guardians": "CLE",
+    "colorado rockies": "COL",
+    "detroit tigers": "DET",
+    "houston astros": "HOU",
+    "kansas city royals": "KC",
+    "los angeles angels": "LAA",
+    "los angeles dodgers": "LAD",
+    "miami marlins": "MIA",
+    "milwaukee brewers": "MIL",
+    "minnesota twins": "MIN",
+    "new york mets": "NYM",
+    "new york yankees": "NYY",
+    "athletics": "ATH",
+    "oakland athletics": "ATH",
+    "philadelphia phillies": "PHI",
+    "pittsburgh pirates": "PIT",
+    "san diego padres": "SD",
+    "san francisco giants": "SF",
+    "seattle mariners": "SEA",
+    "st louis cardinals": "STL",
+    "tampa bay rays": "TB",
+    "texas rangers": "TEX",
+    "toronto blue jays": "TOR",
+    "washington nationals": "WSH",
+}
+
 _TOTAL_SIDES = {"over": "over", "under": "under"}
 
 
