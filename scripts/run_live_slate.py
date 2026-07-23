@@ -241,9 +241,10 @@ def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
     """
     try:
         from velocity.report.card_html import write_cards_html
-        from velocity.report.cards import build_cards
+        from velocity.report.cards import GridSources, build_cards
 
         contexts = []
+        grid = GridSources()
         if not args.snapshot_file:
             from velocity.ingest.mlb_context import load_context
 
@@ -251,12 +252,73 @@ def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
                 contexts = load_context(now.strftime("%Y-%m-%d"))
             except Exception as exc:  # noqa: BLE001 - context is header decoration
                 print(f"card context fetch skipped: {exc}")
-        cards = build_cards(events, projections, canonical, contexts, aliases=MLB_TEAM_ALIASES)
+            grid = _mlb_grid_sources(events, contexts, now)
+        cards = build_cards(
+            events, projections, canonical, contexts,
+            aliases=MLB_TEAM_ALIASES, grid=grid,
+        )
         dest = out_dir / f"cards_{args.league}_{stamp}.html"
         write_cards_html(dest, cards, league=args.league, generated_at=str(generated_at))
         print(f"wrote {len(cards)} matchup cards to {dest}")
     except Exception as exc:  # noqa: BLE001 - the cards page is a convenience, never fatal
         print(f"cards export skipped: {exc}")
+
+
+def _mlb_grid_sources(  # pragma: no cover - network
+    events: pd.DataFrame, contexts: list, now: datetime
+):  # type: ignore[no-untyped-def]
+    """Fetch the descriptive-grid data tiers, each independent and best-effort.
+
+    A failure in any one feed (StatsAPI stats, FanGraphs/Statcast, Open-Meteo)
+    contributes nothing for that tier — the card omits those rows rather than break.
+    """
+    from velocity.ingest.mlb_advanced import load_advanced
+    from velocity.ingest.mlb_stats import load_team_hitting, load_team_pitching, load_team_splits
+    from velocity.ingest.mlb_weather import load_weather
+    from velocity.report.cards import GridSources
+    from velocity.wagering.live import resolve_team
+
+    season = now.year
+    codes = sorted(set(MLB_TEAM_ALIASES.values()))
+
+    def _try(label: str, fn):  # type: ignore[no-untyped-def]
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - one tier failing never blocks the rest
+            print(f"grid: {label} skipped ({exc})")
+            return None
+
+    hitting = _try("team hitting", lambda: tuple(load_team_hitting(season))) or ()
+    pitching = _try("team pitching", lambda: tuple(load_team_pitching(season))) or ()
+    advanced = _try("advanced metrics", lambda: load_advanced(season)) or {}
+
+    # Platoon + recent-form splits for just the clubs playing today (id from context).
+    splits: dict[str, object] = {}
+    for ctx in contexts:
+        for team in (ctx.away, ctx.home):
+            code = resolve_team(team.name, codes, MLB_TEAM_ALIASES)
+            if code and code not in splits and team.team_id:
+                got = _try(f"{code} splits", lambda tid=team.team_id: load_team_splits(tid, season))
+                if got is not None:
+                    splits[code] = got
+
+    # First-pitch weather per game, keyed by game_id (home park + kickoff).
+    weather: dict[str, object] = {}
+    for event in events.to_dict("records"):
+        home_code = resolve_team(str(event["home_team"]), codes, MLB_TEAM_ALIASES)
+        first_pitch = pd.Timestamp(event["kickoff"]).to_pydatetime()
+        if home_code:
+            got = _try(
+                f"{home_code} weather",
+                lambda hc=home_code, fp=first_pitch: load_weather(hc, fp),
+            )
+            if got is not None:
+                weather[str(event["game_id"])] = got
+
+    return GridSources(
+        hitting=hitting, pitching=pitching,
+        splits=splits, advanced=advanced, weather=weather,  # type: ignore[arg-type]
+    )
 
 
 def _mlb_prop_slate(  # pragma: no cover - network

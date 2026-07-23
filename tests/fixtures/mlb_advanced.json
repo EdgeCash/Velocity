@@ -1,0 +1,21 @@
+{
+  "fg_bat": {
+    "data": [
+      {"Team": "LAD", "wRC+": 118},
+      {"Team": "SFG", "wRC+": 95},
+      {"Team": "COL", "wRC+": 88}
+    ]
+  },
+  "fg_pit": {
+    "data": [
+      {"Team": "LAD", "xFIP": 3.65},
+      {"Team": "SFG", "xFIP": 4.10},
+      {"Team": "COL", "xFIP": 4.85}
+    ]
+  },
+  "savant": [
+    {"team": "LAD", "barrel_batted_rate": 9.8, "xwoba": 0.335},
+    {"team": "SFG", "barrel_batted_rate": 7.5, "est_woba": 0.312},
+    {"team": "TBR", "barrel_batted_rate": 8.1}
+  ]
+}

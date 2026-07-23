@@ -52,6 +52,109 @@ def _record(team: dict[str, Any]) -> str:
     return f'<span class="rec">{html.escape(team["record"])}</span>' if team.get("record") else ""
 
 
+def _av3(v: Any) -> str | None:
+    return None if v is None else f"{float(v):.3f}".lstrip("0")  # .780
+
+
+def _rate(v: Any) -> str | None:
+    return None if v is None else f"{float(v):.2f}"
+
+
+def _pct(v: Any) -> str | None:
+    return None if v is None else f"{float(v) * 100:.1f}%"
+
+
+def _int(v: Any) -> str | None:
+    return None if v is None else str(int(v))
+
+
+def _brl(v: Any) -> str | None:
+    return None if v is None else f"{float(v):.1f}%"
+
+
+# (section, label, formatter, key, rank_key) — rank shown only where a rank_key is set.
+_GRID_ROWS: list[tuple[str, str, Any, str, str | None]] = [
+    ("bat", "OPS", _av3, "ops", "ops_rank"),
+    ("bat", "R/G", _rate, "rpg", "rpg_rank"),
+    ("bat", "wRC+", _int, "wrc_plus", None),
+    ("bat", "AVG", _av3, "avg", None),
+    ("bat", "HR", _int, "hr", None),
+    ("bat", "K%", _pct, "k_pct", None),
+    ("bat", "BB%", _pct, "bb_pct", None),
+    ("bat", "Barrel%", _brl, "barrel_pct", None),
+    ("bat", "xwOBA", _av3, "xwoba", None),
+    ("splits", "vs LHP", _av3, "vs_lhp_ops", None),
+    ("splits", "vs RHP", _av3, "vs_rhp_ops", None),
+    ("splits", "L15 R/G", _rate, "last_n_rpg", None),
+    ("pit", "ERA", _rate, "era", "era_rank"),
+    ("pit", "WHIP", _rate, "whip", "whip_rank"),
+    ("pit", "K/9", _rate, "k_per_9", None),
+    ("pit", "xFIP", _rate, "xfip", None),
+]
+
+
+def _cell(grid: dict[str, Any] | None, section: str, fmt: Any, key: str,
+          rank_key: str | None) -> str:
+    """One side's value cell for a grid row: formatted value + optional rank badge."""
+    sect = (grid or {}).get(section) or {}
+    val = fmt(sect.get(key))
+    if val is None:
+        return '<span class="gv none">·</span>'
+    rank = (grid or {}).get(section, {}).get(rank_key) if rank_key else None
+    badge = f'<sup class="rk">#{int(rank)}</sup>' if rank else ""
+    return f'<span class="gv">{html.escape(val)}{badge}</span>'
+
+
+def _grid(c: dict[str, Any]) -> str:
+    """The descriptive stat grid: away | label | home, per row, only where data exists."""
+    grids = c.get("grid") or {}
+    away, home = grids.get("away"), grids.get("home")
+    if not away and not home:
+        return ""
+    rows = ""
+    for section, label, fmt, key, rank_key in _GRID_ROWS:
+        a = (away or {}).get(section, {})
+        h = (home or {}).get(section, {})
+        if a.get(key) is None and h.get(key) is None:
+            continue
+        rows += (
+            f'<div class="grow"><div class="gc a">{_cell(away, section, fmt, key, rank_key)}</div>'
+            f'<div class="gk">{html.escape(label)}</div>'
+            f'<div class="gc h">{_cell(home, section, fmt, key, rank_key)}</div></div>'
+        )
+    if not rows:
+        return ""
+    return f'<div class="grid"><h4>Team profile · league rank</h4>{rows}</div>'
+
+
+def _conditions(c: dict[str, Any]) -> str:
+    """The weather + park-factor strip (rendered only where present)."""
+    cond = c.get("conditions") or {}
+    chips = ""
+    w = cond.get("weather")
+    if w:
+        if w.get("indoors"):
+            chips += '<span class="chip">Roof closed · indoors</span>'
+        else:
+            if w.get("temp_f") is not None:
+                chips += f'<span class="chip">{int(w["temp_f"])}°F</span>'
+            if w.get("wind_mph") is not None:
+                d = html.escape(str(w.get("wind_dir") or ""))
+                chips += f'<span class="chip">Wind {int(w["wind_mph"])} {d}</span>'
+            if w.get("precip_pct") is not None:
+                chips += f'<span class="chip">Rain {int(w["precip_pct"])}%</span>'
+            if w.get("roof") == "retractable":
+                chips += '<span class="chip muted">retractable</span>'
+    park = cond.get("park")
+    if park:
+        chips += (
+            f'<span class="chip park {html.escape(str(park["lean"]))}">'
+            f'{html.escape(str(park["name"]))} · Park {int(park["runs"])} '
+            f'({html.escape(str(park["lean"]))})</span>'
+        )
+    return f'<div class="cond">{chips}</div>' if chips else ""
+
+
 def _rec_cell(rec: dict[str, Any]) -> str:
     call = str(rec["call"]).lower()
     pick = html.escape(str(rec["pick"]))
@@ -86,6 +189,8 @@ def _card(c: dict[str, Any]) -> str:
       <div class="role">SP · SP</div>
       <div class="sp home"><div>{_sp_line(c["home_sp"])}</div>{_mug(c["home_sp"]["id"])}</div>
     </div>
+    {_conditions(c)}
+    {_grid(c)}
     <div class="proj">
       <h4>Model projection</h4>
       <div class="score">
@@ -160,6 +265,24 @@ padding:2px 9px;border-radius:999px;text-transform:uppercase}
 .play .conf{color:var(--green)}.play .badge{background:rgba(46,204,113,.14);color:var(--green)}
 .lean .conf{color:var(--amber)}.lean .badge{background:rgba(245,179,1,.14);color:var(--amber)}
 .pass .conf{color:var(--slate)}.pass .badge{background:rgba(107,118,132,.16);color:var(--slate)}
+.cond{display:flex;flex-wrap:wrap;gap:6px;padding:2px 16px 12px}
+.chip{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:var(--panel2);
+border:1px solid var(--line);border-radius:999px;padding:3px 9px;letter-spacing:.02em}
+.chip.muted{opacity:.7}
+.chip.park.hitter{color:var(--amber);border-color:rgba(245,179,1,.3)}
+.chip.park.pitcher{color:var(--cyan);border-color:rgba(56,207,221,.3)}
+.grid{padding:4px 16px 10px}
+.grid h4{margin:0 0 7px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+color:var(--cyan);font-weight:700}
+.grow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;
+padding:3px 0;border-bottom:1px solid rgba(35,46,58,.5)}
+.grow:last-child{border-bottom:0}
+.gc{display:flex}.gc.a{justify-content:flex-start}.gc.h{justify-content:flex-end}
+.gk{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;
+text-align:center;min-width:64px}
+.gv{font-family:var(--mono);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.gv.none{color:var(--slate);font-weight:400}
+.rk{font-size:8.5px;color:var(--cyan);font-weight:700;margin-left:2px;top:-.4em}
 footer.note{color:var(--muted);font-size:11.5px;line-height:1.6;margin-top:8px;padding:13px 14px;
 border:1px dashed var(--line);border-radius:10px;background:var(--panel2)}
 footer.note b{color:var(--text)}
@@ -179,10 +302,11 @@ def render_cards_page(cards: list[dict[str, Any]], league: str, generated_at: st
 <span><i style="background:var(--amber)"></i>Lean · 4–8</span>
 <span><i style="background:var(--slate)"></i>Pass · &lt; 4</span></div>
 {body}
-<footer class="note"><b>Real:</b> projected runs, total, fair line, win %, and the
-Moneyline / Run Line / Total recommendations are live model output. The confidence
-scale is a presentation of edge, not a calibrated number. The full descriptive stat
-grid (splits, ranks, weather, park factor) is the planned next data layer.</footer>
+<footer class="note"><b>Sources:</b> projections and recommendations are live model
+output; the team profile is StatsAPI (season lines, splits) with league ranks computed
+across all 30 clubs, advanced metrics from FanGraphs / Statcast, weather from Open-Meteo
+(a first-pitch forecast), and committed park factors. The confidence scale is a
+presentation of edge, not a calibrated number.</footer>
 </div></body></html>"""
 
 
