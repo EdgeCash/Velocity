@@ -25,6 +25,16 @@ SEASON_TYPES = ["PRE", "REG", "POST"]
 MARKETS = ["spread", "total", "moneyline"]
 # Baseball player roles for :class:`BaseballStats`.
 BASEBALL_ROLES = ["bat", "pit"]
+# Player-prop markets (canonical stat keys, matching props_mlb.BaseballProps).
+PROP_MARKETS = [
+    "pitcher_strikeouts",
+    "pitcher_outs",
+    "total_bases",
+    "hits",
+    "home_runs",
+    "strikeouts",
+]
+PROP_SIDES = ["over", "under"]
 
 
 class Games(pa.DataFrameModel):
@@ -127,6 +137,29 @@ class Lines(pa.DataFrameModel):
     point: Series[float] = pa.Field(nullable=True)
     timestamp: Series[pa.DateTime] = pa.Field()
     is_closing: Series[bool] = pa.Field()
+
+    class Config:
+        coerce = True
+
+
+class PropLines(pa.DataFrameModel):
+    """One row per observed player-prop line (an over/under on a player stat).
+
+    Like :class:`Lines` but keyed by ``player`` and ``market`` (the stat), with a
+    two-way ``side`` (``over``/``under``). ``point`` is the prop line and is always
+    present.
+    """
+
+    line_id: Series[str] = Field()
+    game_id: Series[str] = Field()
+    book: Series[str] = Field()
+    market: Series[str] = Field(isin=PROP_MARKETS)
+    player: Series[str] = Field()
+    side: Series[str] = Field(isin=PROP_SIDES)
+    price: Series[int] = Field()
+    point: Series[float] = Field()
+    timestamp: Series[pa.DateTime] = Field()
+    is_closing: Series[bool] = Field()
 
     class Config:
         coerce = True

@@ -136,6 +136,30 @@ def assemble_model(
     return MLBGameModel(teams=teams, config=config, seed=seed), unresolved
 
 
+def build_live_mlb(
+    date: str,
+    season: int,
+    *,
+    config: BaseballSimConfig | None = None,
+    seed: int = 0,
+) -> tuple[MLBGameModel, dict[str, str]]:  # pragma: no cover - network
+    """Fetch StatsAPI stats + lineups and return (model, player-name → id index).
+
+    The name index is what the prop slate uses to resolve a provider player name
+    to a model player id.
+    """
+    from velocity.ingest.mlb import load_lineups, load_player_stats
+    from velocity.wagering.props_slate import build_name_index
+
+    batting = load_player_stats(season, "bat")
+    pitching = load_player_stats(season, "pit")
+    batters, pitchers = build_player_pools(batting, pitching)
+    names = build_name_index(batting, pitching)
+    config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18)
+    model, _ = assemble_model(load_lineups(date), batters, pitchers, config=config, seed=seed)
+    return model, names
+
+
 def build_live_mlb_model(
     date: str,
     season: int,
@@ -144,11 +168,5 @@ def build_live_mlb_model(
     seed: int = 0,
 ) -> MLBGameModel:  # pragma: no cover - network
     """Fetch season stats + today's lineups from StatsAPI and assemble the model."""
-    from velocity.ingest.mlb import load_lineups, load_player_stats
-
-    batters, pitchers = build_player_pools(
-        load_player_stats(season, "bat"), load_player_stats(season, "pit")
-    )
-    config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18)
-    model, _ = assemble_model(load_lineups(date), batters, pitchers, config=config, seed=seed)
+    model, _ = build_live_mlb(date, season, config=config, seed=seed)
     return model

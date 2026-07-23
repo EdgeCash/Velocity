@@ -52,6 +52,7 @@ class Bet:
     timestamp: pd.Timestamp | None = None
     closing_price: float | None = None
     closing_point: float | None = None
+    player: str | None = None  # set for player props; None for game markets
 
     @property
     def net_payout(self) -> float:
@@ -74,8 +75,9 @@ class Bet:
         if self.market == "spread":
             # Higher handicap always helps the side holding it.
             return self.point - self.closing_point
-        if self.market == "total":
-            # Over wants a lower line; under wants a higher one.
+        if self.side in _TOTAL_SIDES:
+            # Over/under lines (game totals and player props): over wants a lower
+            # number, under wants a higher one.
             return (self.closing_point - self.point) if self.side == "over" else (
                 self.point - self.closing_point
             )

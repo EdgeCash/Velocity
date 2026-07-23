@@ -1,0 +1,66 @@
+name: Collect MLB player props
+
+# Snapshots MLB player-prop lines (pitcher Ks, total bases, hits, HR, ...) into a
+# PRIVATE Actions artifact — the prop CLV archive. Props are a per-event endpoint,
+# so a full slate costs more than the game board: ~15 games x 6 markets is on the
+# order of ~90 credits/run, and twice daily lands near ~5k/month, well under the
+# 100k budget. Never commits; empty boards succeed.
+#
+# Manual dispatch doubles as the THE_ODDS_API prop-endpoint verification.
+
+on:
+  schedule:
+    # Twice daily (UTC), bracketing the afternoon and evening slates after props
+    # post. Tighten toward first pitch if closer-to-close prop CLV is wanted.
+    - cron: "0 17,23 * * *"
+  workflow_dispatch:
+    inputs:
+      markets:
+        description: "Prop market keys (comma-separated); blank = all supported"
+        required: false
+        default: ""
+
+concurrency:
+  group: collect-mlb-props
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot MLB props
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot MLB props
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          if [ -n "${{ github.event.inputs.markets }}" ]; then
+            python scripts/collect_mlb_props.py --out artifacts/mlb_props \
+              --markets "${{ github.event.inputs.markets }}"
+          else
+            python scripts/collect_mlb_props.py --out artifacts/mlb_props
+          fi
+
+      - name: Upload props (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlb-props-${{ github.run_id }}
+          path: artifacts/mlb_props/*.parquet
+          if-no-files-found: warn
+          retention-days: 30

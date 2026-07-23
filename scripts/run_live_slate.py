@@ -170,6 +170,49 @@ def main() -> None:
         persisted.to_parquet(dest, index=False)
         print(f"\nwrote {len(persisted)} slate rows to {dest}")
 
+    # MLB player-prop slate — live only (props need the StatsAPI model + a live
+    # prop board); the offline snapshot path prices game markets only.
+    if args.league == "mlb" and not args.snapshot_file and not events.empty:
+        _mlb_prop_slate(args, events, now, generated_at)
+
+
+def _mlb_prop_slate(  # pragma: no cover - network
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Build and persist the MLB prop slate from live StatsAPI + Odds API props."""
+    try:
+        from velocity.ingest.theoddsapi import TheOddsAPIClient
+        from velocity.models.mlb_build import build_live_mlb
+        from velocity.models.simulate_baseball import BaseballSimConfig
+        from velocity.wagering.props_slate import mlb_prop_slate, prop_slate_to_frame
+
+        sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18)
+        model, name_to_id = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=sim_config)
+        prop_lines = TheOddsAPIClient.from_env().player_props("mlb")
+        log, unresolved = mlb_prop_slate(
+            model,
+            events,
+            prop_lines,
+            name_to_id,
+            config=SlateConfig(
+                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
+            ),
+        )
+        frame = prop_slate_to_frame(log)
+        print(f"\n=== MLB props — {len(prop_lines)} lines, {len(frame)} recommended ===")
+        if not frame.empty:
+            with pd.option_context("display.width", 160, "display.max_columns", None):
+                print(frame.to_string(index=False))
+        if args.out:
+            dest = Path(args.out) / f"slate_mlb_props_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+            frame.assign(league="mlb", generated_at=generated_at).to_parquet(dest, index=False)
+            print(f"wrote {len(frame)} prop rows to {dest}")
+    except Exception as exc:  # noqa: BLE001 - prop slate is best-effort; never break the game slate
+        print(f"prop slate skipped: {exc}")
+
 
 if __name__ == "__main__":
     main()

@@ -42,7 +42,7 @@ from typing import Any
 
 import pandas as pd
 
-from velocity.store.schema import Lines
+from velocity.store.schema import Lines, PropLines
 
 _BASE = "https://api.the-odds-api.com/v4"
 _FETCH_TIMEOUT = 60
@@ -60,6 +60,20 @@ SPORT_KEYS = {
     "ncaaf": "americanfootball_ncaaf",
     "mlb": "baseball_mlb",
 }
+
+# The Odds API player-prop market key → canonical prop stat (props_mlb / PropLines).
+# Anything else is ignored.
+PROP_MARKET_BY_KEY = {
+    "pitcher_strikeouts": "pitcher_strikeouts",
+    "pitcher_outs": "pitcher_outs",
+    "batter_total_bases": "total_bases",
+    "batter_hits": "hits",
+    "batter_home_runs": "home_runs",
+    "batter_strikeouts": "strikeouts",
+}
+DEFAULT_PROP_MARKETS = ",".join(PROP_MARKET_BY_KEY)
+
+_PROP_SIDES = {"over": "over", "under": "under"}
 
 _LINES_COLUMNS = [
     "line_id",
@@ -151,6 +165,102 @@ def normalize_odds_events(
     df = df.dropna(subset=["price"]).drop_duplicates("line_id").reset_index(drop=True)
     df["price"] = df["price"].astype(int)
     return Lines.validate(df[_LINES_COLUMNS])
+
+
+_PROP_COLUMNS = [
+    "line_id",
+    "game_id",
+    "book",
+    "market",
+    "player",
+    "side",
+    "price",
+    "point",
+    "timestamp",
+    "is_closing",
+]
+
+
+def _empty_prop_lines() -> pd.DataFrame:
+    empty = pd.DataFrame(
+        {
+            "line_id": pd.Series(dtype=str),
+            "game_id": pd.Series(dtype=str),
+            "book": pd.Series(dtype=str),
+            "market": pd.Series(dtype=str),
+            "player": pd.Series(dtype=str),
+            "side": pd.Series(dtype=str),
+            "price": pd.Series(dtype="int64"),
+            "point": pd.Series(dtype=float),
+            "timestamp": pd.Series(dtype="datetime64[ns]"),
+            "is_closing": pd.Series(dtype=bool),
+        }
+    )
+    return PropLines.validate(empty)
+
+
+def normalize_player_props(
+    events: Iterable[Mapping[str, Any]], is_closing: bool = False
+) -> pd.DataFrame:
+    """Flatten a The Odds API player-prop payload onto the canonical ``PropLines``.
+
+    ``events`` are event-odds objects (from the per-event ``/events/{id}/odds``
+    endpoint). Only the prop markets in :data:`PROP_MARKET_BY_KEY` are kept; each
+    outcome's ``description`` is the player and ``name`` is ``Over``/``Under``.
+    """
+    rows: list[dict[str, object]] = []
+    for event in events:
+        event_id = event.get("id")
+        if event_id is None:
+            continue
+        for book in event.get("bookmakers") or []:
+            book_key = book.get("key")
+            book_update = book.get("last_update")
+            for market in book.get("markets") or []:
+                stat = PROP_MARKET_BY_KEY.get(str(market.get("key")))
+                if stat is None:
+                    continue
+                market_update = market.get("last_update") or book_update
+                for outcome in market.get("outcomes") or []:
+                    side = _PROP_SIDES.get(str(outcome.get("name", "")).strip().lower())
+                    player = outcome.get("description")
+                    price = outcome.get("price")
+                    point = outcome.get("point")
+                    if side is None or player is None or price is None or point is None:
+                        continue
+                    rows.append(
+                        {
+                            "game_id": str(event_id),
+                            "book": None if book_key is None else str(book_key),
+                            "market": stat,
+                            "player": str(player),
+                            "side": side,
+                            "price": price,
+                            "point": point,
+                            "timestamp": market_update,
+                            "is_closing": is_closing,
+                        }
+                    )
+    if not rows:
+        return _empty_prop_lines()
+
+    df = pd.DataFrame(rows)
+    player_key = df["player"].str.lower().str.replace(r"\s+", "-", regex=True)
+    df["line_id"] = (
+        df["game_id"]
+        + "|" + df["market"]
+        + "|" + player_key
+        + "|" + df["side"]
+        + "|" + df["book"].fillna("")
+        + "|" + df["point"].map(lambda v: f"{float(v):g}")
+    )
+    df["price"] = pd.to_numeric(df["price"], errors="coerce").round().astype("Int64")
+    df["point"] = pd.to_numeric(df["point"], errors="coerce")
+    ts = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    df["timestamp"] = ts.dt.tz_localize(None)
+    df = df.dropna(subset=["price", "point"]).drop_duplicates("line_id").reset_index(drop=True)
+    df["price"] = df["price"].astype(int)
+    return PropLines.validate(df[_PROP_COLUMNS])
 
 
 def extract_events(payload: Any) -> pd.DataFrame:
@@ -274,3 +384,32 @@ class TheOddsAPIClient:
         )
         self.remaining = meta.get("remaining")
         return normalize_odds_events(unwrap(data), is_closing=True)
+
+    def event_ids(self, league: str) -> list[str]:  # pragma: no cover - network
+        """The current event ids for ``league`` (the cheap ``/events`` list)."""
+        data, _ = self._get(f"sports/{self.sport_key(league)}/events")
+        return [str(e["id"]) for e in (data or []) if e.get("id") is not None]
+
+    def player_props(  # pragma: no cover - network
+        self, league: str, markets: str = DEFAULT_PROP_MARKETS
+    ) -> pd.DataFrame:
+        """Live player props for ``league`` → a canonical ``PropLines`` frame.
+
+        Props are a per-event endpoint, so this pulls the event list and then each
+        event's prop board, concatenating them. Empty (no props posted) is a valid
+        snapshot, not an error.
+        """
+        sport = self.sport_key(league)
+        frames: list[pd.DataFrame] = []
+        for event_id in self.event_ids(league):
+            data, meta = self._get(
+                f"sports/{sport}/events/{event_id}/odds",
+                regions=self.regions,
+                markets=markets,
+                oddsFormat=self.odds_format,
+            )
+            self.remaining = meta.get("remaining")
+            frames.append(normalize_player_props(unwrap(data), is_closing=False))
+        if not frames:
+            return _empty_prop_lines()
+        return PropLines.validate(pd.concat(frames, ignore_index=True))
