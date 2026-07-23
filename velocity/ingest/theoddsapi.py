@@ -367,13 +367,14 @@ class TheOddsAPIClient:
         """Live game lines for ``league`` → a canonical ``Lines`` frame (snapshot, not closing)."""
         return normalize_odds_events(unwrap(self.odds_payload(league, markets)), is_closing=False)
 
-    def historical_odds(
+    def historical_odds_payload(  # pragma: no cover - network
         self, league: str, date: str, markets: str = "h2h,spreads,totals"
-    ) -> pd.DataFrame:  # pragma: no cover - network
-        """Historical snapshot at ``date`` (ISO 8601) → canonical ``Lines`` (the CLV archive).
+    ) -> Any:
+        """Raw historical ``/historical/.../odds`` payload at ``date`` (ISO 8601).
 
-        The API returns the last snapshot at or before ``date``; pass a kickoff
-        time to approximate the closing line, so these rows are marked closing.
+        A ``{"timestamp", "previous_timestamp", "next_timestamp", "data": [...]}``
+        wrapper; the collector banks it verbatim so nothing the credits bought is
+        lost. Updates :attr:`remaining` from the response header.
         """
         data, meta = self._get(
             f"historical/sports/{self.sport_key(league)}/odds",
@@ -383,7 +384,19 @@ class TheOddsAPIClient:
             date=date,
         )
         self.remaining = meta.get("remaining")
-        return normalize_odds_events(unwrap(data), is_closing=True)
+        return data
+
+    def historical_odds(
+        self, league: str, date: str, markets: str = "h2h,spreads,totals"
+    ) -> pd.DataFrame:  # pragma: no cover - network
+        """Historical snapshot at ``date`` (ISO 8601) → canonical ``Lines`` (the CLV archive).
+
+        The API returns the last snapshot at or before ``date``; pass a kickoff
+        time to approximate the closing line, so these rows are marked closing.
+        """
+        return normalize_odds_events(
+            unwrap(self.historical_odds_payload(league, date, markets)), is_closing=True
+        )
 
     def event_ids(self, league: str) -> list[str]:  # pragma: no cover - network
         """The current event ids for ``league`` (the cheap ``/events`` list)."""
