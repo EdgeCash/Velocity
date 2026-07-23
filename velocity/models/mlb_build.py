@@ -106,13 +106,15 @@ def assemble_model(
     config: BaseballSimConfig | None = None,
     seed: int = 0,
     park_hr_factors: Mapping[str, float] | None = None,
+    run_env_tilts: Mapping[str, float] | None = None,
 ) -> tuple[MLBGameModel, list[str]]:
     """Build an :class:`MLBGameModel` keyed by rating code from parsed lineups.
 
     Each club's provider name is resolved to a rating code via ``aliases``; the
     model's teams use those keys, matching what the slate resolver produces.
-    ``park_hr_factors`` (home-park HR multipliers by code) makes each game's total
-    park-aware. Returns the model plus any team names that did not resolve.
+    ``park_hr_factors`` (home-park HR multipliers) and ``run_env_tilts`` (the non-HR
+    run-environment tilt) by code make each game's total park/weather-aware. Returns
+    the model plus any team names that did not resolve.
     """
     # Local import keeps the models layer from importing wagering at module load.
     from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
@@ -138,6 +140,7 @@ def assemble_model(
     model = MLBGameModel(
         teams=teams, config=config, seed=seed,
         park_hr_factors=dict(park_hr_factors or {}),
+        run_env_tilts=dict(run_env_tilts or {}),
     )
     return model, unresolved
 
@@ -155,18 +158,22 @@ def build_live_mlb(
     to a model player id.
     """
     from velocity.ingest.mlb import load_lineups, load_player_stats
-    from velocity.models.simulate_baseball import DEFAULT_HFA
-    from velocity.report.park_factors import park_hr_factors
+    from velocity.models.simulate_baseball import DEFAULT_HFA, DEFAULT_TTO_PENALTY
+    from velocity.report.park_factors import run_environment_maps
     from velocity.wagering.props_slate import build_name_index
 
     batting = load_player_stats(season, "bat")
     pitching = load_player_stats(season, "pit")
     batters, pitchers = build_player_pools(batting, pitching)
     names = build_name_index(batting, pitching)
-    config = config or BaseballSimConfig(n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA)
+    config = config or BaseballSimConfig(
+        n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA, tto_penalty=DEFAULT_TTO_PENALTY
+    )
+    # Park-static run environment; the runner folds today's weather in before pricing.
+    hr_factors, run_env_tilts = run_environment_maps()
     model, _ = assemble_model(
         load_lineups(date), batters, pitchers,
-        config=config, seed=seed, park_hr_factors=park_hr_factors(),
+        config=config, seed=seed, park_hr_factors=hr_factors, run_env_tilts=run_env_tilts,
     )
     return model, names
 

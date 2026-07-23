@@ -52,6 +52,12 @@ _REACH_OUTCOMES = [BB, HBP, HR, SINGLE, DOUBLE, TRIPLE]
 # tuned so equal teams give home ~a 53-54% win probability — the MLB norm.
 DEFAULT_HFA = 0.02
 
+# Times-through-the-order penalty the production model uses (see
+# BaseballSimConfig.tto_penalty): the reach-base tilt added to the starter's
+# matchup the 2nd and 3rd+ time through the order, approximating the ~8-10
+# wOBA-point-per-turn decay of a tiring starter. First-order; calibration-pending.
+DEFAULT_TTO_PENALTY = (0.03, 0.06)
+
 _LEAGUE_PA_VEC = np.array([LEAGUE_PA_RATE[o] for o in PA_OUTCOMES], dtype=float)
 
 
@@ -96,12 +102,21 @@ class BaseballSimConfig:
     lineup's down by ``hfa``, so home scores a touch more and away a touch less —
     a margin shift toward home with the total roughly unchanged. ``0.0`` (the
     default) is a neutral, symmetric game; the production model sets ``DEFAULT_HFA``.
+
+    ``tto_penalty`` is the times-through-the-order penalty as ``(second, third)``
+    reach-base tilts added to the *starter's* matchup the 2nd and 3rd+ time through
+    the order (a tiring starter allows more offense before he's pulled). Applied
+    only while the starter is in — once he passes ``starter_outs`` the reliever
+    stand-in resets to no penalty. ``(0.0, 0.0)`` (the default) disables it; the
+    production model sets ``DEFAULT_TTO_PENALTY``. It requires ``starter_outs`` to
+    be set to have a pull point; with no cap the penalty escalates and holds.
     """
 
     n_sims: int = 10_000
     max_innings: int = 30
     starter_outs: int | None = None
     hfa: float = 0.0
+    tto_penalty: tuple[float, float] = (0.0, 0.0)
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -112,6 +127,8 @@ class BaseballSimConfig:
             raise ValueError("starter_outs must be positive when set")
         if not -1.0 < self.hfa < 1.0:
             raise ValueError("hfa must be in (-1, 1)")
+        if any(not 0.0 <= p < 1.0 for p in self.tto_penalty):
+            raise ValueError("tto_penalty entries must be in [0, 1)")
 
 
 @dataclass(frozen=True)
@@ -316,6 +333,24 @@ def _accumulate(
     return pitcher_k
 
 
+def _tier_cum(
+    tiers: Sequence[Sequence[np.ndarray]],
+    pitcher_outs: int,
+    pitcher_bf: int,
+    cap: int | None,
+    lineup_len: int,
+) -> Sequence[np.ndarray]:
+    """Pick the times-through-the-order tier for the pitcher currently on the mound.
+
+    Once the starter passes ``cap`` outs he is 'pulled' and the fresh reliever
+    stand-in uses tier 0 (no penalty). Otherwise the tier is the number of times
+    the starter has been through the order so far (capped at the top tier).
+    """
+    if cap is not None and pitcher_outs >= cap:
+        return tiers[0]
+    return tiers[min(pitcher_bf // lineup_len, len(tiers) - 1)]
+
+
 def simulate_game(
     home: Team,
     away: Team,
@@ -323,6 +358,7 @@ def simulate_game(
     config: BaseballSimConfig | None = None,
     *,
     park_hr_factor: float = 1.0,
+    run_env_tilt: float = 0.0,
 ) -> BaseballSimResult:
     """Simulate ``config.n_sims`` games and return priced distributions + stats.
 
@@ -332,27 +368,36 @@ def simulate_game(
     ninth-and-later home half-innings end on a walk-off; ties go to ghost-runner
     extra innings up to ``config.max_innings``.
 
+    Per-game run environment (both applied to both lineups, since both bat here):
     ``park_hr_factor`` is the home park's multiplicative HR factor (1.0 = neutral),
-    applied to both lineups' home-run rate — a hitter's park (>1) lifts the total,
-    a pitcher's park (<1) suppresses it.
+    and ``run_env_tilt`` is a symmetric reach-base tilt for the non-HR run
+    environment (a park's doubles/BABIP tendency and temperature). On top of these,
+    ``config.hfa`` tilts the home lineup up and the away lineup down, and
+    ``config.tto_penalty`` adds the times-through-the-order tilt to whichever
+    starter is on the mound.
     """
     config = config or BaseballSimConfig()
     n = config.n_sims
 
-    # Park then home-field advantage. The park HR factor scales both lineups (both
-    # bat here); HFA then lifts the home lineup's reach-base outcomes and trims the
-    # away lineup's (the home team bats the bottom half of innings).
+    # Build, per lineup, one cumulative-matchup list per times-through-the-order
+    # tier (0 = first time through, no penalty). Each batter's static base folds in
+    # the park HR factor, the symmetric run-environment tilt, and the home-field
+    # tilt; the tier then adds the starter's TTO penalty on top.
     hfa = config.hfa
-    away_cum = [
-        np.cumsum(_tilt_offense(_scale_hr(matchup_distribution(b, home.pitcher), park_hr_factor),
-                                -hfa))
-        for b in away.lineup
-    ]
-    home_cum = [
-        np.cumsum(_tilt_offense(_scale_hr(matchup_distribution(b, away.pitcher), park_hr_factor),
-                                hfa))
-        for b in home.lineup
-    ]
+    tto_deltas = (0.0, config.tto_penalty[0], config.tto_penalty[1])
+
+    def _base(b: Batter, opp: Pitcher, hfa_sign: float) -> np.ndarray:
+        d = _scale_hr(matchup_distribution(b, opp), park_hr_factor)  # park + weather HR
+        d = _tilt_offense(d, run_env_tilt)  # non-HR run environment (symmetric)
+        return _tilt_offense(d, hfa_sign * hfa)  # home-field advantage
+
+    def _tiers(lineup: Sequence[Batter], opp: Pitcher, hfa_sign: float) -> list[list[np.ndarray]]:
+        bases = [_base(b, opp, hfa_sign) for b in lineup]
+        return [[np.cumsum(_tilt_offense(base, d)) for base in bases] for d in tto_deltas]
+
+    away_tiers = _tiers(away.lineup, home.pitcher, -1.0)
+    home_tiers = _tiers(home.lineup, away.pitcher, 1.0)
+    away_len, home_len = len(away.lineup), len(home.lineup)
 
     home_final = np.zeros(n, dtype=np.int64)
     away_final = np.zeros(n, dtype=np.int64)
@@ -379,35 +424,39 @@ def simulate_game(
         g_k = dict.fromkeys(bat_tb, 0.0)
         g_pit_k = dict.fromkeys(pitchers, 0)
         g_pit_outs = dict.fromkeys(pitchers, 0)
+        g_pit_bf = dict.fromkeys(pitchers, 0)  # batters the starter has faced (TTO)
+        hp, ap = home.pitcher.player_id, away.pitcher.player_id
 
         inning = 1
         while True:
-            # Top half — away bats vs the home pitcher.
+            # Top half — away bats vs the home pitcher (TTO tier by his batters faced).
+            away_cum = _tier_cum(away_tiers, g_pit_outs[hp], g_pit_bf[hp], cap, away_len)
             top = simulate_half_inning(away_cum, away_idx, rng)
             away_idx = top.next_index
             away_runs += top.runs
             if inning <= 5:
                 away_f5_runs += top.runs
-            hp = home.pitcher.player_id
             k_recorded = _accumulate(top.events, away.lineup, g_tb, g_h, g_hr, g_k)
             if cap is None or g_pit_outs[hp] < cap:  # starter still in the game
                 g_pit_k[hp] += k_recorded
                 g_pit_outs[hp] += top.outs
+                g_pit_bf[hp] += len(top.events)
 
             # Bottom half — home bats, unless it is the 9th+ and home already leads.
             home_bats = not (inning >= 9 and home_runs > away_runs)
             if home_bats:
                 runs_to_win = (away_runs - home_runs + 1) if inning >= 9 else None
+                home_cum = _tier_cum(home_tiers, g_pit_outs[ap], g_pit_bf[ap], cap, home_len)
                 bottom = simulate_half_inning(home_cum, home_idx, rng, runs_to_win=runs_to_win)
                 home_idx = bottom.next_index
                 home_runs += bottom.runs
                 if inning <= 5:
                     home_f5_runs += bottom.runs
-                ap = away.pitcher.player_id
                 k_recorded = _accumulate(bottom.events, home.lineup, g_tb, g_h, g_hr, g_k)
                 if cap is None or g_pit_outs[ap] < cap:
                     g_pit_k[ap] += k_recorded
                     g_pit_outs[ap] += bottom.outs
+                    g_pit_bf[ap] += len(bottom.events)
 
             decided = inning >= 9 and away_runs != home_runs
             if decided or inning >= config.max_innings:

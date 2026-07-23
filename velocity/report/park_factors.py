@@ -13,7 +13,10 @@ could, using the ``hr`` column — a separate, deliberate wiring, out of scope h
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+
+from velocity.models.run_environment import game_run_environment
 
 
 @dataclass(frozen=True)
@@ -82,3 +85,26 @@ def park_hr_factors() -> dict[str, float]:
     (110 → 1.10) projects more runs and an Oracle game (90 → 0.90) fewer.
     """
     return {code: pf.hr / 100.0 for code, pf in PARK_FACTORS.items()}
+
+
+def run_environment_maps(
+    weather: Mapping[str, tuple[float | None, bool]] | None = None,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The two model inputs per home team: ``(hr_factor_map, run_env_tilt_map)``.
+
+    Folds the committed park factors together with optional first-pitch weather via
+    :func:`velocity.models.run_environment.game_run_environment` — so the HR map is
+    park × temperature and the tilt map is the non-HR park run environment + a small
+    temperature term. ``weather`` maps a team code to ``(temp_f, indoors)`` for the
+    clubs playing at home today; a code without weather (or ``weather=None``) is
+    park-only. Covers all 30 clubs so any home team resolves.
+    """
+    hr_factors: dict[str, float] = {}
+    tilts: dict[str, float] = {}
+    for code, pf in PARK_FACTORS.items():
+        temp_f, indoors = (weather or {}).get(code, (None, False))
+        env = game_run_environment(
+            park_hr_index=pf.hr, park_runs_index=pf.runs, temp_f=temp_f, indoors=indoors
+        )
+        hr_factors[code], tilts[code] = env.hr_factor, env.tilt
+    return hr_factors, tilts

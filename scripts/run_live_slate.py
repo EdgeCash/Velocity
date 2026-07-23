@@ -35,7 +35,11 @@ from velocity.models.game_mlb import league_average_model
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
-from velocity.models.simulate_baseball import DEFAULT_HFA, BaseballSimConfig
+from velocity.models.simulate_baseball import (
+    DEFAULT_HFA,
+    DEFAULT_TTO_PENALTY,
+    BaseballSimConfig,
+)
 from velocity.report.slate_xlsx import (
     export_slate_workbook,
     plays_display,
@@ -78,12 +82,16 @@ def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     runs.
     """
     codes = sorted(set(MLB_TEAM_ALIASES.values()))
-    config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
+    config = BaseballSimConfig(
+        n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA, tto_penalty=DEFAULT_TTO_PENALTY
+    )
     if args.snapshot_file:
-        from velocity.report.park_factors import park_hr_factors
+        from velocity.report.park_factors import run_environment_maps
 
+        hr_factors, run_env_tilts = run_environment_maps()  # park-static (offline: no weather)
         return league_average_model(
-            codes, n_sims=args.n_sims, park_hr_factors=park_hr_factors()
+            codes, n_sims=args.n_sims,
+            park_hr_factors=hr_factors, run_env_tilts=run_env_tilts,
         )
     try:
         from velocity.models.mlb_build import build_live_mlb_model
@@ -99,16 +107,16 @@ def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
 
 def _build_projection(
     args: argparse.Namespace,
-) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None]:
-    """Return ``(project, known_teams, aliases)`` for the requested league.
+) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None, object | None]:
+    """Return ``(project, known_teams, aliases, mlb_model)`` for the requested league.
 
     Football fits the scores ratings from a committed games file; MLB simulates
-    from lineups, so it needs no ``--data`` — it uses the league-average baseline
-    until real per-team lineups/rates are wired in.
+    from lineups. The MLB model is returned so the runner can fold today's weather
+    into its per-home run environment before pricing; football returns ``None``.
     """
     if args.league == "mlb":
         model = _mlb_model(args)
-        return model.project_full, model.known_teams, MLB_TEAM_ALIASES
+        return model.project_full, model.known_teams, MLB_TEAM_ALIASES, model
 
     if not args.data:
         raise SystemExit(f"--data is required for {args.league} (a folder with a games file)")
@@ -123,7 +131,7 @@ def _build_projection(
     def project(home: str, away: str) -> GameProjection:
         return model.project(home, away, rng=make_rng())
 
-    return project, list(model.ratings.teams), None
+    return project, list(model.ratings.teams), None, None
 
 
 def main() -> None:
@@ -140,12 +148,19 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
-    project, known_teams, aliases = _build_projection(args)
+    project, known_teams, aliases, mlb_model = _build_projection(args)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
     print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
+
+    # Fold today's first-pitch weather into the MLB model's run environment (temp →
+    # HR, roof gate), so projections — not just the cards — are weather-aware. Live
+    # only; the offline snapshot keeps the park-static environment.
+    weather_by_game: dict[str, object] = {}
+    if mlb_model is not None and not args.snapshot_file and not events.empty:
+        weather_by_game = _apply_weather_run_env(mlb_model, events)
 
     frame = pd.DataFrame()
     projections: dict = {}
@@ -195,7 +210,8 @@ def main() -> None:
         print(f"\nwrote {len(persisted)} slate rows to {parquet}")
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
         if args.league == "mlb" and not events.empty:
-            _write_cards(out_dir, stamp, args, events, projections, canonical, now, generated_at)
+            _write_cards(out_dir, stamp, args, events, projections, canonical, now,
+                         generated_at, weather_by_game)
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
@@ -236,6 +252,7 @@ def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
     canonical: pd.DataFrame,
     now: datetime,
     generated_at: pd.Timestamp,
+    weather_by_game: dict | None = None,
 ) -> None:
     """Render the per-game matchup cards to an HTML page (best-effort, MLB only).
 
@@ -256,7 +273,7 @@ def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
                 contexts = load_context(now.strftime("%Y-%m-%d"))
             except Exception as exc:  # noqa: BLE001 - context is header decoration
                 print(f"card context fetch skipped: {exc}")
-            grid = _mlb_grid_sources(events, contexts, now)
+            grid = _mlb_grid_sources(events, contexts, now, weather_by_game or {})
         cards = build_cards(
             events, projections, canonical, contexts,
             aliases=MLB_TEAM_ALIASES, grid=grid,
@@ -269,16 +286,17 @@ def _write_cards(  # noqa: PLR0913 - a report writer with several inputs
 
 
 def _mlb_grid_sources(  # pragma: no cover - network
-    events: pd.DataFrame, contexts: list, now: datetime
+    events: pd.DataFrame, contexts: list, now: datetime, weather: dict
 ):  # type: ignore[no-untyped-def]
     """Fetch the descriptive-grid data tiers, each independent and best-effort.
 
-    A failure in any one feed (StatsAPI stats, FanGraphs/Statcast, Open-Meteo)
-    contributes nothing for that tier — the card omits those rows rather than break.
+    A failure in any one feed (StatsAPI stats, FanGraphs/Statcast) contributes
+    nothing for that tier — the card omits those rows rather than break. ``weather``
+    (keyed by game_id) is fetched once by the caller and reused here, so the cards
+    and the projections share one Open-Meteo pull.
     """
     from velocity.ingest.mlb_advanced import load_advanced
     from velocity.ingest.mlb_stats import load_team_hitting, load_team_pitching, load_team_splits
-    from velocity.ingest.mlb_weather import load_weather
     from velocity.report.cards import GridSources
     from velocity.wagering.live import resolve_team
 
@@ -306,23 +324,48 @@ def _mlb_grid_sources(  # pragma: no cover - network
                 if got is not None:
                     splits[code] = got
 
-    # First-pitch weather per game, keyed by game_id (home park + kickoff).
-    weather: dict[str, object] = {}
-    for event in events.to_dict("records"):
-        home_code = resolve_team(str(event["home_team"]), codes, MLB_TEAM_ALIASES)
-        first_pitch = pd.Timestamp(event["kickoff"]).to_pydatetime()
-        if home_code:
-            got = _try(
-                f"{home_code} weather",
-                lambda hc=home_code, fp=first_pitch: load_weather(hc, fp),
-            )
-            if got is not None:
-                weather[str(event["game_id"])] = got
-
     return GridSources(
         hitting=hitting, pitching=pitching,
         splits=splits, advanced=advanced, weather=weather,  # type: ignore[arg-type]
     )
+
+
+def _apply_weather_run_env(model, events: pd.DataFrame) -> dict:  # pragma: no cover - network
+    # type: ignore[no-untyped-def]
+    """Fetch first-pitch weather per game, fold it into the model's run environment.
+
+    Returns ``{game_id: Weather}`` so the cards reuse the same pull. Temperature
+    lifts/suppresses HR and a closed roof neutralizes it; the model's per-home HR
+    factor and run-env tilt are rebuilt from park × weather before pricing.
+    """
+    from velocity.ingest.mlb_weather import load_weather
+    from velocity.report.park_factors import run_environment_maps
+    from velocity.wagering.live import resolve_team
+
+    codes = sorted(set(MLB_TEAM_ALIASES.values()))
+    weather_by_game: dict[str, object] = {}
+    weather_by_home: dict[str, tuple[float | None, bool]] = {}
+    for event in events.to_dict("records"):
+        home_code = resolve_team(str(event["home_team"]), codes, MLB_TEAM_ALIASES)
+        if not home_code:
+            continue
+        try:
+            first_pitch = pd.Timestamp(event["kickoff"]).to_pydatetime()
+            w = load_weather(home_code, first_pitch)
+        except Exception as exc:  # noqa: BLE001 - weather is best-effort; park-static stands in
+            print(f"projection weather skipped for {home_code}: {exc}")
+            continue
+        if w is None:
+            continue
+        weather_by_game[str(event["game_id"])] = w
+        weather_by_home[home_code] = (w.temp_f, w.indoors)
+
+    if weather_by_home:
+        hr_factors, run_env_tilts = run_environment_maps(weather_by_home)
+        model.park_hr_factors = hr_factors
+        model.run_env_tilts = run_env_tilts
+        print(f"folded weather into the run environment for {len(weather_by_home)} park(s)")
+    return weather_by_game
 
 
 def _mlb_prop_slate(  # pragma: no cover - network
