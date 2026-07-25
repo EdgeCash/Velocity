@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from velocity.ingest.mlb import normalize_player_stats, normalize_schedule
+from velocity.ingest.mlb import (
+    normalize_boxscore,
+    normalize_player_stats,
+    normalize_schedule,
+)
 from velocity.store.schema import BaseballStats, Games
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -139,3 +143,27 @@ def test_empty_stats_yield_empty_valid_frame() -> None:
     bat = normalize_player_stats({}, "bat")
     BaseballStats.validate(bat)
     assert bat.empty
+
+
+# --- boxscore → per-player actual prop stats --------------------------------
+
+
+def test_boxscore_flattens_actual_prop_stats() -> None:
+    box = normalize_boxscore(_load("mlb_boxscore.json"), game_id="g1").set_index("player_id")
+    # Did-Not-Play (empty stats) is dropped; three players with stat lines remain.
+    assert set(box.index) == {"660271", "477132", "592885"}
+    assert (box["game_id"] == "g1").all()
+
+    ohtani = box.loc["660271"]  # two-way: both batting and pitching lines
+    assert (ohtani["total_bases"], ohtani["home_runs"], ohtani["strikeouts"]) == (7.0, 1.0, 1.0)
+    assert (ohtani["pitcher_strikeouts"], ohtani["pitcher_outs"]) == (9.0, 18.0)
+
+    kershaw = box.loc["477132"]  # pitching only → batting stats null
+    assert kershaw["pitcher_strikeouts"] == 7.0
+    assert pd.isna(kershaw["total_bases"])
+
+
+def test_boxscore_empty_payload_is_empty_valid() -> None:
+    box = normalize_boxscore({})
+    assert box.empty
+    assert "pitcher_strikeouts" in box.columns
