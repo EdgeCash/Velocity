@@ -11,11 +11,14 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from velocity.backtest.props_mlb import (
     PropBacktestReport,
+    grade_prop_ledger,
     prop_clv_ledger,
     run_prop_archive_backtest,
 )
+from velocity.ingest.mlb import normalize_boxscore
 from velocity.ingest.theoddsapi import normalize_player_props
 from velocity.models.game_mlb import MLBGameModel
 from velocity.models.simulate_baseball import (
@@ -119,6 +122,46 @@ def test_prop_archive_backtest_prices_and_scores_clv() -> None:
     assert {"price_clv", "line_clv"}.issubset(led.columns)
     assert report.summary["n_bets"] == len(led)
     assert not report.clv_by_market.empty
+
+
+def _boxscores() -> pd.DataFrame:
+    box = json.loads((FIXTURES / "mlb_boxscore.json").read_text())
+    return normalize_boxscore(box, game_id="evt-mlb-001")
+
+
+def test_grade_prop_ledger_scores_over_under_and_pending() -> None:
+    # Box score: Kershaw 7 K (pitching), Ohtani 7 total bases.
+    box = _boxscores()
+    _, name_to_id = _model_and_names()  # "Clayton Kershaw"→477132, "Shohei Ohtani"→660271
+    ledger = pd.DataFrame([
+        {"game_id": "evt-mlb-001", "market": "pitcher_strikeouts", "player": "Clayton Kershaw",
+         "side": "over", "point": 6.5, "price": -110, "stake": 2.0, "p_model": 0.6,
+         "price_clv": 0.05, "line_clv": 1.0},
+        {"game_id": "evt-mlb-001", "market": "total_bases", "player": "Shohei Ohtani",
+         "side": "under", "point": 1.5, "price": 100, "stake": 1.0, "p_model": 0.55,
+         "price_clv": -0.02, "line_clv": -0.5},
+        {"game_id": "evt-mlb-001", "market": "hits", "player": "Ghost Runner",
+         "side": "over", "point": 0.5, "price": -120, "stake": 1.0, "p_model": 0.7,
+         "price_clv": 0.0, "line_clv": 0.0},
+    ])
+    graded = grade_prop_ledger(ledger, box, name_to_id)
+
+    assert graded["result"].tolist() == ["win", "loss", "pending"]
+    assert graded.loc[0, "profit"] == pytest.approx(2.0 * (100 / 110))  # win at -110
+    assert graded.loc[1, "profit"] == -1.0  # under 1.5 vs 7 total bases → loss
+    assert pd.isna(graded.loc[2, "profit"])  # unresolved player → pending
+
+
+def test_prop_archive_backtest_graded_gives_full_scorecard() -> None:
+    report = run_prop_archive_backtest(
+        _archive(), EVENTS, lambda d: _model_and_names(),
+        boxscores=_boxscores(), config=SlateConfig(exclude_closing=False, min_edge=0.0),
+    )
+    assert "result" in report.ledger.columns
+    assert (report.ledger["result"] != "pending").any()  # box scores actually graded bets
+    # graded → the scorecard summary (record + ROI + ECE), not just CLV
+    assert {"wins", "losses", "roi", "ece"} <= set(report.summary)
+    assert not report.calibration.empty
 
 
 def test_empty_prop_archive_yields_empty_report() -> None:
