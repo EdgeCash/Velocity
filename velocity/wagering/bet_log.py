@@ -175,13 +175,15 @@ class BetLog:
         rows: list[dict[str, object]] = []
         bankroll = starting_bankroll
         for bet in self._bets:
-            home_raw, away_raw = scores[bet.game_id]
-            home = float(home_raw)
-            away = float(away_raw)
-            if math.isnan(home) or math.isnan(away):
+            final = scores.get(bet.game_id)
+            if final is None:
+                # No final for this game (unplayed, postponed, or unmatched to the
+                # results feed). Ungraded → pending, but CLV below still counts.
+                result, profit = "pending", float("nan")
+            elif math.isnan(float(final[0])) or math.isnan(float(final[1])):
                 result, profit = "pending", float("nan")
             else:
-                result, profit = bet.grade(home, away)
+                result, profit = bet.grade(float(final[0]), float(final[1]))
                 bankroll += profit
             rows.append(
                 {
