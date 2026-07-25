@@ -259,6 +259,41 @@ def load_player_stats(season: int, role: str) -> pd.DataFrame:  # pragma: no cov
     return normalize_player_stats(_get_json(url), role)
 
 
+def asof_daterange(season: int, date: str) -> tuple[str, str]:
+    """Season-to-date window ending the day *before* ``date`` — the anti-leakage span.
+
+    A walk-forward projection for a game on ``date`` may only see stats accrued
+    strictly before it, so the range runs from opening day (``{season}-03-01``, a
+    safe pre-season floor) through ``date − 1 day``. Both ends are ISO
+    ``YYYY-MM-DD``; pass them straight to :func:`load_player_stats_asof`.
+    """
+    end = (pd.Timestamp(date) - pd.Timedelta(days=1)).date().isoformat()
+    return f"{season}-03-01", end
+
+
+def load_player_stats_asof(
+    season: int, role: str, end_date: str, start_date: str | None = None
+) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch season-to-date player stats for ``role`` over a ``byDateRange`` window.
+
+    Point-in-time counterpart to :func:`load_player_stats`: the StatsAPI
+    ``byDateRange`` split has the same shape as the season split, so the pure
+    :func:`normalize_player_stats` flattens it unchanged. ``start_date`` defaults to
+    the season floor from :func:`asof_daterange`; ``end_date`` is the last day
+    included (inclusive).
+    """
+    if role not in BASEBALL_ROLES:
+        raise ValueError(f"role must be one of {BASEBALL_ROLES}, got {role!r}")
+    group = "pitching" if role == "pit" else "hitting"
+    start = start_date or f"{season}-03-01"
+    url = (
+        f"{_STATSAPI}/stats?stats=byDateRange&group={group}"
+        f"&startDate={start}&endDate={end_date}"
+        f"&season={season}&sportId=1&playerPool=all&limit=2000"
+    )
+    return normalize_player_stats(_get_json(url), role)
+
+
 @dataclass(frozen=True)
 class GameLineups:
     """One game's probable starters and batting orders (player ids), by side.
