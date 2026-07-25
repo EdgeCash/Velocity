@@ -28,6 +28,7 @@ import json
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -276,8 +277,13 @@ def asof_daterange(season: int, date: str) -> tuple[str, str]:
 
 
 def load_player_stats_asof(
-    season: int, role: str, end_date: str, start_date: str | None = None
-) -> pd.DataFrame:  # pragma: no cover - network
+    season: int,
+    role: str,
+    end_date: str,
+    start_date: str | None = None,
+    *,
+    cache_dir: str | None = None,
+) -> pd.DataFrame:
     """Fetch season-to-date player stats for ``role`` over a ``byDateRange`` window.
 
     Point-in-time counterpart to :func:`load_player_stats`: the StatsAPI
@@ -285,9 +291,29 @@ def load_player_stats_asof(
     :func:`normalize_player_stats` flattens it unchanged. ``start_date`` defaults to
     the season floor from :func:`asof_daterange`; ``end_date`` is the last day
     included (inclusive).
+
+    A walk-forward backtest re-fetches the same ``(role, end_date)`` windows every
+    time it is re-run; ``cache_dir`` memoizes each window to a parquet so only the
+    first run pays the network. The window is keyed by role + end date (the start is
+    the fixed season floor), so a cache hit is exact.
     """
     if role not in BASEBALL_ROLES:
         raise ValueError(f"role must be one of {BASEBALL_ROLES}, got {role!r}")
+    cache_path = None
+    if cache_dir is not None:
+        cache_path = Path(cache_dir) / f"asof_{role}_{end_date}.parquet"
+        if cache_path.exists():
+            return pd.read_parquet(cache_path)
+    df = _fetch_player_stats_asof(season, role, end_date, start_date)
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache_path, index=False)
+    return df
+
+
+def _fetch_player_stats_asof(
+    season: int, role: str, end_date: str, start_date: str | None
+) -> pd.DataFrame:  # pragma: no cover - network
     group = "pitching" if role == "pit" else "hitting"
     start = start_date or f"{season}-03-01"
     url = (

@@ -249,6 +249,8 @@ def build_mlb_asof(
     *,
     config: BaseballSimConfig | None = None,
     seed: int = 0,
+    n_sims: int = 10_000,
+    cache_dir: str | None = None,
 ) -> tuple[MLBGameModel, dict[str, str]]:  # pragma: no cover - network
     """Assemble a point-in-time model for ``date`` — the walk-forward, no-leakage build.
 
@@ -282,8 +284,8 @@ def build_mlb_asof(
     from velocity.wagering.props_slate import build_name_index
 
     start, end = asof_daterange(season, date)
-    batting = load_player_stats_asof(season, "bat", end, start)
-    pitching = load_player_stats_asof(season, "pit", end, start)
+    batting = load_player_stats_asof(season, "bat", end, start, cache_dir=cache_dir)
+    pitching = load_player_stats_asof(season, "pit", end, start, cache_dir=cache_dir)
     lineups = list(load_lineups(date))
     ids: set[str] = set()
     for g in lineups:
@@ -298,7 +300,7 @@ def build_mlb_asof(
     batters, pitchers = build_player_pools(batting, pitching, hands=hands)
     names = build_name_index(batting, pitching)
     config = config or BaseballSimConfig(
-        n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA,
+        n_sims=n_sims, starter_outs=18, hfa=DEFAULT_HFA,
         tto_penalty=DEFAULT_TTO_PENALTY, platoon_gap=DEFAULT_PLATOON_GAP,
     )
     # Park-static; no historical weather archive and no as-of bullpen (would leak).
