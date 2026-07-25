@@ -22,6 +22,10 @@ on:
         description: "Season year for the point-in-time (as-of) stats"
         required: false
         default: "2026"
+      n_sims:
+        description: "Monte Carlo draws per game (lower = faster; 2000 is plenty for CLV)"
+        required: false
+        default: "2000"
 
 permissions:
   contents: read
@@ -67,6 +71,7 @@ jobs:
           python scripts/backtest_mlb.py \
             --archive artifacts/hist \
             --season "${{ github.event.inputs.season || '2026' }}" \
+            --n-sims "${{ github.event.inputs.n_sims || '2000' }}" \
             --out artifacts/backtest/ledger.parquet \
             | tee artifacts/backtest/scorecard.txt
 

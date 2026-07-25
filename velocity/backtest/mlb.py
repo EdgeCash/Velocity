@@ -176,12 +176,19 @@ def walk_forward_mlb(
     *,
     config: SlateConfig | None = None,
     seed: int = 0,
+    n_sims: int = 2_000,
+    cache_dir: str | None = None,
 ) -> BacktestReport:  # pragma: no cover - network
     """Network entry point: build each day's as-of model + finals, then backtest.
 
     Resolves finals once from the StatsAPI schedule spanning the archive, and wires
     :func:`build_mlb_asof` as the per-date ``model_factory``. Offline logic lives in
     :func:`run_archive_backtest`; this only supplies the two networked inputs.
+
+    ``n_sims`` defaults to 2,000 (not the live model's 10,000): the sim is a Python
+    loop over draws, so cost is linear in it, and CLV/calibration over thousands of
+    graded bets are stable well below 10k. ``cache_dir`` memoizes the per-day as-of
+    stat fetches so a re-run (e.g. the calibration sweep) skips the network.
     """
     from velocity.ingest.mlb import load_schedule
     from velocity.models.mlb_build import build_mlb_asof
@@ -194,7 +201,7 @@ def walk_forward_mlb(
 
     def factory(date: str) -> tuple[Callable[[str, str], GameProjection], Iterable[str]]:
         try:
-            model, _ = build_mlb_asof(date, season, seed=seed)
+            model, _ = build_mlb_asof(date, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir)
         except Exception as exc:  # noqa: BLE001 - one flaky StatsAPI day shouldn't kill the run
             print(f"as-of model for {date} skipped ({exc}); that day is unpriced")
             # Empty team universe → every event that day resolves to nothing and is

@@ -40,6 +40,10 @@ def main() -> None:
     parser.add_argument("--archive", required=True, help="dir of banked lines_/events_ parquet")
     parser.add_argument("--season", type=int, required=True, help="season year for as-of stats")
     parser.add_argument("--out", help="optional parquet to persist the graded ledger")
+    parser.add_argument("--n-sims", type=int, default=2000,
+                        help="Monte Carlo draws per game (default 2000; lower = faster)")
+    parser.add_argument("--cache-dir",
+                        help="dir to memoize per-day as-of stat fetches (skips network on re-runs)")
     args = parser.parse_args()
 
     from velocity.backtest.mlb import walk_forward_mlb
@@ -49,7 +53,9 @@ def main() -> None:
     events = _load_concat(archive, "events").drop_duplicates("game_id")
     print(f"loaded {len(lines)} line rows across {events['game_id'].nunique()} games")
 
-    report = walk_forward_mlb(lines, events, args.season)
+    report = walk_forward_mlb(
+        lines, events, args.season, n_sims=args.n_sims, cache_dir=args.cache_dir
+    )
 
     print(f"\n=== Season scorecard — {len(report.ledger)} bets ===")
     for key, value in report.summary.items():
