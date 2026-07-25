@@ -193,7 +193,13 @@ def walk_forward_mlb(
     finals = finals_for_slate(games_map, schedule)
 
     def factory(date: str) -> tuple[Callable[[str, str], GameProjection], Iterable[str]]:
-        model, _ = build_mlb_asof(date, season, seed=seed)
+        try:
+            model, _ = build_mlb_asof(date, season, seed=seed)
+        except Exception as exc:  # noqa: BLE001 - one flaky StatsAPI day shouldn't kill the run
+            print(f"as-of model for {date} skipped ({exc}); that day is unpriced")
+            # Empty team universe → every event that day resolves to nothing and is
+            # skipped, so the season run continues instead of aborting.
+            return (lambda home, away: None), []  # type: ignore[return-value]
         return model.project_full, model.known_teams
 
     return run_archive_backtest(lines, events, finals, factory, config=config)
