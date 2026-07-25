@@ -89,6 +89,21 @@ def test_settle_rolls_bankroll_and_handles_pending() -> None:
     assert out.loc[1, "bankroll"] == pytest.approx(110.0)  # unchanged by pending
 
 
+def test_settle_marks_unmatched_game_pending_but_keeps_clv() -> None:
+    # A bet on a game absent from the finals frame (postponed, or unmatched to the
+    # results feed) must not crash settle — it's pending, bankroll unchanged, and
+    # its CLV (which needs no final) still counts.
+    games = pd.DataFrame({"game_id": ["G1"], "home_score": [21.0], "away_score": [20.0]})
+    log = BetLog()
+    log.add(_bet(game_id="ABSENT", market="moneyline", side="home",
+                 price=-110, closing_price=-120, stake=10.0))
+    out = log.settle(games, starting_bankroll=100.0)
+    assert out.loc[0, "result"] == "pending"
+    assert math.isnan(out.loc[0, "profit"])
+    assert out.loc[0, "bankroll"] == pytest.approx(100.0)  # untouched by an ungraded bet
+    assert out.loc[0, "price_clv"] > 0  # CLV needs only the prices, not the final
+
+
 def test_settle_is_reproducible() -> None:
     games = pd.DataFrame(
         {"game_id": ["G1"], "home_score": [21.0], "away_score": [20.0]}
