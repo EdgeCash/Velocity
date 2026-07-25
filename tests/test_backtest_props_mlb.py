@@ -1,0 +1,130 @@
+"""Prop CLV backtest (velocity.backtest.props_mlb) — pure, offline.
+
+Two levels: the closing-attach + CLV math on a hand-built prop BetLog, and the
+day-walk driver end to end on a two-snapshot prop archive with a real (tiny) model.
+No network, no box scores — this is the grade-free CLV read.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+from velocity.backtest.props_mlb import (
+    PropBacktestReport,
+    prop_clv_ledger,
+    run_prop_archive_backtest,
+)
+from velocity.ingest.theoddsapi import normalize_player_props
+from velocity.models.game_mlb import MLBGameModel
+from velocity.models.simulate_baseball import (
+    BaseballSimConfig,
+    Team,
+    batter_from_rates,
+    pitcher_from_rates,
+)
+from velocity.wagering.bet_log import Bet, BetLog
+from velocity.wagering.props_slate import build_name_index
+from velocity.wagering.slate import SlateConfig
+
+FIXTURES = Path(__file__).parent / "fixtures"
+AVG_BAT = {"k": 0.225, "bb": 0.085, "hbp": 0.011, "hr": 0.035, "in_play": 0.644}
+AVG_BIP = {"single": 0.222, "double": 0.068, "triple": 0.008, "out_bip": 0.702}
+AVG_PIT = {"k": 0.225, "bb": 0.080, "hbp": 0.011, "hr": 0.035, "in_play": 0.649}
+HIGH_K_PIT = {"k": 0.32, "bb": 0.06, "hbp": 0.01, "hr": 0.03, "in_play": 0.58}
+
+
+def _props_json() -> list[dict]:
+    return json.loads((FIXTURES / "theoddsapi_mlb_props.json").read_text())
+
+
+# --- the CLV math (pure) ----------------------------------------------------
+
+
+def test_prop_clv_ledger_attaches_close_and_scores() -> None:
+    log = BetLog()
+    log.add(Bet(game_id="g1", market="pitcher_strikeouts", side="over", book="dk",
+                price=-110, stake=2.0, p_model=0.6, point=6.5, player="Kershaw"))
+    log.add(Bet(game_id="g1", market="total_bases", side="under", book="dk",
+                price=100, stake=1.0, p_model=0.55, point=1.5, player="Ohtani"))
+    # Kershaw's over closed at a higher number and a worse price → we beat both;
+    # Ohtani has no closing row → CLV is undefined, not zero.
+    closing = pd.DataFrame([{
+        "game_id": "g1", "market": "pitcher_strikeouts", "player": "Kershaw",
+        "side": "over", "price": -130, "point": 8.5,
+    }])
+    led = prop_clv_ledger(log, closing)
+
+    k = led[led["player"] == "Kershaw"].iloc[0]
+    assert k["line_clv"] == 2.0          # over 6.5 vs close 8.5 → +2 points in our favor
+    assert k["price_clv"] > 0            # -110 beats a -130 close
+    o = led[led["player"] == "Ohtani"].iloc[0]
+    assert pd.isna(o["price_clv"]) and pd.isna(o["line_clv"])  # unmatched → undefined
+
+
+# --- the day-walk driver (real tiny model, two-snapshot archive) ------------
+
+
+def _model_and_names() -> tuple[MLBGameModel, dict[str, str]]:
+    lad_lineup = [batter_from_rates("660271", AVG_BAT, AVG_BIP)]
+    lad_lineup += [batter_from_rates(f"lad{i}", AVG_BAT, AVG_BIP) for i in range(8)]
+    lad = Team(lineup=lad_lineup, pitcher=pitcher_from_rates("477132", HIGH_K_PIT))
+    sf = Team(
+        lineup=[batter_from_rates(f"sf{i}", AVG_BAT, AVG_BIP) for i in range(9)],
+        pitcher=pitcher_from_rates("sf_p", AVG_PIT),
+    )
+    model = MLBGameModel(
+        teams={"LAD": lad, "SF": sf},
+        config=BaseballSimConfig(n_sims=1500, starter_outs=18),
+        seed=3,
+    )
+    stats = pd.DataFrame(
+        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
+    )
+    return model, build_name_index(stats)
+
+
+EVENTS = pd.DataFrame({
+    "game_id": ["evt-mlb-001"],  # the id the prop fixture carries
+    "home_team": ["Los Angeles Dodgers"],
+    "away_team": ["San Francisco Giants"],
+    "kickoff": pd.to_datetime(["2026-07-24T23:10:00"]),
+})
+
+
+def _archive() -> pd.DataFrame:
+    base = normalize_player_props(_props_json())
+    entry = base.assign(snapshot="2026-07-24T18:00:00Z")          # >3h pre → entry
+    close = base.assign(snapshot="2026-07-24T22:00:00Z", price=base["price"] - 12)  # near-close
+    return pd.concat([entry, close], ignore_index=True)
+
+
+def test_prop_archive_backtest_prices_and_scores_clv() -> None:
+    seen: list[str] = []
+
+    def factory(date: str):
+        seen.append(date)
+        return _model_and_names()
+
+    report = run_prop_archive_backtest(
+        _archive(), EVENTS, factory, config=SlateConfig(exclude_closing=False, min_edge=0.0)
+    )
+
+    assert isinstance(report, PropBacktestReport)
+    assert seen == ["2026-07-24"]  # one point-in-time model on the game's ET date
+    led = report.ledger
+    assert not led.empty  # beatable prop lines cleared the 0% edge
+    assert set(led["market"]).issubset({"pitcher_strikeouts", "total_bases", "hits"})
+    assert {"price_clv", "line_clv"}.issubset(led.columns)
+    assert report.summary["n_bets"] == len(led)
+    assert not report.clv_by_market.empty
+
+
+def test_empty_prop_archive_yields_empty_report() -> None:
+    report = run_prop_archive_backtest(
+        _archive().iloc[:0], EVENTS.iloc[:0], lambda d: _model_and_names()
+    )
+    assert report.ledger.empty
+    assert report.summary["n_bets"] == 0
+    assert report.clv_by_market.empty
