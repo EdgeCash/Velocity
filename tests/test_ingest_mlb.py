@@ -64,6 +64,34 @@ def test_empty_schedule_yields_empty_valid_games() -> None:
     assert games.empty
 
 
+def test_suspended_game_listed_twice_is_deduped_to_the_final() -> None:
+    """A resumed game shares its gamePk across two dates — keep the final listing.
+
+    StatsAPI lists a suspended game on both its original and resumption date under
+    the same ``gamePk``. Over a wide range that would break ``Games``' unique
+    game_id rule; normalize keeps the last (resumption) row, which carries the final
+    score.
+    """
+    def _team(name: str, s: int | None) -> dict:
+        return {"team": {"name": name}, **({"score": s} if s is not None else {})}
+
+    def _game(score: int | None) -> dict:
+        return {
+            "gamePk": 800001, "season": 2026, "gameType": "R", "gameDate": "2026-05-01T18:00:00Z",
+            "teams": {"home": _team("Chicago Cubs", score), "away": _team("Miami Marlins", score)},
+        }
+
+    payload = {"dates": [
+        {"games": [_game(None)]},   # suspended — no final yet
+        {"games": [_game(4)]},      # resumed the next day — carries the final
+    ]}
+    games = normalize_schedule(payload)
+    Games.validate(games)
+    assert list(games["game_id"]) == ["800001"]  # one row, not two
+    row = games.set_index("game_id").loc["800001"]
+    assert (row["home_score"], row["away_score"]) == (4.0, 4.0)  # the resumption final
+
+
 # --- season splits → BaseballStats ------------------------------------------
 
 
