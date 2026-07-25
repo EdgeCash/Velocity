@@ -1,0 +1,77 @@
+name: Bank historical odds (CLV archive)
+
+# One-shot, manually triggered backfill of the CLV archive. The Odds API
+# historical endpoint costs more credits than live, so this exists to spend a
+# stash of expiring credits deliberately: it pulls past snapshots for a date
+# range at a few times per day and banks them (raw JSON + normalized parquet)
+# into a PRIVATE Actions artifact. Nothing is committed — the repo is public and
+# paid odds must not land in it.
+#
+# Later, grade_archive joins these closing lines to StatsAPI finals for CLV — no
+# further credits needed. Pull a few times/day so every game has a snapshot near
+# its first pitch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      league:
+        description: "League to backfill"
+        required: false
+        default: "mlb"
+      start:
+        description: "Range start YYYY-MM-DD (UTC)"
+        required: true
+      end:
+        description: "Range end YYYY-MM-DD (UTC, inclusive)"
+        required: true
+      times:
+        description: "UTC snapshot times per day (comma HH:MM)"
+        required: false
+        default: "18:00,21:00,23:30"
+
+concurrency:
+  group: collect-historical-odds
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: bank historical snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Bank historical odds
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          python scripts/collect_historical_odds.py \
+            --league "${{ github.event.inputs.league || 'mlb' }}" \
+            --start "${{ github.event.inputs.start }}" \
+            --end "${{ github.event.inputs.end }}" \
+            --times "${{ github.event.inputs.times || '18:00,21:00,23:30' }}" \
+            --out artifacts/hist
+
+      - name: Upload CLV archive (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hist-odds-${{ github.run_id }}
+          path: |
+            artifacts/hist/*.parquet
+            artifacts/hist/raw/*.json
+          if-no-files-found: warn
+          retention-days: 90
