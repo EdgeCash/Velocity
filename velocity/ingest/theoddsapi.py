@@ -73,6 +73,19 @@ PROP_MARKET_BY_KEY = {
 }
 DEFAULT_PROP_MARKETS = ",".join(PROP_MARKET_BY_KEY)
 
+# Derivative market keys (team totals + first-5-innings). Like props, these are
+# "additional markets" served only from the per-event ``/events/{id}/odds`` endpoint
+# — not the bulk ``/odds`` feed — so they ride along on the same per-event call. No
+# canonical normalizer yet (see the props/derivatives backtest issue); the collector
+# banks the raw per-event payloads so this history accrues now and normalizes later.
+DERIVATIVE_MARKET_KEYS = (
+    "team_totals",
+    "h2h_1st_5_innings",
+    "spreads_1st_5_innings",
+    "totals_1st_5_innings",
+)
+DEFAULT_DERIVATIVE_MARKETS = ",".join(DERIVATIVE_MARKET_KEYS)
+
 _PROP_SIDES = {"over": "over", "under": "under"}
 
 _LINES_COLUMNS = [
@@ -304,6 +317,22 @@ def unwrap(payload: Any) -> list[dict]:
     return list(payload or [])
 
 
+def events_of(payload: Any) -> list[dict]:
+    """Event objects from any odds payload shape — including a lone per-event object.
+
+    Superset of :func:`unwrap`: the bulk ``/odds`` endpoint returns an array and the
+    historical endpoints wrap it as ``{"data": […]}`` (both handled by ``unwrap``),
+    but the per-event ``/events/{id}/odds`` endpoint returns a **single event
+    object** — which ``unwrap`` would read as empty (no ``data`` key). This flattens
+    all three, so per-event props/derivatives normalize correctly.
+    """
+    if isinstance(payload, Mapping):
+        if "data" in payload:
+            return events_of(payload["data"])
+        return [dict(payload)]  # a single per-event object
+    return list(payload or [])
+
+
 @dataclass
 class TheOddsAPIClient:
     """Network client for The Odds API. Build with :meth:`from_env`.
@@ -403,17 +432,19 @@ class TheOddsAPIClient:
         data, _ = self._get(f"sports/{self.sport_key(league)}/events")
         return [str(e["id"]) for e in (data or []) if e.get("id") is not None]
 
-    def player_props(  # pragma: no cover - network
-        self, league: str, markets: str = DEFAULT_PROP_MARKETS
-    ) -> pd.DataFrame:
-        """Live player props for ``league`` → a canonical ``PropLines`` frame.
+    def event_odds_payloads(  # pragma: no cover - network
+        self, league: str, markets: str
+    ) -> list[tuple[str, Any]]:
+        """Raw per-event ``/events/{id}/odds`` payloads for every current event.
 
-        Props are a per-event endpoint, so this pulls the event list and then each
-        event's prop board, concatenating them. Empty (no props posted) is a valid
-        snapshot, not an error.
+        One call per event (the only way The Odds API serves props + the additional
+        markets — team totals, first-5-innings). Returns ``(event_id, raw payload)``
+        pairs so a collector can bank them verbatim; nothing the credits bought is
+        lost, even for markets without a normalizer yet. ``markets`` may combine prop
+        and derivative keys in a single credit-efficient call.
         """
         sport = self.sport_key(league)
-        frames: list[pd.DataFrame] = []
+        out: list[tuple[str, Any]] = []
         for event_id in self.event_ids(league):
             data, meta = self._get(
                 f"sports/{sport}/events/{event_id}/odds",
@@ -422,7 +453,22 @@ class TheOddsAPIClient:
                 oddsFormat=self.odds_format,
             )
             self.remaining = meta.get("remaining")
-            frames.append(normalize_player_props(unwrap(data), is_closing=False))
+            out.append((event_id, data))
+        return out
+
+    def player_props(  # pragma: no cover - network
+        self, league: str, markets: str = DEFAULT_PROP_MARKETS
+    ) -> pd.DataFrame:
+        """Live player props for ``league`` → a canonical ``PropLines`` frame.
+
+        Props are a per-event endpoint, so this pulls each event's board (via
+        :meth:`event_odds_payloads`) and concatenates. Empty (no props posted) is a
+        valid snapshot, not an error.
+        """
+        frames = [
+            normalize_player_props(events_of(raw), is_closing=False)
+            for _, raw in self.event_odds_payloads(league, markets)
+        ]
         if not frames:
             return _empty_prop_lines()
         return PropLines.validate(pd.concat(frames, ignore_index=True))

@@ -1,10 +1,13 @@
 name: Collect MLB player props
 
-# Snapshots MLB player-prop lines (pitcher Ks, total bases, hits, HR, ...) into a
-# PRIVATE Actions artifact — the prop CLV archive. Props are a per-event endpoint,
-# so a full slate costs more than the game board: ~15 games x 6 markets is on the
-# order of ~90 credits/run, and twice daily lands near ~5k/month, well under the
-# 100k budget. Never commits; empty boards succeed.
+# Snapshots MLB player props (pitcher Ks, total bases, hits, HR, ...) AND the
+# derivative markets (team totals, first-5-innings) into a PRIVATE Actions artifact
+# — the soft-market CLV archive. All are per-event "additional" markets served from
+# one /events/{id}/odds call, so a full slate costs more than the game board:
+# ~15 games x ~10 markets is on the order of ~150 credits/run, and twice daily lands
+# near ~9k/month, well under the 100k budget. Props are normalized to parquet; every
+# market (incl. derivatives) is also banked raw for later normalization. Never
+# commits; empty boards succeed.
 #
 # Manual dispatch doubles as the THE_ODDS_API prop-endpoint verification.
 
@@ -61,6 +64,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mlb-props-${{ github.run_id }}
-          path: artifacts/mlb_props/*.parquet
+          path: |
+            artifacts/mlb_props/*.parquet
+            artifacts/mlb_props/raw/*.json
           if-no-files-found: warn
           retention-days: 30

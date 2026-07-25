@@ -13,7 +13,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from velocity.ingest.theoddsapi import extract_events, normalize_player_props
+from velocity.ingest.theoddsapi import (
+    events_of,
+    extract_events,
+    normalize_player_props,
+    unwrap,
+)
 from velocity.models.game_mlb import MLBGameModel
 from velocity.models.props_mlb import BaseballProps
 from velocity.models.simulate_baseball import (
@@ -41,6 +46,20 @@ HIGH_K_PIT = {"k": 0.32, "bb": 0.06, "hbp": 0.01, "hr": 0.03, "in_play": 0.58}
 
 def _props_json() -> list[dict]:
     return json.loads((FIXTURES / "theoddsapi_mlb_props.json").read_text())
+
+
+def test_events_of_recovers_a_single_per_event_object() -> None:
+    """The per-event ``/events/{id}/odds`` endpoint returns ONE event object, not an
+    array. ``unwrap`` reads that as empty (no ``data`` key) — the bug that left the
+    prop archive empty; ``events_of`` recovers it, so props normalize from a live
+    per-event payload."""
+    event = _props_json()[0]  # a single event object, as the per-event endpoint returns
+    assert unwrap(event) == []  # the old, broken path — silently no props
+    assert events_of(event) == [event]  # the fix
+    assert not normalize_player_props(events_of(event)).empty
+    # and it still agrees with the other shapes:
+    assert events_of(_props_json()) == _props_json()  # a bulk array
+    assert events_of({"data": _props_json()}) == _props_json()  # a historical wrapper
 
 
 def test_normalize_player_props_validates_and_filters() -> None:
