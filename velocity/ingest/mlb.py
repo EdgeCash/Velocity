@@ -390,3 +390,75 @@ def load_lineups(date: str) -> list[GameLineups]:  # pragma: no cover - network
     """Fetch and normalize probable lineups for a date (ISO ``YYYY-MM-DD``)."""
     url = f"{_STATSAPI}/schedule?sportId=1&date={date}&hydrate=lineups,probablePitcher"
     return normalize_lineups(_get_json(url))
+
+
+# StatsAPI boxscore stat field → canonical prop stat (see PropLines / props_mlb).
+# A two-way player (e.g. Ohtani) carries both batting and pitching sub-dicts.
+_BOX_BATTING = {
+    "total_bases": "totalBases",
+    "hits": "hits",
+    "home_runs": "homeRuns",
+    "strikeouts": "strikeOuts",  # batter strikeouts
+}
+_BOX_PITCHING = {
+    "pitcher_strikeouts": "strikeOuts",
+    "pitcher_outs": "outs",
+}
+_BOX_STATS = [*_BOX_BATTING, *_BOX_PITCHING]
+_BOXSCORE_COLUMNS = ["game_id", "player_id", "player_name", "team", *_BOX_STATS]
+
+
+def _empty_boxscore() -> pd.DataFrame:
+    cols = {c: pd.Series(dtype=str) for c in ("game_id", "player_id", "player_name", "team")}
+    cols.update({c: pd.Series(dtype=float) for c in _BOX_STATS})
+    return pd.DataFrame(cols)
+
+
+def normalize_boxscore(payload: Mapping[str, Any], game_id: str = "") -> pd.DataFrame:
+    """Flatten a StatsAPI ``/game/{pk}/boxscore`` payload → one row per player.
+
+    Each row carries the player's **actual** final stat line in canonical prop
+    columns (``total_bases``, ``hits``, ``home_runs``, ``strikeouts``,
+    ``pitcher_strikeouts``, ``pitcher_outs``); a stat the player didn't record is
+    null. This is the player-level finals source that grades prop bets — the piece
+    that season-aggregate splits and game finals can't provide. Players who never
+    took the field (empty stats) are dropped. ``game_id`` tags every row so a graded
+    ledger can key on it.
+    """
+    rows: list[dict[str, Any]] = []
+    teams = payload.get("teams") or {}
+    for side in ("home", "away"):
+        team = teams.get(side) or {}
+        team_name = (team.get("team") or {}).get("name")
+        for player in (team.get("players") or {}).values():
+            person = player.get("person") or {}
+            player_id = person.get("id")
+            stats = player.get("stats") or {}
+            batting = stats.get("batting") or {}
+            pitching = stats.get("pitching") or {}
+            if player_id is None or (not batting and not pitching):
+                continue  # didn't appear → nothing to grade against
+            row: dict[str, Any] = {
+                "game_id": str(game_id),
+                "player_id": str(player_id),
+                "player_name": str(person.get("fullName", "")),
+                "team": team_name,
+            }
+            for canon, src in _BOX_BATTING.items():
+                row[canon] = batting.get(src)
+            for canon, src in _BOX_PITCHING.items():
+                row[canon] = pitching.get(src)
+            rows.append(row)
+    if not rows:
+        return _empty_boxscore()
+
+    df = pd.DataFrame(rows)
+    for col in _BOX_STATS:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df[_BOXSCORE_COLUMNS]
+
+
+def load_boxscore(game_pk: str, game_id: str = "") -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch and normalize a game's boxscore (per-player actual stats) by ``gamePk``."""
+    url = f"{_STATSAPI}/game/{game_pk}/boxscore"
+    return normalize_boxscore(_get_json(url), game_id=game_id or str(game_pk))

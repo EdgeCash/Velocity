@@ -1,0 +1,33 @@
+{
+  "teams": {
+    "home": {
+      "team": {"name": "Los Angeles Dodgers"},
+      "players": {
+        "ID660271": {
+          "person": {"id": 660271, "fullName": "Shohei Ohtani"},
+          "stats": {
+            "batting": {"hits": 3, "doubles": 1, "triples": 0, "homeRuns": 1, "strikeOuts": 1, "totalBases": 7},
+            "pitching": {"strikeOuts": 9, "outs": 18}
+          }
+        },
+        "ID477132": {
+          "person": {"id": 477132, "fullName": "Clayton Kershaw"},
+          "stats": {"pitching": {"strikeOuts": 7, "outs": 19}}
+        }
+      }
+    },
+    "away": {
+      "team": {"name": "San Francisco Giants"},
+      "players": {
+        "ID592885": {
+          "person": {"id": 592885, "fullName": "Wilmer Flores"},
+          "stats": {"batting": {"hits": 1, "doubles": 0, "triples": 0, "homeRuns": 0, "strikeOuts": 2, "totalBases": 1}}
+        },
+        "ID000000": {
+          "person": {"id": 0, "fullName": "Did Not Play"},
+          "stats": {}
+        }
+      }
+    }
+  }
+}
