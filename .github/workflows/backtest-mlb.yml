@@ -62,6 +62,7 @@ jobs:
 
       - name: Run walk-forward backtest
         run: |
+          set -o pipefail  # a python crash must fail the job, not be masked by tee
           mkdir -p artifacts/backtest
           python scripts/backtest_mlb.py \
             --archive artifacts/hist \

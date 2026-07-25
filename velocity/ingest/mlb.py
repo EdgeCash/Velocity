@@ -172,6 +172,10 @@ def normalize_schedule(payload: Mapping[str, Any]) -> pd.DataFrame:
     df["kickoff"] = kickoff.dt.tz_localize(None)
     df["home_score"] = pd.to_numeric(df["home_score"], errors="coerce")
     df["away_score"] = pd.to_numeric(df["away_score"], errors="coerce")
+    # A suspended/resumed game is listed under one ``gamePk`` on two dates; over a
+    # wide range that breaks ``Games``' unique-game_id rule. Keep the last listing —
+    # the resumption row carries the final score.
+    df = df.drop_duplicates("game_id", keep="last")
     return Games.validate(df[_GAMES_COLUMNS])
 
 
