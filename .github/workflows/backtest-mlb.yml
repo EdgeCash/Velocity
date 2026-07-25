@@ -26,6 +26,10 @@ on:
         description: "Monte Carlo draws per game (lower = faster; 2000 is plenty for CLV)"
         required: false
         default: "2000"
+      shrink_sweep:
+        description: "Confidence shrinks to compare in one walk, e.g. '1.0,0.8,0.6,0.5,0.4' (blank = single run)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -65,14 +69,24 @@ jobs:
           find artifacts/hist -name '*.parquet' | head
 
       - name: Run walk-forward backtest
+        env:
+          SHRINK_SWEEP: ${{ github.event.inputs.shrink_sweep }}
         run: |
           set -o pipefail  # a python crash must fail the job, not be masked by tee
           mkdir -p artifacts/backtest
+          # A shrink sweep compares calibration levels in one walk (no --out ledger);
+          # a blank input runs the single walk and persists the graded ledger.
+          extra=""
+          if [ -n "$SHRINK_SWEEP" ]; then
+            extra="--shrink-sweep $SHRINK_SWEEP"
+          else
+            extra="--out artifacts/backtest/ledger.parquet"
+          fi
           python scripts/backtest_mlb.py \
             --archive artifacts/hist \
             --season "${{ github.event.inputs.season || '2026' }}" \
             --n-sims "${{ github.event.inputs.n_sims || '2000' }}" \
-            --out artifacts/backtest/ledger.parquet \
+            $extra \
             | tee artifacts/backtest/scorecard.txt
 
       - name: Upload scorecard + ledger
