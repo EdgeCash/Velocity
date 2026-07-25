@@ -55,6 +55,12 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
+    # Confidence calibration: shrink the model's probability toward 0.5 (the
+    # no-information point) before measuring edge and staking. 1.0 = the raw model
+    # (default, bit-identical to before); < 1.0 tempers an over-confident model so a
+    # bet must clear the edge on the *calibrated* probability. The backtest's
+    # calibration table is what this is tuned against.
+    prob_shrink: float = 1.0
 
 
 def model_probability(
@@ -192,6 +198,8 @@ def _best_opportunity(
         if p_fair is None:
             continue
         p_model = model_probability(proj, market, side, point)
+        if config.prob_shrink != 1.0:  # temper an over-confident model toward 0.5
+            p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
         signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
         if not signal.qualifies:
             continue
