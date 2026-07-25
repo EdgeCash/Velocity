@@ -241,3 +241,71 @@ def build_live_mlb_model(
     """Fetch season stats + today's lineups from StatsAPI and assemble the model."""
     model, _ = build_live_mlb(date, season, config=config, seed=seed)
     return model
+
+
+def build_mlb_asof(
+    date: str,
+    season: int,
+    *,
+    config: BaseballSimConfig | None = None,
+    seed: int = 0,
+) -> tuple[MLBGameModel, dict[str, str]]:  # pragma: no cover - network
+    """Assemble a point-in-time model for ``date`` — the walk-forward, no-leakage build.
+
+    The anti-leakage twin of :func:`build_live_mlb`: every input is restricted to
+    what was knowable the morning of ``date``.
+
+    * **Stats** are season-to-date through ``date − 1`` (:func:`asof_daterange` +
+      :func:`load_player_stats_asof`), never the full-season line that folds in the
+      game being projected.
+    * **Lineups + starters** are that day's actual card (``load_lineups(date)``),
+      which for a past date returns the posted lineups.
+    * **Handedness** is a static player attribute, so it is safe to fetch as-of.
+    * **Run environment** is park-static (no historical weather archive), and the
+      **bullpen is omitted** — an as-of pen isn't reconstructed here, so each game
+      finishes on the league-average stand-in rather than a leak-prone proxy.
+
+    Returns ``(model, name-index)`` like :func:`build_live_mlb`.
+    """
+    from velocity.ingest.mlb import (
+        asof_daterange,
+        load_lineups,
+        load_player_stats_asof,
+    )
+    from velocity.ingest.mlb_people import load_player_hands
+    from velocity.models.simulate_baseball import (
+        DEFAULT_HFA,
+        DEFAULT_PLATOON_GAP,
+        DEFAULT_TTO_PENALTY,
+    )
+    from velocity.report.park_factors import run_environment_maps
+    from velocity.wagering.props_slate import build_name_index
+
+    start, end = asof_daterange(season, date)
+    batting = load_player_stats_asof(season, "bat", end, start)
+    pitching = load_player_stats_asof(season, "pit", end, start)
+    lineups = list(load_lineups(date))
+    ids: set[str] = set()
+    for g in lineups:
+        ids.update(g.home_lineup)
+        ids.update(g.away_lineup)
+        ids.update(p for p in (g.home_pitcher_id, g.away_pitcher_id) if p)
+    try:
+        hands = load_player_hands(ids)
+    except Exception as exc:  # noqa: BLE001 - hands are optional; platoon stays neutral
+        print(f"player hands skipped ({exc}); platoon neutral")
+        hands = {}
+    batters, pitchers = build_player_pools(batting, pitching, hands=hands)
+    names = build_name_index(batting, pitching)
+    config = config or BaseballSimConfig(
+        n_sims=10_000, starter_outs=18, hfa=DEFAULT_HFA,
+        tto_penalty=DEFAULT_TTO_PENALTY, platoon_gap=DEFAULT_PLATOON_GAP,
+    )
+    # Park-static; no historical weather archive and no as-of bullpen (would leak).
+    hr_factors, run_env_tilts = run_environment_maps()
+    model, _ = assemble_model(
+        lineups, batters, pitchers,
+        config=config, seed=seed, park_hr_factors=hr_factors,
+        run_env_tilts=run_env_tilts,
+    )
+    return model, names
