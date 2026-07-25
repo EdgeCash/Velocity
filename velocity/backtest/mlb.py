@@ -169,6 +169,21 @@ def run_archive_backtest(
     )
 
 
+def _memoize_projector(
+    project: Callable[[str, str], GameProjection],
+) -> Callable[[str, str], GameProjection]:
+    """Wrap a projector so each ``(home, away)`` matchup is simulated at most once."""
+    memo: dict[tuple[str, str], GameProjection] = {}
+
+    def run(home: str, away: str) -> GameProjection:
+        key = (home, away)
+        if key not in memo:
+            memo[key] = project(home, away)
+        return memo[key]
+
+    return run
+
+
 def run_shrink_sweep(
     lines: pd.DataFrame,
     events: pd.DataFrame,
@@ -203,13 +218,7 @@ def run_shrink_sweep(
             closing = boards.closing[closing_gid.isin(gids)]
             day_finals = finals[finals_gid.isin(gids)]
             project, known = model_factory(str(date))
-            memo: dict[tuple[str, str], GameProjection] = {}
-
-            def cached(home: str, away: str, _p=project, _m=memo) -> GameProjection:
-                key = (home, away)
-                if key not in _m:  # simulate this matchup once, reuse across shrinks
-                    _m[key] = _p(home, away)
-                return _m[key]
+            cached = _memoize_projector(project)  # simulate each matchup once, reuse across shrinks
 
             for s in shrinks:
                 graded = backtest_day(
