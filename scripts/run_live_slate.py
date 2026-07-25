@@ -142,6 +142,13 @@ def main() -> None:
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
     parser.add_argument("--bankroll", type=float, default=100.0)
+    # Confidence calibration for the MLB game markets. The walk-forward shrink sweep
+    # (#23) found the raw model over-confident — CLV positive but ROI −3.7% from
+    # over-staking; shrinking the model probability toward 0.5 pulled ROI to
+    # break-even and CLV to +9%. 0.35 sits between the break-even knee (~0.30) and a
+    # conservative hedge (0.40). In-sample; re-tune once a second season is banked.
+    parser.add_argument("--mlb-shrink", type=float, default=0.35,
+                        help="MLB confidence shrink toward 0.5 (1.0 = raw model)")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     args = parser.parse_args()
 
@@ -169,8 +176,12 @@ def main() -> None:
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
     else:
+        # Calibrated confidence for MLB (see --mlb-shrink); football stays raw (1.0),
+        # its own calibration is untuned here.
+        shrink = args.mlb_shrink if args.league == "mlb" else 1.0
         cfg = SlateConfig(
-            exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
+            exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
+            prob_shrink=shrink,
         )
         # Project once, then price off those projections (reused for the workbook).
         projections, unresolved = project_board(events, project, known_teams, aliases)
