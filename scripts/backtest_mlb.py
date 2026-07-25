@@ -44,14 +44,21 @@ def main() -> None:
                         help="Monte Carlo draws per game (default 2000; lower = faster)")
     parser.add_argument("--cache-dir",
                         help="dir to memoize per-day as-of stat fetches (skips network on re-runs)")
+    parser.add_argument("--shrink-sweep",
+                        help="comma-separated confidence shrinks to compare in one walk, "
+                             "e.g. '1.0,0.8,0.6,0.5,0.4' (1.0 = raw model)")
     args = parser.parse_args()
-
-    from velocity.backtest.mlb import walk_forward_mlb
 
     archive = Path(args.archive)
     lines = _load_concat(archive, "lines")
     events = _load_concat(archive, "events").drop_duplicates("game_id")
     print(f"loaded {len(lines)} line rows across {events['game_id'].nunique()} games")
+
+    if args.shrink_sweep:
+        _run_sweep(lines, events, args)
+        return
+
+    from velocity.backtest.mlb import walk_forward_mlb
 
     report = walk_forward_mlb(
         lines, events, args.season, n_sims=args.n_sims, cache_dir=args.cache_dir
@@ -70,6 +77,23 @@ def main() -> None:
     if args.out:
         report.ledger.to_parquet(args.out, index=False)
         print(f"\nwrote {len(report.ledger)} graded rows to {args.out}")
+
+
+def _run_sweep(lines, events, args) -> None:  # pragma: no cover - network
+    """Score the archive across confidence-shrink levels and print a comparison table."""
+    from velocity.backtest.mlb import walk_forward_mlb_sweep
+
+    shrinks = [float(s) for s in args.shrink_sweep.split(",")]
+    reports = walk_forward_mlb_sweep(
+        lines, events, args.season, shrinks, n_sims=args.n_sims, cache_dir=args.cache_dir
+    )
+    print("\n=== Confidence-shrink sweep (1.0 = raw model) ===")
+    print(f"{'shrink':>7} {'n_bets':>7} {'wins':>6} {'losses':>7} "
+          f"{'roi':>8} {'mean_clv':>9} {'pct_clv+':>9} {'ece':>7}")
+    for s in shrinks:
+        m = reports[s].summary
+        print(f"{s:>7.2f} {m['n_bets']:>7} {m['wins']:>6} {m['losses']:>7} "
+              f"{m['roi']:>8} {m['mean_price_clv']:>9} {m['pct_positive_clv']:>9} {m['ece']:>7}")
 
 
 if __name__ == "__main__":

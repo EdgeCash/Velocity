@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from velocity.backtest.mlb import BacktestReport, run_archive_backtest
+from velocity.backtest.mlb import BacktestReport, run_archive_backtest, run_shrink_sweep
 from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate import GameSim
 
@@ -100,3 +100,41 @@ def test_empty_archive_yields_empty_report() -> None:
     assert report.ledger.empty
     assert report.summary["n_bets"] == 0
     assert report.clv_by_market.empty
+
+
+def _factory(date: str):
+    return _favorite_home, ["LAD", "SF", "NYY", "BOS"]
+
+
+def test_shrink_sweep_1p0_matches_single_config_and_calibrates_down() -> None:
+    reports = run_shrink_sweep(LINES, EVENTS, FINALS, _factory, [1.0, 0.5])
+    assert set(reports) == {1.0, 0.5}
+
+    # shrink 1.0 is the raw model → identical to the single-config backtest.
+    base = run_archive_backtest(LINES, EVENTS, FINALS, _factory)
+    assert reports[1.0].summary == base.summary
+
+    # shrink 0.5 pulls the home moneyline probability halfway toward 0.5 (but keeps
+    # it a favorite), so the recorded p_model drops while staying above 0.5.
+    raw = reports[1.0].ledger
+    sh = reports[0.5].ledger
+    raw_ml = raw[(raw["market"] == "moneyline") & (raw["side"] == "home")].set_index("game_id")
+    sh_ml = sh[(sh["market"] == "moneyline") & (sh["side"] == "home")].set_index("game_id")
+    assert not sh_ml.empty
+    for gid in sh_ml.index:
+        assert 0.5 < sh_ml.loc[gid, "p_model"] < raw_ml.loc[gid, "p_model"]
+
+
+def test_shrink_sweep_simulates_each_matchup_once() -> None:
+    calls = {"n": 0}
+
+    def counting(home: str, away: str) -> GameProjection:
+        calls["n"] += 1
+        return _favorite_home(home, away)
+
+    def factory(date: str):
+        return counting, ["LAD", "SF", "NYY", "BOS"]
+
+    run_shrink_sweep(LINES, EVENTS, FINALS, factory, [1.0, 0.8, 0.5])
+    # Two matchups (g1, g2), each projected once despite pricing at three shrinks.
+    assert calls["n"] == 2

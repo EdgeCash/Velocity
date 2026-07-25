@@ -28,8 +28,8 @@ with no network.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -169,6 +169,111 @@ def run_archive_backtest(
     )
 
 
+def _memoize_projector(
+    project: Callable[[str, str], GameProjection],
+) -> Callable[[str, str], GameProjection]:
+    """Wrap a projector so each ``(home, away)`` matchup is simulated at most once."""
+    memo: dict[tuple[str, str], GameProjection] = {}
+
+    def run(home: str, away: str) -> GameProjection:
+        key = (home, away)
+        if key not in memo:
+            memo[key] = project(home, away)
+        return memo[key]
+
+    return run
+
+
+def run_shrink_sweep(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    finals: pd.DataFrame,
+    model_factory: ModelFactory,
+    shrinks: Sequence[float],
+    *,
+    base_config: SlateConfig | None = None,
+    aliases: dict[str, str] | None = None,
+) -> dict[float, BacktestReport]:
+    """Score the archive at several confidence-shrink levels in one walk.
+
+    The Monte Carlo projection of a game does not depend on the shrink — only
+    pricing does — so each game-day is simulated **once** (the projector is memoized
+    per matchup) and then priced at every ``shrinks`` value. Returns
+    ``{shrink: BacktestReport}``, so a caller can read off which calibration moves
+    ROI toward break-even while holding the CLV. ``shrink=1.0`` is the raw model.
+    """
+    base = base_config or SlateConfig(exclude_closing=False)
+    boards = select_boards(lines, events)
+    parts: dict[float, list[pd.DataFrame]] = {s: [] for s in shrinks}
+    if not boards.events.empty:
+        ev = boards.events.copy()
+        ev["date"] = _game_dates(ev["kickoff"])
+        entry_gid = boards.entry["game_id"].astype(str)
+        closing_gid = boards.closing["game_id"].astype(str)
+        finals_gid = finals["game_id"].astype(str)
+
+        for date, day_events in ev.groupby("date"):
+            gids = set(day_events["game_id"].astype(str))
+            entry = boards.entry[entry_gid.isin(gids)]
+            closing = boards.closing[closing_gid.isin(gids)]
+            day_finals = finals[finals_gid.isin(gids)]
+            project, known = model_factory(str(date))
+            cached = _memoize_projector(project)  # simulate each matchup once, reuse across shrinks
+
+            for s in shrinks:
+                graded = backtest_day(
+                    entry, closing, day_events, day_finals, cached, known,
+                    config=replace(base, prob_shrink=s), aliases=aliases,
+                )
+                if not graded.empty:
+                    graded = graded.copy()
+                    graded.insert(0, "date", str(date))
+                    parts[s].append(graded)
+
+    reports: dict[float, BacktestReport] = {}
+    for s in shrinks:
+        ledger = pd.concat(parts[s], ignore_index=True) if parts[s] else _empty_ledger()
+        reports[s] = BacktestReport(
+            ledger=ledger,
+            summary=summarize(ledger),
+            clv_by_market=clv_by_market(ledger),
+            calibration=calibration_table(ledger),
+        )
+    return reports
+
+
+def _asof_setup(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    season: int,
+    *,
+    seed: int,
+    n_sims: int,
+    cache_dir: str | None,
+) -> tuple[ModelFactory, pd.DataFrame]:  # pragma: no cover - network
+    """Shared network setup: StatsAPI finals + the per-date as-of ``model_factory``."""
+    from velocity.ingest.mlb import load_schedule
+    from velocity.models.mlb_build import build_mlb_asof
+    from velocity.report.results import finals_for_slate
+
+    games_map = events[["game_id", "home_team", "away_team", "kickoff"]].copy()
+    dates = _game_dates(events["kickoff"])
+    schedule = load_schedule(dates.min(), dates.max())
+    finals = finals_for_slate(games_map, schedule)
+
+    def factory(date: str) -> tuple[Callable[[str, str], GameProjection], Iterable[str]]:
+        try:
+            model, _ = build_mlb_asof(date, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir)
+        except Exception as exc:  # noqa: BLE001 - one flaky StatsAPI day shouldn't kill the run
+            print(f"as-of model for {date} skipped ({exc}); that day is unpriced")
+            # Empty team universe → every event that day resolves to nothing and is
+            # skipped, so the season run continues instead of aborting.
+            return (lambda home, away: None), []  # type: ignore[return-value]
+        return model.project_full, model.known_teams
+
+    return factory, finals
+
+
 def walk_forward_mlb(
     lines: pd.DataFrame,
     events: pd.DataFrame,
@@ -190,23 +295,30 @@ def walk_forward_mlb(
     graded bets are stable well below 10k. ``cache_dir`` memoizes the per-day as-of
     stat fetches so a re-run (e.g. the calibration sweep) skips the network.
     """
-    from velocity.ingest.mlb import load_schedule
-    from velocity.models.mlb_build import build_mlb_asof
-    from velocity.report.results import finals_for_slate
-
-    games_map = events[["game_id", "home_team", "away_team", "kickoff"]].copy()
-    dates = _game_dates(events["kickoff"])
-    schedule = load_schedule(dates.min(), dates.max())
-    finals = finals_for_slate(games_map, schedule)
-
-    def factory(date: str) -> tuple[Callable[[str, str], GameProjection], Iterable[str]]:
-        try:
-            model, _ = build_mlb_asof(date, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir)
-        except Exception as exc:  # noqa: BLE001 - one flaky StatsAPI day shouldn't kill the run
-            print(f"as-of model for {date} skipped ({exc}); that day is unpriced")
-            # Empty team universe → every event that day resolves to nothing and is
-            # skipped, so the season run continues instead of aborting.
-            return (lambda home, away: None), []  # type: ignore[return-value]
-        return model.project_full, model.known_teams
-
+    factory, finals = _asof_setup(
+        lines, events, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir
+    )
     return run_archive_backtest(lines, events, finals, factory, config=config)
+
+
+def walk_forward_mlb_sweep(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    season: int,
+    shrinks: Sequence[float],
+    *,
+    seed: int = 0,
+    n_sims: int = 2_000,
+    cache_dir: str | None = None,
+) -> dict[float, BacktestReport]:  # pragma: no cover - network
+    """Network entry point for the confidence-calibration sweep (one walk, many shrinks).
+
+    Same as :func:`walk_forward_mlb` but scores every ``shrinks`` value off a single
+    simulation of each game (see :func:`run_shrink_sweep`), so the whole calibration
+    curve costs one walk. Point ``cache_dir`` at a warm cache from a prior run and
+    only the sim runs.
+    """
+    factory, finals = _asof_setup(
+        lines, events, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir
+    )
+    return run_shrink_sweep(lines, events, finals, factory, shrinks)
