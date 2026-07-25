@@ -23,8 +23,13 @@ import pandas as pd
 
 
 def _load_concat(archive: Path, stem: str) -> pd.DataFrame:
-    """Concatenate every banked ``{stem}_*.parquet`` snapshot in the archive dir."""
-    files = sorted(archive.glob(f"{stem}_*.parquet"))
+    """Concatenate every banked ``{stem}_*.parquet`` snapshot under the archive dir.
+
+    Recursive: a downloaded Actions artifact extracts each run's files into its own
+    subdir, so the parquet can sit one level down — ``rglob`` finds them wherever
+    they land, and the snapshot-tagged filenames don't collide across runs.
+    """
+    files = sorted(archive.rglob(f"{stem}_*.parquet"))
     if not files:
         raise SystemExit(f"no {stem}_*.parquet under {archive}")
     return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
