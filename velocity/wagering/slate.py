@@ -68,6 +68,11 @@ class SlateConfig:
     # the global default. Empty (default) = every market uses ``prob_shrink``. Ignored
     # by the game slate, which has no per-market props.
     prop_shrink_by_market: Mapping[str, float] = field(default_factory=dict)
+    # Prop markets to skip entirely. The per-market backtest found total_bases
+    # unprofitable at *every* shrink (the sim can't predict the extra-base
+    # distribution game-to-game), so no confidence lever rescues it — the honest
+    # treatment is to not bet it. Empty (default) = bet every market.
+    exclude_markets: frozenset[str] = frozenset()
 
     def shrink_for(self, market: str) -> float:
         """The confidence shrink to apply to ``market`` — its override, else the global."""

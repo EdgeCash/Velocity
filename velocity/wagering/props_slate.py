@@ -77,6 +77,8 @@ def build_prop_slate(
         pending: dict[str, dict] = {}
         reported: set[str] = set()
         for market, player in {(r["market"], r["player"]) for r in records}:
+            if market in config.exclude_markets:  # a no-edge market (e.g. total_bases)
+                continue
             pid = resolve_player(player, name_to_id)
             if pid is None:
                 if player not in reported:
