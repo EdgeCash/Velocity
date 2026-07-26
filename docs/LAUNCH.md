@@ -13,6 +13,7 @@ turning it on, verifying it, and running it week to week.
 | `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → private artifact |
 | `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → private artifact |
 | `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → private artifact |
+| `live-slate-mlb.yml` | daily 9am & 4pm CT | `THE_ODDS_API` (+ mail secrets, optional) | staked MLB game/prop/parlay slate → private artifact + **email** |
 
 Everything paid is written **only to private Actions artifacts**, never to this
 public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
@@ -72,6 +73,29 @@ public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
 - **Staking discipline:** fractional Kelly with per-bet and per-game group caps is
   already enforced (`velocity/wagering/staking.py`); the group cap keeps one
   game's correlated bets bounded.
+
+## Email delivery (optional)
+
+`live-slate-mlb.yml` emails the day's plays after each run — game markets
+(including F5 and NRFI/YRFI), props, and parlays as matchup-labeled tables, with
+the formatted workbook attached, and a "no plays today" heartbeat on empty days.
+It activates when these Actions secrets exist (until then the email steps skip
+and the workflow behaves exactly as before):
+
+- `MAIL_USERNAME` — the sending account (e.g. a Gmail address).
+- `MAIL_PASSWORD` — its SMTP password. For Gmail this must be an **App
+  Password** (Google account → Security → 2-Step Verification → App passwords);
+  a normal account password will not authenticate.
+- `MAIL_TO` — the recipient inbox. Kept in a secret, never in the workflow file:
+  the repo is public, and the mail carries paid-odds-derived data, so it must go
+  to a private inbox.
+- `MAIL_SERVER` / `MAIL_PORT` *(optional)* — default `smtp.gmail.com` / `465`
+  (SSL); set both to use another provider.
+
+To verify: add the secrets, then **Actions → Live slate (MLB) → Run workflow**
+and check the inbox. The email is rendered by `scripts/render_slate_email.py`
+from the run's persisted parquets, so what lands in the inbox is exactly what
+the artifact says.
 
 ## Team-name resolution (the one real-world seam)
 

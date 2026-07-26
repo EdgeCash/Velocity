@@ -541,11 +541,16 @@ def _mlb_parlay_slate(  # noqa: PLR0913 - a report writer with several inputs
         if not candidates:
             return
         results_by_game = {str(gid): proj.result for gid, proj in projections.items()}
+        game_labels = {
+            str(gid): f"{proj.away_team}@{proj.home_team}"
+            for gid, proj in projections.items()
+        }
         tickets = build_parlays(
             candidates,
             results_by_game,
             bankroll=args.bankroll,
             name_to_id=name_to_id or {},
+            game_labels=game_labels,
             config=ParlayConfig(
                 max_legs=max(args.parlay_max_legs, 2),
                 min_ev=args.parlay_min_ev,

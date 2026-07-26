@@ -176,6 +176,20 @@ def test_legs_from_bets_resolves_props_and_drops_unknowns() -> None:
     assert pairs[1][0].label == "Gerrit Cole"  # display keeps the provider name
 
 
+def test_legs_from_bets_labels_game_legs_with_the_matchup() -> None:
+    results = {"g": _result([1, 0], [0, 1], pitcher_ks={"p1": [5, 7]})}
+    bets = [
+        _bet("g", "moneyline", "home", 100),
+        _bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Gerrit Cole"),
+    ]
+    pairs = legs_from_bets(bets, results, {"gerritcole": "p1"}, game_labels={"g": "SF@LAD"})
+    game_leg, prop_leg = pairs[0][0], pairs[1][0]
+    # A game leg carries the matchup so a cross-game parlay reads unambiguously;
+    # a prop leg keeps the player's name.
+    assert game_leg.describe().startswith("SF@LAD moneyline home")
+    assert prop_leg.describe().startswith("Gerrit Cole pitcher_strikeouts over")
+
+
 def test_legs_from_bets_drops_unsimulated_stat() -> None:
     results = {"g": _result([1, 0], [0, 1])}  # no pitcher arrays at all
     bets = [_bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Gerrit Cole")]

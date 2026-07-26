@@ -39,6 +39,11 @@ jobs:
   slate:
     name: build staked MLB slate
     runs-on: ubuntu-latest
+    # Mail secrets surfaced as env so the email steps can be skipped cleanly when
+    # they are not configured (a step `if:` cannot read `secrets` directly).
+    env:
+      MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,3 +80,32 @@ jobs:
             artifacts/slate/*.html
           if-no-files-found: warn
           retention-days: 60
+
+      # ---- email delivery (optional) ------------------------------------------
+      # Sends the day's plays (game markets, props, parlays) to MAIL_TO after the
+      # artifact is safely uploaded. Skipped entirely until the mail secrets are
+      # configured — see docs/LAUNCH.md "Email delivery". The recipient lives in a
+      # secret (never in this public file), and the mail carries paid-odds-derived
+      # data, so it must go to a private inbox.
+      - name: Render slate email
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        id: email
+        run: |
+          python scripts/render_slate_email.py \
+            --slate-dir artifacts/slate --out-dir artifacts/email --league mlb
+          echo "subject=$(cat artifacts/email/subject.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Email the slate
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER || 'smtp.gmail.com' }}
+          server_port: ${{ secrets.MAIL_PORT || '465' }}
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: Velocity <${{ secrets.MAIL_USERNAME }}>
+          to: ${{ secrets.MAIL_TO }}
+          subject: ${{ steps.email.outputs.subject }}
+          html_body: file://artifacts/email/slate_email.html
+          attachments: artifacts/slate/*.xlsx

@@ -78,11 +78,12 @@ class ParlayLeg:
     point: float | None = None
     player: str | None = None
     book: str | None = None
-    label: str | None = None  # display name, e.g. the provider player name
+    label: str | None = None  # display name: the player, or the game's matchup
 
     def describe(self) -> str:
         """Compact human-readable leg description for the slate table."""
-        who = f"{self.label or self.player} " if self.player is not None else ""
+        name = self.label or self.player
+        who = f"{name} " if name else ""
         pt = "" if self.point is None else f" {self.point:g}"
         return f"{who}{self.market} {self.side}{pt} ({self.price:+.0f})"
 
@@ -227,15 +228,20 @@ def legs_from_bets(
     bets: Sequence[Bet],
     results_by_game: Mapping[str, BaseballSimResult],
     name_to_id: Mapping[str, str] | None = None,
+    *,
+    game_labels: Mapping[str, str] | None = None,
 ) -> list[tuple[ParlayLeg, float]]:
     """Turn staked single bets into candidate parlay legs with their single EV.
 
     Only bets whose game has a sim (and, for props, whose player resolves to a
     simulated id) become legs — a leg we cannot price jointly is dropped, never
-    guessed. Returns ``(leg, single_ev)`` pairs; the EV ranks the pool.
+    guessed. ``game_labels`` (``game_id → "AWY@HOM"``) names game-market legs so
+    a cross-game parlay reads unambiguously; prop legs keep the player's name.
+    Returns ``(leg, single_ev)`` pairs; the EV ranks the pool.
     """
     from velocity.wagering.props_slate import resolve_player  # local: avoids cycle
 
+    labels = game_labels or {}
     out: list[tuple[ParlayLeg, float]] = []
     for bet in bets:
         game_id = str(bet.game_id)
@@ -254,7 +260,7 @@ def legs_from_bets(
             point=bet.point,
             player=player_id,
             book=bet.book,
-            label=bet.player,
+            label=bet.player if bet.player is not None else labels.get(game_id),
         )
         try:  # a leg the sim can't grade (missing stat array) is dropped
             leg_outcomes(leg, results_by_game[game_id])
@@ -279,6 +285,7 @@ def build_parlays(
     *,
     bankroll: float,
     name_to_id: Mapping[str, str] | None = None,
+    game_labels: Mapping[str, str] | None = None,
     config: ParlayConfig | None = None,
 ) -> list[ParlayTicket]:
     """Select and stake parlays from the slate's qualifying single bets.
@@ -290,7 +297,7 @@ def build_parlays(
     stake cap. Deterministic given the inputs.
     """
     config = config or ParlayConfig()
-    pool = legs_from_bets(bets, results_by_game, name_to_id)
+    pool = legs_from_bets(bets, results_by_game, name_to_id, game_labels=game_labels)
     pool.sort(key=lambda pair: pair[1], reverse=True)
     legs = [leg for leg, _ in pool[: config.top_legs]]
 
