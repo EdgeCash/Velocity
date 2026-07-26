@@ -103,7 +103,7 @@ def main() -> None:
 
 def _run_sweep(lines, events, boxscores, args) -> None:  # pragma: no cover - network
     """Score the prop archive across confidence-shrink levels and print a comparison."""
-    from velocity.backtest.props_mlb import walk_forward_props_mlb_sweep
+    from velocity.backtest.props_mlb import prop_market_sweep, walk_forward_props_mlb_sweep
 
     shrinks = [float(s) for s in args.shrink_sweep.split(",")]
     reports = walk_forward_props_mlb_sweep(
@@ -127,6 +127,14 @@ def _run_sweep(lines, events, boxscores, args) -> None:  # pragma: no cover - ne
             m = reports[s].summary
             print(f"{s:>7.2f} {m['n_bets']:>7} {m['mean_price_clv']:>15} "
                   f"{m['mean_line_clv']:>14} {m['pct_positive_clv']:>9}")
+
+    # Per-market: which shrink each prop market wants on its own (total_bases vs the rest).
+    breakdown = prop_market_sweep(reports)
+    if not breakdown.empty:
+        metric = "roi" if graded else "mean_price_clv"
+        print(f"\nPer-market {metric} by shrink (pick each market's own optimum):")
+        pivot = breakdown.pivot(index="market", columns="shrink", values=metric)
+        print(pivot.to_string())
 
 
 if __name__ == "__main__":

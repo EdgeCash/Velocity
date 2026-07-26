@@ -172,6 +172,32 @@ def _prop_report(ledger: pd.DataFrame) -> PropBacktestReport:
     return PropBacktestReport(ledger, summary, clv_by_market(ledger), calibration)
 
 
+def prop_market_sweep(reports: Mapping[float, PropBacktestReport]) -> pd.DataFrame:
+    """Per-market metrics for each shrink in a sweep → a tidy frame.
+
+    For every ``(shrink, market)`` it scores that shrink's ledger filtered to the one
+    market with the shared scorecard, so ``total_bases`` can be calibrated separately
+    from the pitcher markets (the whole point of a per-market shrink). Columns:
+    ``shrink, market, n_bets, roi, mean_price_clv, ece`` — ``roi``/``ece`` are null on
+    a grade-free (CLV-only) sweep. Sorted by market then shrink for a readable table.
+    """
+    rows: list[dict[str, object]] = []
+    for shrink, report in reports.items():
+        led = report.ledger
+        if led.empty or "market" not in led.columns:
+            continue
+        graded = "result" in led.columns
+        for market, sub in led.groupby("market"):
+            m = summarize(sub) if graded else _summarize_clv(sub)
+            rows.append({
+                "shrink": float(shrink), "market": str(market), "n_bets": int(len(sub)),
+                "roi": m.get("roi"), "mean_price_clv": m.get("mean_price_clv"),
+                "ece": m.get("ece"),
+            })
+    cols = ["shrink", "market", "n_bets", "roi", "mean_price_clv", "ece"]
+    return pd.DataFrame(rows, columns=cols).sort_values(["market", "shrink"]).reset_index(drop=True)
+
+
 @dataclass(frozen=True)
 class PropBacktestReport:
     """The prop acceptance report: the per-bet ledger plus its CLV (and, if graded,
