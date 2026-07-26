@@ -1,0 +1,81 @@
+name: Bank historical MLB props (CLV archive)
+
+# One-shot, manually triggered backfill of the PROP CLV archive. Props are a
+# per-event endpoint and historical calls carry a 10x multiplier, so this is the
+# credit-expensive one: it exists to spend a targeted stash on a WINDOW (a couple of
+# weeks), not the whole season. For each day in the range at a few snapshot times it
+# lists the historical events, pulls each event's prop board, and banks raw JSON +
+# normalized PropLines + events into a PRIVATE artifact. Nothing is committed — the
+# repo is public and paid odds must not land in it.
+#
+# Later, the prop backtest (velocity/backtest/props_mlb) picks each game's entry +
+# closing prop board and scores CLV — no more credits needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Range start YYYY-MM-DD (UTC)"
+        required: true
+      end:
+        description: "Range end YYYY-MM-DD (UTC, inclusive)"
+        required: true
+      times:
+        description: "UTC snapshot times per day (comma HH:MM)"
+        required: false
+        default: "16:00,20:00,23:30"
+      markets:
+        description: "Prop market keys (comma-separated); blank = all supported"
+        required: false
+        default: ""
+
+concurrency:
+  group: collect-historical-props
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: bank historical prop snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Bank historical props
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          extra=""
+          if [ -n "${{ github.event.inputs.markets }}" ]; then
+            extra="--markets ${{ github.event.inputs.markets }}"
+          fi
+          python scripts/collect_historical_props.py \
+            --start "${{ github.event.inputs.start }}" \
+            --end "${{ github.event.inputs.end }}" \
+            --times "${{ github.event.inputs.times || '16:00,20:00,23:30' }}" \
+            --out artifacts/hist_props \
+            $extra
+
+      - name: Upload prop CLV archive (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hist-props-${{ github.run_id }}
+          path: |
+            artifacts/hist_props/*.parquet
+            artifacts/hist_props/raw/*.json
+          if-no-files-found: warn
+          retention-days: 90

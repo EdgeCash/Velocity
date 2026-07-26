@@ -472,3 +472,35 @@ class TheOddsAPIClient:
         if not frames:
             return _empty_prop_lines()
         return PropLines.validate(pd.concat(frames, ignore_index=True))
+
+    def historical_events_payload(  # pragma: no cover - network
+        self, league: str, date: str
+    ) -> Any:
+        """Raw ``/historical/.../events`` list at ``date`` (ISO 8601) — cheap (1 credit).
+
+        Props are per-event, so a historical props pull first needs the event ids that
+        existed at the snapshot. The ``{data: [event…]}`` wrapper's events carry
+        ``id`` + ``commence_time`` + teams — enough for :func:`extract_events`.
+        """
+        data, meta = self._get(f"historical/sports/{self.sport_key(league)}/events", date=date)
+        self.remaining = meta.get("remaining")
+        return data
+
+    def historical_event_odds_payload(  # pragma: no cover - network
+        self, league: str, event_id: str, date: str, markets: str = DEFAULT_PROP_MARKETS
+    ) -> Any:
+        """Raw per-event ``/historical/.../events/{id}/odds`` at ``date`` (ISO 8601).
+
+        The historical counterpart of :meth:`event_odds_payloads` — one event, one
+        snapshot. Costs 10 × markets × regions (historical multiplier), so the
+        collector banks the ``{…, data: {event}}`` wrapper verbatim.
+        """
+        data, meta = self._get(
+            f"historical/sports/{self.sport_key(league)}/events/{event_id}/odds",
+            regions=self.regions,
+            markets=markets,
+            oddsFormat=self.odds_format,
+            date=date,
+        )
+        self.remaining = meta.get("remaining")
+        return data
