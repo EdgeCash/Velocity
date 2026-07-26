@@ -26,6 +26,11 @@ on:
         description: "Monte Carlo draws per game (lower = faster; 2000 is plenty for CLV)"
         required: false
         default: "2000"
+      grade:
+        description: "Fetch box scores + grade win/loss + ROI + calibration (free StatsAPI)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -68,11 +73,16 @@ jobs:
         run: |
           set -o pipefail  # a python crash must fail the job, not be masked by tee
           mkdir -p artifacts/backtest
+          grade=""
+          if [ "${{ github.event.inputs.grade }}" = "true" ]; then
+            grade="--grade"
+          fi
           python scripts/backtest_props_mlb.py \
             --archive artifacts/hist_props \
             --season "${{ github.event.inputs.season || '2026' }}" \
             --n-sims "${{ github.event.inputs.n_sims || '2000' }}" \
             --out artifacts/backtest/prop_ledger.parquet \
+            $grade \
             | tee artifacts/backtest/prop_scorecard.txt
 
       - name: Upload scorecard + ledger

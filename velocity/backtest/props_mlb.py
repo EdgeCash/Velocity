@@ -255,6 +255,37 @@ def run_prop_archive_backtest(
     return _prop_report(ledger)
 
 
+def load_archive_boxscores(
+    events: pd.DataFrame,
+    *,
+    aliases: Mapping[str, str] | None = None,
+) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch per-player box scores for every game in the archive, keyed by ``game_id``.
+
+    The grading source for player props. It spans the archive's date range with one
+    StatsAPI schedule pull, resolves each Odds-API ``game_id`` to its ``gamePk``
+    (:func:`gamepks_for_slate`), fetches each game's box score, and tags every row
+    with the Odds-API ``game_id`` so :func:`grade_prop_ledger` joins straight onto the
+    ledger. A game that fails to resolve or fetch is skipped (its props stay pending).
+    """
+    from velocity.ingest.mlb import _empty_boxscore, load_boxscore, load_schedule
+    from velocity.report.results import gamepks_for_slate
+
+    kick = pd.to_datetime(events["kickoff"], errors="coerce", utc=True).dropna()
+    if kick.empty:
+        return _empty_boxscore()
+    schedule = load_schedule(kick.min().date().isoformat(), kick.max().date().isoformat())
+    pks = gamepks_for_slate(events, schedule, aliases=aliases or MLB_TEAM_ALIASES)
+
+    frames: list[pd.DataFrame] = []
+    for row in pks.to_dict("records"):
+        try:
+            frames.append(load_boxscore(str(row["game_pk"]), game_id=str(row["game_id"])))
+        except Exception as exc:  # noqa: BLE001 - one missing box score shouldn't stop grading
+            print(f"boxscore {row['game_pk']} ({row['game_id']}) failed ({exc})")
+    return pd.concat(frames, ignore_index=True) if frames else _empty_boxscore()
+
+
 def walk_forward_props_mlb(
     lines: pd.DataFrame,
     events: pd.DataFrame,
