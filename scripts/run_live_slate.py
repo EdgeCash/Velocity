@@ -298,6 +298,14 @@ def main() -> None:
             games_cols = ["game_id", "home_team", "away_team", "kickoff"]
             games_map = events[games_cols].assign(league=args.league)
             games_map.to_parquet(out_dir / f"games_{args.league}_{stamp}.parquet", index=False)
+        # Persist the per-game model numbers (win %, projected runs, fair lines,
+        # F5/YRFI where the projection has segments) — the matchup-card data the
+        # plays app renders without re-simulating anything.
+        if projections:
+            proj_frame = _projections_frame(projections)
+            proj_frame.assign(league=args.league, generated_at=generated_at).to_parquet(
+                out_dir / f"projections_{args.league}_{stamp}.parquet", index=False
+            )
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
         if args.league == "mlb" and not events.empty:
             _write_cards(out_dir, stamp, args, events, projections, canonical, now,
@@ -456,6 +464,35 @@ def _apply_weather_run_env(model, events: pd.DataFrame) -> dict:  # pragma: no c
         model.run_env_tilts = run_env_tilts
         print(f"folded weather into the run environment for {len(weather_by_home)} park(s)")
     return weather_by_game
+
+
+def _projections_frame(projections: dict) -> pd.DataFrame:
+    """One row of model numbers per projected game, for the plays app's cards.
+
+    Football projections carry the full-game numbers; an MLB projection also
+    exposes its F5 segment and first-inning YRFI probability, persisted when
+    present so the card can show them.
+    """
+    rows = []
+    for gid, proj in projections.items():
+        row = {
+            "game_id": str(gid),
+            "away": proj.away_team,
+            "home": proj.home_team,
+            "mu_away": round(float(proj.mu_away), 2),
+            "mu_home": round(float(proj.mu_home), 2),
+            "p_home_win": round(float(proj.p_home_win()), 4),
+            "fair_spread": round(float(proj.fair_spread()), 2),
+            "fair_total": round(float(proj.fair_total()), 2),
+        }
+        f5 = getattr(proj, "f5", None)
+        if f5 is not None:
+            row["f5_fair_total"] = round(float(f5.fair_total()), 2)
+            row["p_home_win_f5"] = round(float(f5.p_home_win()), 4)
+        if hasattr(proj, "prob_yrfi"):
+            row["p_yrfi"] = round(float(proj.prob_yrfi()), 4)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _load_derivative_lines(path: str) -> pd.DataFrame:

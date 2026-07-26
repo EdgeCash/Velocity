@@ -103,6 +103,41 @@ and check the inbox. The email is rendered by `scripts/render_slate_email.py`
 from the run's persisted parquets, so what lands in the inbox is exactly what
 the artifact says.
 
+## The plays app (optional, free)
+
+`app/streamlit_app.py` is a dark, phone-friendly board over the same persisted
+slate the email uses: a **Plays** tab (matchup | play — "Tampa Bay ML +101",
+"Cole O6.5 K -106", "NRFI -135"), a **Matchups** tab (per-game card with win
+probabilities, projected score, fair total/run line, F5 total, YRFI%, and that
+game's plays), and a **Record** tab (yesterday's graded plays).
+
+It reads the newest `slate-mlb-*` Actions artifact through the GitHub API — the
+paid-odds data itself stays out of the repo. Deploy free on
+[Streamlit Community Cloud](https://share.streamlit.io):
+
+1. New app → this repo → main file `app/streamlit_app.py` (deps come from the
+   root `requirements.txt`).
+2. In the app's **Secrets**, add:
+
+   ```toml
+   GITHUB_TOKEN = "<fine-grained PAT for this repo with Actions: read>"
+   # optional, defaults to EdgeCash/Velocity:
+   GITHUB_REPO = "EdgeCash/Velocity"
+   ```
+3. Open the app — it fetches the latest successful run's artifact (cached ten
+   minutes) and renders the board.
+
+**Privacy:** the app displays paid-odds-derived data, so don't share the URL
+publicly — deploy it as a private app (Community Cloud allows one free) or keep
+the URL to yourself, the same discipline as the private artifacts.
+
+Local, no token needed:
+
+```bash
+pip install -r requirements.txt
+VELOCITY_SLATE_DIR=artifacts/slate streamlit run app/streamlit_app.py
+```
+
 ## Team-name resolution (the one real-world seam)
 
 The slate maps a provider's team name to the model's rating key. NFL is covered

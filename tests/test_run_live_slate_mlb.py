@@ -48,6 +48,12 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     assert len(written) == 1
     frame = pd.read_parquet(written[0])
     assert "league" in frame.columns  # persisted with league/generated_at tags
+    # Per-game model numbers persist alongside — the plays app's matchup cards.
+    projections = list(out.glob("projections_mlb_*.parquet"))
+    assert len(projections) == 1
+    proj = pd.read_parquet(projections[0])
+    assert {"p_home_win", "fair_total", "f5_fair_total", "p_yrfi"} <= set(proj.columns)
+    assert len(proj) == 1  # the one game in the snapshot fixture
     # The matchup-cards HTML page is emitted alongside the parquet (offline: no
     # StatsAPI context, so it renders from projections + board with TBD starters).
     cards = list(out.glob("cards_mlb_*.html"))

@@ -1,0 +1,10 @@
+# Dark theme matching the plays board (app/streamlit_app.py adds the detail CSS).
+[theme]
+base = "dark"
+primaryColor = "#3ddad0"
+backgroundColor = "#0a0e13"
+secondaryBackgroundColor = "#10151c"
+textColor = "#e8edf2"
+
+[browser]
+gatherUsageStats = false
