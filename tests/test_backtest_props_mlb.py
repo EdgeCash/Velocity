@@ -17,6 +17,7 @@ from velocity.backtest.props_mlb import (
     PropBacktestReport,
     grade_prop_ledger,
     prop_clv_ledger,
+    prop_market_sweep,
     run_prop_archive_backtest,
     run_prop_shrink_sweep,
 )
@@ -187,6 +188,44 @@ def test_prop_shrink_sweep_prices_once_and_scales_confidence() -> None:
     assert not merged.empty
     assert np.allclose(merged["p_model_s"], 0.5 + 0.5 * (merged["p_model_raw"] - 0.5))
     assert len(shrunk) <= len(raw)  # shrinking edge can only drop bets, never add
+
+
+def test_per_market_shrink_override_beats_global() -> None:
+    # A per-market override shrinks only total_bases; the other markets keep the global.
+    cfg = SlateConfig(
+        exclude_closing=False, min_edge=0.0,
+        prob_shrink=1.0, prop_shrink_by_market={"total_bases": 0.5},
+    )
+    report = run_prop_archive_backtest(
+        _archive(), EVENTS, lambda d: _model_and_names(), config=cfg
+    )
+    raw = run_prop_archive_backtest(
+        _archive(), EVENTS, lambda d: _model_and_names(),
+        config=SlateConfig(exclude_closing=False, min_edge=0.0),
+    )
+    led, raw_led = report.ledger, raw.ledger
+    keys = ["game_id", "market", "player", "side"]
+    merged = led.merge(raw_led, on=keys, suffixes=("_o", "_raw"))
+    for row in merged.to_dict("records"):
+        if row["market"] == "total_bases":  # shrunk toward 0.5
+            assert row["p_model_o"] == pytest.approx(0.5 + 0.5 * (row["p_model_raw"] - 0.5))
+        else:  # untouched (global shrink is 1.0)
+            assert row["p_model_o"] == pytest.approx(row["p_model_raw"])
+
+
+def test_prop_market_sweep_tabulates_per_market_metrics() -> None:
+    cfg = SlateConfig(exclude_closing=False, min_edge=0.0)
+    reports = run_prop_shrink_sweep(
+        _archive(), EVENTS, lambda d: _model_and_names(), [1.0, 0.5],
+        boxscores=_boxscores(), base_config=cfg,
+    )
+    table = prop_market_sweep(reports)
+    assert set(table["shrink"]) == {1.0, 0.5}
+    assert set(table["market"]).issubset({"pitcher_strikeouts", "total_bases", "hits"})
+    # graded → per-market roi + ece are populated; one row per (market, shrink).
+    assert {"roi", "ece", "mean_price_clv", "n_bets"}.issubset(table.columns)
+    assert table["roi"].notna().any()
+    assert len(table) == table.groupby(["market", "shrink"]).ngroups
 
 
 def test_empty_prop_archive_yields_empty_report() -> None:

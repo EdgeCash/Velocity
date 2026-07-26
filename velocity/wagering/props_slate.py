@@ -205,9 +205,11 @@ def _best_prop(
         )
         # Confidence calibration: shrink the model probability toward 0.5, exactly as
         # the game slate does. The prop backtest found the raw model overconfident
-        # (notably on total_bases); prob_shrink=1.0 leaves it untouched (bit-identical).
-        if config.prob_shrink != 1.0:
-            p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
+        # (notably on total_bases), so the shrink is per-market — total_bases can take
+        # a stronger one than the pitcher markets. shrink=1.0 leaves it untouched.
+        shrink = config.shrink_for(market)
+        if shrink != 1.0:
+            p_model = 0.5 + shrink * (p_model - 0.5)
         signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
         if not signal.qualifies:
             continue

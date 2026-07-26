@@ -21,6 +21,7 @@ The result is a :class:`~velocity.wagering.bet_log.BetLog`; grade it with
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -61,6 +62,16 @@ class SlateConfig:
     # bet must clear the edge on the *calibrated* probability. The backtest's
     # calibration table is what this is tuned against.
     prob_shrink: float = 1.0
+    # Per-market shrink overrides for player props: a market listed here uses its own
+    # shrink instead of ``prob_shrink``. The prop backtest found ``total_bases`` far
+    # more over-confident than the pitcher markets, so it wants a stronger shrink than
+    # the global default. Empty (default) = every market uses ``prob_shrink``. Ignored
+    # by the game slate, which has no per-market props.
+    prop_shrink_by_market: Mapping[str, float] = field(default_factory=dict)
+
+    def shrink_for(self, market: str) -> float:
+        """The confidence shrink to apply to ``market`` — its override, else the global."""
+        return self.prop_shrink_by_market.get(market, self.prob_shrink)
 
 
 def model_probability(
