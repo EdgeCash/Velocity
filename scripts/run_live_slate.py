@@ -149,6 +149,16 @@ def main() -> None:
     # conservative hedge (0.40). In-sample; re-tune once a second season is banked.
     parser.add_argument("--mlb-shrink", type=float, default=0.35,
                         help="MLB confidence shrink toward 0.5 (1.0 = raw model)")
+    # Prop calibration, from the per-market prop shrink sweep (#23). Props are more
+    # over-confident than game markets: aggregate ROI/ECE optimize near 0.5, and the
+    # per-market read is decisive — pitcher_strikeouts/outs and hits carry CLV at ~0.5,
+    # but total_bases loses at *every* shrink (the sim can't call the extra-base
+    # distribution game-to-game), so it is excluded rather than shrunk. In-sample;
+    # re-tune once a second season is banked.
+    parser.add_argument("--mlb-prop-shrink", type=float, default=0.5,
+                        help="MLB prop confidence shrink toward 0.5 (1.0 = raw model)")
+    parser.add_argument("--mlb-exclude-props", default="total_bases",
+                        help="comma-separated prop markets to skip (no-edge); '' bets all")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     args = parser.parse_args()
 
@@ -406,7 +416,11 @@ def _mlb_prop_slate(  # pragma: no cover - network
             prop_lines,
             name_to_id,
             config=SlateConfig(
-                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll
+                exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
+                prob_shrink=args.mlb_prop_shrink,
+                exclude_markets=frozenset(
+                    m.strip() for m in args.mlb_exclude_props.split(",") if m.strip()
+                ),
             ),
         )
         frame = prop_slate_to_frame(log)

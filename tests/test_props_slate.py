@@ -208,6 +208,33 @@ def test_prob_shrink_pulls_prop_confidence_toward_half() -> None:
     assert matched  # the shrink path actually ran on real bets
 
 
+def test_exclude_markets_skips_a_no_edge_market() -> None:
+    """A market in SlateConfig.exclude_markets is never staked (total_bases lost at
+    every shrink in the backtest), while the others price normally."""
+    props = _props_for_game()
+    prop_lines = normalize_player_props(_props_json())
+    stats = pd.DataFrame(
+        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
+    )
+    name_to_id = build_name_index(stats)
+
+    kept, _ = build_prop_slate(
+        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        SlateConfig(exclude_closing=False, min_edge=0.0),
+    )
+    excluded, _ = build_prop_slate(
+        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        SlateConfig(
+            exclude_closing=False, min_edge=0.0, exclude_markets=frozenset({"total_bases"})
+        ),
+    )
+    assert any(b.market == "total_bases" for b in kept)  # normally staked
+    assert all(b.market != "total_bases" for b in excluded)  # excluded → never staked
+    # the other markets are unaffected
+    other = {b.market for b in kept if b.market != "total_bases"}
+    assert other and other == {b.market for b in excluded}
+
+
 def test_empty_prop_board_yields_no_bets() -> None:
     props = _props_for_game()
     empty = normalize_player_props([])
