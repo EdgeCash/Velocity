@@ -101,6 +101,15 @@ def test_unknown_stat_and_player_raise() -> None:
         props.mean("nobody", "total_bases")
 
 
+def test_has_flags_priceable_player_stat() -> None:
+    props = _props(_team("h", DEFAULT_BAT_PRIOR), _team("a", DEFAULT_BAT_PRIOR))
+    assert props.has("a0", "total_bases")  # simulated batter → priceable
+    assert props.has("h_p", "pitcher_strikeouts")  # the starter → priceable
+    assert not props.has("nobody", "total_bases")  # off the nine-man lineup
+    assert not props.has("a0", "pitcher_strikeouts")  # a batter has no pitcher stat
+    assert not props.has("a0", "doubles")  # a market we don't model
+
+
 def test_substitute_missing_player_raises() -> None:
     team = _team("h", DEFAULT_BAT_PRIOR)
     with pytest.raises(KeyError):

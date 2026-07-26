@@ -83,6 +83,11 @@ def build_prop_slate(
                     unresolved.append({"game_id": str(game_id), "player": player, "market": market})
                     reported.add(player)
                 continue
+            if not props.has(pid, market):
+                # Resolved to a real id, but the sim didn't produce this stat for him
+                # (bench/pinch player off the nine-man lineup, or a role/market
+                # mismatch). Unpriceable — skip rather than crash.
+                continue
             for side in ("over", "under"):
                 best = _best_prop(game_lines, snapshots, props, pid, market, player, side, config)
                 if best is None:
