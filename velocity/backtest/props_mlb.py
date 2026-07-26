@@ -17,7 +17,7 @@ CLV-only ledger differ. Everything except the network model build is offline-tes
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -30,7 +30,12 @@ from velocity.report.scorecard import calibration_table, clv_by_market, summariz
 from velocity.wagering.bet_log import BetLog
 from velocity.wagering.live import MLB_TEAM_ALIASES
 from velocity.wagering.odds import net_payout
-from velocity.wagering.props_slate import mlb_prop_slate, resolve_player
+from velocity.wagering.props_slate import (
+    build_prop_slate,
+    mlb_prop_slate,
+    prop_projections,
+    resolve_player,
+)
 from velocity.wagering.slate import SlateConfig
 
 # A day's prop model: given the game date, hand back the point-in-time MLB model and
@@ -255,6 +260,63 @@ def run_prop_archive_backtest(
     return _prop_report(ledger)
 
 
+def run_prop_shrink_sweep(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    model_factory: PropModelFactory,
+    shrinks: Sequence[float],
+    *,
+    boxscores: pd.DataFrame | None = None,
+    base_config: SlateConfig | None = None,
+    aliases: Mapping[str, str] | None = None,
+) -> dict[float, PropBacktestReport]:
+    """Score the prop archive at several confidence-shrink levels in one walk.
+
+    The per-game :class:`~velocity.models.props_mlb.BaseballProps` don't depend on the
+    shrink — only pricing does — so each day's games are simulated **once**
+    (:func:`prop_projections`) and the board re-priced at every ``shrinks`` value.
+    Returns ``{shrink: PropBacktestReport}`` so a caller can read which shrink moves
+    ROI / CLV where. ``shrink=1.0`` is the raw model. Pass ``boxscores`` to grade
+    win/loss + ROI + calibration at each shrink; omit for CLV only.
+    """
+    base = base_config or SlateConfig(exclude_closing=False)
+    alias_map = aliases or MLB_TEAM_ALIASES
+    boards = select_boards(lines, events)
+    parts: dict[float, list[pd.DataFrame]] = {s: [] for s in shrinks}
+    if not boards.events.empty:
+        ev = boards.events.copy()
+        ev["date"] = _game_dates(ev["kickoff"])
+        entry_gid = boards.entry["game_id"].astype(str)
+        closing_gid = boards.closing["game_id"].astype(str)
+
+        for date, day_events in ev.groupby("date"):
+            gids = set(day_events["game_id"].astype(str))
+            entry = boards.entry[entry_gid.isin(gids)]
+            closing = boards.closing[closing_gid.isin(gids)]
+            day_box = None
+            if boxscores is not None:
+                day_box = boxscores[boxscores["game_id"].astype(str).isin(gids)]
+            model, name_to_id = model_factory(str(date))
+            props_by_game = prop_projections(model, day_events, aliases=alias_map)  # sim once
+
+            for s in shrinks:
+                cfg = replace(base, prob_shrink=s)
+                log, _ = build_prop_slate(props_by_game, entry, name_to_id, cfg)
+                led = prop_clv_ledger(log, closing)
+                if day_box is not None and not led.empty:
+                    led = grade_prop_ledger(led, day_box, name_to_id)
+                if not led.empty:
+                    led = led.copy()
+                    led.insert(0, "date", str(date))
+                    parts[s].append(led)
+
+    reports: dict[float, PropBacktestReport] = {}
+    for s in shrinks:
+        ledger = pd.concat(parts[s], ignore_index=True) if parts[s] else _empty_ledger()
+        reports[s] = _prop_report(ledger)
+    return reports
+
+
 def load_archive_boxscores(
     events: pd.DataFrame,
     *,
@@ -312,4 +374,33 @@ def walk_forward_props_mlb(
 
     return run_prop_archive_backtest(
         lines, events, factory, boxscores=boxscores, config=config, aliases=MLB_TEAM_ALIASES
+    )
+
+
+def walk_forward_props_mlb_sweep(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    season: int,
+    shrinks: Sequence[float],
+    *,
+    boxscores: pd.DataFrame | None = None,
+    seed: int = 0,
+    n_sims: int = 2_000,
+    cache_dir: str | None = None,
+) -> dict[float, PropBacktestReport]:  # pragma: no cover - network
+    """Network entry point for the prop confidence-shrink sweep (one walk, many shrinks).
+
+    Same as :func:`walk_forward_props_mlb` but scores every ``shrinks`` value off a
+    single simulation of each game (see :func:`run_prop_shrink_sweep`), so the whole
+    calibration curve costs one walk. A warm ``cache_dir`` from a prior run skips the
+    stat network; only the sims run.
+    """
+    from velocity.models.mlb_build import build_mlb_asof
+
+    def factory(date: str) -> tuple[MLBGameModel, Mapping[str, str]]:
+        model, names = build_mlb_asof(date, season, seed=seed, n_sims=n_sims, cache_dir=cache_dir)
+        return model, names
+
+    return run_prop_shrink_sweep(
+        lines, events, factory, shrinks, boxscores=boxscores, aliases=MLB_TEAM_ALIASES
     )

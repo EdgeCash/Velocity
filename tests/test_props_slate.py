@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from velocity.ingest.theoddsapi import (
     events_of,
     extract_events,
@@ -176,6 +177,35 @@ def test_resolved_but_unsimulated_player_is_skipped_not_crashed() -> None:
     # No crash; the unsimulated player produced no bet and isn't a name-resolution miss.
     assert all(bet.player != "Unknown Guy" for bet in log)
     assert unresolved == []  # he resolved — the skip is a pricing gap, not a name miss
+
+
+def test_prob_shrink_pulls_prop_confidence_toward_half() -> None:
+    """SlateConfig.prob_shrink shrinks the model prob toward 0.5 in the prop pricer,
+    just as it does on the game slate. 1.0 is untouched; a lower value is less
+    confident on every bet that survives."""
+    props = _props_for_game()
+    prop_lines = normalize_player_props(_props_json())
+    stats = pd.DataFrame(
+        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
+    )
+    name_to_id = build_name_index(stats)
+
+    raw, _ = build_prop_slate(
+        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        SlateConfig(exclude_closing=False, min_edge=0.0, prob_shrink=1.0),
+    )
+    shrunk, _ = build_prop_slate(
+        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        SlateConfig(exclude_closing=False, min_edge=0.0, prob_shrink=0.5),
+    )
+    raw_by_key = {(b.market, b.player, b.side): b.p_model for b in raw}
+    matched = 0
+    for bet in shrunk:
+        key = (bet.market, bet.player, bet.side)
+        if key in raw_by_key:  # p → 0.5 + 0.5·(p−0.5)
+            assert bet.p_model == pytest.approx(0.5 + 0.5 * (raw_by_key[key] - 0.5))
+            matched += 1
+    assert matched  # the shrink path actually ran on real bets
 
 
 def test_empty_prop_board_yields_no_bets() -> None:

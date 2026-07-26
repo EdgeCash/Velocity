@@ -55,6 +55,9 @@ def main() -> None:
                         help="Monte Carlo draws per game (default 2000; lower = faster)")
     parser.add_argument("--cache-dir",
                         help="dir to memoize per-day as-of stat fetches (skips network on re-runs)")
+    parser.add_argument("--shrink-sweep",
+                        help="comma-separated confidence shrinks to compare in one walk, "
+                             "e.g. '1.0,0.7,0.5,0.35' (1.0 = raw model)")
     args = parser.parse_args()
 
     archive = Path(args.archive)
@@ -74,6 +77,10 @@ def main() -> None:
     print(f"loaded {len(lines)} prop line rows across {events['game_id'].nunique()} games"
           f"{' (grading with box scores)' if graded else ' (grade-free CLV read)'}")
 
+    if args.shrink_sweep:
+        _run_sweep(lines, events, boxscores, args)
+        return
+
     report = walk_forward_props_mlb(
         lines, events, args.season,
         boxscores=boxscores, n_sims=args.n_sims, cache_dir=args.cache_dir,
@@ -92,6 +99,34 @@ def main() -> None:
     if args.out:
         report.ledger.to_parquet(args.out, index=False)
         print(f"\nwrote {len(report.ledger)} prop rows to {args.out}")
+
+
+def _run_sweep(lines, events, boxscores, args) -> None:  # pragma: no cover - network
+    """Score the prop archive across confidence-shrink levels and print a comparison."""
+    from velocity.backtest.props_mlb import walk_forward_props_mlb_sweep
+
+    shrinks = [float(s) for s in args.shrink_sweep.split(",")]
+    reports = walk_forward_props_mlb_sweep(
+        lines, events, args.season, shrinks,
+        boxscores=boxscores, n_sims=args.n_sims, cache_dir=args.cache_dir,
+    )
+    graded = "roi" in next(iter(reports.values())).summary
+    print("\n=== Prop confidence-shrink sweep (1.0 = raw model) ===")
+    if graded:  # box scores in hand → the full record + ROI + ECE, plus CLV
+        print(f"{'shrink':>7} {'n_bets':>7} {'wins':>6} {'losses':>7} "
+              f"{'roi':>8} {'mean_clv':>9} {'pct_clv+':>9} {'ece':>7}")
+        for s in shrinks:
+            m = reports[s].summary
+            print(f"{s:>7.2f} {m['n_bets']:>7} {m['wins']:>6} {m['losses']:>7} "
+                  f"{m['roi']:>8} {m['mean_price_clv']:>9} "
+                  f"{m['pct_positive_clv']:>9} {m['ece']:>7}")
+    else:  # grade-free → CLV only
+        print(f"{'shrink':>7} {'n_bets':>7} {'mean_price_clv':>15} "
+              f"{'mean_line_clv':>14} {'pct_clv+':>9}")
+        for s in shrinks:
+            m = reports[s].summary
+            print(f"{s:>7.2f} {m['n_bets']:>7} {m['mean_price_clv']:>15} "
+                  f"{m['mean_line_clv']:>14} {m['pct_positive_clv']:>9}")
 
 
 if __name__ == "__main__":

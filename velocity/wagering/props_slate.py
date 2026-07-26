@@ -128,6 +128,33 @@ def build_prop_slate(
     return log, unresolved
 
 
+def prop_projections(
+    model: MLBGameModel,
+    events: pd.DataFrame,
+    *,
+    aliases: Mapping[str, str] | None = None,
+) -> dict[str, BaseballProps]:
+    """Simulate each event once → ``{game_id: BaseballProps}``.
+
+    The sim step, split out from :func:`mlb_prop_slate` because it does not depend on
+    pricing: a shrink sweep sims each game once here and re-prices the result at every
+    shrink. Events whose teams don't resolve to model clubs are dropped.
+    """
+    alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
+    codes = list(alias_map.values())
+
+    props_by_game: dict[str, BaseballProps] = {}
+    for event in events.to_dict("records"):
+        home = resolve_team(str(event["home_team"]), codes, alias_map)
+        away = resolve_team(str(event["away_team"]), codes, alias_map)
+        if home is None or away is None:
+            continue
+        if home not in model.teams or away not in model.teams:
+            continue
+        props_by_game[str(event["game_id"])] = BaseballProps(model.project(home, away).result)
+    return props_by_game
+
+
 def mlb_prop_slate(
     model: MLBGameModel,
     events: pd.DataFrame,
@@ -143,19 +170,7 @@ def mlb_prop_slate(
     :class:`~velocity.models.props_mlb.BaseballProps` come from one simulation, and
     :func:`build_prop_slate` prices the board against them.
     """
-    alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
-    codes = list(alias_map.values())
-
-    props_by_game: dict[str, BaseballProps] = {}
-    for event in events.to_dict("records"):
-        home = resolve_team(str(event["home_team"]), codes, alias_map)
-        away = resolve_team(str(event["away_team"]), codes, alias_map)
-        if home is None or away is None:
-            continue
-        if home not in model.teams or away not in model.teams:
-            continue
-        props_by_game[str(event["game_id"])] = BaseballProps(model.project(home, away).result)
-
+    props_by_game = prop_projections(model, events, aliases=aliases)
     return build_prop_slate(props_by_game, prop_lines, name_to_id, config)
 
 
@@ -188,6 +203,11 @@ def _best_prop(
             if side == "over"
             else props.prob_under(player_id, market, point)
         )
+        # Confidence calibration: shrink the model probability toward 0.5, exactly as
+        # the game slate does. The prop backtest found the raw model overconfident
+        # (notably on total_bases); prob_shrink=1.0 leaves it untouched (bit-identical).
+        if config.prob_shrink != 1.0:
+            p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
         signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
         if not signal.qualifies:
             continue

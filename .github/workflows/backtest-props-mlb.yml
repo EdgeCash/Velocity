@@ -31,6 +31,10 @@ on:
         type: boolean
         required: false
         default: false
+      shrink_sweep:
+        description: "Confidence shrinks to compare in one walk, e.g. '1.0,0.7,0.5,0.35' (blank = single run)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -73,16 +77,22 @@ jobs:
         run: |
           set -o pipefail  # a python crash must fail the job, not be masked by tee
           mkdir -p artifacts/backtest
-          grade=""
+          extra=""
           if [ "${{ github.event.inputs.grade }}" = "true" ]; then
-            grade="--grade"
+            extra="$extra --grade"
+          fi
+          # A shrink sweep compares calibration levels in one walk (no --out ledger);
+          # a blank input runs the single walk and persists the ledger.
+          if [ -n "${{ github.event.inputs.shrink_sweep }}" ]; then
+            extra="$extra --shrink-sweep ${{ github.event.inputs.shrink_sweep }}"
+          else
+            extra="$extra --out artifacts/backtest/prop_ledger.parquet"
           fi
           python scripts/backtest_props_mlb.py \
             --archive artifacts/hist_props \
             --season "${{ github.event.inputs.season || '2026' }}" \
             --n-sims "${{ github.event.inputs.n_sims || '2000' }}" \
-            --out artifacts/backtest/prop_ledger.parquet \
-            $grade \
+            $extra \
             | tee artifacts/backtest/prop_scorecard.txt
 
       - name: Upload scorecard + ledger
