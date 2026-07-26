@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from velocity.backtest.props_mlb import (
@@ -17,6 +18,7 @@ from velocity.backtest.props_mlb import (
     grade_prop_ledger,
     prop_clv_ledger,
     run_prop_archive_backtest,
+    run_prop_shrink_sweep,
 )
 from velocity.ingest.mlb import normalize_boxscore
 from velocity.ingest.theoddsapi import normalize_player_props
@@ -162,6 +164,29 @@ def test_prop_archive_backtest_graded_gives_full_scorecard() -> None:
     # graded → the scorecard summary (record + ROI + ECE), not just CLV
     assert {"wins", "losses", "roi", "ece"} <= set(report.summary)
     assert not report.calibration.empty
+
+
+def test_prop_shrink_sweep_prices_once_and_scales_confidence() -> None:
+    cfg = SlateConfig(exclude_closing=False, min_edge=0.0)
+    reports = run_prop_shrink_sweep(
+        _archive(), EVENTS, lambda d: _model_and_names(), [1.0, 0.5], base_config=cfg
+    )
+    assert set(reports) == {1.0, 0.5}
+    raw, shrunk = reports[1.0].ledger, reports[0.5].ledger
+    assert not raw.empty
+
+    # shrink=1.0 is the raw model — bit-identical to the plain archive backtest.
+    plain = run_prop_archive_backtest(
+        _archive(), EVENTS, lambda d: _model_and_names(), config=cfg
+    )
+    assert raw["p_model"].tolist() == plain.ledger["p_model"].tolist()
+
+    # 0.5 pulls every retained bet's confidence halfway to 0.5 (p → 0.5 + 0.5·(p−0.5)).
+    keys = ["game_id", "market", "player", "side"]
+    merged = raw.merge(shrunk, on=keys, suffixes=("_raw", "_s"))
+    assert not merged.empty
+    assert np.allclose(merged["p_model_s"], 0.5 + 0.5 * (merged["p_model_raw"] - 0.5))
+    assert len(shrunk) <= len(raw)  # shrinking edge can only drop bets, never add
 
 
 def test_empty_prop_archive_yields_empty_report() -> None:
