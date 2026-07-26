@@ -47,6 +47,9 @@ def main() -> None:
     parser.add_argument("--season", type=int, required=True, help="season year for as-of stats")
     parser.add_argument("--boxscores",
                         help="optional parquet of normalize_boxscore rows to grade win/loss")
+    parser.add_argument("--grade", action="store_true",
+                        help="fetch box scores from StatsAPI for the archive's games and grade "
+                             "win/loss + ROI + calibration (no odds credits; free StatsAPI)")
     parser.add_argument("--out", help="optional parquet to persist the prop ledger")
     parser.add_argument("--n-sims", type=int, default=2000,
                         help="Monte Carlo draws per game (default 2000; lower = faster)")
@@ -57,12 +60,19 @@ def main() -> None:
     archive = Path(args.archive)
     lines = _load_concat(archive, "props")
     events = _load_concat(archive, "events").drop_duplicates("game_id")
-    boxscores = pd.read_parquet(args.boxscores) if args.boxscores else None
+
+    from velocity.backtest.props_mlb import load_archive_boxscores, walk_forward_props_mlb
+
+    if args.boxscores:
+        boxscores = pd.read_parquet(args.boxscores)
+    elif args.grade:
+        boxscores = load_archive_boxscores(events)
+        print(f"fetched box scores for {boxscores['game_id'].nunique()} games")
+    else:
+        boxscores = None
     graded = boxscores is not None
     print(f"loaded {len(lines)} prop line rows across {events['game_id'].nunique()} games"
           f"{' (grading with box scores)' if graded else ' (grade-free CLV read)'}")
-
-    from velocity.backtest.props_mlb import walk_forward_props_mlb
 
     report = walk_forward_props_mlb(
         lines, events, args.season,

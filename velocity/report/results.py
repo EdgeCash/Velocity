@@ -68,3 +68,38 @@ def finals_for_slate(
             hs, as_ = finals[key]
             rows.append({"game_id": str(game["game_id"]), "home_score": hs, "away_score": as_})
     return pd.DataFrame(rows, columns=["game_id", "home_score", "away_score"])
+
+
+def gamepks_for_slate(
+    games_map: pd.DataFrame,
+    schedule: pd.DataFrame,
+    *,
+    aliases: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    """Map each slate ``game_id`` → its StatsAPI ``gamePk`` by team code + date.
+
+    The same team-code + date bridge as :func:`finals_for_slate`, but it hands back
+    the ``gamePk`` (which :func:`velocity.ingest.mlb.normalize_schedule` stores as the
+    schedule's ``game_id``) rather than the score — so a prop backtest can then fetch
+    each game's per-player box score to grade player props. ``games_map`` is the
+    slate side (Odds-API ``game_id`` + team names + ``kickoff``); ``schedule`` is a
+    ``Games``-shaped StatsAPI frame. Returns ``[game_id, game_pk]`` for every slate
+    game matched to a scheduled StatsAPI game; unmatched games are dropped.
+    """
+    alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
+    codes = list(alias_map.values())
+
+    pk_by_key: dict[tuple[str, str, object], str] = {}
+    for row in schedule.to_dict("records"):
+        key = _pair_key(row["away_team"], row["home_team"], row.get("kickoff"), codes, alias_map)
+        if key is not None:
+            pk_by_key[key] = str(row["game_id"])  # schedule game_id IS the StatsAPI gamePk
+
+    rows: list[dict[str, object]] = []
+    for game in games_map.to_dict("records"):
+        key = _pair_key(
+            game["away_team"], game["home_team"], game.get("kickoff"), codes, alias_map
+        )
+        if key is not None and key in pk_by_key:
+            rows.append({"game_id": str(game["game_id"]), "game_pk": pk_by_key[key]})
+    return pd.DataFrame(rows, columns=["game_id", "game_pk"])

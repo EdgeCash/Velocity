@@ -8,7 +8,7 @@ final; an unplayed game, an unmatched team, or a date mismatch is dropped.
 from __future__ import annotations
 
 import pandas as pd
-from velocity.report.results import finals_for_slate
+from velocity.report.results import finals_for_slate, gamepks_for_slate
 
 # The slate side: Odds-API ids + provider names + kickoff.
 GAMES_MAP = pd.DataFrame({
@@ -57,3 +57,28 @@ def test_unresolvable_team_is_dropped() -> None:
 def test_empty_inputs_yield_empty_frame() -> None:
     out = finals_for_slate(GAMES_MAP.iloc[:0], SCHEDULE)
     assert out.empty and list(out.columns) == ["game_id", "home_score", "away_score"]
+
+
+# --- gamePk resolver (the box-score bridge for prop grading) ----------------
+
+
+def test_gamepks_match_by_team_code_and_date() -> None:
+    pks = gamepks_for_slate(GAMES_MAP, SCHEDULE).set_index("game_id")
+    # Each Odds id gets the schedule's gamePk, joined by team + date.
+    assert pks.loc["odds1", "game_pk"] == "745804"
+    assert pks.loc["odds2", "game_pk"] == "745820"
+    # The Cubs game is a day off between the feeds → unmatched, dropped.
+    assert "odds3" not in pks.index
+
+
+def test_gamepks_drop_unresolvable_team() -> None:
+    games = GAMES_MAP.copy()
+    games.loc[games["game_id"] == "odds1", "home_team"] = "Sioux Falls Canaries"
+    pks = gamepks_for_slate(games, SCHEDULE)
+    assert "odds1" not in set(pks["game_id"])
+    assert "odds2" in set(pks["game_id"])
+
+
+def test_gamepks_empty_inputs_yield_empty_frame() -> None:
+    out = gamepks_for_slate(GAMES_MAP.iloc[:0], SCHEDULE)
+    assert out.empty and list(out.columns) == ["game_id", "game_pk"]
