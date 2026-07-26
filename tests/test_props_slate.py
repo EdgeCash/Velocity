@@ -156,6 +156,28 @@ def test_mlb_prop_slate_resolves_events_and_prices() -> None:
     assert [u["player"] for u in unresolved] == ["Unknown Guy"]
 
 
+def test_resolved_but_unsimulated_player_is_skipped_not_crashed() -> None:
+    """A prop board offers lines for more players than the sim's nine-man lineup
+    (bench, pinch-hitters, relievers). One that resolves to a real id but was never
+    simulated must be skipped, not raise KeyError — the crash the live archive hit."""
+    props = _props_for_game()  # sim knows 477132 (Kershaw), 660271 (Ohtani), h*/a*
+    prop_lines = normalize_player_props(_props_json())
+    # "Unknown Guy" now resolves — to a real id the sim never put on the field.
+    stats = pd.DataFrame({
+        "player_id": ["477132", "660271", "693307"],
+        "player_name": ["Clayton Kershaw", "Shohei Ohtani", "Unknown Guy"],
+    })
+    log, unresolved = build_prop_slate(
+        {"evt-mlb-001": props},
+        prop_lines,
+        build_name_index(stats),
+        SlateConfig(exclude_closing=False, min_edge=0.0),
+    )
+    # No crash; the unsimulated player produced no bet and isn't a name-resolution miss.
+    assert all(bet.player != "Unknown Guy" for bet in log)
+    assert unresolved == []  # he resolved — the skip is a pricing gap, not a name miss
+
+
 def test_empty_prop_board_yields_no_bets() -> None:
     props = _props_for_game()
     empty = normalize_player_props([])

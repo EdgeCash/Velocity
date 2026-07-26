@@ -48,6 +48,21 @@ class BaseballProps:
 
     result: BaseballSimResult
 
+    def has(self, player_id: str, stat: str) -> bool:
+        """Whether the sim produced samples for this ``(player, stat)``.
+
+        False when the stat is unknown, or the player was not simulated in a role
+        that yields it — a bench batter / pinch-hitter absent from the nine-man
+        lineup, or a position player carrying a pitcher-market line. The prop board
+        offers lines for more players than the model simulates, so the pricer uses
+        this to skip the unpriceable ones rather than raising.
+        """
+        attr = _STAT_ATTR.get(stat)
+        if attr is None:
+            return False
+        table: Mapping[str, np.ndarray] = getattr(self.result, attr)
+        return player_id in table
+
     def _samples(self, player_id: str, stat: str) -> np.ndarray:
         attr = _STAT_ATTR.get(stat)
         if attr is None:
