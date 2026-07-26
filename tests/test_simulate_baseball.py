@@ -138,6 +138,46 @@ def test_f5_runs_bounded_by_full_game() -> None:
     assert (res.f5.away_score <= res.full.away_score).all()
 
 
+def test_i1_runs_bounded_by_f5() -> None:
+    res = _sim(13, 800)
+    # First-inning runs are a prefix of the first five, which prefix the game.
+    assert (res.i1.home_score <= res.f5.home_score).all()
+    assert (res.i1.away_score <= res.f5.away_score).all()
+    assert (res.i1.home_score >= 0).all()
+    assert np.array_equal(res.i1.home_score, np.round(res.i1.home_score))
+
+
+def test_i1_deterministic_under_seed() -> None:
+    home, away = _avg_team("h"), _avg_team("a")
+    cfg = BaseballSimConfig(n_sims=200)
+    r1 = simulate_game(home, away, np.random.default_rng(42), cfg)
+    r2 = simulate_game(home, away, np.random.default_rng(42), cfg)
+    assert np.array_equal(r1.i1.home_score, r2.i1.home_score)
+    assert np.array_equal(r1.i1.away_score, r2.i1.away_score)
+
+
+def test_all_strikeout_pitchers_guarantee_nrfi() -> None:
+    """Two 100%-strikeout starters allow no baserunners — a certain NRFI."""
+    all_k = {"k": 1.0, "bb": 0.0, "hbp": 0.0, "hr": 0.0, "in_play": 0.0}
+    home = Team(
+        [batter_from_rates(f"h{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR) for i in range(9)],
+        pitcher_from_rates("h_p", all_k),
+    )
+    away = Team(
+        [batter_from_rates(f"a{i}", DEFAULT_BAT_PRIOR, DEFAULT_BIP_PRIOR) for i in range(9)],
+        pitcher_from_rates("a_p", all_k),
+    )
+    res = simulate_game(home, away, np.random.default_rng(6), BaseballSimConfig(n_sims=100))
+    assert (res.i1.home_score + res.i1.away_score == 0).all()
+
+
+def test_i1_realistic_yrfi_rate() -> None:
+    """League-average lineups score a first-inning run at a realistic MLB rate."""
+    res = _sim(17, 3000)
+    yrfi = float(np.mean((res.i1.home_score + res.i1.away_score) > 0.5))
+    assert 0.40 <= yrfi <= 0.62  # real MLB YRFI runs ~50%
+
+
 def test_pitcher_strikeouts_match_batters_faced() -> None:
     """Internal consistency: the home pitcher's Ks are the away batters' Ks."""
     res = _sim(2, 400)

@@ -38,8 +38,25 @@ _MARKET_SIDES = {
     "spread": ("home", "away"),
     "total": ("over", "under"),
     "moneyline": ("home", "away"),
+    # MLB segment derivatives: the F5 markets mirror the three game markets over
+    # innings 1–5; total_i1 is the first-inning total (NRFI = under 0.5, YRFI =
+    # over 0.5). Priced only when the projection exposes the segment (an
+    # MLBProjection); a football projection has no segments, so these lines are
+    # skipped rather than mis-priced off the full-game sim.
+    "spread_f5": ("home", "away"),
+    "total_f5": ("over", "under"),
+    "moneyline_f5": ("home", "away"),
+    "total_i1": ("over", "under"),
 }
 _OPPOSITE = {"home": "away", "away": "home", "over": "under", "under": "over"}
+
+# Segment market → (projection attribute carrying its GameProjection, base market).
+_SEGMENT_MARKETS = {
+    "spread_f5": ("f5", "spread"),
+    "total_f5": ("f5", "total"),
+    "moneyline_f5": ("f5", "moneyline"),
+    "total_i1": ("i1", "total"),
+}
 
 
 @dataclass(frozen=True)
@@ -81,8 +98,29 @@ class SlateConfig:
 
 def model_probability(
     proj: GameProjection, market: str, side: str, point: float | None
-) -> float:
-    """The model's probability for one (market, side, point), read off the sim."""
+) -> float | None:
+    """The model's probability for one (market, side, point), read off the sim.
+
+    Segment markets (``*_f5``, ``total_i1``) price off the projection's segment
+    sim; a projection without that segment (football) returns ``None`` — the
+    caller skips the line rather than mis-pricing it off the full game. A segment
+    *moneyline* conditions on no tie: an F5 tie is common (~15–20% of games) and
+    books push it, so the bettable probability is P(win | not a tie).
+    """
+    segment = _SEGMENT_MARKETS.get(market)
+    if segment is not None:
+        attr, base = segment
+        seg_proj = getattr(proj, attr, None)
+        if seg_proj is None:
+            return None
+        if base == "moneyline":
+            margin = seg_proj.sim.margin
+            wins = float(np.mean(margin > 0)) if side == "home" else float(np.mean(margin < 0))
+            ties = float(np.mean(margin == 0))
+            live = 1.0 - ties
+            return wins / live if live > 0.0 else 0.5
+        return model_probability(seg_proj, base, side, point)
+
     if market == "moneyline":
         p_home = proj.p_home_win()
         return p_home if side == "home" else 1.0 - p_home
@@ -214,6 +252,8 @@ def _best_opportunity(
         if p_fair is None:
             continue
         p_model = model_probability(proj, market, side, point)
+        if p_model is None:  # projection can't price this market (no segment sim)
+            continue
         if config.prob_shrink != 1.0:  # temper an over-confident model toward 0.5
             p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
         signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)

@@ -9,9 +9,10 @@ base-out state machine, and count the runs.
 The engine emits **``GameSim``-compatible** score arrays (see
 :mod:`velocity.models.simulate`), which is the point: the existing de-vig / edge /
 Kelly / backtest stack prices spread, total and moneyline off a ``GameSim`` and
-does not care which sport produced it. So a baseball game yields two of them —
-``full`` (final runs) and ``f5`` (runs through five innings, the first-5-innings
-market) — and every football pricing helper works on each for free. Per-player
+does not care which sport produced it. So a baseball game yields three of them —
+``full`` (final runs), ``f5`` (runs through five innings, the first-5-innings
+market), and ``i1`` (first-inning runs, which prices NRFI/YRFI as a total at 0.5)
+— and every football pricing helper works on each for free. Per-player
 strikeout / total-base sample arrays ride alongside for the props phase.
 
 **Determinism is non-negotiable**, exactly as in the football sim: every draw
@@ -170,15 +171,17 @@ class BaseballSimConfig:
 class BaseballSimResult:
     """The priced distributions plus per-player sample arrays.
 
-    ``full`` and ``f5`` are ordinary :class:`GameSim` objects, so every football
-    pricing helper (``p_home_win``, ``prob_home_cover``, ``prob_over``,
-    ``fair_spread``, ``fair_total``) applies to each unchanged — ``f5`` simply
-    prices the first-5-innings markets. The stat dicts map player id → an array of
+    ``full``, ``f5`` and ``i1`` are ordinary :class:`GameSim` objects, so every
+    football pricing helper (``p_home_win``, ``prob_home_cover``, ``prob_over``,
+    ``fair_spread``, ``fair_total``) applies to each unchanged — ``f5`` prices the
+    first-5-innings markets and ``i1`` the first-inning total (NRFI is the under
+    at 0.5, YRFI the over). The stat dicts map player id → an array of
     per-simulation counts, the raw material for player props.
     """
 
     full: GameSim
     f5: GameSim
+    i1: GameSim
     batter_total_bases: Mapping[str, np.ndarray] = field(default_factory=dict)
     batter_hits: Mapping[str, np.ndarray] = field(default_factory=dict)
     batter_home_runs: Mapping[str, np.ndarray] = field(default_factory=dict)
@@ -467,6 +470,8 @@ def simulate_game(
     away_final = np.zeros(n, dtype=np.int64)
     home_f5 = np.zeros(n, dtype=np.int64)
     away_f5 = np.zeros(n, dtype=np.int64)
+    home_i1 = np.zeros(n, dtype=np.int64)
+    away_i1 = np.zeros(n, dtype=np.int64)
 
     all_batters = [b for t in (home, away) for b in t.lineup]
     bat_tb: dict[str, np.ndarray] = {b.player_id: np.zeros(n, np.int64) for b in all_batters}
@@ -502,6 +507,8 @@ def simulate_game(
             away_runs += top.runs
             if inning <= 5:
                 away_f5_runs += top.runs
+            if inning == 1:
+                away_i1[s] = top.runs
             k_recorded = _accumulate(top.events, away.lineup, g_tb, g_h, g_hr, g_k)
             if cap is None or g_pit_outs[hp] < cap:  # starter still in the game
                 g_pit_k[hp] += k_recorded
@@ -520,6 +527,8 @@ def simulate_game(
                 home_runs += bottom.runs
                 if inning <= 5:
                     home_f5_runs += bottom.runs
+                if inning == 1:
+                    home_i1[s] = bottom.runs
                 k_recorded = _accumulate(bottom.events, home.lineup, g_tb, g_h, g_hr, g_k)
                 if cap is None or g_pit_outs[ap] < cap:
                     g_pit_k[ap] += k_recorded
@@ -547,6 +556,7 @@ def simulate_game(
     return BaseballSimResult(
         full=GameSim(home_score=home_final.astype(float), away_score=away_final.astype(float)),
         f5=GameSim(home_score=home_f5.astype(float), away_score=away_f5.astype(float)),
+        i1=GameSim(home_score=home_i1.astype(float), away_score=away_i1.astype(float)),
         batter_total_bases=bat_tb,
         batter_hits=bat_h,
         batter_home_runs=bat_hr,

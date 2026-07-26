@@ -1,0 +1,53 @@
+{
+  "evt-mlb-001": {
+    "id": "evt-mlb-001",
+    "sport_key": "baseball_mlb",
+    "commence_time": "2026-07-24T02:10:00Z",
+    "home_team": "Los Angeles Dodgers",
+    "away_team": "San Francisco Giants",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-07-24T01:55:00Z",
+        "markets": [
+          {
+            "key": "h2h_1st_5_innings",
+            "outcomes": [
+              {"name": "Los Angeles Dodgers", "price": -150},
+              {"name": "San Francisco Giants", "price": 128}
+            ]
+          },
+          {
+            "key": "spreads_1st_5_innings",
+            "outcomes": [
+              {"name": "Los Angeles Dodgers", "price": 105, "point": -0.5},
+              {"name": "San Francisco Giants", "price": -125, "point": 0.5}
+            ]
+          },
+          {
+            "key": "totals_1st_5_innings",
+            "outcomes": [
+              {"name": "Over", "price": -110, "point": 4.5},
+              {"name": "Under", "price": -110, "point": 4.5}
+            ]
+          },
+          {
+            "key": "totals_1st_1_innings",
+            "outcomes": [
+              {"name": "Over", "price": 115, "point": 0.5},
+              {"name": "Under", "price": -135, "point": 0.5}
+            ]
+          },
+          {
+            "key": "team_totals",
+            "outcomes": [
+              {"name": "Over", "description": "Los Angeles Dodgers", "price": -115, "point": 4.5},
+              {"name": "Under", "description": "Los Angeles Dodgers", "price": -105, "point": 4.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

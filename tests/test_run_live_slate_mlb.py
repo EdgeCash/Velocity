@@ -55,6 +55,22 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     assert "Velocity" in cards[0].read_text()
 
 
+def test_runner_prices_derivative_board_offline(tmp_path: Path) -> None:
+    """A saved snapshot plus banked per-event payloads prices the F5/NRFI board."""
+    deriv = REPO / "tests" / "fixtures" / "theoddsapi_mlb_derivatives.json"
+    out = tmp_path / "slate"
+    result = _run(
+        "--snapshot-file", str(MLB_SNAPSHOT),
+        "--derivatives-file", str(deriv),
+        "--out", str(out),
+    )
+    assert result.returncode == 0, result.stderr
+    # 2 F5 MLs + 2 F5 run lines + 2 F5 totals + 2 first-inning totals normalize;
+    # team_totals stays banked-only.
+    assert "derivative board (file): 8 lines" in result.stdout
+    assert len(list(out.glob("slate_mlb_*.parquet"))) == 1
+
+
 def test_runner_empty_board_succeeds(tmp_path: Path) -> None:
     empty = tmp_path / "empty.json"
     empty.write_text("[]")  # a valid Odds API payload with no events

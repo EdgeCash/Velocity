@@ -84,6 +84,83 @@ def test_slate_never_enters_on_the_closing_line(projection, market, games) -> No
     assert entry_ts == pd.Timestamp("2023-09-05 12:00:00")
 
 
+def _segment_projection():
+    """A hand-built segment-aware projection with exactly known probabilities.
+
+    F5 margins [2, 0, −1, 1] → home wins 2, tie 1, loss 1 (tie-conditioned
+    p_home = 2/3); first-inning totals [1, 0, 0, 0] → NRFI (under 0.5) = 3/4.
+    """
+    from types import SimpleNamespace
+
+    import numpy as np
+    from velocity.models.game_nfl import GameProjection
+    from velocity.models.simulate import GameSim
+
+    f5 = GameProjection(
+        "H", "A", 2.0, 1.5,
+        GameSim(np.array([3.0, 2.0, 1.0, 2.0]), np.array([1.0, 2.0, 2.0, 1.0])),
+    )
+    i1 = GameProjection(
+        "H", "A", 0.25, 0.0,
+        GameSim(np.array([1.0, 0.0, 0.0, 0.0]), np.array([0.0, 0.0, 0.0, 0.0])),
+    )
+    return SimpleNamespace(f5=f5, i1=i1)
+
+
+def test_model_probability_prices_segments_exactly() -> None:
+    proj = _segment_projection()
+    # F5 moneyline conditions on no tie: 2 wins / (2 wins + 1 loss).
+    assert model_probability(proj, "moneyline_f5", "home", None) == pytest.approx(2 / 3)
+    assert model_probability(proj, "moneyline_f5", "away", None) == pytest.approx(1 / 3)
+    # F5 run line and total read the segment sim.
+    assert model_probability(proj, "spread_f5", "home", -0.5) == pytest.approx(0.5)
+    assert model_probability(proj, "total_f5", "over", 3.5) == pytest.approx(0.5)
+    # NRFI/YRFI at 0.5 partition the first inning.
+    assert model_probability(proj, "total_i1", "under", 0.5) == pytest.approx(0.75)
+    assert model_probability(proj, "total_i1", "over", 0.5) == pytest.approx(0.25)
+
+
+def test_football_projection_cannot_price_segments(projection) -> None:
+    # A projection without segment sims returns None — skipped, never mis-priced
+    # off the full-game distribution.
+    assert model_probability(projection, "total_i1", "under", 0.5) is None
+    assert model_probability(projection, "moneyline_f5", "home", None) is None
+
+
+def _segment_lines(game_id: str, ts: pd.Timestamp) -> pd.DataFrame:
+    rows = [
+        {"line_id": f"i1-{side}", "game_id": game_id, "book": "dk", "market": "total_i1",
+         "side": side, "price": -110, "point": 0.5, "timestamp": ts, "is_closing": False}
+        for side in ("over", "under")
+    ] + [
+        {"line_id": f"f5ml-{side}", "game_id": game_id, "book": "dk", "market": "moneyline_f5",
+         "side": side, "price": price, "point": None, "timestamp": ts, "is_closing": False}
+        for side, price in (("home", -120), ("away", 100))
+    ]
+    return pd.DataFrame(rows)
+
+
+def test_slate_stakes_nrfi_and_f5_edges() -> None:
+    games = pd.DataFrame({"game_id": ["g1"], "kickoff": [pd.Timestamp("2026-07-24 23:00")]})
+    lines = _segment_lines("g1", pd.Timestamp("2026-07-24 12:00"))
+    log = build_slate(
+        {"g1": _segment_projection()}, lines, games, SlateConfig(exclude_closing=False)
+    )
+    by_market = {b.market: b for b in log.bets}
+    # NRFI: model 75% vs a de-vigged 50% coin — a clear under.
+    assert by_market["total_i1"].side == "under"
+    assert by_market["total_i1"].p_model == pytest.approx(0.75)
+    # F5 moneyline: tie-conditioned 2/3 home beats the 52% implied at −120.
+    assert by_market["moneyline_f5"].side == "home"
+    assert by_market["moneyline_f5"].p_model == pytest.approx(2 / 3)
+
+
+def test_segment_lines_skipped_for_football(projection, games) -> None:
+    lines = _segment_lines(GAME_ID, pd.Timestamp("2023-09-05 12:00:00"))
+    log = build_slate({GAME_ID: projection}, lines, games, SlateConfig(exclude_closing=False))
+    assert len(log) == 0  # no segment sims on a football projection → no bets
+
+
 def test_no_lines_no_bets(projection, games) -> None:
     empty = pd.DataFrame(
         columns=[

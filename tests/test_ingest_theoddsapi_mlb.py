@@ -15,7 +15,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from pandera.errors import SchemaError
-from velocity.ingest.theoddsapi import SPORT_KEYS, TheOddsAPIClient, normalize_odds_events
+from velocity.ingest.theoddsapi import (
+    DERIVATIVE_MARKET_KEYS,
+    SPORT_KEYS,
+    TheOddsAPIClient,
+    events_of,
+    normalize_derivative_markets,
+    normalize_odds_events,
+)
 from velocity.store.schema import Games, Lines
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -24,6 +31,15 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def _mlb_events() -> list[dict]:
     """The frozen live-array ``/odds`` sample for one MLB game (one book)."""
     return json.loads((FIXTURES / "theoddsapi_mlb.json").read_text())
+
+
+def _derivative_events() -> list[dict]:
+    """The frozen per-event derivative payloads (the collector's banked shape)."""
+    banked = json.loads((FIXTURES / "theoddsapi_mlb_derivatives.json").read_text())
+    events: list[dict] = []
+    for raw in banked.values():
+        events.extend(events_of(raw))
+    return events
 
 
 def test_sport_key_maps_mlb() -> None:
@@ -60,6 +76,38 @@ def test_collector_league_tag_rides_along() -> None:
     lines = normalize_odds_events(_mlb_events()).assign(league="mlb")
     Lines.validate(lines)  # extra column is tolerated by the non-strict schema
     assert (lines["league"] == "mlb").all()
+
+
+def test_derivative_markets_normalize_and_validate() -> None:
+    lines = normalize_derivative_markets(_derivative_events())
+    Lines.validate(lines)
+    # 2 F5 moneylines + 2 F5 run lines + 2 F5 totals + 2 first-inning totals;
+    # team_totals (no two-way normalizer yet) is banked-only and dropped.
+    assert len(lines) == 8
+    assert set(lines["market"]) == {"moneyline_f5", "spread_f5", "total_f5", "total_i1"}
+    assert lines["line_id"].is_unique
+
+
+def test_derivative_points_and_sides() -> None:
+    lines = normalize_derivative_markets(_derivative_events())
+    # An F5 moneyline carries no number, exactly like the full-game moneyline.
+    assert lines[lines["market"] == "moneyline_f5"]["point"].isna().all()
+    # NRFI/YRFI is the first-inning total at the standard 0.5.
+    i1 = lines[lines["market"] == "total_i1"]
+    assert set(i1["point"]) == {0.5}
+    assert set(i1["side"]) == {"Over", "Under"}  # canonicalized later, like any board
+    assert set(lines[lines["market"] == "spread_f5"]["point"]) == {-0.5, 0.5}
+
+
+def test_derivative_keys_include_first_inning() -> None:
+    # The collector banks the first-inning market alongside the F5 board.
+    assert "totals_1st_1_innings" in DERIVATIVE_MARKET_KEYS
+
+
+def test_game_normalizer_ignores_derivative_markets() -> None:
+    # The bulk-board normalizer keeps its three game markets; the derivative
+    # payload contributes nothing to it (separate market map, no cross-talk).
+    assert normalize_odds_events(_derivative_events()).empty
 
 
 def _mlb_games_frame() -> pd.DataFrame:

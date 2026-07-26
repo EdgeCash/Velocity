@@ -19,10 +19,19 @@ from pandera.typing import Series
 
 LEAGUES = ["nfl", "ncaaf", "mlb"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
-# Game-level markets shared by every league. MLB's derivative markets (run line,
-# and first-5-innings segments) are added with the MLB wagering phase; see
-# docs/BUILD_MLB.md. Until then MLB uses the same three game markets as football.
-MARKETS = ["spread", "total", "moneyline"]
+# Game-level markets. The first three are shared by every league (MLB's run line
+# is a ``spread``). The ``_f5`` segment markets are the MLB first-5-innings
+# derivatives (same semantics over the innings-1–5 scores), and ``total_i1`` is
+# the first-inning total — NRFI/YRFI as an under/over at the standard 0.5 point.
+MARKETS = [
+    "spread",
+    "total",
+    "moneyline",
+    "spread_f5",
+    "total_f5",
+    "moneyline_f5",
+    "total_i1",
+]
 # Baseball player roles for :class:`BaseballStats`.
 BASEBALL_ROLES = ["bat", "pit"]
 # Player-prop markets (canonical stat keys, matching props_mlb.BaseballProps).

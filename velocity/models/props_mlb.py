@@ -64,13 +64,16 @@ class BaseballProps:
         return player_id in table
 
     def _samples(self, player_id: str, stat: str) -> np.ndarray:
-        attr = _STAT_ATTR.get(stat)
-        if attr is None:
-            raise ValueError(f"unknown prop stat {stat!r}")
-        table: Mapping[str, np.ndarray] = getattr(self.result, attr)
-        if player_id not in table:
-            raise KeyError(f"{player_id!r} has no {stat} samples")
-        return table[player_id]
+        return prop_samples(self.result, player_id, stat)
+
+    def samples(self, player_id: str, stat: str) -> np.ndarray:
+        """The raw per-simulation sample array for ``(player, stat)``.
+
+        Public access for consumers that need the joint distribution itself —
+        notably parlay pricing, which combines a prop leg with other legs of the
+        same simulated game so their correlation is preserved.
+        """
+        return prop_samples(self.result, player_id, stat)
 
     def mean(self, player_id: str, stat: str) -> float:
         return float(np.mean(self._samples(player_id, stat)))
@@ -93,6 +96,22 @@ class BaseballProps:
         values, counts = np.unique(samples, return_counts=True)
         n = int(samples.shape[0])
         return {int(v): float(c) / n for v, c in zip(values, counts, strict=False)}
+
+
+def prop_samples(result: BaseballSimResult, player_id: str, stat: str) -> np.ndarray:
+    """The per-simulation sample array for ``(player, stat)`` on a sim result.
+
+    Module-level twin of :meth:`BaseballProps.samples` for callers holding a raw
+    :class:`BaseballSimResult`. Raises ``ValueError`` on an unknown stat and
+    ``KeyError`` when the player was not simulated in a role that yields it.
+    """
+    attr = _STAT_ATTR.get(stat)
+    if attr is None:
+        raise ValueError(f"unknown prop stat {stat!r}")
+    table: Mapping[str, np.ndarray] = getattr(result, attr)
+    if player_id not in table:
+        raise KeyError(f"{player_id!r} has no {stat} samples")
+    return table[player_id]
 
 
 def substitute(team: Team, out_player_id: str, replacement: Batter) -> Team:

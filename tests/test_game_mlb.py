@@ -73,6 +73,32 @@ def test_f5_is_a_smaller_game_than_the_full_nine() -> None:
     assert (proj.result.f5.home_score <= proj.result.full.home_score).all()
 
 
+def test_i1_segment_and_nrfi_pricing() -> None:
+    proj = _model().project("LAD", "SF")
+    # NRFI/YRFI partition the first inning at the standard 0.5 total.
+    assert proj.prob_nrfi() + proj.prob_yrfi() == pytest.approx(1.0)
+    assert 0.2 < proj.prob_yrfi() < 0.8  # a real rate, not degenerate
+    # The i1 segment is a strictly smaller game than F5, which is smaller than 9.
+    assert proj.i1.mu_total < proj.f5.mu_total < proj.full.mu_total
+
+
+def test_mlb_projection_duck_types_game_projection() -> None:
+    """The consumers of a full-game projection read these attributes; the
+    MLBProjection must delegate them so it can flow through slate/report code."""
+    proj = _model().project("LAD", "SF")
+    assert proj.home_team == "LAD"
+    assert proj.away_team == "SF"
+    assert proj.mu_home == proj.full.mu_home
+    assert proj.mu_total == pytest.approx(proj.mu_home + proj.mu_away)
+    assert proj.sim is proj.full.sim
+    assert proj.p_home_win() == proj.full.p_home_win()
+    assert proj.p_away_win() == pytest.approx(1.0 - proj.p_home_win())
+    assert proj.fair_spread() == proj.full.fair_spread()
+    assert proj.fair_total() == proj.full.fair_total()
+    assert proj.prob_over(8.5) == proj.full.prob_over(8.5)
+    assert proj.prob_home_cover(-1.5) == proj.full.prob_home_cover(-1.5)
+
+
 def test_team_total_probability_is_bounded() -> None:
     proj = _model().project("LAD", "SF")
     p = proj.prob_team_over("home", 4.5)

@@ -5,8 +5,10 @@ only from the per-event ``/events/{id}/odds`` endpoint. This pulls each event's 
 once — asking for the prop and derivative markets together (credit-efficient) — then:
 
 * banks the **raw** per-event JSON verbatim (so every market, including ones with no
-  canonical normalizer yet, is preserved for the props/derivatives backtest), and
-* writes the normalized ``PropLines`` parquet for the prop markets we already model.
+  canonical normalizer yet, is preserved for the props/derivatives backtest),
+* writes the normalized ``PropLines`` parquet for the prop markets we model, and
+* writes the normalized derivative ``Lines`` parquet (F5 moneyline/run line/total +
+  NRFI/YRFI) — the entry/closing archive the derivative CLV backtest replays.
 
 Runs as a GitHub Action (where ``THE_ODDS_API`` lives) and uploads a PRIVATE artifact
 — never commits, since the repo is public and paid odds must not land in it. Empty
@@ -28,6 +30,7 @@ from velocity.ingest.theoddsapi import (
     DEFAULT_PROP_MARKETS,
     TheOddsAPIClient,
     events_of,
+    normalize_derivative_markets,
     normalize_player_props,
 )
 
@@ -62,20 +65,32 @@ def main() -> None:
     for event_id, raw in payloads:
         (raw_dir / f"mlb_event_{tag}_{event_id}.json").write_text(json.dumps(raw))
 
-    # Normalize just the prop markets we model today; derivatives wait for their
-    # normalizer (see the props/derivatives backtest issue) and live in the raw bank.
+    # Normalize both boards we model: the prop markets and the derivative game
+    # markets (F5 + first inning). team_totals stays raw-banked only.
     frames = [normalize_player_props(events_of(raw), is_closing=False) for _, raw in payloads]
     props = (
         pd.concat(frames, ignore_index=True) if frames else normalize_player_props([])
     ).assign(league="mlb", collected_at=stamp)
+    deriv_frames = [
+        normalize_derivative_markets(events_of(raw), is_closing=False) for _, raw in payloads
+    ]
+    derivs = (
+        pd.concat(deriv_frames, ignore_index=True)
+        if deriv_frames
+        else normalize_derivative_markets([])
+    ).assign(league="mlb", collected_at=stamp)
     print(
         f"  {len(payloads)} events banked (raw); {len(props)} prop lines normalized "
-        f"({props['game_id'].nunique()} games, {props['player'].nunique()} players)"
+        f"({props['game_id'].nunique()} games, {props['player'].nunique()} players); "
+        f"{len(derivs)} derivative lines normalized"
     )
 
     dest = out / f"mlb_props_{tag}.parquet"
     props.to_parquet(dest, index=False)
-    print(f"wrote {len(props)} prop rows to {dest} and {len(payloads)} raw payloads to {raw_dir}")
+    deriv_dest = out / f"mlb_derivatives_{tag}.parquet"
+    derivs.to_parquet(deriv_dest, index=False)
+    print(f"wrote {len(props)} prop rows to {dest}, {len(derivs)} derivative rows to "
+          f"{deriv_dest}, and {len(payloads)} raw payloads to {raw_dir}")
     if client.remaining is not None:
         print(f"credits remaining this month: {client.remaining}")
     if not payloads:

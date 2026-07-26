@@ -74,12 +74,13 @@ def _load_snapshot(args: argparse.Namespace) -> object:
 
 
 def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
-    """The MLB model: real StatsAPI lineups/rates when live, else the baseline.
+    """The MLB model + player-name index: StatsAPI when live, else the baseline.
 
     An offline run (``--snapshot-file``) uses the league-average baseline — no
     network. A live run builds today's model from StatsAPI (season stats + probable
     lineups), falling back to the baseline if that fetch fails so the slate still
-    runs.
+    runs. Returns ``(model, name_to_id | None)`` — one build serves the game
+    slate, the prop slate, and parlay pricing off the same simulation.
     """
     codes = sorted(set(MLB_TEAM_ALIASES.values()))
     config = BaseballSimConfig(
@@ -92,31 +93,39 @@ def _mlb_model(args: argparse.Namespace):  # type: ignore[no-untyped-def]
         return league_average_model(
             codes, n_sims=args.n_sims,
             park_hr_factors=hr_factors, run_env_tilts=run_env_tilts,
-        )
+        ), None
     try:
-        from velocity.models.mlb_build import build_live_mlb_model
+        from velocity.models.mlb_build import build_live_mlb
 
         now = datetime.now(UTC)
-        model = build_live_mlb_model(now.strftime("%Y-%m-%d"), now.year, config=config)
+        model, names = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=config)
         print(f"built MLB model from StatsAPI lineups ({len(model.known_teams)} clubs)")
-        return model
+        return model, names
     except Exception as exc:  # noqa: BLE001 - any live-data failure degrades gracefully
         print(f"warning: live lineup build failed ({exc}); using league-average baseline")
-        return league_average_model(codes, n_sims=args.n_sims)
+        return league_average_model(codes, n_sims=args.n_sims), None
 
 
 def _build_projection(
     args: argparse.Namespace,
-) -> tuple[Callable[[str, str], GameProjection], list[str], dict[str, str] | None, object | None]:
-    """Return ``(project, known_teams, aliases, mlb_model)`` for the requested league.
+) -> tuple[
+    Callable[[str, str], GameProjection],
+    list[str],
+    dict[str, str] | None,
+    object | None,
+    dict[str, str] | None,
+]:
+    """Return ``(project, known_teams, aliases, mlb_model, mlb_names)`` per league.
 
     Football fits the scores ratings from a committed games file; MLB simulates
     from lineups. The MLB model is returned so the runner can fold today's weather
     into its per-home run environment before pricing; football returns ``None``.
+    MLB's ``project`` is the segment-aware :meth:`MLBGameModel.project`, so the
+    slate prices the F5 and first-inning (NRFI/YRFI) markets off the same sim.
     """
     if args.league == "mlb":
-        model = _mlb_model(args)
-        return model.project_full, model.known_teams, MLB_TEAM_ALIASES, model
+        model, names = _mlb_model(args)
+        return model.project, model.known_teams, MLB_TEAM_ALIASES, model, names
 
     if not args.data:
         raise SystemExit(f"--data is required for {args.league} (a folder with a games file)")
@@ -131,7 +140,7 @@ def _build_projection(
     def project(home: str, away: str) -> GameProjection:
         return model.project(home, away, rng=make_rng())
 
-    return project, list(model.ratings.teams), None, None
+    return project, list(model.ratings.teams), None, None, None
 
 
 def main() -> None:
@@ -159,18 +168,54 @@ def main() -> None:
                         help="MLB prop confidence shrink toward 0.5 (1.0 = raw model)")
     parser.add_argument("--mlb-exclude-props", default="total_bases",
                         help="comma-separated prop markets to skip (no-edge); '' bets all")
+    # Derivative board (F5 moneyline/run line/total + NRFI/YRFI). Live MLB fetches it
+    # per-event alongside the props (one credit-efficient pass); offline runs can
+    # supply banked per-event payloads.
+    parser.add_argument("--derivatives-file",
+                        help="saved per-event odds payloads JSON (offline F5/NRFI board)")
+    # Parlays: legs come only from bets that already cleared the single-bet gate, are
+    # priced sim-exactly (correlated within a game, independent across), and must
+    # clear their own higher EV bar. Same-game combos are flagged — books reprice
+    # correlated SGPs below the product payout, so their EV is an upper bound.
+    parser.add_argument("--parlay-max-legs", type=int, default=3,
+                        help="max legs per parlay (0 disables parlays)")
+    parser.add_argument("--parlay-min-ev", type=float, default=0.05,
+                        help="min combined EV per unit for a parlay to be recommended")
+    parser.add_argument("--max-parlays", type=int, default=5,
+                        help="max parlays to recommend per slate")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     args = parser.parse_args()
 
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
-    project, known_teams, aliases, mlb_model = _build_projection(args)
+    project, known_teams, aliases, mlb_model, mlb_names = _build_projection(args)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
     print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
+
+    # The MLB soft board: player props + derivative game markets (F5 moneyline/run
+    # line/total, NRFI/YRFI). Both ride the per-event endpoint, so one live pass
+    # serves both; an offline run can supply banked per-event payloads instead.
+    prop_lines: pd.DataFrame | None = None
+    if args.league == "mlb" and not events.empty:
+        derivatives = pd.DataFrame()
+        if args.derivatives_file:
+            derivatives = _load_derivative_lines(args.derivatives_file)
+            print(f"derivative board (file): {len(derivatives)} lines")
+        elif not args.snapshot_file:
+            try:
+                from velocity.ingest.theoddsapi import TheOddsAPIClient
+
+                prop_lines, derivatives = TheOddsAPIClient.from_env().soft_board("mlb")
+                print(f"soft board: {len(prop_lines)} prop lines, "
+                      f"{len(derivatives)} derivative lines")
+            except Exception as exc:  # noqa: BLE001 - soft board is additive, never fatal
+                print(f"soft board fetch skipped: {exc}")
+        if not derivatives.empty:
+            lines = pd.concat([lines, derivatives], ignore_index=True)
 
     # Fold today's first-pitch weather into the MLB model's run environment (temp →
     # HR, roof gate), so projections — not just the cards — are weather-aware. Live
@@ -183,6 +228,7 @@ def main() -> None:
     projections: dict = {}
     canonical = pd.DataFrame()
     unresolved: list[dict[str, str]] = []
+    game_log = None
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
     else:
@@ -199,7 +245,8 @@ def main() -> None:
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
         games_min = events[["game_id", "kickoff"]].copy()
         games_min["game_id"] = games_min["game_id"].astype(str)
-        frame = slate_to_frame(build_slate(projections, canonical, games_min, cfg))
+        game_log = build_slate(projections, canonical, games_min, cfg)
+        frame = slate_to_frame(game_log)
 
         if frame.empty:
             print("no bets cleared the edge threshold.")
@@ -215,11 +262,27 @@ def main() -> None:
             for u in unresolved:
                 print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
 
-    # MLB player-prop slate — live only (props need the StatsAPI model + a live
-    # prop board); the offline snapshot path prices game markets only.
+    # MLB player-prop slate — live only (props need the StatsAPI name index + a
+    # live prop board); the offline snapshot path prices game markets only. Props
+    # price off the *same* projections as the game slate (one simulation), which
+    # is also what makes prop legs parlay-able against game legs below.
     props_frame = None
-    if args.league == "mlb" and not args.snapshot_file and not events.empty:
-        props_frame = _mlb_prop_slate(args, events, now, generated_at)
+    prop_log = None
+    if (
+        args.league == "mlb"
+        and mlb_names is not None
+        and prop_lines is not None
+        and not prop_lines.empty
+        and projections
+    ):
+        props_frame, prop_log = _mlb_prop_slate(
+            args, projections, prop_lines, mlb_names, now, generated_at
+        )
+
+    # Parlay slate — combine the qualifying single bets (game markets, segments,
+    # props) into sim-exact correlated parlays. Works offline too (game legs only).
+    if args.league == "mlb" and projections and args.parlay_max_legs >= 2:
+        _mlb_parlay_slate(args, projections, game_log, prop_log, mlb_names, now, generated_at)
 
     if args.out:
         out_dir = Path(args.out)
@@ -395,24 +458,43 @@ def _apply_weather_run_env(model, events: pd.DataFrame) -> dict:  # pragma: no c
     return weather_by_game
 
 
-def _mlb_prop_slate(  # pragma: no cover - network
+def _load_derivative_lines(path: str) -> pd.DataFrame:
+    """Normalize saved per-event odds payloads into the derivative ``Lines`` frame.
+
+    Accepts either a ``{event_id: payload}`` mapping (the collector's banked
+    shape) or a bare list of per-event payloads; each payload may be the raw
+    per-event object or a historical ``{data: …}`` wrapper.
+    """
+    from velocity.ingest.theoddsapi import events_of, normalize_derivative_markets
+
+    payload = json.loads(Path(path).read_text())
+    raws = payload.values() if isinstance(payload, dict) else payload
+    events: list[dict] = []
+    for raw in raws:
+        events.extend(events_of(raw))
+    return normalize_derivative_markets(events)
+
+
+def _mlb_prop_slate(
     args: argparse.Namespace,
-    events: pd.DataFrame,
+    projections: dict,
+    prop_lines: pd.DataFrame,
+    name_to_id: dict[str, str],
     now: datetime,
     generated_at: pd.Timestamp,
-) -> pd.DataFrame | None:
-    """Build and persist the MLB prop slate; return its frame (or None on failure)."""
-    try:
-        from velocity.ingest.theoddsapi import TheOddsAPIClient
-        from velocity.models.mlb_build import build_live_mlb
-        from velocity.wagering.props_slate import mlb_prop_slate, prop_slate_to_frame
+) -> tuple[pd.DataFrame | None, object | None]:
+    """Price the prop board off the game slate's projections; return (frame, log).
 
-        sim_config = BaseballSimConfig(n_sims=args.n_sims, starter_outs=18, hfa=DEFAULT_HFA)
-        model, name_to_id = build_live_mlb(now.strftime("%Y-%m-%d"), now.year, config=sim_config)
-        prop_lines = TheOddsAPIClient.from_env().player_props("mlb")
-        log, _ = mlb_prop_slate(
-            model,
-            events,
+    The projections already carry every player's sample arrays (one simulation
+    per game), so no second model build or re-simulation happens here.
+    """
+    try:
+        from velocity.models.props_mlb import BaseballProps
+        from velocity.wagering.props_slate import build_prop_slate, prop_slate_to_frame
+
+        props_by_game = {gid: BaseballProps(proj.result) for gid, proj in projections.items()}
+        log, _ = build_prop_slate(
+            props_by_game,
             prop_lines,
             name_to_id,
             config=SlateConfig(
@@ -432,10 +514,60 @@ def _mlb_prop_slate(  # pragma: no cover - network
             dest = Path(args.out) / f"slate_mlb_props_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
             frame.assign(league="mlb", generated_at=generated_at).to_parquet(dest, index=False)
             print(f"wrote {len(frame)} prop rows to {dest}")
-        return frame
+        return frame, log
     except Exception as exc:  # noqa: BLE001 - prop slate is best-effort; never break the game slate
         print(f"prop slate skipped: {exc}")
-        return None
+        return None, None
+
+
+def _mlb_parlay_slate(  # noqa: PLR0913 - a report writer with several inputs
+    args: argparse.Namespace,
+    projections: dict,
+    game_log: object | None,
+    prop_log: object | None,
+    name_to_id: dict[str, str] | None,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Build, print, and persist the parlay slate from the day's qualifying bets."""
+    try:
+        from velocity.wagering.parlay import (
+            ParlayConfig,
+            build_parlays,
+            parlay_slate_to_frame,
+        )
+
+        candidates = list(game_log or []) + list(prop_log or [])
+        if not candidates:
+            return
+        results_by_game = {str(gid): proj.result for gid, proj in projections.items()}
+        tickets = build_parlays(
+            candidates,
+            results_by_game,
+            bankroll=args.bankroll,
+            name_to_id=name_to_id or {},
+            config=ParlayConfig(
+                max_legs=max(args.parlay_max_legs, 2),
+                min_ev=args.parlay_min_ev,
+                max_parlays=args.max_parlays,
+            ),
+        )
+        frame = parlay_slate_to_frame(tickets)
+        print(f"\n=== MLB parlays — {len(candidates)} candidate legs, "
+              f"{len(frame)} recommended ===")
+        if frame.empty:
+            print("no parlay cleared the combined-EV bar.")
+        else:
+            with pd.option_context("display.width", 200, "display.max_columns", None):
+                print(frame.to_string(index=False))
+            print("note: same_game=True payouts assume the product price; books "
+                  "reprice correlated SGPs, so treat that EV as an upper bound.")
+        if args.out and not frame.empty:
+            dest = Path(args.out) / f"slate_mlb_parlays_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+            frame.assign(league="mlb", generated_at=generated_at).to_parquet(dest, index=False)
+            print(f"wrote {len(frame)} parlay rows to {dest}")
+    except Exception as exc:  # noqa: BLE001 - parlays are additive; never break the slate
+        print(f"parlay slate skipped: {exc}")
 
 
 if __name__ == "__main__":

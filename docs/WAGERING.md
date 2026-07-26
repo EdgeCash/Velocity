@@ -41,6 +41,8 @@ slate before football arrives in September.
 | Game slate | `wagering/slate.py` | ✅ live — point-in-time entry lines, shop books/numbers/times, de-vig, edge, stake, per-game group cap, closing attach |
 | Prop slate | `wagering/props_slate.py` | ✅ live — same discipline for player props; unresolved players reported, never guessed |
 | Live runner | `wagering/live.py`, `scripts/run_live_slate.py` | ✅ live — team/player resolution, `live-slate-mlb.yml` twice daily |
+| MLB derivative segments | `models/simulate_baseball.py` (`f5`/`i1` sims), `wagering/slate.py` | ✅ live — F5 moneyline/run line/total and NRFI/YRFI (`total_i1` at 0.5) priced off the same simulation as the full game; segment bets grade against segment scores or stay pending |
+| Parlay engine | `wagering/parlay.py` | ✅ live — sim-exact joint pricing (correlated within a game, independent across), push-reduction, conservative selection off qualifying single legs, tight stake cap; same-game combos flagged (books reprice SGPs below the product payout) |
 | Confidence calibration | `SlateConfig.prob_shrink` / `prop_shrink_by_market` / `exclude_markets` | ✅ live — tuned by walk-forward sweeps (see §1.3) |
 | Walk-forward backtests | `backtest/engine.py`, `backtest/mlb.py`, `backtest/props_mlb.py` | ✅ — game CLV+ROI and grade-free prop CLV over the banked archive |
 | Grading / scorecard | `report/scorecard.py`, `report/results.py`, `scripts/grade_archive.py` | ✅ — finals join (Odds-API id ↔ StatsAPI gamePk by team+date), ROI + calibration tables |

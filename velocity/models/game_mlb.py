@@ -38,24 +38,85 @@ from velocity.models.simulate_baseball import (
 
 @dataclass(frozen=True)
 class MLBProjection:
-    """A fully simulated MLB matchup.
+    """A fully simulated MLB matchup, priced over every game segment.
 
-    ``full`` and ``f5`` are ordinary :class:`GameProjection` objects (over the
-    final and first-5-innings run distributions), so every wagering helper applies
-    to each. ``result`` keeps the raw sim for player props (Phase M5).
+    ``full``, ``f5`` and ``i1`` are ordinary :class:`GameProjection` objects (over
+    the final, first-5-innings, and first-inning run distributions), so every
+    wagering helper applies to each — ``f5`` prices the F5 moneyline / run line /
+    total and ``i1`` prices NRFI/YRFI (a total at 0.5). ``result`` keeps the raw
+    sim for player props (Phase M5) and parlay leg pricing.
+
+    The full-game attributes (``sim``, ``mu_home`` …) are delegated so this object
+    *duck-types* a plain :class:`GameProjection`: everything that consumed the
+    full-game projection (slate, workbook, cards) keeps working when handed an
+    ``MLBProjection``, while the segment-aware slate reads ``f5``/``i1`` off it.
     """
 
     full: GameProjection
     f5: GameProjection
+    i1: GameProjection
     result: BaseballSimResult
+
+    # -- full-game delegation (GameProjection duck-typing) --------------------
+    @property
+    def home_team(self) -> str:
+        return self.full.home_team
+
+    @property
+    def away_team(self) -> str:
+        return self.full.away_team
+
+    @property
+    def mu_home(self) -> float:
+        return self.full.mu_home
+
+    @property
+    def mu_away(self) -> float:
+        return self.full.mu_away
+
+    @property
+    def mu_margin(self) -> float:
+        return self.full.mu_margin
+
+    @property
+    def mu_total(self) -> float:
+        return self.full.mu_total
+
+    @property
+    def sim(self):  # type: ignore[no-untyped-def]  # GameSim; matches GameProjection.sim
+        return self.full.sim
 
     def p_home_win(self) -> float:
         return self.full.p_home_win()
 
+    def p_away_win(self) -> float:
+        return self.full.p_away_win()
+
+    def fair_spread(self) -> float:
+        return self.full.fair_spread()
+
+    def fair_total(self) -> float:
+        return self.full.fair_total()
+
+    def prob_home_cover(self, home_spread: float) -> float:
+        return self.full.prob_home_cover(home_spread)
+
+    def prob_over(self, total_point: float) -> float:
+        return self.full.prob_over(total_point)
+
+    # -- segment + derivative pricing -----------------------------------------
     def prob_team_over(self, side: str, point: float) -> float:
         """P(a team's *full-game* runs exceed ``point``) — the team-total market."""
         scores = self.result.full.home_score if side == "home" else self.result.full.away_score
         return float(np.mean(scores > point))
+
+    def prob_yrfi(self, point: float = 0.5) -> float:
+        """P(first-inning combined runs > ``point``) — YRFI at the standard 0.5."""
+        return self.i1.prob_over(point)
+
+    def prob_nrfi(self, point: float = 0.5) -> float:
+        """P(first-inning combined runs < ``point``) — NRFI at the standard 0.5."""
+        return 1.0 - self.prob_yrfi(point)
 
 
 @dataclass
@@ -100,10 +161,21 @@ class MLBGameModel:
             mu_away=float(result.f5.away_score.mean()),
             sim=result.f5,
         )
-        return MLBProjection(full=full, f5=f5, result=result)
+        i1 = GameProjection(
+            home_team=home_key,
+            away_team=away_key,
+            mu_home=float(result.i1.home_score.mean()),
+            mu_away=float(result.i1.away_score.mean()),
+            sim=result.i1,
+        )
+        return MLBProjection(full=full, f5=f5, i1=i1, result=result)
 
     def project_full(self, home_key: str, away_key: str) -> GameProjection:
-        """The full-game :class:`GameProjection` — the callable ``build_live_slate`` wants."""
+        """The full-game :class:`GameProjection` — for callers that only price full-game.
+
+        The live path passes :meth:`project` instead, so the slate can also price
+        the F5 and first-inning (NRFI/YRFI) segments off the same simulation.
+        """
         return self.project(home_key, away_key).full
 
 

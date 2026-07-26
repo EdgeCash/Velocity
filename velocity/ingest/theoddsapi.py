@@ -73,18 +73,33 @@ PROP_MARKET_BY_KEY = {
 }
 DEFAULT_PROP_MARKETS = ",".join(PROP_MARKET_BY_KEY)
 
-# Derivative market keys (team totals + first-5-innings). Like props, these are
-# "additional markets" served only from the per-event ``/events/{id}/odds`` endpoint
-# — not the bulk ``/odds`` feed — so they ride along on the same per-event call. No
-# canonical normalizer yet (see the props/derivatives backtest issue); the collector
-# banks the raw per-event payloads so this history accrues now and normalizes later.
+# Derivative market keys (team totals + first-5-innings + first-inning). Like
+# props, these are "additional markets" served only from the per-event
+# ``/events/{id}/odds`` endpoint — not the bulk ``/odds`` feed — so they ride
+# along on the same per-event call. The collector banks the raw per-event
+# payloads verbatim (so history accrues even for markets without a normalizer),
+# and :data:`DERIVATIVE_MARKET_BY_KEY` maps the priced subset onto canonical
+# ``Lines`` markets. ``team_totals`` is banked-only for now (its outcomes key on
+# a team *and* an over/under side, which the two-way Lines shape doesn't carry).
 DERIVATIVE_MARKET_KEYS = (
     "team_totals",
     "h2h_1st_5_innings",
     "spreads_1st_5_innings",
     "totals_1st_5_innings",
+    "totals_1st_1_innings",
 )
 DEFAULT_DERIVATIVE_MARKETS = ",".join(DERIVATIVE_MARKET_KEYS)
+
+# The Odds API derivative market key → canonical Lines market. The F5 segment
+# markets mirror the three game markets over innings 1–5; ``totals_1st_1_innings``
+# is the first-inning total, i.e. NRFI/YRFI as an under/over at 0.5. Anything
+# else (team_totals) is ignored by the normalizer and only banked raw.
+DERIVATIVE_MARKET_BY_KEY = {
+    "h2h_1st_5_innings": "moneyline_f5",
+    "spreads_1st_5_innings": "spread_f5",
+    "totals_1st_5_innings": "total_f5",
+    "totals_1st_1_innings": "total_i1",
+}
 
 _PROP_SIDES = {"over": "over", "under": "under"}
 
@@ -119,15 +134,21 @@ def _empty_lines() -> pd.DataFrame:
 
 
 def normalize_odds_events(
-    events: Iterable[Mapping[str, Any]], is_closing: bool = False
+    events: Iterable[Mapping[str, Any]],
+    is_closing: bool = False,
+    market_by_key: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
     """Flatten a The Odds API events array onto the canonical ``Lines`` schema.
 
     ``events`` is the list of event objects (the top-level array of ``/odds`` or
     the ``data`` field of a historical response — use :func:`unwrap` for the
-    latter). Only the three game markets are kept. ``is_closing`` marks a snapshot
+    latter). ``market_by_key`` selects which provider markets are kept and names
+    them canonically — the three game markets by default; pass
+    :data:`DERIVATIVE_MARKET_BY_KEY` for the F5/first-inning derivative board
+    (see :func:`normalize_derivative_markets`). ``is_closing`` marks a snapshot
     taken at the close (the CLV anchor); live snapshots pass ``False``.
     """
+    keep = GAME_MARKET_BY_KEY if market_by_key is None else market_by_key
     rows: list[dict[str, object]] = []
     for event in events:
         event_id = event.get("id")
@@ -137,7 +158,7 @@ def normalize_odds_events(
             book_key = book.get("key")
             book_update = book.get("last_update")
             for market in book.get("markets") or []:
-                canonical = GAME_MARKET_BY_KEY.get(str(market.get("key")))
+                canonical = keep.get(str(market.get("key")))
                 if canonical is None:
                     continue
                 market_update = market.get("last_update") or book_update
@@ -154,7 +175,8 @@ def normalize_odds_events(
                             "market": canonical,
                             "side": side,
                             "price": price,
-                            "point": None if canonical == "moneyline" else point,
+                            # Moneylines (full-game and F5 alike) carry no number.
+                            "point": None if canonical.startswith("moneyline") else point,
                             "timestamp": market_update,
                             "is_closing": is_closing,
                         }
@@ -178,6 +200,22 @@ def normalize_odds_events(
     df = df.dropna(subset=["price"]).drop_duplicates("line_id").reset_index(drop=True)
     df["price"] = df["price"].astype(int)
     return Lines.validate(df[_LINES_COLUMNS])
+
+
+def normalize_derivative_markets(
+    events: Iterable[Mapping[str, Any]], is_closing: bool = False
+) -> pd.DataFrame:
+    """Flatten per-event derivative markets (F5 + first-inning) onto ``Lines``.
+
+    The per-event ``/events/{id}/odds`` payloads carry the derivative board; use
+    :func:`events_of` to flatten a raw payload first. F5 moneyline/spread sides
+    are team names (canonicalized to home/away later, exactly like the game
+    board); F5 and first-inning totals are ``Over``/``Under`` at their points —
+    NRFI is the ``total_i1`` under at 0.5, YRFI the over.
+    """
+    return normalize_odds_events(
+        events, is_closing=is_closing, market_by_key=DERIVATIVE_MARKET_BY_KEY
+    )
 
 
 _PROP_COLUMNS = [
@@ -472,6 +510,39 @@ class TheOddsAPIClient:
         if not frames:
             return _empty_prop_lines()
         return PropLines.validate(pd.concat(frames, ignore_index=True))
+
+    def soft_board(  # pragma: no cover - network
+        self,
+        league: str,
+        prop_markets: str = DEFAULT_PROP_MARKETS,
+        derivative_markets: str = DEFAULT_DERIVATIVE_MARKETS,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Player props *and* derivative lines in one per-event pass.
+
+        Both boards are served only by the per-event endpoint, so asking for the
+        prop and derivative markets together halves the credit cost versus two
+        passes. Returns ``(PropLines frame, Lines frame)`` — the second is the
+        F5/first-inning board on the canonical game-lines schema, ready for the
+        same canonicalize-sides + slate path as the bulk ``/odds`` board.
+        """
+        markets = ",".join(m for m in (prop_markets, derivative_markets) if m)
+        prop_frames: list[pd.DataFrame] = []
+        deriv_frames: list[pd.DataFrame] = []
+        for _, raw in self.event_odds_payloads(league, markets):
+            events = events_of(raw)
+            prop_frames.append(normalize_player_props(events, is_closing=False))
+            deriv_frames.append(normalize_derivative_markets(events, is_closing=False))
+        props = (
+            PropLines.validate(pd.concat(prop_frames, ignore_index=True))
+            if prop_frames
+            else _empty_prop_lines()
+        )
+        derivs = (
+            Lines.validate(pd.concat(deriv_frames, ignore_index=True))
+            if deriv_frames
+            else _empty_lines()
+        )
+        return props, derivs
 
     def historical_events_payload(  # pragma: no cover - network
         self, league: str, date: str
