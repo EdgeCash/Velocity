@@ -11,8 +11,10 @@ The guiding metric is **closing-line value (CLV)**: the market's closing price i
 the sharpest widely available forecast, so consistently beating it is the real
 signal of edge.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the full system design and
-[`docs/BUILD.md`](docs/BUILD.md) for the phased, test-gated build plan.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the full system design,
+[`docs/BUILD.md`](docs/BUILD.md) for the phased, test-gated build plan, and
+[`docs/WAGERING.md`](docs/WAGERING.md) for the wagering system's current state
+and build plan.
 
 ## Layout
 
