@@ -33,6 +33,7 @@ The builder is deliberately conservative:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
@@ -332,7 +333,12 @@ def _decimal_to_american(decimal: float) -> float:
 
 
 def parlay_slate_to_frame(tickets: Sequence[ParlayTicket]) -> pd.DataFrame:
-    """Render parlay tickets as a readable table (one row per parlay)."""
+    """Render parlay tickets as a readable table (one row per parlay).
+
+    ``legs_json`` carries the structured legs (game id, market, side, point,
+    price, player id) so a later grader can settle the ticket leg by leg — the
+    display string alone can't be graded.
+    """
     rows = [
         {
             "legs": " + ".join(leg.describe() for leg in t.legs),
@@ -343,8 +349,21 @@ def parlay_slate_to_frame(tickets: Sequence[ParlayTicket]) -> pd.DataFrame:
             "ev": round(t.evaluation.ev, 4),
             "same_game": t.evaluation.same_game,
             "stake": round(t.stake, 4),
+            "legs_json": json.dumps([
+                {
+                    "game_id": leg.game_id,
+                    "market": leg.market,
+                    "side": leg.side,
+                    "price": leg.price,
+                    "point": leg.point,
+                    "player": leg.player,
+                    "label": leg.label,
+                }
+                for leg in t.legs
+            ]),
         }
         for t in tickets
     ]
-    cols = ["legs", "n_legs", "price", "decimal", "p_win", "ev", "same_game", "stake"]
+    cols = ["legs", "n_legs", "price", "decimal", "p_win", "ev", "same_game", "stake",
+            "legs_json"]
     return pd.DataFrame(rows, columns=cols)

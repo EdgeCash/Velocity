@@ -34,6 +34,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read  # download previous runs' slate artifacts for the yesterday record
 
 jobs:
   slate:
@@ -69,6 +70,28 @@ jobs:
             --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
             --bankroll ${{ github.event.inputs.bankroll || '100' }} \
             --out artifacts/slate
+
+      # ---- yesterday's record (model status for the email) --------------------
+      # Both best-effort: the record section is additive and must never block the
+      # slate or its email. Previous slates live only in private run artifacts
+      # (paid-odds data never lands in the public repo), so they are fetched from
+      # recent runs; grading uses free StatsAPI finals/linescores/boxscores.
+      - name: Fetch previous slates
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/previous
+          for id in $(gh run list --workflow live-slate-mlb.yml --status success \
+              --limit 6 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/previous/$id" || true
+          done
+
+      - name: Grade yesterday's slate
+        continue-on-error: true
+        run: |
+          python scripts/grade_yesterday.py \
+            --prev-dir artifacts/previous --out-dir artifacts/slate --league mlb
 
       - name: Upload slate (private artifact)
         uses: actions/upload-artifact@v4

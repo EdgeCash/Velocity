@@ -38,7 +38,7 @@ def _matchup_map(games_map: pd.DataFrame | None) -> dict[str, str]:
 def _with_matchup(frame: pd.DataFrame, matchups: Mapping[str, str]) -> pd.DataFrame:
     """Readable copy: a leading ``matchup`` column replacing the opaque game id."""
     out = frame.copy()
-    drop = [c for c in ("league", "generated_at") if c in out.columns]
+    drop = [c for c in ("league", "generated_at", "legs_json") if c in out.columns]
     out = out.drop(columns=drop)
     if "game_id" in out.columns and matchups:
         out.insert(0, "matchup", out["game_id"].astype(str).map(matchups).fillna(""))
@@ -69,6 +69,7 @@ def render_slate_email(
     games_map: pd.DataFrame | None = None,
     league: str = "mlb",
     generated_at: object = None,
+    record: pd.DataFrame | None = None,
 ) -> tuple[str, str]:
     """Render the day's slate as ``(subject, html_body)``.
 
@@ -76,6 +77,9 @@ def render_slate_email(
     ``None`` or empty); ``games_map`` (the persisted ``games_*`` parquet) turns
     opaque provider game ids into "Away @ Home" matchups. The subject carries the
     play counts so the inbox line alone says whether today is worth opening.
+    ``record`` (the graded previous slate, ``daily_record.RECORD_COLUMNS``) leads
+    the body as the model-status section; ``None`` — grading unavailable — omits
+    the section rather than implying an empty record.
     """
     matchups = _matchup_map(games_map)
     n_plays = 0 if plays is None else len(plays)
@@ -94,7 +98,20 @@ def render_slate_email(
     else:
         subject = f"Velocity {tag}: no plays today{date_tag}"
 
-    sections = [
+    sections = []
+    if record is not None:
+        from velocity.report.daily_record import record_headline
+
+        display = record.drop(columns=["slate_date"], errors="ignore").copy()
+        if "profit" in display.columns:
+            display["profit"] = display["profit"].round(2)
+        headline = record_headline(record)
+        body = _table(display) if not display.empty else ""
+        sections.append(
+            f'<h2 style="{_H2_STYLE}">Model status — yesterday\'s plays</h2>\n'
+            f'<p style="margin:4px 0"><b>{headline}</b></p>\n{body}'
+        )
+    sections += [
         _section(
             "Game plays",
             None if plays is None else _with_matchup(plays, matchups),

@@ -271,9 +271,17 @@ def test_parlay_frame_shape() -> None:
     frame = parlay_slate_to_frame(tickets)
     assert list(frame.columns) == [
         "legs", "n_legs", "price", "decimal", "p_win", "ev", "same_game", "stake",
+        "legs_json",
     ]
     assert frame.loc[0, "price"] == 300  # two +100 legs → +300 parlay
     assert "moneyline home" in frame.loc[0, "legs"]
+    # legs_json carries the structured legs so a grader can settle the ticket.
+    import json
+
+    legs = json.loads(frame.loc[0, "legs_json"])
+    assert [leg["game_id"] for leg in legs] == ["a", "b"]
+    assert legs[0]["market"] == "moneyline"
+    assert legs[0]["price"] == 100
 
 
 def test_config_validation() -> None:

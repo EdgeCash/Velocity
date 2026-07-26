@@ -103,3 +103,27 @@ def gamepks_for_slate(
         if key is not None and key in pk_by_key:
             rows.append({"game_id": str(game["game_id"]), "game_pk": pk_by_key[key]})
     return pd.DataFrame(rows, columns=["game_id", "game_pk"])
+
+
+def attach_segment_scores(
+    finals: pd.DataFrame,
+    pk_map: pd.DataFrame,
+    linescores: Mapping[str, Mapping[str, float | None]],
+) -> pd.DataFrame:
+    """Add F5/first-inning actual-score columns to a finals frame.
+
+    ``linescores`` maps a StatsAPI ``game_pk`` to its normalized segment scores
+    (:func:`velocity.ingest.mlb.normalize_linescore`); ``pk_map`` bridges the
+    slate's ``game_id`` to that pk. The returned frame is what
+    :meth:`BetLog.settle` wants for a slate carrying segment bets — a game with
+    no linescore keeps null segment columns, so its F5/NRFI bets stay pending.
+    """
+    out = finals.copy()
+    pk_by_gid = dict(zip(pk_map["game_id"].astype(str), pk_map["game_pk"].astype(str),
+                         strict=False))
+    for col in ("home_score_f5", "away_score_f5", "home_score_i1", "away_score_i1"):
+        out[col] = [
+            (linescores.get(pk_by_gid.get(str(gid), ""), {}) or {}).get(col)
+            for gid in out["game_id"]
+        ]
+    return out

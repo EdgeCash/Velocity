@@ -462,3 +462,51 @@ def load_boxscore(game_pk: str, game_id: str = "") -> pd.DataFrame:  # pragma: n
     """Fetch and normalize a game's boxscore (per-player actual stats) by ``gamePk``."""
     url = f"{_STATSAPI}/game/{game_pk}/boxscore"
     return normalize_boxscore(_get_json(url), game_id=game_id or str(game_pk))
+
+
+# Segment score columns emitted by the linescore normalizer — the finals-side
+# counterpart of the sim's f5/i1 segments, so F5 and NRFI/YRFI bets grade
+# against what actually happened through five innings / in the first.
+LINESCORE_COLUMNS = [
+    "home_score_f5",
+    "away_score_f5",
+    "home_score_i1",
+    "away_score_i1",
+]
+
+
+def normalize_linescore(payload: Mapping[str, Any]) -> dict[str, float | None]:
+    """Per-segment actual runs from a StatsAPI ``/game/{pk}/linescore`` payload.
+
+    Sums each side's runs over innings 1–5 (the F5 segment) and inning 1 (the
+    NRFI/YRFI segment). A segment whose innings aren't all present with recorded
+    runs — a rain-shortened or in-progress game — yields ``None`` for that side,
+    so the bet stays pending rather than grading against a partial segment.
+    """
+    by_num: dict[int, Mapping[str, Any]] = {}
+    for inning in payload.get("innings") or []:
+        num = inning.get("num")
+        if num is not None:
+            by_num[int(num)] = inning
+
+    def _through(side: str, innings: int) -> float | None:
+        total = 0.0
+        for n in range(1, innings + 1):
+            runs = ((by_num.get(n) or {}).get(side) or {}).get("runs")
+            if runs is None:
+                return None
+            total += float(runs)
+        return total
+
+    return {
+        "home_score_f5": _through("home", 5),
+        "away_score_f5": _through("away", 5),
+        "home_score_i1": _through("home", 1),
+        "away_score_i1": _through("away", 1),
+    }
+
+
+def load_linescore(game_pk: str) -> dict[str, float | None]:  # pragma: no cover - network
+    """Fetch and normalize a game's per-segment actual runs by ``gamePk``."""
+    url = f"{_STATSAPI}/game/{game_pk}/linescore"
+    return normalize_linescore(_get_json(url))

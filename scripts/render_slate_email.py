@@ -46,6 +46,9 @@ def main() -> None:
     props = _newest(folder, rf"slate_{league}_props_{stamp}\.parquet")
     parlays = _newest(folder, rf"slate_{league}_parlays_{stamp}\.parquet")
     games_map = _newest(folder, rf"games_{league}_{stamp}\.parquet")
+    # The graded previous-day record (written by grade_yesterday.py). Absent —
+    # grading skipped or failed — the email simply omits the model-status section.
+    record = _newest(folder, rf"record_{league}_{stamp}\.parquet")
 
     generated_at = None
     for frame in (plays, props, parlays):
@@ -56,6 +59,7 @@ def main() -> None:
     subject, html = render_slate_email(
         plays, props, parlays,
         games_map=games_map, league=args.league, generated_at=generated_at,
+        record=record,
     )
 
     out = Path(args.out_dir)

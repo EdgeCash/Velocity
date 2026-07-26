@@ -79,6 +79,12 @@ public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
 `live-slate-mlb.yml` emails the day's plays after each run — game markets
 (including F5 and NRFI/YRFI), props, and parlays as matchup-labeled tables, with
 the formatted workbook attached, and a "no plays today" heartbeat on empty days.
+The email opens with a **model status** section: the previous day's plays graded
+against StatsAPI finals (linescores settle the F5/NRFI segments, box scores the
+props and parlay prop legs) as a per-section record with units won/lost.
+Previous slates are fetched from recent runs' private artifacts; if none exist
+yet (first runs) or grading fails, the section is simply omitted — it never
+blocks the email.
 It activates when these Actions secrets exist (until then the email steps skip
 and the workflow behaves exactly as before):
 

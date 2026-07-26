@@ -101,6 +101,38 @@ def test_styles_are_inline() -> None:
     assert '<th style="' in html
 
 
+def _record() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "section": ["games"],
+            "play": ["SF @ LAD"],
+            "market": ["total_i1"],
+            "side": ["under"],
+            "point": [0.5],
+            "price": [-110],
+            "stake": [2.0],
+            "result": ["win"],
+            "profit": [1.8182],
+            "slate_date": [pd.Timestamp("2026-07-25")],
+        }
+    )
+
+
+def test_record_section_leads_the_email() -> None:
+    _, html = render_slate_email(_plays(), None, None, record=_record())
+    assert "Model status — yesterday's plays" in html
+    assert "Yesterday (Jul 25): games 1-0 (+1.8u) · total +1.8u" in html
+    # Status comes first — before today's plays.
+    assert html.index("Model status") < html.index("Game plays")
+    assert "slate_date" not in html  # internal column, not for the reader
+
+
+def test_no_record_means_no_status_section() -> None:
+    # None = grading unavailable; the section is omitted, never shown empty.
+    _, html = render_slate_email(_plays(), None, None)
+    assert "Model status" not in html
+
+
 def test_render_script_writes_body_and_subject(tmp_path: Path) -> None:
     slate = tmp_path / "slate"
     slate.mkdir()
@@ -108,6 +140,7 @@ def test_render_script_writes_body_and_subject(tmp_path: Path) -> None:
     _plays().to_parquet(slate / f"slate_mlb_{stamp}.parquet", index=False)
     _games_map().to_parquet(slate / f"games_mlb_{stamp}.parquet", index=False)
     _parlays().to_parquet(slate / f"slate_mlb_parlays_{stamp}.parquet", index=False)
+    _record().to_parquet(slate / f"record_mlb_{stamp}.parquet", index=False)
     out = tmp_path / "email"
     result = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "render_slate_email.py"),
@@ -120,6 +153,8 @@ def test_render_script_writes_body_and_subject(tmp_path: Path) -> None:
     html = (out / "slate_email.html").read_text()
     assert "San Francisco Giants @ Los Angeles Dodgers" in html
     assert "SF@LAD moneyline home" in html
+    # The graded record parquet in the folder becomes the leading status section.
+    assert "Model status — yesterday's plays" in html
 
 
 def test_render_script_survives_an_empty_folder(tmp_path: Path) -> None:
