@@ -59,6 +59,10 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     cards = list(out.glob("cards_mlb_*.html"))
     assert len(cards) == 1
     assert "Velocity" in cards[0].read_text()
+    # The social model card + captions render offline too (watch strip empty —
+    # no prop board or names — but the graphic itself is complete).
+    assert len(list(out.glob("social_mlb_*_SF_at_LAD.png"))) == 1
+    assert len(list(out.glob("social_mlb_*_captions.md"))) == 1
 
 
 def test_runner_prices_derivative_board_offline(tmp_path: Path) -> None:

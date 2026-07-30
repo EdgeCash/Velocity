@@ -103,6 +103,19 @@ and check the inbox. The email is rendered by `scripts/render_slate_email.py`
 from the run's persisted parquets, so what lands in the inbox is exactly what
 the artifact says.
 
+## Social model cards (in every slate artifact)
+
+Each MLB run also renders one shareable **model card** per game
+(`social_mlb_<stamp>_<AWY>_at_<HOM>.png`, 1200×675 — the X/Twitter frame) plus
+a `social_mlb_<stamp>_captions.md` file of ready-to-paste post copy. Cards
+carry **model facts only** — win split, projected score, fair/F5 totals,
+first-inning-run probability, the simulated total-runs distribution, and a
+players-to-watch strip — no odds, no picks, no hype. Players to watch are
+chosen where the model most disagrees with the market's prop line (when a
+board is available), but the card states only the model's probability at that
+line; a sharp reader needs no hand-holding, a casual reader sees a stat
+graphic. The footer marks every card "model output, informational only".
+
 ## The plays app (optional, free)
 
 `app/streamlit_app.py` is a dark, phone-friendly board over the same persisted

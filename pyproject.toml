@@ -11,6 +11,7 @@ dependencies = [
     "duckdb>=1.0",
     "pandera>=0.20",
     "openpyxl>=3.1",
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]
@@ -63,7 +64,7 @@ no_implicit_optional = true
 files = ["velocity"]
 
 [[tool.mypy.overrides]]
-module = ["duckdb", "pandera.*", "cfbd", "openpyxl.*"]
+module = ["duckdb", "pandera.*", "cfbd", "openpyxl.*", "matplotlib.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

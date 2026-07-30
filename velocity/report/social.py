@@ -1,0 +1,258 @@
+"""Social model cards — the shareable per-game breakdown, data side.
+
+The public face of a slate run: one card per game carrying **only model
+facts** — win probabilities, projected score, fair total, the F5 and
+first-inning shape, the simulated run distribution, and a "players to watch"
+strip. No odds, no picks, no verdicts: every number is a checkable output of
+the same 10,000-game Monte Carlo the slate prices from, so tomorrow's graded
+record can be laid directly against today's card.
+
+The one quietly sharp element: **players to watch are chosen where the model
+most disagrees with the market's prop line** (when a board is available) — but
+the card states only the model's probability at that line, never the price.
+A reader who knows what a line is can do the rest; the card never does it for
+them.
+
+Pure and offline-testable; rendering lives in :mod:`social_png`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from velocity.models.game_mlb import MLBProjection
+from velocity.models.props_mlb import BaseballProps
+
+# Prop markets a watch entry may come from, with display units. Kept to the
+# stats a casual reader recognizes on sight.
+_WATCH_MARKETS = {
+    "pitcher_strikeouts": ("strikeouts", "K"),
+    "total_bases": ("total bases", "TB"),
+    "hits": ("hits", "H"),
+}
+_MAX_HISTOGRAM_RUNS = 17  # right tail folds into a "17+" bucket
+
+
+@dataclass(frozen=True)
+class WatchEntry:
+    """One players-to-watch row: a named model fact at a specific line.
+
+    ``from_board`` marks a line taken from the market's prop board (the
+    disagreement-bearing case) versus the model's own median-anchored line
+    (the no-board fallback, where distance from 50% is self-referential).
+    """
+
+    player: str
+    market: str
+    line: float
+    p_over: float
+    mean: float
+    pmf: Mapping[int, float]  # value → probability, for the mini distribution
+    from_board: bool = False
+
+    def fact(self) -> str:
+        """"61% to clear 6.5 K (model avg 6.8)" — a statement, not a pick."""
+        _, unit = _WATCH_MARKETS.get(self.market, (self.market, self.market))
+        return (
+            f"{self.p_over:.0%} to clear {self.line:g} {unit} "
+            f"(model avg {self.mean:.1f})"
+        )
+
+
+@dataclass(frozen=True)
+class SocialCard:
+    """Everything the renderer needs for one game's graphic."""
+
+    game_id: str
+    away_name: str
+    home_name: str
+    away_code: str
+    home_code: str
+    kickoff: pd.Timestamp | None
+    p_home_win: float
+    mu_away: float
+    mu_home: float
+    fair_total: float
+    f5_fair_total: float
+    p_yrfi: float
+    total_runs_pmf: Mapping[int, float]  # simulated full-game total runs
+    n_sims: int = 0  # simulations behind every number — stated on the card
+    watch: Sequence[WatchEntry] = field(default_factory=tuple)
+
+
+def _pmf(samples: np.ndarray, cap: int) -> dict[int, float]:
+    """Empirical pmf of an integer sample array, right tail folded into ``cap``."""
+    clipped = np.minimum(samples.astype(int), cap)
+    counts = np.bincount(clipped, minlength=cap + 1)
+    n = int(clipped.shape[0])
+    return {value: float(c) / n for value, c in enumerate(counts)}
+
+
+def _prop_lines_index(prop_lines: pd.DataFrame | None) -> dict[tuple[str, str, str], float]:
+    """``(game_id, market, normalized player) → line point`` from a prop board.
+
+    Multiple books/points collapse to the modal point — the market's consensus
+    number, which is the honest line to state a probability at.
+    """
+    if prop_lines is None or prop_lines.empty:
+        return {}
+    from velocity.wagering.props_slate import _normalize  # same name normalization
+
+    index: dict[tuple[str, str, str], float] = {}
+    grouped = prop_lines.groupby(
+        [prop_lines["game_id"].astype(str), "market", prop_lines["player"].map(_normalize)]
+    )["point"]
+    for (gid, market, player), points in grouped:
+        index[(str(gid), str(market), str(player))] = float(points.mode().iloc[0])
+    return index
+
+
+def _watch_candidates(
+    game_id: str,
+    props: BaseballProps,
+    id_to_name: Mapping[str, str],
+    line_index: Mapping[tuple[str, str, str], float],
+) -> list[WatchEntry]:
+    """Every nameable (player, market) the sim produced, at its display line.
+
+    The line is the market's consensus point when the board carries one, else
+    the model's own median-anchored half-run line — stated on the card either
+    way, so the fact is checkable against the box score.
+    """
+    from velocity.wagering.props_slate import _normalize
+
+    result = props.result
+    entries: list[WatchEntry] = []
+    tables = {
+        "pitcher_strikeouts": result.pitcher_strikeouts,
+        "total_bases": result.batter_total_bases,
+        "hits": result.batter_hits,
+    }
+    for market, table in tables.items():
+        for pid, samples in table.items():
+            name = id_to_name.get(str(pid))
+            if name is None:
+                continue  # league-average stand-ins have no real name → skip
+            board_line = line_index.get((game_id, market, _normalize(name)))
+            if board_line is None and market == "hits":
+                # A median-anchored hits line reads the same for every batter
+                # ("~25% to clear 1.5 H") — noise, not insight. Board-only.
+                continue
+            line = (
+                board_line
+                if board_line is not None
+                else float(np.floor(np.median(samples)) + 0.5)
+            )
+            if line < 0.5:
+                continue  # a degenerate line states nothing
+            entries.append(
+                WatchEntry(
+                    player=name,
+                    market=market,
+                    line=float(line),
+                    p_over=float(np.mean(samples > line)),
+                    mean=float(np.mean(samples)),
+                    pmf=_pmf(samples, cap=int(max(line + 4, 8))),
+                    from_board=board_line is not None,
+                )
+            )
+    return entries
+
+
+def _select_watch(entries: list[WatchEntry], max_watch: int) -> tuple[WatchEntry, ...]:
+    """The sharpest facts, one per player.
+
+    Board-lined entries lead, ranked by distance from 50% at the market's own
+    number — prop lines sit near the median, so that distance *is* the model's
+    disagreement with the market, stated without ever touching a price. With no
+    board, distance from 50% at the model's own line is self-referential, so
+    fallback entries rank by substance instead: starters' strikeout facts
+    first, then the biggest total-bases threats.
+    """
+
+    def _key(entry: WatchEntry) -> tuple[float, ...]:
+        if entry.from_board:
+            return (0.0, -abs(entry.p_over - 0.5), -entry.mean)
+        market_rank = 0.0 if entry.market == "pitcher_strikeouts" else 1.0
+        return (1.0, market_rank, -entry.mean)
+
+    seen: set[str] = set()
+    picked: list[WatchEntry] = []
+    for entry in sorted(entries, key=_key):
+        if entry.player in seen:
+            continue
+        seen.add(entry.player)
+        picked.append(entry)
+        if len(picked) >= max_watch:
+            break
+    return tuple(picked)
+
+
+def build_social_cards(
+    projections: Mapping[str, MLBProjection],
+    events: pd.DataFrame,
+    *,
+    id_to_name: Mapping[str, str] | None = None,
+    prop_lines: pd.DataFrame | None = None,
+    aliases: Mapping[str, str] | None = None,
+    max_watch: int = 3,
+) -> list[SocialCard]:
+    """One :class:`SocialCard` per projected event, in board order."""
+    from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
+
+    alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
+    codes = list(alias_map.values())
+    names = dict(id_to_name or {})
+    line_index = _prop_lines_index(prop_lines)
+
+    cards: list[SocialCard] = []
+    for event in events.to_dict("records"):
+        gid = str(event["game_id"])
+        proj = projections.get(gid)
+        if proj is None:
+            continue
+        away_name = str(event["away_team"])
+        home_name = str(event["home_team"])
+        kickoff = event.get("kickoff")
+        result = proj.result
+        total_runs = (result.full.home_score + result.full.away_score).astype(int)
+        watch = _select_watch(
+            _watch_candidates(gid, BaseballProps(result), names, line_index), max_watch
+        )
+        cards.append(
+            SocialCard(
+                game_id=gid,
+                away_name=away_name,
+                home_name=home_name,
+                away_code=resolve_team(away_name, codes, alias_map) or away_name,
+                home_code=resolve_team(home_name, codes, alias_map) or home_name,
+                kickoff=None if pd.isna(kickoff) else pd.Timestamp(kickoff),
+                p_home_win=float(proj.p_home_win()),
+                mu_away=float(proj.mu_away),
+                mu_home=float(proj.mu_home),
+                fair_total=float(proj.fair_total()),
+                f5_fair_total=float(proj.f5.fair_total()),
+                p_yrfi=float(proj.prob_yrfi()),
+                total_runs_pmf=_pmf(total_runs, cap=_MAX_HISTOGRAM_RUNS),
+                n_sims=int(result.full.home_score.shape[0]),
+                watch=watch,
+            )
+        )
+    return cards
+
+
+def caption(card: SocialCard) -> str:
+    """Post copy for one card: plain model facts, no odds, no imperatives."""
+    favorite = card.home_code if card.p_home_win >= 0.5 else card.away_code
+    p_fav = max(card.p_home_win, 1.0 - card.p_home_win)
+    lines = [
+        f"{card.away_code} @ {card.home_code} — model: {favorite} {p_fav:.0%}, "
+        f"projected {card.mu_away:.1f}-{card.mu_home:.1f} (fair total {card.fair_total:.1f}).",
+        f"F5 total {card.f5_fair_total:.1f} · first-inning run {card.p_yrfi:.0%}.",
+    ]
+    lines.extend(f"{entry.player}: {entry.fact()}." for entry in card.watch)
+    return "\n".join(lines)

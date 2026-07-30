@@ -101,6 +101,8 @@ jobs:
             artifacts/slate/*.parquet
             artifacts/slate/*.xlsx
             artifacts/slate/*.html
+            artifacts/slate/*.png
+            artifacts/slate/*.md
           if-no-files-found: warn
           retention-days: 60
 

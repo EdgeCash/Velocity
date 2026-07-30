@@ -284,6 +284,11 @@ def main() -> None:
     if args.league == "mlb" and projections and args.parlay_max_legs >= 2:
         _mlb_parlay_slate(args, projections, game_log, prop_log, mlb_names, now, generated_at)
 
+    # Social model cards — one shareable PNG per game (model facts only, no
+    # odds) plus a captions file of post copy. Best-effort, like every report.
+    if args.league == "mlb" and args.out and projections:
+        _write_social_cards(args, events, projections, prop_lines, mlb_names, now)
+
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -493,6 +498,41 @@ def _projections_frame(projections: dict) -> pd.DataFrame:
             row["p_yrfi"] = round(float(proj.prob_yrfi()), 4)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _write_social_cards(
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    prop_lines: pd.DataFrame | None,
+    name_to_id: dict[str, str] | None,
+    now: datetime,
+) -> None:
+    """Render the per-game social model cards + captions into the out folder.
+
+    Display names for the watch strip come from the prop board's own player
+    names (the name index only keeps normalized keys); with no board — offline
+    runs — cards still render with the watch strip empty.
+    """
+    try:
+        from velocity.report.social import build_social_cards
+        from velocity.report.social_png import render_cards
+        from velocity.wagering.props_slate import resolve_player
+
+        id_to_name: dict[str, str] = {}
+        if prop_lines is not None and not prop_lines.empty and name_to_id:
+            for player in prop_lines["player"].astype(str).unique():
+                pid = resolve_player(player, name_to_id)
+                if pid is not None:
+                    id_to_name.setdefault(pid, player)
+        cards = build_social_cards(
+            projections, events, id_to_name=id_to_name, prop_lines=prop_lines
+        )
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        paths = render_cards(cards, Path(args.out), stamp)
+        print(f"wrote {len(paths)} social card(s) to {args.out}")
+    except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
+        print(f"social cards skipped: {exc}")
 
 
 def _load_derivative_lines(path: str) -> pd.DataFrame:
