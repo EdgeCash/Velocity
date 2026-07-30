@@ -28,6 +28,12 @@ dev = [
 ingest = [
     "cfbd>=4.0",
 ]
+# Local viewer for the daily plays + matchup cards (dashboard/app.py). Only the
+# Streamlit app needs it; the pure data layer (velocity.report.dashboard_data) and
+# the test suite do not.
+dashboard = [
+    "streamlit>=1.30",
+]
 
 [build-system]
 requires = ["hatchling"]
