@@ -82,6 +82,9 @@ class SocialCard:
     total_runs_pmf: Mapping[int, float]  # simulated full-game total runs
     n_sims: int = 0  # simulations behind every number — stated on the card
     watch: Sequence[WatchEntry] = field(default_factory=tuple)
+    # The running graded record ("SEASON 41-38 · +6.2U"), carried on every card
+    # so each graphic doubles as the receipt. None until a record exists.
+    record_line: str | None = None
 
 
 def _pmf(samples: np.ndarray, cap: int) -> dict[int, float]:
@@ -200,6 +203,7 @@ def build_social_cards(
     prop_lines: pd.DataFrame | None = None,
     aliases: Mapping[str, str] | None = None,
     max_watch: int = 3,
+    record_line: str | None = None,
 ) -> list[SocialCard]:
     """One :class:`SocialCard` per projected event, in board order."""
     from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
@@ -240,9 +244,33 @@ def build_social_cards(
                 total_runs_pmf=_pmf(total_runs, cap=_MAX_HISTOGRAM_RUNS),
                 n_sims=int(result.full.home_score.shape[0]),
                 watch=watch,
+                record_line=record_line,
             )
         )
     return cards
+
+
+def distributions_frame(projections: Mapping[str, MLBProjection]) -> pd.DataFrame:
+    """Tidy per-game pregame distributions: ``game_id, kind, value, prob``.
+
+    ``kind`` is ``total`` (combined runs) or ``margin`` (home − away). Persisted
+    unfolded (full support, exact pmf) so the post-game Sim Check can place the
+    actual result at its true percentile; display-side folding happens at
+    render time. Every (game, kind) sums to 1.
+    """
+    rows: list[dict[str, object]] = []
+    for gid, proj in projections.items():
+        result = proj.result
+        total = (result.full.home_score + result.full.away_score).astype(int)
+        margin = (result.full.home_score - result.full.away_score).astype(int)
+        n = int(total.shape[0])
+        for kind, samples in (("total", total), ("margin", margin)):
+            values, counts = np.unique(samples, return_counts=True)
+            rows.extend(
+                {"game_id": str(gid), "kind": kind, "value": int(v), "prob": float(c) / n}
+                for v, c in zip(values, counts, strict=True)
+            )
+    return pd.DataFrame(rows, columns=["game_id", "kind", "value", "prob"])
 
 
 def caption(card: SocialCard) -> str:

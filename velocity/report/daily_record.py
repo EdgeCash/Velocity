@@ -192,6 +192,49 @@ def build_daily_record(
     return record
 
 
+def accumulate_record(
+    cumulative: pd.DataFrame | None, record: pd.DataFrame | None
+) -> pd.DataFrame:
+    """Fold a newly graded day into the season-to-date record.
+
+    Dedup key is the play's identity (slate date + section + play + market +
+    side + point); a regrade of the same play replaces the old row. This is the
+    rolling ledger each run carries forward in its artifact, so the season
+    record survives artifact retention as long as the chain of runs does.
+    """
+    frames = [f for f in (cumulative, record) if f is not None and not f.empty]
+    if not frames:
+        out = empty_record()
+        out["slate_date"] = pd.NaT
+        return out
+    merged = pd.concat(frames, ignore_index=True)
+    keys = ["slate_date", "section", "play", "market", "side", "point"]
+    return merged.drop_duplicates(subset=keys, keep="last").reset_index(drop=True)
+
+
+def record_summary(record: pd.DataFrame | None) -> dict[str, float]:
+    """Settled record: wins, losses, pushes, and net units (pending excluded)."""
+    if record is None or record.empty:
+        return {"wins": 0, "losses": 0, "pushes": 0, "units": 0.0}
+    return {
+        "wins": int((record["result"] == "win").sum()),
+        "losses": int((record["result"] == "loss").sum()),
+        "pushes": int((record["result"] == "push").sum()),
+        "units": float(record["profit"].dropna().sum()),
+    }
+
+
+def season_record_line(cumulative: pd.DataFrame | None) -> str | None:
+    """"SEASON 41-38 · +6.2U" for the daily card footer; None with no record."""
+    summary = record_summary(cumulative)
+    if summary["wins"] + summary["losses"] + summary["pushes"] == 0:
+        return None
+    line = f"SEASON {summary['wins']}-{summary['losses']}"
+    if summary["pushes"]:
+        line += f"-{summary['pushes']}"
+    return f"{line} · {summary['units']:+.1f}U"
+
+
 def _section_line(record: pd.DataFrame, section: str) -> str | None:
     rows = record[record["section"] == section]
     if rows.empty:

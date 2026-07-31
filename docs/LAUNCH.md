@@ -103,6 +103,23 @@ and check the inbox. The email is rendered by `scripts/render_slate_email.py`
 from the run's persisted parquets, so what lands in the inbox is exactly what
 the artifact says.
 
+## Sim Check + model record (in every slate artifact)
+
+Each run also grades the previous day *visually*:
+
+- **Sim Check cards** (`simcheck_mlb_<stamp>_<AWY>_at_<HOM>.png`) — the actual
+  final pinned onto the pregame simulated distribution, percentile as the hero
+  number, the actual total as the amber bar in the model's teal histogram.
+  Pregame distributions persist per run (`distributions_mlb_*.parquet`), so the
+  card grades against exactly what the model published, not a re-simulation.
+- **Model record card** (`recordcard_mlb_<stamp>.png`) — yesterday's W-L and
+  units by section plus the season line.
+- **The season chain** (`cumulative_record_mlb_<stamp>.parquet`) — every graded
+  play accumulated run over run (each run downloads the previous artifact's
+  chain and extends it), which also puts the `SEASON 41-38 · +6.2U` receipt
+  line on every daily model card. The chain survives as long as consecutive
+  runs stay within artifact retention.
+
 ## Social model cards (in every slate artifact)
 
 Each MLB run also renders one shareable **model card** per game

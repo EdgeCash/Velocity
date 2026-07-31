@@ -46,6 +46,8 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
         "props": rf"slate_{lg}_props_{_STAMP}\.parquet",
         "parlays": rf"slate_{lg}_parlays_{_STAMP}\.parquet",
         "games": rf"games_{lg}_{_STAMP}\.parquet",
+        "projections": rf"projections_{lg}_{_STAMP}\.parquet",
+        "distributions": rf"distributions_{lg}_{_STAMP}\.parquet",
     }
     out: dict[str, dict[str, Path]] = {}
     for path in prev_dir.rglob("*.parquet"):
@@ -72,6 +74,16 @@ def _load(paths: dict[str, Path], kind: str) -> pd.DataFrame | None:
     return pd.read_parquet(path) if path is not None else None
 
 
+def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
+    """The season record chain from the newest downloaded artifact carrying one."""
+    pattern = rf"cumulative_record_{re.escape(league)}_{_STAMP}\.parquet"
+    matches = sorted(
+        (p for p in prev_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name)),
+        key=lambda p: p.name,
+    )
+    return pd.read_parquet(matches[-1]) if matches else None
+
+
 def main() -> None:  # pragma: no cover - network orchestration (pure parts live in report/)
     parser = argparse.ArgumentParser(description="Grade the previous day's slate")
     parser.add_argument("--prev-dir", required=True, help="downloaded previous artifacts")
@@ -82,6 +94,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     from velocity.backtest.props_mlb import grade_prop_ledger
     from velocity.ingest.mlb import load_boxscore, load_linescore, load_schedule
     from velocity.report.daily_record import (
+        accumulate_record,
         build_daily_record,
         empty_record,
         grade_parlay_frame,
@@ -110,6 +123,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     print(f"grading slate {stamp}: {n_plays} play(s)")
 
     record = None
+    finals = None
     if n_plays == 0 or games_map is None or games_map.empty:
         record = empty_record()
         record["slate_date"] = pd.Timestamp(datetime.strptime(stamp, "%Y%m%dT%H%M%SZ"))
@@ -163,10 +177,47 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    dest = out / f"record_{args.league}_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+    out_stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    dest = out / f"record_{args.league}_{out_stamp}.parquet"
     record.to_parquet(dest, index=False)
     print(record_headline(record))
     print(f"wrote {len(record)} graded row(s) to {dest}")
+
+    # Season chain: fold the day into the newest cumulative record and carry it
+    # forward in this run's artifact (the next run downloads it and continues).
+    cumulative = accumulate_record(_newest_cumulative(Path(args.prev_dir), args.league), record)
+    cumulative.to_parquet(
+        out / f"cumulative_record_{args.league}_{out_stamp}.parquet", index=False
+    )
+    print(f"season record: {len(cumulative)} graded row(s) accumulated")
+
+    # Post-game graphics — the Sim Check cards (actual result on the pregame
+    # distribution) and the model record card. Best-effort: rendering trouble
+    # never blocks the graded record itself.
+    try:
+        from velocity.report.sim_check import build_sim_checks
+        from velocity.report.social_png import render_record_card, render_sim_checks
+
+        projections_frame = _load(paths, "projections")
+        distributions = _load(paths, "distributions")
+        if (
+            projections_frame is not None
+            and distributions is not None
+            and finals is not None
+            and games_map is not None
+        ):
+            checks = build_sim_checks(projections_frame, distributions, finals, games_map)
+            rendered = render_sim_checks(checks, out, out_stamp)
+            print(f"rendered {len(rendered)} sim check card(s)")
+        settled = record[record["result"].isin(["win", "loss", "push"])]
+        if not settled.empty:
+            when = record["slate_date"].dropna()
+            date_label = "" if when.empty else pd.Timestamp(when.iloc[0]).strftime("%b %-d")
+            card_dest = out / f"recordcard_{args.league}_{out_stamp}.png"
+            render_record_card(record, cumulative, card_dest, date_label=date_label)
+            print(f"rendered model record card to {card_dest}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"post-game cards skipped: {exc}")
 
 
 if __name__ == "__main__":

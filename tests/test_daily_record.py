@@ -235,3 +235,17 @@ def test_prior_stamp_none_without_prior_dates(tmp_path: Path) -> None:
     now = datetime(2026, 7, 25, 21, 0, tzinfo=UTC)
     stamps = {"20260725T140000Z": {}}
     assert gy._pick_prior_stamp(stamps, now) is None
+
+
+def test_newest_cumulative_picks_latest_stamp(tmp_path: Path) -> None:
+    gy = _grade_yesterday_module()
+    for stamp, marker in (("20260725T140000Z", 1), ("20260726T140000Z", 2)):
+        run_dir = tmp_path / stamp
+        run_dir.mkdir()
+        pd.DataFrame({"marker": [marker]}).to_parquet(
+            run_dir / f"cumulative_record_mlb_{stamp}.parquet", index=False
+        )
+    chain = gy._newest_cumulative(tmp_path, "mlb")
+    assert chain is not None
+    assert chain["marker"].tolist() == [2]
+    assert gy._newest_cumulative(tmp_path, "nfl") is None

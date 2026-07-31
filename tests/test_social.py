@@ -116,8 +116,27 @@ def test_render_card_writes_the_fixed_frame(tmp_path: Path) -> None:
     card = _cards(id_to_name=NAMES)[0]
     path = render_card(card, tmp_path / "card.png")
     image = plt.imread(path)
-    assert image.shape[0] == 675
-    assert image.shape[1] == 1200
+    assert image.shape[0] == 900  # 16:9 at 1600×900 — uncropped in the X timeline
+    assert image.shape[1] == 1600
+
+
+def test_distributions_frame_is_a_pmf_per_game_and_kind() -> None:
+    from velocity.report.social import distributions_frame
+
+    frame = distributions_frame({"evt1": _projection()})
+    for kind in ("total", "margin"):
+        part = frame[frame["kind"] == kind]
+        assert part["prob"].sum() == pytest.approx(1.0)
+    # Margins carry their true signed support — sims 2, 2, −2, −2.
+    margins = frame[frame["kind"] == "margin"]
+    assert set(margins["value"]) == {-2, 2}
+    totals = frame[frame["kind"] == "total"]
+    assert set(totals["value"]) == {4, 6, 8}  # totals 8, 6, 6, 4
+
+
+def test_record_line_rides_every_card() -> None:
+    card = _cards(id_to_name=NAMES, record_line="SEASON 3-1 · +2.1U")[0]
+    assert card.record_line == "SEASON 3-1 · +2.1U"
 
 
 def test_card_filename_is_safe() -> None:

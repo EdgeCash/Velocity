@@ -311,6 +311,14 @@ def main() -> None:
             proj_frame.assign(league=args.league, generated_at=generated_at).to_parquet(
                 out_dir / f"projections_{args.league}_{stamp}.parquet", index=False
             )
+        # Persist the pregame total/margin distributions (MLB) — tomorrow's
+        # Sim Check pins the actual result at its true percentile on these.
+        if projections and all(hasattr(p, "result") for p in projections.values()):
+            from velocity.report.social import distributions_frame
+
+            distributions_frame(projections).assign(league=args.league).to_parquet(
+                out_dir / f"distributions_{args.league}_{stamp}.parquet", index=False
+            )
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame, generated_at)
         if args.league == "mlb" and not events.empty:
             _write_cards(out_dir, stamp, args, events, projections, canonical, now,
@@ -484,6 +492,7 @@ def _projections_frame(projections: dict) -> pd.DataFrame:
             "game_id": str(gid),
             "away": proj.away_team,
             "home": proj.home_team,
+            "n_sims": int(proj.sim.home_score.shape[0]),
             "mu_away": round(float(proj.mu_away), 2),
             "mu_home": round(float(proj.mu_home), 2),
             "p_home_win": round(float(proj.p_home_win()), 4),
@@ -525,8 +534,20 @@ def _write_social_cards(
                 pid = resolve_player(player, name_to_id)
                 if pid is not None:
                     id_to_name.setdefault(pid, player)
+        # The season record chain (written by the grading step, which runs
+        # before the slate build) puts the receipt line on every card.
+        record_line = None
+        try:
+            from velocity.report.daily_record import season_record_line
+
+            cumulative_files = sorted(Path(args.out).glob("cumulative_record_mlb_*.parquet"))
+            if cumulative_files:
+                record_line = season_record_line(pd.read_parquet(cumulative_files[-1]))
+        except Exception as exc:  # noqa: BLE001 - the record line is optional decoration
+            print(f"record line skipped: {exc}")
         cards = build_social_cards(
-            projections, events, id_to_name=id_to_name, prop_lines=prop_lines
+            projections, events, id_to_name=id_to_name, prop_lines=prop_lines,
+            record_line=record_line,
         )
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
         paths = render_cards(cards, Path(args.out), stamp)

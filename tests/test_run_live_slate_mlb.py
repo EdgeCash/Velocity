@@ -52,8 +52,17 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     projections = list(out.glob("projections_mlb_*.parquet"))
     assert len(projections) == 1
     proj = pd.read_parquet(projections[0])
-    assert {"p_home_win", "fair_total", "f5_fair_total", "p_yrfi"} <= set(proj.columns)
+    assert {"p_home_win", "fair_total", "f5_fair_total", "p_yrfi", "n_sims"} <= set(
+        proj.columns
+    )
     assert len(proj) == 1  # the one game in the snapshot fixture
+    # The pregame distributions persist too — tomorrow's Sim Check grades on them.
+    dists = list(out.glob("distributions_mlb_*.parquet"))
+    assert len(dists) == 1
+    dist = pd.read_parquet(dists[0])
+    assert set(dist["kind"]) == {"total", "margin"}
+    for _, part in dist.groupby("kind"):
+        assert abs(part["prob"].sum() - 1.0) < 1e-9
     # The matchup-cards HTML page is emitted alongside the parquet (offline: no
     # StatsAPI context, so it renders from projections + board with TBD starters).
     cards = list(out.glob("cards_mlb_*.html"))

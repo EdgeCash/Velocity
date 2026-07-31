@@ -60,22 +60,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: Build MLB slate
-        env:
-          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
-        run: |
-          python scripts/run_live_slate.py \
-            --league mlb \
-            --n-sims ${{ github.event.inputs.n_sims || '10000' }} \
-            --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
-            --bankroll ${{ github.event.inputs.bankroll || '100' }} \
-            --out artifacts/slate
-
-      # ---- yesterday's record (model status for the email) --------------------
-      # Both best-effort: the record section is additive and must never block the
-      # slate or its email. Previous slates live only in private run artifacts
-      # (paid-odds data never lands in the public repo), so they are fetched from
-      # recent runs; grading uses free StatsAPI finals/linescores/boxscores.
+      # ---- yesterday's record, Sim Check cards, and the season chain ----------
+      # Runs BEFORE the slate build so today's model cards can carry the season
+      # record line, and the Sim Check cards (yesterday's results on the pregame
+      # distributions) land in the same artifact. Both best-effort: grading
+      # trouble never blocks the slate or its email. Previous slates live only
+      # in private run artifacts (paid-odds data never lands in the public
+      # repo); grading uses free StatsAPI finals/linescores/boxscores.
       - name: Fetch previous slates
         continue-on-error: true
         env:
@@ -92,6 +83,17 @@ jobs:
         run: |
           python scripts/grade_yesterday.py \
             --prev-dir artifacts/previous --out-dir artifacts/slate --league mlb
+
+      - name: Build MLB slate
+        env:
+          THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+        run: |
+          python scripts/run_live_slate.py \
+            --league mlb \
+            --n-sims ${{ github.event.inputs.n_sims || '10000' }} \
+            --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
+            --bankroll ${{ github.event.inputs.bankroll || '100' }} \
+            --out artifacts/slate
 
       - name: Upload slate (private artifact)
         uses: actions/upload-artifact@v4
