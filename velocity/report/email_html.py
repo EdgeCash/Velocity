@@ -91,12 +91,12 @@ def render_slate_email(
     tag = league.upper()
     if n_plays or n_props or n_parlays:
         subject = (
-            f"Velocity {tag}: {n_plays} play{'s' if n_plays != 1 else ''}, "
+            f"MatchUp Labs {tag}: {n_plays} play{'s' if n_plays != 1 else ''}, "
             f"{n_props} prop{'s' if n_props != 1 else ''}, "
             f"{n_parlays} parlay{'s' if n_parlays != 1 else ''}{date_tag}"
         )
     else:
-        subject = f"Velocity {tag}: no plays today{date_tag}"
+        subject = f"MatchUp Labs {tag}: no plays today{date_tag}"
 
     sections = []
     if record is not None:

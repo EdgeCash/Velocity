@@ -36,7 +36,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 from format_plays import load_slate_frames, matchup_cards, plays_table  # noqa: E402
 
-st.set_page_config(page_title="Velocity — Plays", page_icon="⚾", layout="centered")
+st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="⚾", layout="centered")
 
 _API = "https://api.github.com"
 _ACCENT = "#3ddad0"
@@ -218,6 +218,11 @@ def _render_record(record: pd.DataFrame | None) -> None:
 
 def main() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='color:{_ACCENT};font-weight:700;letter-spacing:0.18em;"
+        "font-size:14px'>MATCHUP LABS</div>",
+        unsafe_allow_html=True,
+    )
     st.title("PLAYS")
 
     folder = _slate_dir()

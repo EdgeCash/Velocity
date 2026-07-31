@@ -69,12 +69,12 @@ def test_subject_counts_the_plays() -> None:
         _plays(), None, _parlays(),
         games_map=_games_map(), generated_at="2026-07-26 14:00",
     )
-    assert subject == "Velocity MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
+    assert subject == "MatchUp Labs MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
 
 
 def test_empty_slate_is_a_heartbeat() -> None:
     subject, html = render_slate_email(None, None, None)
-    assert subject == "Velocity MLB: no plays today"
+    assert subject == "MatchUp Labs MLB: no plays today"
     assert "No game bet cleared" in html
     assert "No prop cleared" in html
     assert "No parlay cleared" in html
@@ -149,7 +149,7 @@ def test_render_script_writes_body_and_subject(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     subject = (out / "subject.txt").read_text()
-    assert subject == "Velocity MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
+    assert subject == "MatchUp Labs MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
     html = (out / "slate_email.html").read_text()
     assert "San Francisco Giants @ Los Angeles Dodgers" in html
     assert "SF@LAD moneyline home" in html
@@ -167,4 +167,4 @@ def test_render_script_survives_an_empty_folder(tmp_path: Path) -> None:
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
-    assert (out / "subject.txt").read_text() == "Velocity MLB: no plays today"
+    assert (out / "subject.txt").read_text() == "MatchUp Labs MLB: no plays today"

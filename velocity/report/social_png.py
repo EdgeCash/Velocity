@@ -59,8 +59,8 @@ def _rounded(ax: plt.Axes, x: float, w: float, color: str, *, y: float = 0.0,
 
 
 def _header(fig: plt.Figure, card: SocialCard) -> None:
-    _text(fig, 0.055, 0.935, "VELOCITY", color=BRAND, fontsize=17, fontweight="bold")
-    _text(fig, 0.163, 0.935, "MODEL CARD", color=INK_DIM, fontsize=17)
+    _text(fig, 0.055, 0.935, "MATCHUP LABS", color=BRAND, fontsize=17, fontweight="bold")
+    _text(fig, 0.232, 0.935, "MODEL CARD", color=INK_DIM, fontsize=17)
     when = ""
     if card.kickoff is not None:
         central = card.kickoff.tz_localize("UTC").tz_convert("America/Chicago")
@@ -156,7 +156,7 @@ def _footer(fig: plt.Figure, card: SocialCard) -> None:
     _text(fig, 0.055, 0.055,
           f"{date}Monte Carlo simulation · model output, informational only",
           color=INK_DIM, fontsize=10)
-    _text(fig, 0.945, 0.055, "velocity", color=BRAND, fontsize=10, ha="right",
+    _text(fig, 0.945, 0.055, "@MatchUpLabs", color=BRAND, fontsize=10, ha="right",
           fontweight="bold")
 
 
