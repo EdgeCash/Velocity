@@ -139,6 +139,38 @@ def test_record_line_rides_every_card() -> None:
     assert card.record_line == "SEASON 3-1 · +2.1U"
 
 
+def test_market_strip_condenses_the_board() -> None:
+    from velocity.report.social import market_strip
+
+    lines = pd.DataFrame([
+        {"game_id": "evt1", "market": "moneyline", "side": "away", "price": 142, "point": None},
+        {"game_id": "evt1", "market": "moneyline", "side": "away", "price": 138, "point": None},
+        {"game_id": "evt1", "market": "moneyline", "side": "home", "price": -156, "point": None},
+        {"game_id": "evt1", "market": "total", "side": "over", "price": -110, "point": 8.5},
+        {"game_id": "evt1", "market": "total", "side": "under", "price": -110, "point": 8.5},
+    ])
+    strip = market_strip(lines, "evt1", "SF", "LAD")
+    assert strip == "SF +140 · LAD -156 · O/U 8.5"  # median ML, modal total
+    assert market_strip(lines, "other", "A", "B") is None
+    assert market_strip(None, "evt1", "SF", "LAD") is None
+
+
+def test_team_context_rides_the_card() -> None:
+    card = _cards(
+        id_to_name=NAMES,
+        team_records={"SF": "54-52", "LAD": "63-44"},
+        lines=pd.DataFrame([
+            {"game_id": "evt1", "market": "total", "side": "over", "price": -110,
+             "point": 8.5},
+        ]),
+    )[0]
+    assert card.away_record == "54-52"
+    assert card.home_record == "63-44"
+    assert card.market == "O/U 8.5"
+    # Watch entries carry the model player id — the card's headshot key.
+    assert card.watch[0].player_id in {"p1", "b1"}
+
+
 def test_card_filename_is_safe() -> None:
     card = _cards()[0]
     assert card_filename(card, "20260727T140000Z") == "social_mlb_20260727T140000Z_SF_at_LAD.png"

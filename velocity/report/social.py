@@ -53,6 +53,7 @@ class WatchEntry:
     mean: float
     pmf: Mapping[int, float]  # value → probability, for the mini distribution
     from_board: bool = False
+    player_id: str | None = None  # StatsAPI id → the card's headshot
 
     def fact(self) -> str:
         """"61% to clear 6.5 K (model avg 6.8)" — a statement, not a pick."""
@@ -85,6 +86,12 @@ class SocialCard:
     # The running graded record ("SEASON 41-38 · +6.2U"), carried on every card
     # so each graphic doubles as the receipt. None until a record exists.
     record_line: str | None = None
+    # Team context (best-effort, live only): W-L records for the header blocks.
+    away_record: str | None = None
+    home_record: str | None = None
+    # The market strip ("SF +142 · LAD -156 · O/U 8.5") — consensus board
+    # numbers stated as fact, broadcast-style; never a recommendation.
+    market: str | None = None
 
 
 def _pmf(samples: np.ndarray, cap: int) -> dict[int, float]:
@@ -161,6 +168,7 @@ def _watch_candidates(
                     mean=float(np.mean(samples)),
                     pmf=_pmf(samples, cap=int(max(line + 4, 8))),
                     from_board=board_line is not None,
+                    player_id=str(pid),
                 )
             )
     return entries
@@ -204,14 +212,22 @@ def build_social_cards(
     aliases: Mapping[str, str] | None = None,
     max_watch: int = 3,
     record_line: str | None = None,
+    team_records: Mapping[str, str] | None = None,
+    lines: pd.DataFrame | None = None,
 ) -> list[SocialCard]:
-    """One :class:`SocialCard` per projected event, in board order."""
+    """One :class:`SocialCard` per projected event, in board order.
+
+    ``team_records`` maps a club code to its W-L string (best-effort context);
+    ``lines`` is the canonical game board, from which each card's market strip
+    is condensed.
+    """
     from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
 
     alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
     codes = list(alias_map.values())
     names = dict(id_to_name or {})
     line_index = _prop_lines_index(prop_lines)
+    records = dict(team_records or {})
 
     cards: list[SocialCard] = []
     for event in events.to_dict("records"):
@@ -227,13 +243,15 @@ def build_social_cards(
         watch = _select_watch(
             _watch_candidates(gid, BaseballProps(result), names, line_index), max_watch
         )
+        away_code = resolve_team(away_name, codes, alias_map) or away_name
+        home_code = resolve_team(home_name, codes, alias_map) or home_name
         cards.append(
             SocialCard(
                 game_id=gid,
                 away_name=away_name,
                 home_name=home_name,
-                away_code=resolve_team(away_name, codes, alias_map) or away_name,
-                home_code=resolve_team(home_name, codes, alias_map) or home_name,
+                away_code=away_code,
+                home_code=home_code,
                 kickoff=None if pd.isna(kickoff) else pd.Timestamp(kickoff),
                 p_home_win=float(proj.p_home_win()),
                 mu_away=float(proj.mu_away),
@@ -245,9 +263,38 @@ def build_social_cards(
                 n_sims=int(result.full.home_score.shape[0]),
                 watch=watch,
                 record_line=record_line,
+                away_record=records.get(away_code),
+                home_record=records.get(home_code),
+                market=market_strip(lines, gid, away_code, home_code),
             )
         )
     return cards
+
+
+def market_strip(
+    lines: pd.DataFrame | None, game_id: str, away_code: str, home_code: str
+) -> str | None:
+    """Condense a game's board to one broadcast-style line of consensus numbers.
+
+    "SF +142 · LAD -156 · O/U 8.5" — the median moneyline per side and the
+    modal total, stated as market fact (the same numbers any broadcast shows),
+    never a recommendation. ``None`` when the board has neither.
+    """
+    if lines is None or lines.empty:
+        return None
+    game = lines[lines["game_id"].astype(str) == str(game_id)]
+    if game.empty:
+        return None
+    parts: list[str] = []
+    ml = game[game["market"] == "moneyline"]
+    for side, code in (("away", away_code), ("home", home_code)):
+        prices = ml.loc[ml["side"] == side, "price"]
+        if not prices.empty:
+            parts.append(f"{code} {int(prices.median()):+d}")
+    totals = game.loc[game["market"] == "total", "point"].dropna()
+    if not totals.empty:
+        parts.append(f"O/U {float(totals.mode().iloc[0]):g}")
+    return " · ".join(parts) if parts else None
 
 
 def distributions_frame(projections: Mapping[str, MLBProjection]) -> pd.DataFrame:

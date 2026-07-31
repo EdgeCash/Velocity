@@ -207,7 +207,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             and games_map is not None
         ):
             checks = build_sim_checks(projections_frame, distributions, finals, games_map)
-            rendered = render_sim_checks(checks, out, out_stamp)
+            rendered = render_sim_checks(checks, out, out_stamp,
+                                         asset_dir=out / ".assets")
             print(f"rendered {len(rendered)} sim check card(s)")
         settled = record[record["result"].isin(["win", "loss", "push"])]
         if not settled.empty:

@@ -284,10 +284,11 @@ def main() -> None:
     if args.league == "mlb" and projections and args.parlay_max_legs >= 2:
         _mlb_parlay_slate(args, projections, game_log, prop_log, mlb_names, now, generated_at)
 
-    # Social model cards — one shareable PNG per game (model facts only, no
-    # odds) plus a captions file of post copy. Best-effort, like every report.
+    # Social model cards — one shareable PNG per game plus a captions file of
+    # post copy. Best-effort, like every report.
     if args.league == "mlb" and args.out and projections:
-        _write_social_cards(args, events, projections, prop_lines, mlb_names, now)
+        _write_social_cards(args, events, projections, prop_lines, mlb_names, now,
+                            canonical)
 
     if args.out:
         out_dir = Path(args.out)
@@ -509,19 +510,38 @@ def _projections_frame(projections: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _write_social_cards(
+def _team_records(args: argparse.Namespace, now: datetime) -> dict[str, str]:
+    """Best-effort W-L records by club code from StatsAPI context (live only)."""
+    if args.snapshot_file:
+        return {}
+    from velocity.ingest.mlb_context import load_context
+    from velocity.wagering.live import resolve_team
+
+    codes = sorted(set(MLB_TEAM_ALIASES.values()))
+    records: dict[str, str] = {}
+    for ctx in load_context(now.strftime("%Y-%m-%d")):
+        for team in (ctx.away, ctx.home):
+            code = resolve_team(team.name, codes, MLB_TEAM_ALIASES)
+            if code and team.record:
+                records[code] = team.record
+    return records
+
+
+def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     args: argparse.Namespace,
     events: pd.DataFrame,
     projections: dict,
     prop_lines: pd.DataFrame | None,
     name_to_id: dict[str, str] | None,
     now: datetime,
+    lines: pd.DataFrame | None = None,
 ) -> None:
     """Render the per-game social model cards + captions into the out folder.
 
     Display names for the watch strip come from the prop board's own player
     names (the name index only keeps normalized keys); with no board — offline
-    runs — cards still render with the watch strip empty.
+    runs — cards still render with the watch strip empty. Logos and headshots
+    are fetched into a hidden cache under the out folder (never uploaded).
     """
     try:
         from velocity.report.social import build_social_cards
@@ -545,12 +565,18 @@ def _write_social_cards(
                 record_line = season_record_line(pd.read_parquet(cumulative_files[-1]))
         except Exception as exc:  # noqa: BLE001 - the record line is optional decoration
             print(f"record line skipped: {exc}")
+        try:
+            team_records = _team_records(args, now)
+        except Exception as exc:  # noqa: BLE001 - records are header decoration
+            print(f"team records skipped: {exc}")
+            team_records = {}
         cards = build_social_cards(
             projections, events, id_to_name=id_to_name, prop_lines=prop_lines,
-            record_line=record_line,
+            record_line=record_line, team_records=team_records, lines=lines,
         )
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
-        paths = render_cards(cards, Path(args.out), stamp)
+        asset_dir = Path(args.out) / ".assets"  # hidden: outside the upload globs
+        paths = render_cards(cards, Path(args.out), stamp, asset_dir=asset_dir)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
     except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
         print(f"social cards skipped: {exc}")
