@@ -189,6 +189,12 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
+    # Create the output folder up front: the prop, parlay, and card writers all
+    # persist into it before the final block below, and a missing directory
+    # would silently cost those files (they are best-effort by design).
+    if args.out:
+        Path(args.out).mkdir(parents=True, exist_ok=True)
+
     project, known_teams, aliases, mlb_model, mlb_names = _build_projection(args)
 
     payload = _load_snapshot(args)

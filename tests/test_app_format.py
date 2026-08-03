@@ -120,3 +120,26 @@ def test_load_slate_frames_picks_newest_recursively(tmp_path: Path) -> None:
     assert frames["plays"] is not None
     assert frames["plays"]["a"].tolist() == [2]  # the newer, nested file wins
     assert frames["record"] is None
+
+
+def test_card_images_finds_the_newest_run(tmp_path: Path) -> None:
+    old, new = "20260725T140000Z", "20260726T140000Z"
+    for stamp in (old, new):
+        (tmp_path / f"social_mlb_{stamp}_SF_at_LAD.png").write_bytes(b"x")
+        (tmp_path / f"social_mlb_{stamp}_captions.md").write_text(f"copy {stamp}")
+    (tmp_path / f"simcheck_mlb_{new}_NYY_at_BOS.png").write_bytes(b"x")
+    (tmp_path / f"recordcard_mlb_{new}.png").write_bytes(b"x")
+
+    images = fp.card_images(tmp_path)
+    assert [label for label, _ in images["model"]] == ["SF @ LAD"]
+    assert new in str(images["model"][0][1])  # only the newest run's cards
+    assert [label for label, _ in images["simcheck"]] == ["NYY @ BOS"]
+    assert images["record"] is not None
+    assert images["model_captions"] == f"copy {new}"
+    assert images["simcheck_captions"] is None  # no captions file written
+
+
+def test_card_images_empty_folder(tmp_path: Path) -> None:
+    images = fp.card_images(tmp_path)
+    assert images["model"] == [] and images["simcheck"] == []
+    assert images["record"] is None

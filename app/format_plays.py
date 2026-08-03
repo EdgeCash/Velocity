@@ -214,6 +214,58 @@ def newest(folder: Path, pattern: str) -> pd.DataFrame | None:
     return pd.read_parquet(matches[-1]) if matches else None
 
 
+def _newest_stamp(folder: Path, prefix: str, league: str) -> str | None:
+    """The newest run stamp among ``<prefix>_<league>_<stamp>*`` files."""
+    pattern = re.compile(rf"{re.escape(prefix)}_{re.escape(league)}_({_STAMP})")
+    stamps = [
+        m.group(1)
+        for p in folder.rglob("*")
+        if (m := pattern.match(p.name)) is not None
+    ]
+    return max(stamps) if stamps else None
+
+
+def card_images(folder: Path, league: str = "mlb") -> dict[str, object]:
+    """The newest run's graphics: model cards, sim checks, record card, captions.
+
+    Returns ``{"model": [(label, path)], "simcheck": [...], "record": path|None,
+    "model_captions": str|None, "simcheck_captions": str|None}`` — everything
+    the Cards tab needs to display and hand off for posting.
+    """
+
+    def _pngs(prefix: str) -> list[tuple[str, Path]]:
+        stamp = _newest_stamp(folder, prefix, league)
+        if stamp is None:
+            return []
+        found = list(folder.rglob(f"{prefix}_{league}_{stamp}_*.png"))
+        labelled = [
+            (p.stem.split(f"{stamp}_", 1)[-1].replace("_at_", " @ "), p)
+            for p in found
+        ]
+        return sorted(labelled)
+
+    def _captions(prefix: str) -> str | None:
+        stamp = _newest_stamp(folder, prefix, league)
+        if stamp is None:
+            return None
+        matches = list(folder.rglob(f"{prefix}_{league}_{stamp}_captions.md"))
+        return matches[0].read_text() if matches else None
+
+    record_stamp = _newest_stamp(folder, "recordcard", league)
+    record = None
+    if record_stamp is not None:
+        matches = list(folder.rglob(f"recordcard_{league}_{record_stamp}.png"))
+        record = matches[0] if matches else None
+
+    return {
+        "model": _pngs("social"),
+        "simcheck": _pngs("simcheck"),
+        "record": record,
+        "model_captions": _captions("social"),
+        "simcheck_captions": _captions("simcheck"),
+    }
+
+
 def load_slate_frames(folder: Path, league: str = "mlb") -> dict[str, pd.DataFrame | None]:
     """All the app's frames from a slate folder (or downloaded artifact dir)."""
     lg = re.escape(league)

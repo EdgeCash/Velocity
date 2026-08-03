@@ -1,7 +1,10 @@
-"""Velocity plays app — the day's slate as a dark, readable board.
+"""MatchUp Labs app — the day's slate as a dark, readable board.
 
-Three tabs over the live-slate workflow's persisted artifacts:
+Four tabs over the live-slate workflow's persisted artifacts:
 
+* **Cards** — the day's graphics: model cards, Sim Checks, and the record
+  card, each viewable and downloadable, with the caption copy alongside. This
+  is the posting workflow on a phone.
 * **Plays** — the reference-style two-column board: matchup on the left, the
   play in accent teal on the right ("Tampa Bay ML +101", "Tatis O1.5 TB +109",
   "NRFI -135"), games → props → parlays.
@@ -34,7 +37,12 @@ import streamlit as st
 
 # `streamlit run` puts the script dir on sys.path; test harnesses don't.
 sys.path.insert(0, str(Path(__file__).parent))
-from format_plays import load_slate_frames, matchup_cards, plays_table  # noqa: E402
+from format_plays import (  # noqa: E402
+    card_images,
+    load_slate_frames,
+    matchup_cards,
+    plays_table,
+)
 
 st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="⚾", layout="centered")
 
@@ -216,6 +224,49 @@ def _render_record(record: pd.DataFrame | None) -> None:
     )
 
 
+def _render_cards_tab(folder: Path) -> None:
+    """The day's graphics: view, download, and copy the post copy — phone-first."""
+    images = card_images(folder)
+    model, checks, record = images["model"], images["simcheck"], images["record"]
+    if not model and not checks and record is None:
+        st.info("No cards in the latest slate yet — they render with each run.")
+        return
+
+    if record is not None:
+        st.markdown("#### Model record")
+        st.image(str(record), width="stretch")
+        st.download_button(
+            "Download record card", Path(str(record)).read_bytes(),
+            file_name=Path(str(record)).name, mime="image/png",
+        )
+
+    if checks:
+        st.markdown("#### Sim Checks — yesterday's results vs the pregame model")
+        for label, path in checks:  # type: ignore[misc]
+            st.image(str(path), caption=label, width="stretch")
+            st.download_button(
+                f"Download {label}", Path(path).read_bytes(),
+                file_name=Path(path).name, mime="image/png",
+                key=f"dl-check-{label}",
+            )
+        if images["simcheck_captions"]:
+            with st.expander("Sim Check captions"):
+                st.code(images["simcheck_captions"], language=None)
+
+    if model:
+        st.markdown("#### Today's model cards")
+        for label, path in model:  # type: ignore[misc]
+            st.image(str(path), caption=label, width="stretch")
+            st.download_button(
+                f"Download {label}", Path(path).read_bytes(),
+                file_name=Path(path).name, mime="image/png",
+                key=f"dl-model-{label}",
+            )
+        if images["model_captions"]:
+            with st.expander("Model card captions"):
+                st.code(images["model_captions"], language=None)
+
+
 def main() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
     st.markdown(
@@ -249,7 +300,11 @@ def main() -> None:
     if generated is not None:
         st.caption(f"Slate generated {pd.Timestamp(generated):%b %-d, %H:%M} UTC")
 
-    tab_plays, tab_matchups, tab_record = st.tabs(["Plays", "Matchups", "Record"])
+    tab_cards, tab_plays, tab_matchups, tab_record = st.tabs(
+        ["Cards", "Plays", "Matchups", "Record"]
+    )
+    with tab_cards:
+        _render_cards_tab(folder)
     with tab_plays:
         _render_plays(view)
     with tab_matchups:

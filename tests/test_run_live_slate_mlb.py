@@ -8,6 +8,7 @@ writing a private slate parquet either way.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,14 @@ from pathlib import Path
 import pandas as pd
 from velocity.models.game_mlb import league_average_model
 from velocity.wagering.live import MLB_TEAM_ALIASES
+
+# The game slate proper — not the props/parlays parquets, which share the prefix.
+_GAME_SLATE = re.compile(r"slate_mlb_\d{8}T\d{6}Z\.parquet")
+
+
+def _game_slates(out: Path) -> list[Path]:
+    return [p for p in out.glob("slate_mlb_*.parquet") if _GAME_SLATE.fullmatch(p.name)]
+
 
 REPO = Path(__file__).parent.parent
 RUNNER = REPO / "scripts" / "run_live_slate.py"
@@ -44,7 +53,7 @@ def test_runner_writes_slate_from_saved_snapshot(tmp_path: Path) -> None:
     result = _run("--snapshot-file", str(MLB_SNAPSHOT), "--out", str(out))
     assert result.returncode == 0, result.stderr
     assert "games on the board" in result.stdout
-    written = list(out.glob("slate_mlb_*.parquet"))
+    written = _game_slates(out)
     assert len(written) == 1
     frame = pd.read_parquet(written[0])
     assert "league" in frame.columns  # persisted with league/generated_at tags
@@ -87,7 +96,11 @@ def test_runner_prices_derivative_board_offline(tmp_path: Path) -> None:
     # 2 F5 MLs + 2 F5 run lines + 2 F5 totals + 2 first-inning totals normalize;
     # team_totals stays banked-only.
     assert "derivative board (file): 8 lines" in result.stdout
-    assert len(list(out.glob("slate_mlb_*.parquet"))) == 1
+    assert len(_game_slates(out)) == 1
+    # The derivative board also yields correlated same-game parlays, and their
+    # parquet lands in the same folder (it needs the out dir to already exist —
+    # the runner creates it up front, before any writer runs).
+    assert len(list(out.glob("slate_mlb_parlays_*.parquet"))) == 1
 
 
 def test_runner_empty_board_succeeds(tmp_path: Path) -> None:
@@ -98,4 +111,4 @@ def test_runner_empty_board_succeeds(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "no games on the board" in result.stdout
     # An off-day still writes an (empty) slate so the schedule keeps producing.
-    assert len(list(out.glob("slate_mlb_*.parquet"))) == 1
+    assert len(_game_slates(out)) == 1
