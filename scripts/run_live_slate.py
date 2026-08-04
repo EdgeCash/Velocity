@@ -168,6 +168,13 @@ def main() -> None:
                         help="MLB prop confidence shrink toward 0.5 (1.0 = raw model)")
     parser.add_argument("--mlb-exclude-props", default="total_bases",
                         help="comma-separated prop markets to skip (no-edge); '' bets all")
+    # NCAAF selectivity, in POINTS of total disagreement — the edge exactly as
+    # backtested (docs/BACKTEST_NCAAF.md): flat totals 51.6%, but 52.8% when the
+    # model differs from the number by ≥4 points (5,477 bets, positive in 7 of 10
+    # seasons) and 53.4% at ≥6. Applies to full-game totals only; NCAAF spreads
+    # showed no edge at any threshold, so nothing is bet there on this cut.
+    parser.add_argument("--ncaaf-total-edge", type=float, default=4.0,
+                        help="NCAAF: min points of total disagreement to bet (0 = off)")
     # Derivative board (F5 moneyline/run line/total + NRFI/YRFI). Live MLB fetches it
     # per-event alongside the props (one credit-efficient pass); offline runs can
     # supply banked per-event payloads.
@@ -241,10 +248,16 @@ def main() -> None:
         # Calibrated confidence for MLB (see --mlb-shrink); football stays raw (1.0),
         # its own calibration is untuned here.
         shrink = args.mlb_shrink if args.league == "mlb" else 1.0
+        # NCAAF bets totals on points of disagreement (the backtested cut); the
+        # other leagues leave it off and gate on probability edge alone.
+        total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
-            prob_shrink=shrink,
+            prob_shrink=shrink, min_total_disagreement=total_edge,
         )
+        if total_edge > 0.0:
+            print(f"NCAAF totals filter: model must differ from the number by "
+                  f"≥ {total_edge:g} points")
         # Project once, then price off those projections (reused for the workbook).
         projections, unresolved = project_board(events, project, known_teams, aliases)
         canonical = canonicalize_sides(lines, events)

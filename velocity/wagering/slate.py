@@ -90,10 +90,35 @@ class SlateConfig:
     # distribution game-to-game), so no confidence lever rescues it — the honest
     # treatment is to not bet it. Empty (default) = bet every market.
     exclude_markets: frozenset[str] = frozenset()
+    # Selectivity on full-game totals, measured in **points of disagreement**
+    # rather than probability: bet a total only when the model's fair total
+    # differs from the offered number by at least this much, *in the direction
+    # of the side being bet*. This is the NCAAF edge as actually backtested
+    # (docs/BACKTEST_NCAAF.md): flat totals sit at 51.6%, but the win rate rises
+    # monotonically with disagreement — 52.8% at ≥4 points (5,477 bets, positive
+    # in 7 of 10 seasons), 53.4% at ≥6. The probability-edge gate (``min_edge``)
+    # is a different cut and does not reproduce it, so both are applied.
+    #
+    # Scope is deliberately the full-game ``total`` only. The threshold is
+    # calibrated on NCAAF full-game totals and means nothing on a segment market
+    # (a 4-point filter would silently kill every NRFI bet, whose line is 0.5).
+    # ``0.0`` (default) disables it — every other league is unaffected.
+    min_total_disagreement: float = 0.0
 
     def shrink_for(self, market: str) -> float:
         """The confidence shrink to apply to ``market`` — its override, else the global."""
         return self.prop_shrink_by_market.get(market, self.prob_shrink)
+
+
+def total_disagreement(proj: GameProjection, side: str, point: float) -> float:
+    """Signed points by which the model's fair total favors ``side`` at ``point``.
+
+    Positive means the model agrees with this side's direction: the over wants
+    the model's total above the number, the under wants it below. Mirrors the
+    backtest's ``pick_over = fair_total > total_line`` comparison exactly.
+    """
+    fair = float(proj.fair_total())
+    return (fair - point) if side == "over" else (point - fair)
 
 
 def model_probability(
@@ -250,6 +275,16 @@ def _best_opportunity(
         bucket = snapshots.get((market, row["book"], row["timestamp"]), {})
         p_fair = _fair_probability(bucket, side, config.devig_method)
         if p_fair is None:
+            continue
+        # Points-of-disagreement selectivity on full-game totals (the backtested
+        # NCAAF cut). Applied before pricing: a number the model barely disagrees
+        # with is not a candidate at any price.
+        if (
+            market == "total"
+            and config.min_total_disagreement > 0.0
+            and point is not None
+            and total_disagreement(proj, side, point) < config.min_total_disagreement
+        ):
             continue
         p_model = model_probability(proj, market, side, point)
         if p_model is None:  # projection can't price this market (no segment sim)

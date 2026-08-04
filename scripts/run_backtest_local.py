@@ -86,7 +86,7 @@ def run(
     n_sims: int,
     min_train_games: int,
     rating: str = "epa",
-) -> dict[str, float]:
+) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
     folder = Path(data_dir)
     games_path = _find(folder, "games")
     if games_path is None:
@@ -117,7 +117,66 @@ def run(
     )
     metrics = dict(result.metrics)
     metrics.update(_ats_vs_close(result.projections, games))
-    return metrics
+    return metrics, result.projections, games
+
+
+def totals_disagreement_sweep(
+    projections: pd.DataFrame, games: pd.DataFrame, thresholds: tuple[float, ...]
+) -> pd.DataFrame:
+    """O/U win rate when betting only totals the model disagrees with by ≥ N points.
+
+    The strategy the live slate now runs (``SlateConfig.min_total_disagreement``),
+    measured the way ``docs/BACKTEST_NCAAF.md`` measured it: pick the over when
+    the model's fair total sits above the closing number and the under when it
+    sits below, keep only games where ``|fair_total − total_line| ≥ N``, and
+    score against the realized total. Pushes (exact ties) are excluded, as they
+    are in the market.
+    """
+    if projections.empty or "total_line" not in games.columns:
+        return pd.DataFrame(columns=["threshold", "win_rate", "bets"])
+    df = projections.merge(
+        games[["game_id", "home_score", "away_score", "total_line"]], on="game_id", how="inner"
+    )
+    realized = df["home_score"] + df["away_score"]
+    gap = df["fair_total"] - df["total_line"]
+    pick_over = gap > 0
+    diff = realized - df["total_line"]
+    win = ((pick_over & (diff > 0)) | (~pick_over & (diff < 0)))
+    decided = df["total_line"].notna() & (gap != 0) & (diff != 0)
+    rows = []
+    for threshold in thresholds:
+        mask = decided & (gap.abs() >= threshold)
+        rows.append({
+            "threshold": threshold,
+            "win_rate": float(win[mask].mean()) if mask.any() else float("nan"),
+            "bets": int(mask.sum()),
+        })
+    return pd.DataFrame(rows)
+
+
+def totals_sweep_by_season(
+    projections: pd.DataFrame, games: pd.DataFrame, threshold: float
+) -> pd.DataFrame:
+    """Per-season win rate at one threshold — the robustness cut (7-of-10 test)."""
+    if projections.empty or "total_line" not in games.columns:
+        return pd.DataFrame(columns=["season", "win_rate", "bets"])
+    # Only bring columns the projections frame doesn't already carry — merging a
+    # duplicate (``season`` is on both) would suffix it out of existence.
+    wanted = ["home_score", "away_score", "total_line", "season"]
+    cols = ["game_id", *[c for c in wanted if c not in projections.columns]]
+    df = projections.merge(games[cols], on="game_id", how="inner")
+    realized = df["home_score"] + df["away_score"]
+    gap = df["fair_total"] - df["total_line"]
+    diff = realized - df["total_line"]
+    win = (((gap > 0) & (diff > 0)) | ((gap < 0) & (diff < 0)))
+    mask = df["total_line"].notna() & (gap != 0) & (diff != 0) & (gap.abs() >= threshold)
+    out = (
+        df[mask].assign(win=win[mask])
+        .groupby("season")["win"].agg(["mean", "size"])
+        .rename(columns={"mean": "win_rate", "size": "bets"})
+        .reset_index()
+    )
+    return out
 
 
 def _ats_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str, float]:
@@ -165,9 +224,15 @@ def main() -> None:
         "--rating", choices=["epa", "scores"], default="epa",
         help="epa needs a plays file; scores fits on games only",
     )
+    parser.add_argument(
+        "--totals-sweep", action="store_true",
+        help="print the points-of-disagreement totals sweep (the NCAAF strategy)",
+    )
     args = parser.parse_args()
 
-    metrics = run(args.league, args.data, args.n_sims, args.min_train_games, args.rating)
+    metrics, projections, games = run(
+        args.league, args.data, args.n_sims, args.min_train_games, args.rating
+    )
     print(f"=== Local backtest: {args.league.upper()} from {args.data} ===")
     for key, value in metrics.items():
         print(f"  {key:22s} {value:.4f}")
@@ -187,6 +252,23 @@ def main() -> None:
             f"  vs closing total:  {metrics['ou_total']:.1%} O/U on "
             f"{int(metrics['ou_total_n'])} games (break-even 52.4%)"
         )
+
+    if args.totals_sweep:
+        sweep = totals_disagreement_sweep(projections, games, (0.0, 3.0, 4.0, 6.0, 8.0))
+        print("\n  totals by points of disagreement (break-even 52.4%):")
+        for row in sweep.to_dict("records"):
+            flag = "" if row["bets"] == 0 else (" ✅" if row["win_rate"] > 0.524 else "")
+            print(f"    ≥ {row['threshold']:>4.1f} pts   {row['win_rate']:.1%}   "
+                  f"{row['bets']:>5d} bets{flag}")
+        by_season = totals_sweep_by_season(projections, games, 4.0)
+        if not by_season.empty:
+            positive = int((by_season["win_rate"] > 0.524).sum())
+            print(f"\n  per-season at ≥ 4.0 pts: {positive}/{len(by_season)} seasons "
+                  "above break-even")
+            for row in by_season.to_dict("records"):
+                mark = "✅" if row["win_rate"] > 0.524 else "❌"
+                print(f"    {int(row['season'])}  {row['win_rate']:.1%} {mark}  "
+                      f"{int(row['bets'])} bets")
 
 
 if __name__ == "__main__":

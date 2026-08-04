@@ -69,6 +69,34 @@ staking discipline (fractional Kelly, caps) exists. 7-of-10 positive across a
 decade — including four of the last five seasons — is a credible signal worth
 sharpening, not a finished bankroll.
 
+## Re-verification (the filter as now wired live)
+
+The strategy is no longer analysis-only: `SlateConfig.min_total_disagreement`
+implements it in the live slate path, and
+`run_backtest_local.py --totals-sweep` re-measures it on demand. Re-running the
+full 10 seasons (`--rating scores --n-sims 10000`) reproduces the aggregate edge:
+
+| Threshold | This run | Original table |
+|---|---|---|
+| ≥ 0 pts | 51.6% (9,567) | 51.6% (9,531) |
+| ≥ 3 pts | 52.3% (6,605) | 52.4% (6,448) |
+| ≥ 4 pts | **52.6%** (5,630) | 52.8% (5,477) |
+| ≥ 6 pts | **53.4%** (3,894) | 53.4% (3,776) |
+| ≥ 8 pts | 53.0% (2,461) | 53.4% (2,347) |
+
+The shape holds exactly — flat totals at break-even-minus, rising monotonically
+with disagreement, clearing 52.4% from 4 points on.
+
+**Where it differs, honestly:** bet counts run ~3% higher than the original
+table throughout (a small definitional difference in the earlier ad-hoc
+analysis), and the per-season robustness comes out **6 of 10 seasons above
+break-even, not 7** — 2015 lands at 50.7% here versus 54.5% as first reported.
+2017, 2018 and 2022 are the losing seasons in both runs. The reproducible
+number to carry forward is **6/10**; treat the edge as real but thinner than
+the original write-up implied, which is exactly why the points threshold is a
+CLI knob (`--ncaaf-total-edge`) rather than a constant — ≥6 points buys a
+clearly better rate for ~30% fewer bets.
+
 ## Honest caveats
 
 - The edge is **thin** (53% vs 52.4% break-even) and measured with **fixed sim

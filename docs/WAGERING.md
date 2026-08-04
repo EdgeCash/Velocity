@@ -60,12 +60,14 @@ slate before football arrives in September.
 - **NFL sides/totals: no edge.** The from-scratch model cannot beat the razor
   close (`docs/BACKTEST_NFL.md`). Football slates run the raw model
   (shrink 1.0) but the honest read is: NFL is CLV-capture practice, not profit.
-- **NCAAF selective totals: the first real edge.** 51.6% flat → **52.8–53.4%
-  O/U when |model − market| ≥ 4–6 points**, monotone in disagreement, 10 seasons
-  (`docs/BACKTEST_NCAAF.md`). Note: this proven filter is expressed in *points
-  of disagreement*, while the live slate filters on *probability edge*
-  (`min_edge = 0.02`) — the backtested selectivity is *not yet the live filter*
-  (closed in W4).
+- **NCAAF selective totals: the first real edge — and now the live filter.**
+  51.6% flat → **52.6% at ≥4 points of disagreement, 53.4% at ≥6**, monotone,
+  10 seasons (`docs/BACKTEST_NCAAF.md`). Implemented as
+  `SlateConfig.min_total_disagreement` and wired for NCAAF at 4.0 points
+  (`--ncaaf-total-edge`); re-measurable any time via
+  `run_backtest_local.py --totals-sweep`. Re-verification reproduced the
+  aggregate edge but **6 of 10 seasons positive, not 7** — real, thinner than
+  first written up.
 - **MLB game markets: shrink 0.35.** The walk-forward sweep found the raw model
   overconfident (over-staking); shrink toward 0.5 pulled ROI positive. Wired
   (`--mlb-shrink 0.35`, PR #47).
@@ -94,7 +96,8 @@ slate before football arrives in September.
    bets, or watches rolling CLV per market and flags decay.
 5. **One global `min_edge`.** DESIGN §6.2 calls for thresholds sized to
    estimation error (higher for props/NCAAF); today one number (0.02) serves
-   every market. The proven NCAAF points-disagreement filter isn't live (§1.3).
+   every market. *(The NCAAF points-disagreement filter is now live — the
+   remaining gap is per-market probability thresholds.)*
 6. **Execution seams unmodeled.** No stale-snapshot guard (a slate can price a
    board minutes before lineups shift), no limit-aware stakes (prop limits are
    $200–500), no repricing at MLB lineup release, and football team-name alias
