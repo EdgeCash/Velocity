@@ -179,6 +179,52 @@ def histogram_rows(
     return lines
 
 
+# --- block numerals -----------------------------------------------------------
+# A 5×3 cell figure set drawn from full blocks — the terminal's own answer to
+# "make it bigger". Rendered at grid scale these stand ~200px tall on the 900px
+# canvas, so the headline numbers survive a timeline thumbnail; the compact
+# layout's uniform type does not.
+_GLYPH_ROWS = 5
+_BLOCK_FONT: dict[str, tuple[str, ...]] = {
+    "0": ("███", "█ █", "█ █", "█ █", "███"),
+    "1": (" █ ", "██ ", " █ ", " █ ", "███"),
+    "2": ("███", "  █", "███", "█  ", "███"),
+    "3": ("███", "  █", "███", "  █", "███"),
+    "4": ("█ █", "█ █", "███", "  █", "  █"),
+    "5": ("███", "█  ", "███", "  █", "███"),
+    "6": ("███", "█  ", "███", "█ █", "███"),
+    "7": ("███", "  █", "  █", "  █", "  █"),
+    "8": ("███", "█ █", "███", "█ █", "███"),
+    "9": ("███", "█ █", "███", "  █", "███"),
+    "%": ("█   █", "   █ ", "  █  ", " █   ", "█   █"),
+    ".": (" ", " ", " ", " ", "█"),
+    "-": ("   ", "   ", "███", "   ", "   "),
+    "+": ("   ", " █ ", "███", " █ ", "   "),
+    " ": ("   ", "   ", "   ", "   ", "   "),
+}
+
+
+def block_text(text: str) -> list[str]:
+    """Render ``text`` as :data:`_GLYPH_ROWS` lines of block characters.
+
+    Unknown characters fall back to a blank cell, so a stray glyph thins the
+    headline rather than raising mid-render.
+    """
+    rows = []
+    for row in range(_GLYPH_ROWS):
+        parts = [_BLOCK_FONT.get(ch, _BLOCK_FONT[" "])[row] for ch in text]
+        rows.append(" ".join(parts))
+    return rows
+
+
+def block_width(text: str) -> int:
+    """Grid columns a :func:`block_text` headline occupies (glyphs vary in width)."""
+    if not text:
+        return 0
+    widths = [len(_BLOCK_FONT.get(ch, _BLOCK_FONT[" "])[0]) for ch in text]
+    return sum(widths) + len(widths) - 1
+
+
 def _axis_labels(lo: int, hi: int, width: int, ticks: int = 6) -> tuple[str, list[int]]:
     """A monospace axis line for the histogram plus the tick values used."""
     line = [" "] * width
@@ -308,8 +354,118 @@ def card_lines(card: TerminalCard) -> list[Span]:
     return spans
 
 
-def render_terminal_card(card: TerminalCard, path: Path | str) -> Path:
-    """Paint the character grid to a 1600×900 PNG."""
+
+def hero_card_lines(card: TerminalCard) -> list[Span]:
+    """The hybrid layout: terminal frame and grammar, headline numbers at poster
+    scale.
+
+    The compact layout prints every value at one size, which reads as a wall of
+    green at timeline thumbnail size. Here the three numbers that carry the card
+    — the favourite's win probability, the model's total, and how far that sits
+    from the market — are drawn as block numerals, and the win-probability bars
+    are dropped as redundant with the headline. Everything else is unchanged.
+    """
+    spans: list[Span] = []
+    inner = COLS - 2
+
+    def put(row: int, col: int, text: str, color: str = GREEN) -> None:
+        spans.append(Span(row, col, text, color))
+
+    # --- frame -------------------------------------------------------------
+    title = f" MATCHUP LABS TERMINAL · {card.league} "
+    put(0, 0, "┌" + title + "─" * (inner - len(title)) + "┐", GREEN_DIM)
+    put(0, 1, title, GREEN)
+    for row in range(1, ROWS - 1):
+        put(row, 0, "│", GREEN_DIM)
+        put(row, COLS - 1, "│", GREEN_DIM)
+    footer = f" >_ @MatchUpLabs · {card.league} MODEL · informational only "
+    put(ROWS - 1, 0, "└" + footer + "─" * (inner - len(footer)) + "┘", GREEN_DIM)
+    put(ROWS - 1, 1, footer, GREEN)
+
+    # --- header ------------------------------------------------------------
+    put(1, 3, card.week, GREEN_DIM)
+    put(1, COLS - 3 - len(card.kickoff), card.kickoff, GREEN_DIM)
+    away_txt = f"{card.away_name.upper()}" + (f"  {card.away_record}" if card.away_record else "")
+    home_txt = f"{card.home_name.upper()}" + (f"  {card.home_record}" if card.home_record else "")
+    put(2, 3, away_txt, INK)
+    put(2, (COLS - 2) // 2, "AT", GREEN_DIM)
+    put(2, COLS - 3 - len(home_txt), home_txt, INK)
+
+    # --- headline numbers --------------------------------------------------
+    fav_code = card.home_code if card.p_home_win >= 0.5 else card.away_code
+    dog_code = card.away_code if card.p_home_win >= 0.5 else card.home_code
+    p_fav = max(card.p_home_win, 1.0 - card.p_home_win)
+    heroes: list[tuple[str, str, str]] = [
+        (f"{p_fav:.0%}", f"{fav_code} WIN · {dog_code} {1 - p_fav:.0%}", GREEN),
+        (f"{card.fair_total:.1f}", "MODEL TOTAL", GREEN),
+    ]
+    if card.market_total is not None:
+        gap = card.fair_total - card.market_total
+        heroes.append((f"{gap:+.1f}", f"VS MARKET {card.market_total:.1f}", AMBER))
+    lane = (COLS - 6) // len(heroes)
+    for i, (value, label, color) in enumerate(heroes):
+        col = 3 + i * lane
+        for row, line in enumerate(block_text(value)):
+            put(4 + row, col, line, color)
+        put(4 + _GLYPH_ROWS, col, label[: lane - 1], GREEN_DIM)
+
+    # --- the detail line ---------------------------------------------------
+    put(11, 3, "MODEL", GREEN)
+    put(11, 10, f"{card.mu_away:.1f}-{card.mu_home:.1f}", INK)
+    put(11, 22, _fmt_spread(card.home_code, card.away_code, card.fair_spread), INK)
+    if card.market_spread is not None or card.market_total is not None:
+        put(11, 42, "MARKET", AMBER)
+        detail = []
+        if card.market_spread is not None:
+            detail.append(_fmt_spread(card.home_code, card.away_code, -card.market_spread))
+        if card.market_total is not None:
+            detail.append(f"O/U {card.market_total:.1f}")
+        put(11, 50, "  ".join(detail), AMBER)
+
+    # --- distribution ------------------------------------------------------
+    put(13, 3, f"[ SIMULATED TOTAL POINTS · {card.n_sims:,} GAMES ]", GREEN_DIM)
+    hist_w, hist_col, hist_rows = 62, 9, 5
+    values = sorted(card.total_pmf)
+    if values:
+        ordered = sorted(card.total_pmf.items())
+        lo, hi = min(values), max(values)
+        cumulative = 0.0
+        for total, prob in ordered:
+            cumulative += prob
+            if cumulative >= 0.02:
+                lo = int(math.floor(total / 5.0) * 5)
+                break
+        cumulative = 0.0
+        for total, prob in reversed(ordered):
+            cumulative += prob
+            if cumulative >= 0.02:
+                hi = int(math.ceil(total / 5.0) * 5)
+                break
+        for i, line in enumerate(histogram_rows(card.total_pmf, lo, hi, hist_w, hist_rows)):
+            put(14 + i, hist_col, line, GREEN)
+        marker_row = 14 + hist_rows
+        axis, _ = _axis_labels(lo, hi, hist_w)
+        put(marker_row + 1, hist_col, axis, GREEN_DIM)
+        if card.market_total is not None and lo <= card.market_total <= hi:
+            col = hist_col + int((card.market_total - lo) / (hi - lo) * (hist_w - 1))
+            put(marker_row, max(3, col), f"^ MKT {card.market_total:.1f}", AMBER)
+
+    if card.record_line:
+        put(21, 3, card.record_line, AMBER)
+    note = card.notes[0] if card.notes else ""
+    if note:
+        put(21, COLS - 3 - len(note), note, GREEN_DIM)
+    return spans
+
+
+def render_terminal_card(
+    card: TerminalCard, path: Path | str, *, style: str = "hero"
+) -> Path:
+    """Paint the character grid to a 1600×900 PNG.
+
+    ``style`` picks the layout: ``"hero"`` (headline numbers at poster scale,
+    the default) or ``"compact"`` (uniform grid, more rows of detail).
+    """
     family, ratio = mono_family()
     fig = plt.figure(figsize=(WIDTH / DPI, HEIGHT / DPI), dpi=DPI)
     fig.patch.set_facecolor(BG)
@@ -323,7 +479,8 @@ def render_terminal_card(card: TerminalCard, path: Path | str) -> Path:
     # Lock the type size so one glyph advance == one grid column: the box rules
     # only close if the font's advance width matches the cell exactly.
     size = (WIDTH / COLS) / ratio * (72.0 / DPI)
-    for span in card_lines(card):
+    builder = hero_card_lines if style == "hero" else card_lines
+    for span in builder(card):
         ax.text(
             span.col, span.row + 0.72, span.text,
             color=span.color, fontfamily=family, fontsize=size,

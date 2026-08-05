@@ -172,3 +172,67 @@ def test_render_survives_an_empty_distribution(tmp_path: Path) -> None:
 def test_league_names_the_card(league: str) -> None:
     spans = card_lines(_card(league=league))
     assert league in _text_at(spans, 0)
+
+
+# --- block numerals + the hero layout ----------------------------------------
+
+
+def test_block_text_is_five_rows_of_equal_width() -> None:
+    from velocity.report.terminal_card import _GLYPH_ROWS, block_text, block_width
+
+    rows = block_text("91%")
+    assert len(rows) == _GLYPH_ROWS
+    assert len({len(r) for r in rows}) == 1, "block rows must be rectangular"
+    assert len(rows[0]) == block_width("91%")
+    # Glyphs vary in width — a period is one cell, a percent five.
+    assert block_width(".") == 1
+    assert block_width("%") == 5
+    assert block_width("") == 0
+
+
+def test_block_text_falls_back_on_unknown_glyphs() -> None:
+    from velocity.report.terminal_card import block_text
+
+    rows = block_text("Z")  # not in the font
+    assert len(rows) == 5
+    assert set("".join(rows)) <= {" "}  # blank, not an exception
+
+
+def test_hero_layout_prints_the_headline_numbers() -> None:
+    from velocity.report.terminal_card import block_text, hero_card_lines
+
+    spans = hero_card_lines(_card())
+    joined = "\n".join(_text_at(spans, r) for r in range(ROWS))
+    # The favourite's win probability, the model total, and the market gap are
+    # each drawn as block numerals rather than plain text.
+    for value in ("91%", "53.0", "+4.0"):
+        first_row = block_text(value)[0]
+        assert any(first_row in _text_at(spans, r) for r in range(ROWS)), value
+    assert "UGA WIN" in joined
+    assert "MODEL TOTAL" in joined
+    assert "VS MARKET 49.0" in joined
+
+
+def test_hero_layout_stays_inside_the_frame() -> None:
+    from velocity.report.terminal_card import hero_card_lines
+
+    for card in (_card(), _card(p_home_win=0.5, fair_total=100.0, market_total=99.5)):
+        for span in hero_card_lines(card):
+            assert 0 <= span.row < ROWS
+            assert span.col + len(span.text) <= COLS, f"'{span.text}' overruns"
+
+
+def test_hero_layout_without_a_market_drops_the_gap() -> None:
+    from velocity.report.terminal_card import hero_card_lines
+
+    spans = hero_card_lines(_card(market_spread=None, market_total=None))
+    joined = "\n".join(_text_at(spans, r) for r in range(ROWS))
+    assert "VS MARKET" not in joined
+    assert "MODEL TOTAL" in joined  # the model's own headline is unaffected
+    assert not any(s.color == AMBER for s in spans)
+
+
+def test_both_styles_render(tmp_path: Path) -> None:
+    for style in ("hero", "compact"):
+        path = render_terminal_card(_card(), tmp_path / f"{style}.png", style=style)
+        assert plt.imread(path).shape[:2] == (900, 1600)
