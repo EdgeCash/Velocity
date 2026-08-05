@@ -165,7 +165,11 @@ def register_fonts() -> tuple[str, str]:
     global _registered
     display, body = "DejaVu Sans", "DejaVu Sans"
     try:
+        # Mono faces belong to the terminal card; this pair is the body/display
+        # family for the graphic cards and must not be displaced by them.
         for path in sorted(_FONT_DIR.glob("*.ttf")):
+            if "Mono" in path.stem:
+                continue
             if not _registered:
                 font_manager.fontManager.addfont(str(path))
             name = font_manager.FontProperties(fname=str(path)).get_name()
