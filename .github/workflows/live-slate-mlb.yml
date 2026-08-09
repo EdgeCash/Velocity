@@ -8,11 +8,8 @@ name: Live slate (MLB)
 # slate. This does not place bets — a human acts on it.
 
 on:
-  schedule:
-    # Two daily info windows, in Central time (CDT, UTC-5, in effect all MLB
-    # season): 09:00 CT (14:00 UTC) catches the morning board, and 16:00 CT
-    # (21:00 UTC) runs after evening-game lineups and props post.
-    - cron: "0 14,21 * * *"
+  # DECOMMISSIONED (docs/FOOTBALL_CUTOVER.md Phase 0): schedule removed; manual
+  # dispatch remains for a final grading run. Code lives at tag `mlb-final`.
   workflow_dispatch:
     inputs:
       min_edge:

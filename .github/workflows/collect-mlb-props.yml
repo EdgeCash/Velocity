@@ -12,10 +12,8 @@ name: Collect MLB player props
 # Manual dispatch doubles as the THE_ODDS_API prop-endpoint verification.
 
 on:
-  schedule:
-    # Twice daily (UTC), bracketing the afternoon and evening slates after props
-    # post. Tighten toward first pitch if closer-to-close prop CLV is wanted.
-    - cron: "0 17,23 * * *"
+  # DECOMMISSIONED (docs/FOOTBALL_CUTOVER.md Phase 0): schedule removed; manual
+  # dispatch remains for a final snapshot. Code lives at tag `mlb-final`.
   workflow_dispatch:
     inputs:
       markets:
