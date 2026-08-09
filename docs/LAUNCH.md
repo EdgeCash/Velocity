@@ -13,6 +13,9 @@ turning it on, verifying it, and running it week to week.
 | `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → private artifact |
 | `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → private artifact |
 | `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → private artifact |
+| `refresh-datasets.yml` | Tue 9am UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` |
+| `collect-football-props.yml` | daily 15:00/22:00 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → private artifact |
+| `collect-dk-salaries.yml` | daily 15:00 UTC | — | DK salary snapshots → private artifact |
 
 > **Note (2026-08):** the MLB workflows referenced below were decommissioned per
 > [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md) (code at tag `mlb-final`);

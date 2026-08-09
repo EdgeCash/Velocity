@@ -167,7 +167,7 @@ pitchers/parks/F5 and Phase 4 rebuilds them for football from `mlb-final`. The
 grade→record→email chain survives sport-agnostic and is wired to nflverse/CFBD
 finals.
 
-### Phase 2 — Football data loops on, archives banking (week 1)
+### Phase 2 — Football data loops on, archives banking (week 1) — ✅ BUILT 2026-08-09 (needs live verification)
 
 The MLB lesson: the CLV archive is only as good as the days it was collecting.
 Start these **now**, weeks before kickoff.
@@ -186,6 +186,27 @@ Start these **now**, weeks before kickoff.
 
 **DoD:** every collector has a green scheduled run with 2026-season rows in the
 artifact; props archive banking daily.
+
+*Execution notes:* built and offline-tested on the branch; the DoD's green
+**scheduled** runs can only happen on `main` with secrets, so after merge the
+operator should manually dispatch each new workflow once as verification:
+
+- `refresh-datasets.yml` (Tue 09:00 UTC) — `scripts/refresh_datasets.py` tops
+  up `datasets/` with the current season's played games (nflverse for NFL,
+  CFBD REST for NCAAF — needs the `CFBD_API_KEY` secret) and commits the
+  changed parquets. Idempotent per-season replace; if branch protection blocks
+  the github-actions bot's push, allow bypass or convert the push to a PR.
+- `collect-football-props.yml` (15:00/22:00 UTC daily) —
+  `scripts/collect_football_props.py` banks NFL+NCAAF prop boards (raw
+  per-event JSON + normalized `PropLines` parquet) to private artifacts.
+- `collect-dk-salaries.yml` (15:00 UTC daily) — `velocity/dfs/salaries.py` +
+  `scripts/collect_dk_salaries.py` bank every DK draft group's salaries (raw
+  lobby/draftables JSON + normalized `Salaries` parquet) to private
+  artifacts. Unauthenticated; no secret.
+
+The pre-existing `collect-odds` / `collect-bettingpros` / `collect-fantasypros`
+crons were already football-configured; verifying they're green with 2026
+markets is an operator check on `main`, not a code change.
 
 ### Phase 3 — Model work (weeks 1–4, the real work — see §4)
 

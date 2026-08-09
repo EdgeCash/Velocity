@@ -1,0 +1,73 @@
+name: Refresh datasets (current season)
+
+# The live slate fits its ratings from the committed datasets/ files; this job
+# tops them up with the current season's played games every week so the model
+# tracks the season as it happens. Tuesday 09:00 UTC sits after Monday Night
+# Football and after nflverse's overnight rebuilds. Free feeds only (nflverse;
+# CFBD needs the CFBD_API_KEY secret) — datasets/ carries no paid data, so
+# committing it to the public repo is fine (it's the whole point).
+#
+# The push goes straight to the branch the run checked out (the default
+# branch on schedule). If branch protection blocks the github-actions bot,
+# either allow it to bypass or convert the push step to open a PR instead.
+
+on:
+  schedule:
+    - cron: "0 9 * * 2"
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season year (default: inferred from today)"
+        required: false
+      league:
+        description: "League to refresh (nfl, ncaaf, both)"
+        required: false
+        default: "both"
+
+concurrency:
+  group: refresh-datasets
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    name: refresh current-season rows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Refresh datasets
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          ARGS="--league ${{ github.event.inputs.league || 'both' }}"
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            ARGS="$ARGS --season ${{ github.event.inputs.season }}"
+          fi
+          python scripts/refresh_datasets.py $ARGS
+
+      - name: Commit refreshed datasets
+        run: |
+          if git diff --quiet -- datasets/; then
+            echo "datasets unchanged — nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add datasets/
+          git commit -m "Data: refresh current-season dataset rows"
+          git push
