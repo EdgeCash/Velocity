@@ -38,25 +38,8 @@ _MARKET_SIDES = {
     "spread": ("home", "away"),
     "total": ("over", "under"),
     "moneyline": ("home", "away"),
-    # MLB segment derivatives: the F5 markets mirror the three game markets over
-    # innings 1–5; total_i1 is the first-inning total (NRFI = under 0.5, YRFI =
-    # over 0.5). Priced only when the projection exposes the segment (an
-    # MLBProjection); a football projection has no segments, so these lines are
-    # skipped rather than mis-priced off the full-game sim.
-    "spread_f5": ("home", "away"),
-    "total_f5": ("over", "under"),
-    "moneyline_f5": ("home", "away"),
-    "total_i1": ("over", "under"),
 }
 _OPPOSITE = {"home": "away", "away": "home", "over": "under", "under": "over"}
-
-# Segment market → (projection attribute carrying its GameProjection, base market).
-_SEGMENT_MARKETS = {
-    "spread_f5": ("f5", "spread"),
-    "total_f5": ("f5", "total"),
-    "moneyline_f5": ("f5", "moneyline"),
-    "total_i1": ("i1", "total"),
-}
 
 
 @dataclass(frozen=True)
@@ -79,16 +62,15 @@ class SlateConfig:
     # bet must clear the edge on the *calibrated* probability. The backtest's
     # calibration table is what this is tuned against.
     prob_shrink: float = 1.0
-    # Per-market shrink overrides for player props: a market listed here uses its own
-    # shrink instead of ``prob_shrink``. The prop backtest found ``total_bases`` far
-    # more over-confident than the pitcher markets, so it wants a stronger shrink than
-    # the global default. Empty (default) = every market uses ``prob_shrink``. Ignored
-    # by the game slate, which has no per-market props.
+    # Per-market shrink overrides for player props: a market listed here uses its
+    # own shrink instead of ``prob_shrink``. The MLB-era prop backtest showed
+    # over-confidence varies sharply by market, so the lever is per-market; the
+    # football prop backtest re-tunes it. Empty (default) = every market uses
+    # ``prob_shrink``. Ignored by the game slate, which has no per-market props.
     prop_shrink_by_market: Mapping[str, float] = field(default_factory=dict)
-    # Prop markets to skip entirely. The per-market backtest found total_bases
-    # unprofitable at *every* shrink (the sim can't predict the extra-base
-    # distribution game-to-game), so no confidence lever rescues it — the honest
-    # treatment is to not bet it. Empty (default) = bet every market.
+    # Prop markets to skip entirely. A market the backtest finds unprofitable at
+    # *every* shrink has no confidence lever to rescue it — the honest treatment
+    # is to not bet it. Empty (default) = bet every market.
     exclude_markets: frozenset[str] = frozenset()
     # Selectivity on full-game totals, measured in **points of disagreement**
     # rather than probability: bet a total only when the model's fair total
@@ -99,10 +81,9 @@ class SlateConfig:
     # in 7 of 10 seasons), 53.4% at ≥6. The probability-edge gate (``min_edge``)
     # is a different cut and does not reproduce it, so both are applied.
     #
-    # Scope is deliberately the full-game ``total`` only. The threshold is
-    # calibrated on NCAAF full-game totals and means nothing on a segment market
-    # (a 4-point filter would silently kill every NRFI bet, whose line is 0.5).
-    # ``0.0`` (default) disables it — every other league is unaffected.
+    # Scope is deliberately the full-game ``total`` only, where the threshold
+    # was calibrated. ``0.0`` (default) disables it — every other league is
+    # unaffected.
     min_total_disagreement: float = 0.0
 
     def shrink_for(self, market: str) -> float:
@@ -124,28 +105,7 @@ def total_disagreement(proj: GameProjection, side: str, point: float) -> float:
 def model_probability(
     proj: GameProjection, market: str, side: str, point: float | None
 ) -> float | None:
-    """The model's probability for one (market, side, point), read off the sim.
-
-    Segment markets (``*_f5``, ``total_i1``) price off the projection's segment
-    sim; a projection without that segment (football) returns ``None`` — the
-    caller skips the line rather than mis-pricing it off the full game. A segment
-    *moneyline* conditions on no tie: an F5 tie is common (~15–20% of games) and
-    books push it, so the bettable probability is P(win | not a tie).
-    """
-    segment = _SEGMENT_MARKETS.get(market)
-    if segment is not None:
-        attr, base = segment
-        seg_proj = getattr(proj, attr, None)
-        if seg_proj is None:
-            return None
-        if base == "moneyline":
-            margin = seg_proj.sim.margin
-            wins = float(np.mean(margin > 0)) if side == "home" else float(np.mean(margin < 0))
-            ties = float(np.mean(margin == 0))
-            live = 1.0 - ties
-            return wins / live if live > 0.0 else 0.5
-        return model_probability(seg_proj, base, side, point)
-
+    """The model's probability for one (market, side, point), read off the sim."""
     if market == "moneyline":
         p_home = proj.p_home_win()
         return p_home if side == "home" else 1.0 - p_home

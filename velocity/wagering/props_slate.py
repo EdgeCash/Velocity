@@ -1,12 +1,12 @@
 """Player-prop slate — model prop distributions + prop lines → staked bets.
 
 The game-market analogue of :mod:`velocity.wagering.slate`, for player props. For
-each game it takes the model's :class:`~velocity.models.props_mlb.BaseballProps`
-(the empirical per-player distributions from the sim) and the provider's prop
-board, resolves each provider player name to a model player id, de-vigs each
-over/under pair, measures edge, and stakes survivors with the same
-fractional-Kelly-plus-group-cap discipline. Unresolved players are skipped and
-reported, never guessed.
+each game it takes the model's per-player prop distributions (any object
+satisfying :class:`PropDistributions` — empirical distributions read off the
+correlated sim) and the provider's prop board, resolves each provider player
+name to a model player id, de-vigs each over/under pair, measures edge, and
+stakes survivors with the same fractional-Kelly-plus-group-cap discipline.
+Unresolved players are skipped and reported, never guessed.
 
 CLV is not measured here — a live snapshot is the only board — so bets are logged
 without a close; the prop-line archive (the collector) is what a later backtest
@@ -17,19 +17,27 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from typing import Protocol
 
 import pandas as pd
 
-from velocity.models.game_mlb import MLBGameModel
-from velocity.models.props_mlb import BaseballProps
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
-from velocity.wagering.live import MLB_TEAM_ALIASES, resolve_team
 from velocity.wagering.slate import SlateConfig
 from velocity.wagering.staking import apply_group_cap, stake_amount
 
 _OPPOSITE = {"over": "under", "under": "over"}
+
+
+class PropDistributions(Protocol):
+    """Per-player prop distributions a game's simulation exposes for pricing."""
+
+    def has(self, player_id: str, market: str) -> bool: ...
+
+    def prob_over(self, player_id: str, market: str, point: float) -> float: ...
+
+    def prob_under(self, player_id: str, market: str, point: float) -> float: ...
 
 
 def _normalize(name: str) -> str:
@@ -37,7 +45,7 @@ def _normalize(name: str) -> str:
 
 
 def build_name_index(*stats_frames: pd.DataFrame) -> dict[str, str]:
-    """Map normalized player name → player id from ``BaseballStats`` frames."""
+    """Map normalized player name → player id from ``(player_id, player_name)`` frames."""
     index: dict[str, str] = {}
     for frame in stats_frames:
         for pid, name in zip(frame["player_id"], frame["player_name"], strict=False):
@@ -51,7 +59,7 @@ def resolve_player(name: str, name_to_id: Mapping[str, str]) -> str | None:
 
 
 def build_prop_slate(
-    props_by_game: Mapping[str, BaseballProps],
+    props_by_game: Mapping[str, PropDistributions],
     prop_lines: pd.DataFrame,
     name_to_id: Mapping[str, str],
     config: SlateConfig | None = None,
@@ -77,7 +85,7 @@ def build_prop_slate(
         pending: dict[str, dict] = {}
         reported: set[str] = set()
         for market, player in {(r["market"], r["player"]) for r in records}:
-            if market in config.exclude_markets:  # a no-edge market (e.g. total_bases)
+            if market in config.exclude_markets:  # a market the backtest excluded
                 continue
             pid = resolve_player(player, name_to_id)
             if pid is None:
@@ -86,8 +94,8 @@ def build_prop_slate(
                     reported.add(player)
                 continue
             if not props.has(pid, market):
-                # Resolved to a real id, but the sim didn't produce this stat for him
-                # (bench/pinch player off the nine-man lineup, or a role/market
+                # Resolved to a real id, but the sim didn't produce this stat for
+                # them (off the simulated depth chart, or a role/market
                 # mismatch). Unpriceable — skip rather than crash.
                 continue
             for side in ("over", "under"):
@@ -130,56 +138,10 @@ def build_prop_slate(
     return log, unresolved
 
 
-def prop_projections(
-    model: MLBGameModel,
-    events: pd.DataFrame,
-    *,
-    aliases: Mapping[str, str] | None = None,
-) -> dict[str, BaseballProps]:
-    """Simulate each event once → ``{game_id: BaseballProps}``.
-
-    The sim step, split out from :func:`mlb_prop_slate` because it does not depend on
-    pricing: a shrink sweep sims each game once here and re-prices the result at every
-    shrink. Events whose teams don't resolve to model clubs are dropped.
-    """
-    alias_map = dict(MLB_TEAM_ALIASES if aliases is None else aliases)
-    codes = list(alias_map.values())
-
-    props_by_game: dict[str, BaseballProps] = {}
-    for event in events.to_dict("records"):
-        home = resolve_team(str(event["home_team"]), codes, alias_map)
-        away = resolve_team(str(event["away_team"]), codes, alias_map)
-        if home is None or away is None:
-            continue
-        if home not in model.teams or away not in model.teams:
-            continue
-        props_by_game[str(event["game_id"])] = BaseballProps(model.project(home, away).result)
-    return props_by_game
-
-
-def mlb_prop_slate(
-    model: MLBGameModel,
-    events: pd.DataFrame,
-    prop_lines: pd.DataFrame,
-    name_to_id: Mapping[str, str],
-    *,
-    aliases: Mapping[str, str] | None = None,
-    config: SlateConfig | None = None,
-) -> tuple[BetLog, list[dict[str, str]]]:
-    """Prop slate for an MLB board: resolve each event, simulate, price its props.
-
-    For each event whose teams resolve to model clubs, the per-game
-    :class:`~velocity.models.props_mlb.BaseballProps` come from one simulation, and
-    :func:`build_prop_slate` prices the board against them.
-    """
-    props_by_game = prop_projections(model, events, aliases=aliases)
-    return build_prop_slate(props_by_game, prop_lines, name_to_id, config)
-
-
 def _best_prop(
     game_lines: pd.DataFrame,
     snapshots: dict[tuple, dict[str, float]],
-    props: BaseballProps,
+    props: PropDistributions,
     player_id: str,
     market: str,
     player: str,
@@ -205,10 +167,10 @@ def _best_prop(
             if side == "over"
             else props.prob_under(player_id, market, point)
         )
-        # Confidence calibration: shrink the model probability toward 0.5, exactly as
-        # the game slate does. The prop backtest found the raw model overconfident
-        # (notably on total_bases), so the shrink is per-market — total_bases can take
-        # a stronger one than the pitcher markets. shrink=1.0 leaves it untouched.
+        # Confidence calibration: shrink the model probability toward 0.5, exactly
+        # as the game slate does. The MLB-era prop backtest found over-confidence
+        # varies sharply by market, so the shrink is per-market; the football prop
+        # backtest re-tunes it. shrink=1.0 leaves it untouched.
         shrink = config.shrink_for(market)
         if shrink != 1.0:
             p_model = 0.5 + shrink * (p_model - 0.5)

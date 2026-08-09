@@ -32,7 +32,7 @@ _PCT_COLS = {"Model %", "Fair %", "Edge", "Home Win %", "Away Win %", "Stake %",
 _MONEY_COLS = {"Stake $"}
 _INT_COLS = {"Price"}
 _D2_COLS = {"Proj Away", "Proj Home", "Proj Total", "Proj"}
-_D1_COLS = {"Fair Total", "Fair Line (Home)", "F5 Total", "Line", "Sample Line"}
+_D1_COLS = {"Fair Total", "Fair Line (Home)", "Line", "Sample Line"}
 _LEFT_COLS = {"Matchup", "Away", "Home", "Player", "Team"}
 _TOTAL_COLS = ("Stake %", "Stake $")
 

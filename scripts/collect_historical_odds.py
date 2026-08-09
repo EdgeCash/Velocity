@@ -14,13 +14,13 @@ its first pitch) from the banked snapshots and grades it — no more credits nee
 Pull a few times per day (e.g. afternoon + evening UTC) so every game has a
 snapshot close to its start.
 
-    # live (needs THE_ODDS_API), a week of MLB at 3 snapshot times a day:
-    python scripts/collect_historical_odds.py --league mlb \
+    # live (needs THE_ODDS_API), a week of NFL at 3 snapshot times a day:
+    python scripts/collect_historical_odds.py --league nfl \
         --start 2026-07-16 --end 2026-07-22 --times 18:00,21:00,23:30 --out archive/hist
 
     # offline — re-process a banked raw snapshot into parquet (no credits):
     python scripts/collect_historical_odds.py --from-file snap.json \
-        --snapshot 2026-07-22T23:30:00Z --league mlb --out archive/hist
+        --snapshot 2026-07-22T23:30:00Z --league nfl --out archive/hist
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _write(out_dir: Path, league: str, tag: str, raw: object,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bank historical odds snapshots (CLV archive)")
-    parser.add_argument("--league", default="mlb")
+    parser.add_argument("--league", default="nfl")
     parser.add_argument("--start", help="range start YYYY-MM-DD (UTC)")
     parser.add_argument("--end", help="range end YYYY-MM-DD (UTC), inclusive")
     parser.add_argument("--times", default="18:00,21:00,23:30",

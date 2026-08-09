@@ -16,22 +16,22 @@ import pandas as pd
 
 REPO = Path(__file__).parent.parent
 SCRIPT = REPO / "scripts" / "collect_historical_odds.py"
-SNAPSHOT = REPO / "tests" / "fixtures" / "theoddsapi_mlb.json"
+SNAPSHOT = REPO / "tests" / "fixtures" / "theoddsapi_nfl.json"
 
 
 def test_from_file_banks_the_archive(tmp_path: Path) -> None:
     out = tmp_path / "hist"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--from-file", str(SNAPSHOT),
-         "--snapshot", "2026-07-22T23:30:00Z", "--league", "mlb", "--out", str(out)],
+         "--snapshot", "2026-09-10T23:30:00Z", "--league", "nfl", "--out", str(out)],
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
     assert "processed" in result.stdout
     # Raw JSON is banked verbatim, plus normalized lines + events parquet.
-    assert list(out.glob("raw/hist_mlb_*.json"))
-    lines_files = list(out.glob("lines_mlb_*.parquet"))
-    assert lines_files and list(out.glob("events_mlb_*.parquet"))
+    assert list(out.glob("raw/hist_nfl_*.json"))
+    lines_files = list(out.glob("lines_nfl_*.parquet"))
+    assert lines_files and list(out.glob("events_nfl_*.parquet"))
     lines = pd.read_parquet(lines_files[0])
     assert (lines["is_closing"]).all()  # historical snapshots are the CLV anchor
-    assert (lines["snapshot"] == "2026-07-22T23:30:00Z").all()
+    assert (lines["snapshot"] == "2026-09-10T23:30:00Z").all()

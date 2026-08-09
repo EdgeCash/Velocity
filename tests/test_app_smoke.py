@@ -27,23 +27,22 @@ def _slate_dir(tmp_path: Path) -> Path:
     pd.DataFrame(
         [{"game_id": "g1", "market": "moneyline", "side": "away", "price": 101,
           "point": None, "stake": 2.0, "book": "dk", "p_model": 0.52, "p_fair": 0.5,
-          "edge": 0.02, "league": "mlb",
+          "edge": 0.02, "league": "nfl",
           "generated_at": pd.Timestamp("2026-07-26 14:00")}]
-    ).to_parquet(folder / f"slate_mlb_{STAMP}.parquet", index=False)
+    ).to_parquet(folder / f"slate_nfl_{STAMP}.parquet", index=False)
     pd.DataFrame(
-        [{"game_id": "g1", "away_team": "Tampa Bay Rays", "home_team": "Toronto Blue Jays",
-          "kickoff": pd.Timestamp("2026-07-26 23:07"), "league": "mlb"}]
-    ).to_parquet(folder / f"games_mlb_{STAMP}.parquet", index=False)
+        [{"game_id": "g1", "away_team": "Buffalo Bills", "home_team": "Kansas City Chiefs",
+          "kickoff": pd.Timestamp("2026-07-26 23:07"), "league": "nfl"}]
+    ).to_parquet(folder / f"games_nfl_{STAMP}.parquet", index=False)
     pd.DataFrame(
-        [{"game_id": "g1", "away": "TB", "home": "TOR", "mu_away": 4.1, "mu_home": 4.6,
-          "p_home_win": 0.55, "fair_spread": -0.5, "fair_total": 8.7,
-          "f5_fair_total": 4.6, "p_home_win_f5": 0.54, "p_yrfi": 0.52}]
-    ).to_parquet(folder / f"projections_mlb_{STAMP}.parquet", index=False)
+        [{"game_id": "g1", "away": "BUF", "home": "KC", "mu_away": 22.4, "mu_home": 25.1,
+          "p_home_win": 0.58, "fair_spread": -2.7, "fair_total": 47.5}]
+    ).to_parquet(folder / f"projections_nfl_{STAMP}.parquet", index=False)
     pd.DataFrame(
-        [{"section": "games", "play": "Tampa Bay @ Toronto", "market": "moneyline",
+        [{"section": "games", "play": "Buffalo @ Kansas City", "market": "moneyline",
           "side": "away", "point": None, "price": 101, "stake": 2.0, "result": "win",
           "profit": 2.02, "slate_date": pd.Timestamp("2026-07-25")}]
-    ).to_parquet(folder / f"record_mlb_{STAMP}.parquet", index=False)
+    ).to_parquet(folder / f"record_nfl_{STAMP}.parquet", index=False)
     return folder
 
 
@@ -53,8 +52,8 @@ def test_app_renders_local_slate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     at.run()
     assert not at.exception, at.exception
     body = " ".join(str(m.value) for m in at.markdown)
-    assert "Tampa Bay ML +101" in body  # the plays board rendered
-    assert "Tampa Bay @ Toronto" in body
+    assert "Buffalo ML +101" in body  # the plays board rendered
+    assert "Buffalo @ Kansas City" in body
     assert "Yesterday: 1-0" in body  # the record tab rendered
 
 

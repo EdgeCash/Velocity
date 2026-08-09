@@ -7,9 +7,9 @@ name: Bank historical odds (CLV archive)
 # into a PRIVATE Actions artifact. Nothing is committed — the repo is public and
 # paid odds must not land in it.
 #
-# Later, grade_archive joins these closing lines to StatsAPI finals for CLV — no
-# further credits needed. Pull a few times/day so every game has a snapshot near
-# its first pitch.
+# Later, grade_archive joins these closing lines to schedule-feed finals for CLV
+# — no further credits needed. Pull a few times/day so every game has a snapshot
+# near its kickoff.
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
       league:
         description: "League to backfill"
         required: false
-        default: "mlb"
+        default: "nfl"
       start:
         description: "Range start YYYY-MM-DD (UTC)"
         required: true
@@ -60,7 +60,7 @@ jobs:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
         run: |
           python scripts/collect_historical_odds.py \
-            --league "${{ github.event.inputs.league || 'mlb' }}" \
+            --league "${{ github.event.inputs.league || 'nfl' }}" \
             --start "${{ github.event.inputs.start }}" \
             --end "${{ github.event.inputs.end }}" \
             --times "${{ github.event.inputs.times || '18:00,21:00,23:30' }}" \

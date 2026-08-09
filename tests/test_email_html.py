@@ -32,7 +32,7 @@ def _plays() -> pd.DataFrame:
             "p_fair": [0.5, 0.5217],
             "edge": [0.25, 0.145],
             "stake": [5.0, 3.2],
-            "league": ["mlb", "mlb"],
+            "league": ["nfl", "nfl"],
             "generated_at": [pd.Timestamp("2026-07-26 14:00")] * 2,
         }
     )
@@ -69,12 +69,12 @@ def test_subject_counts_the_plays() -> None:
         _plays(), None, _parlays(),
         games_map=_games_map(), generated_at="2026-07-26 14:00",
     )
-    assert subject == "MatchUp Labs MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
+    assert subject == "MatchUp Labs NFL: 2 plays, 0 props, 1 parlay (Jul 26)"
 
 
 def test_empty_slate_is_a_heartbeat() -> None:
     subject, html = render_slate_email(None, None, None)
-    assert subject == "MatchUp Labs MLB: no plays today"
+    assert subject == "MatchUp Labs NFL: no plays today"
     assert "No game bet cleared" in html
     assert "No prop cleared" in html
     assert "No parlay cleared" in html
@@ -137,19 +137,19 @@ def test_render_script_writes_body_and_subject(tmp_path: Path) -> None:
     slate = tmp_path / "slate"
     slate.mkdir()
     stamp = "20260726T140000Z"
-    _plays().to_parquet(slate / f"slate_mlb_{stamp}.parquet", index=False)
-    _games_map().to_parquet(slate / f"games_mlb_{stamp}.parquet", index=False)
-    _parlays().to_parquet(slate / f"slate_mlb_parlays_{stamp}.parquet", index=False)
-    _record().to_parquet(slate / f"record_mlb_{stamp}.parquet", index=False)
+    _plays().to_parquet(slate / f"slate_nfl_{stamp}.parquet", index=False)
+    _games_map().to_parquet(slate / f"games_nfl_{stamp}.parquet", index=False)
+    _parlays().to_parquet(slate / f"slate_nfl_parlays_{stamp}.parquet", index=False)
+    _record().to_parquet(slate / f"record_nfl_{stamp}.parquet", index=False)
     out = tmp_path / "email"
     result = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "render_slate_email.py"),
-         "--slate-dir", str(slate), "--out-dir", str(out), "--league", "mlb"],
+         "--slate-dir", str(slate), "--out-dir", str(out), "--league", "nfl"],
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
     subject = (out / "subject.txt").read_text()
-    assert subject == "MatchUp Labs MLB: 2 plays, 0 props, 1 parlay (Jul 26)"
+    assert subject == "MatchUp Labs NFL: 2 plays, 0 props, 1 parlay (Jul 26)"
     html = (out / "slate_email.html").read_text()
     assert "San Francisco Giants @ Los Angeles Dodgers" in html
     assert "SF@LAD moneyline home" in html
@@ -167,4 +167,4 @@ def test_render_script_survives_an_empty_folder(tmp_path: Path) -> None:
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
-    assert (out / "subject.txt").read_text() == "MatchUp Labs MLB: no plays today"
+    assert (out / "subject.txt").read_text() == "MatchUp Labs NFL: no plays today"

@@ -7,7 +7,7 @@ games map that turns provider ids into matchups), render, and write
 missing slate still renders the "no plays today" heartbeat.
 
     python scripts/render_slate_email.py --slate-dir artifacts/slate \
-        --out-dir artifacts/email --league mlb
+        --out-dir artifacts/email --league nfl
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def main() -> None:
     parser.add_argument("--slate-dir", required=True, help="folder the runner wrote (--out)")
     parser.add_argument("--out-dir", required=True,
                         help="folder for slate_email.html + subject.txt")
-    parser.add_argument("--league", default="mlb")
+    parser.add_argument("--league", default="nfl")
     args = parser.parse_args()
 
     from velocity.report.email_html import render_slate_email

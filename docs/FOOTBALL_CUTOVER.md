@@ -125,7 +125,7 @@ Recommendation: **remove the MLB code, behind a tag** — not keep it dormant.
 
 Each phase is a branch → tests → real-data verify → PR, per `BUILD.md §1`.
 
-### Phase 0 — Freeze MLB (immediate, ~1 day)
+### Phase 0 — Freeze MLB (immediate, ~1 day) — ✅ DONE 2026-08-09
 
 1. Remove the `schedule:` blocks from `live-slate-mlb.yml`,
    `collect-mlb-props.yml`, `collect-historical-props.yml` (keep
@@ -136,7 +136,15 @@ Each phase is a branch → tests → real-data verify → PR, per `BUILD.md §1`
 
 **DoD:** zero scheduled MLB workflow runs; final MLB record graded and archived.
 
-### Phase 1 — Excise (~2–3 days)
+*Execution notes:* the freeze commit deschedules both cron'd MLB workflows
+(`collect-historical-props.yml` was already dispatch-only). The `mlb-final`
+tag exists locally on the last full-MLB commit (`6cbb566`) but the session's
+push credentials are branch-scoped, so pushing it is a one-command manual step:
+`git push origin mlb-final`. The final grading pass happens automatically with
+the last scheduled `live-slate-mlb` run before this branch merges (dispatch
+remains available on `main` until then).
+
+### Phase 1 — Excise (~2–3 days) — ✅ DONE 2026-08-09
 
 1. Delete the "delete outright" list from §1c.
 2. Untangle the shared files: every `league == "mlb"` branch, flag, and import
@@ -147,6 +155,17 @@ Each phase is a branch → tests → real-data verify → PR, per `BUILD.md §1`
 **DoD:** `pytest`, `ruff`, `mypy` green; `grep -ri "mlb\|baseball"` hits only
 `docs/` and this file; `run_live_slate.py --league nfl --data datasets/nfl`
 produces a slate from a snapshot fixture.
+
+*Execution notes:* all four DoD items verified (the grep also allows two
+one-line "MLB-era backtest" history comments in `wagering/`). Beyond the plan:
+the correlated-parlay engine was retargeted to the football sim (game legs live
+now, prop legs return with Phase 3), the prop-slate pricer was generalized
+behind a `PropDistributions` protocol with `PROP_MARKETS`/The Odds API keys
+switched to football stats, and the report layer's MLB-content card/social/
+sim-check renderers were deleted rather than untangled — they were built around
+pitchers/parks/F5 and Phase 4 rebuilds them for football from `mlb-final`. The
+grade→record→email chain survives sport-agnostic and is wired to nflverse/CFBD
+finals.
 
 ### Phase 2 — Football data loops on, archives banking (week 1)
 

@@ -1,9 +1,8 @@
 """Yesterday's record — grade the previous slate into the email's model status.
 
 The email's accountability section: what did yesterday's recommendations
-actually do? Game plays grade through the segment-aware
-:func:`~velocity.report.scorecard.grade_slate` (F5/NRFI bets settle against
-linescore segment scores, never the full-game final), props grade against
+actually do? Game plays grade through
+:func:`~velocity.report.scorecard.grade_slate`, props grade against
 per-player box scores, and parlays settle leg by leg from their structured
 ``legs_json`` — a pushed leg drops out, any lost leg loses the ticket, exactly
 as a book grades it.
@@ -30,12 +29,6 @@ from velocity.wagering.odds import net_payout
 RECORD_COLUMNS = [
     "section", "play", "market", "side", "point", "price", "stake", "result", "profit",
 ]
-
-_SEGMENT_FINAL_COLUMNS = {
-    "_f5": ("home_score_f5", "away_score_f5"),
-    "_i1": ("home_score_i1", "away_score_i1"),
-}
-
 
 def empty_record() -> pd.DataFrame:
     return pd.DataFrame(columns=RECORD_COLUMNS)
@@ -74,11 +67,7 @@ def _leg_result(
     if final is None:
         return None
     market = str(leg["market"])
-    suffix = next((s for s in _SEGMENT_FINAL_COLUMNS if market.endswith(s)), None)
-    home_col, away_col = (
-        _SEGMENT_FINAL_COLUMNS[suffix] if suffix is not None else ("home_score", "away_score")
-    )
-    home, away = _num(final.get(home_col)), _num(final.get(away_col))
+    home, away = _num(final.get("home_score")), _num(final.get("away_score"))
     price = _num(leg.get("price"))
     if home is None or away is None or price is None:
         return None

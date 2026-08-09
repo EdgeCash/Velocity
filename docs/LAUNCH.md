@@ -13,7 +13,11 @@ turning it on, verifying it, and running it week to week.
 | `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → private artifact |
 | `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → private artifact |
 | `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → private artifact |
-| `live-slate-mlb.yml` | daily 9am & 4pm CT | `THE_ODDS_API` (+ mail secrets, optional) | staked MLB game/prop/parlay slate → private artifact + **email** |
+
+> **Note (2026-08):** the MLB workflows referenced below were decommissioned per
+> [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md) (code at tag `mlb-final`);
+> their daily-loop features (grading, email, cards) move onto `live-slate.yml`
+> in Phase 4 of that plan.
 
 Everything paid is written **only to private Actions artifacts**, never to this
 public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
