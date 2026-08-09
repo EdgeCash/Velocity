@@ -117,7 +117,7 @@ Recommendation: **remove the MLB code, behind a tag** — not keep it dormant.
 - The genuinely valuable MLB artifacts are not the code: they're the **lessons**
   (per-market confidence shrink, prop-market exclusions, CLV archive
   discipline, the grade→record→email loop), and those are carried forward in
-  §5 as football work items.
+  §6 as football work items.
 
 ---
 
@@ -162,6 +162,8 @@ Start these **now**, weeks before kickoff.
    CLV archive pattern.
 3. Verify the existing `collect-odds` / `collect-bettingpros` /
    `collect-fantasypros` crons are green and capturing 2026 markets.
+4. **DK salary snapshots** (see §5a) — start banking alongside the props
+   archive; the collector is small and the history compounds.
 
 **DoD:** every collector has a green scheduled run with 2026-season rows in the
 artifact; props archive banking daily.
@@ -230,7 +232,65 @@ edge is Phase 3, and it's honest work measured in CLV, not a switch to flip.
 
 ---
 
-## 5. Carried-forward MLB lessons (so they don't get lost with the code)
+## 5. DFS track — salary-cap lineups (DraftKings / FanDuel)
+
+DFS is a second consumer of the same player simulation the prop slate uses,
+not a second model. A DFS score is a **fixed linear function of the stats we
+already simulate** (pass/rush/rec yards, TDs, receptions, turnovers), and
+`models/props.py` returns `PropSim` — per-player, per-stat sample arrays drawn
+*jointly* per simulated game. Summing a lineup's scoring function inside each
+simulation gives a full **lineup score distribution with real correlations**
+(QB↔WR1 stacks, game-total leverage) — which is precisely the thing most
+public DFS optimizers fake with heuristic stacking rules. That joint
+distribution is our structural edge in tournaments.
+
+### 5a. Data to gather
+
+| Data | Source | How |
+|---|---|---|
+| Salaries + slates + roster rules | **DraftKings** | Unauthenticated JSON endpoints (`draftgroups` → `draftables`: player, salary, position, game). Collector workflow in the `collect-odds` mold. |
+| Salaries | **FanDuel** | Requires an authenticated session (lobby player-list CSV export). Phase-2 optional; DK-first. |
+| Salaries (fallback/cross-check) | FantasyPros | We already have the client; their pages carry DK/FD salaries. |
+| Scoring rules | Public, static | Encoded as constants: DK full-PPR + 100/300-yd bonuses; FD half-PPR. Versioned in code, tested. |
+| Ownership projections (GPP leverage) | Paid (RotoGrinders etc.) | **Deferred.** Start without; approximate from salary + FantasyPros consensus rank if needed. |
+| Contest results / payout curves | Own entered-contest CSVs | Bank as we go; no good free historical source. |
+
+Same archive discipline as odds: salary snapshots land in private Actions
+artifacts, never in git. Snapshots start **now** — salary vs. projection
+history is the DFS equivalent of the CLV archive.
+
+### 5b. Build (rides Phase 3's prop wiring; ~1 week on top)
+
+1. `velocity/dfs/scoring.py` — DK/FD scoring functions over `PropSim`
+   samples → per-player fantasy-point distributions. Pure, fixture-tested.
+2. `velocity/dfs/salaries.py` + `scripts/collect_dk_salaries.py` +
+   workflow — ingest DK draftables to a canonical `(slate, player, salary,
+   positions)` frame; name-match against our player IDs (reuse the alias
+   machinery the odds ingest already has).
+3. `velocity/dfs/optimizer.py` — salary-cap lineup MILP (PuLP/CBC): roster
+   slots (QB/2RB/3WR/TE/FLEX/DST for DK classic), cap, team limits.
+   - **Cash:** maximize mean projected points.
+   - **GPP:** optimize over the *simulated distribution* — maximize
+     P(lineup > target score), with stack/exposure constraints and
+     multi-lineup generation (max-overlap constraints between entries).
+4. Grading: score generated lineups against actual box scores (nflverse
+   weekly stats, already ingested) — the DFS analog of `grade_yesterday`.
+5. Surface: lineups tab in the slate email / Streamlit app.
+
+**Value calibration, honestly:** salaries are set by the same sharp
+information as prop lines, so mean-projection edge is thin — like the
+full-game close. The realistic edge is (a) correlation-aware GPP construction
+from the joint sim, and (b) reacting to late injury news via
+`redistribute_shares` repricing every teammate's projection at once. Cash-game
+lineups are the calibration proof; GPPs are where the sim earns its keep.
+
+**DoD:** dress-rehearsal on a real DK NFL slate — salaries ingested, 20
+lineups generated (1 cash, 19 GPP with exposure caps), scored post-slate
+against actuals.
+
+---
+
+## 6. Carried-forward MLB lessons (so they don't get lost with the code)
 
 1. **Per-market confidence shrink** — raw model probabilities were
    overconfident on props; a swept, per-market shrink fixed calibration.
