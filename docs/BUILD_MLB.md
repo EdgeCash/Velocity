@@ -1,5 +1,11 @@
 # Velocity — MLB Build Plan
 
+> **DECOMMISSIONED (2026-08).** MLB served its purpose — proving the full
+> ingest → model → wager → grade → report pipeline on a live daily board — and
+> was retired per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md). The last
+> commit with the complete working MLB system is tagged **`mlb-final`**. This
+> document is kept as the historical record of what was built and learned.
+
 **Status:** Build/execution plan (v0.1)
 **Companion to:** [`docs/BUILD.md`](BUILD.md) (the safe build loop and per-phase
 gate discipline this plan inherits verbatim) and [`docs/DESIGN.md`](DESIGN.md)

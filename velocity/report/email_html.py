@@ -67,7 +67,7 @@ def render_slate_email(
     parlays: pd.DataFrame | None,
     *,
     games_map: pd.DataFrame | None = None,
-    league: str = "mlb",
+    league: str = "nfl",
     generated_at: object = None,
     record: pd.DataFrame | None = None,
 ) -> tuple[str, str]:

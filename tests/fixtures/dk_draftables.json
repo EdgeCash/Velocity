@@ -1,0 +1,83 @@
+{
+  "draftables": [
+    {
+      "draftableId": 100001,
+      "firstName": "Josh",
+      "lastName": "Allen",
+      "displayName": "Josh Allen",
+      "playerId": 828743,
+      "playerDkId": 27564,
+      "position": "QB",
+      "rosterSlotId": 66,
+      "salary": 8200,
+      "status": "None",
+      "teamAbbreviation": "BUF",
+      "competition": {
+        "competitionId": 5673406,
+        "name": "BUF @ KC",
+        "startTime": "2026-09-10T20:20:00.0000000-04:00"
+      }
+    },
+    {
+      "draftableId": 100002,
+      "firstName": "Travis",
+      "lastName": "Kelce",
+      "displayName": "Travis Kelce",
+      "playerId": 550050,
+      "playerDkId": 15833,
+      "position": "TE",
+      "rosterSlotId": 71,
+      "salary": 6100,
+      "status": "None",
+      "teamAbbreviation": "KC",
+      "competition": {
+        "competitionId": 5673406,
+        "name": "BUF @ KC",
+        "startTime": "2026-09-10T20:20:00.0000000-04:00"
+      }
+    },
+    {
+      "draftableId": 100003,
+      "firstName": "Travis",
+      "lastName": "Kelce",
+      "displayName": "Travis Kelce",
+      "playerId": 550050,
+      "playerDkId": 15833,
+      "position": "TE",
+      "rosterSlotId": 70,
+      "salary": 6100,
+      "status": "None",
+      "teamAbbreviation": "KC",
+      "competition": {
+        "competitionId": 5673406,
+        "name": "BUF @ KC",
+        "startTime": "2026-09-10T20:20:00.0000000-04:00"
+      }
+    },
+    {
+      "draftableId": 100004,
+      "firstName": "Practice",
+      "lastName": "Squadman",
+      "displayName": "Practice Squadman",
+      "playerId": 999999,
+      "playerDkId": 99999,
+      "position": "WR",
+      "rosterSlotId": 70,
+      "salary": null,
+      "status": "None",
+      "teamAbbreviation": "KC",
+      "competition": {
+        "competitionId": 5673406,
+        "name": "BUF @ KC",
+        "startTime": "2026-09-10T20:20:00.0000000-04:00"
+      }
+    }
+  ],
+  "competitions": [
+    {
+      "competitionId": 5673406,
+      "name": "BUF @ KC",
+      "startTime": "2026-09-10T20:20:00.0000000-04:00"
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+[
+  {
+    "id": "evt-nfl-001",
+    "sport_key": "americanfootball_nfl",
+    "commence_time": "2026-09-11T00:20:00Z",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Buffalo Bills",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-09-10T23:55:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Kansas City Chiefs", "price": -145},
+              {"name": "Buffalo Bills", "price": 125}
+            ]
+          },
+          {
+            "key": "spreads",
+            "outcomes": [
+              {"name": "Kansas City Chiefs", "price": -110, "point": -2.5},
+              {"name": "Buffalo Bills", "price": -110, "point": 2.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "outcomes": [
+              {"name": "Over", "price": -105, "point": 47.5},
+              {"name": "Under", "price": -115, "point": 47.5}
+            ]
+          },
+          {
+            "key": "player_pass_yds",
+            "outcomes": [
+              {"name": "Over", "description": "Josh Allen", "price": -110, "point": 249.5}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "evt-nfl-002",
+    "sport_key": "americanfootball_nfl",
+    "commence_time": "2026-09-13T17:00:00Z",
+    "home_team": "Philadelphia Eagles",
+    "away_team": "Dallas Cowboys",
+    "bookmakers": [
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-09-13T16:30:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "Philadelphia Eagles", "price": -180},
+              {"name": "Dallas Cowboys", "price": 154}
+            ]
+          },
+          {
+            "key": "spreads",
+            "outcomes": [
+              {"name": "Philadelphia Eagles", "price": -108, "point": -3.5},
+              {"name": "Dallas Cowboys", "price": -112, "point": 3.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "outcomes": [
+              {"name": "Over", "price": -110, "point": 44.5},
+              {"name": "Under", "price": -110, "point": 44.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

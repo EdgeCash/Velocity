@@ -1,52 +1,108 @@
-"""MLB player-prop wagering — prop lines + model distributions → staked bets.
+"""Player-prop wagering — prop lines + model distributions → staked bets.
 
 Covers the prop ingest (Odds API per-event props → canonical PropLines) and the
 prop slate builder end-to-end: a beatable board produces staked prop bets tagged
 with the player, an unresolved player is skipped and reported, and player-name
-resolution is normalized.
+resolution is normalized. The model side is a tiny sample-backed stub satisfying
+:class:`~velocity.wagering.props_slate.PropDistributions` — the pricing engine
+is what's under test, not any one sport's simulator.
 """
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 from velocity.ingest.theoddsapi import (
     events_of,
-    extract_events,
     normalize_player_props,
     unwrap,
-)
-from velocity.models.game_mlb import MLBGameModel
-from velocity.models.props_mlb import BaseballProps
-from velocity.models.simulate_baseball import (
-    BaseballSimConfig,
-    Team,
-    batter_from_rates,
-    pitcher_from_rates,
-    simulate_game,
 )
 from velocity.store.schema import PropLines
 from velocity.wagering.props_slate import (
     build_name_index,
     build_prop_slate,
-    mlb_prop_slate,
     resolve_player,
 )
 from velocity.wagering.slate import SlateConfig
 
-FIXTURES = Path(__file__).parent / "fixtures"
-AVG_BAT = {"k": 0.225, "bb": 0.085, "hbp": 0.011, "hr": 0.035, "in_play": 0.644}
-AVG_BIP = {"single": 0.222, "double": 0.068, "triple": 0.008, "out_bip": 0.702}
-AVG_PIT = {"k": 0.225, "bb": 0.080, "hbp": 0.011, "hr": 0.035, "in_play": 0.649}
-HIGH_K_PIT = {"k": 0.32, "bb": 0.06, "hbp": 0.01, "hr": 0.03, "in_play": 0.58}
+_UPDATE = "2026-09-10T12:00:00Z"
+
+
+def _outcomes(player: str, point: float, over: int, under: int) -> list[dict]:
+    return [
+        {"name": "Over", "description": player, "price": over, "point": point},
+        {"name": "Under", "description": player, "price": under, "point": point},
+    ]
 
 
 def _props_json() -> list[dict]:
-    return json.loads((FIXTURES / "theoddsapi_mlb_props.json").read_text())
+    """One event's per-event odds payload: two prop markets + a to-be-dropped h2h."""
+    return [
+        {
+            "id": "evt-001",
+            "sport_key": "americanfootball_nfl",
+            "commence_time": "2026-09-10T00:20:00Z",
+            "home_team": "Kansas City Chiefs",
+            "away_team": "Buffalo Bills",
+            "bookmakers": [
+                {
+                    "key": "draftkings",
+                    "last_update": _UPDATE,
+                    "markets": [
+                        {
+                            "key": "player_pass_yds",
+                            "last_update": _UPDATE,
+                            "outcomes": _outcomes("Josh Allen", 249.5, 100, -120),
+                        },
+                        {
+                            "key": "player_receptions",
+                            "last_update": _UPDATE,
+                            "outcomes": _outcomes("Travis Kelce", 6.5, 105, -125)
+                            + _outcomes("Unknown Guy", 4.5, 100, -110),
+                        },
+                        {
+                            "key": "h2h",
+                            "last_update": _UPDATE,
+                            "outcomes": [
+                                {"name": "Kansas City Chiefs", "price": -145},
+                                {"name": "Buffalo Bills", "price": 125},
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+
+class SampleProps:
+    """A ``PropDistributions`` stub backed by per-(player, market) sample arrays."""
+
+    def __init__(self, samples: dict[tuple[str, str], np.ndarray]) -> None:
+        self.samples = samples
+
+    def has(self, player_id: str, market: str) -> bool:
+        return (player_id, market) in self.samples
+
+    def prob_over(self, player_id: str, market: str, point: float) -> float:
+        return float(np.mean(self.samples[(player_id, market)] > point))
+
+    def prob_under(self, player_id: str, market: str, point: float) -> float:
+        return float(np.mean(self.samples[(player_id, market)] < point))
+
+
+def _props_for_game() -> SampleProps:
+    # Allen clears 249.5 in 70% of sims; Kelce clears 6.5 in 60%.
+    return SampleProps({
+        ("qb1", "pass_yards"): np.array([300.0] * 70 + [200.0] * 30),
+        ("te1", "receptions"): np.array([8.0] * 60 + [5.0] * 40),
+    })
+
+
+STATS = pd.DataFrame(
+    {"player_id": ["qb1", "te1"], "player_name": ["Josh Allen", "Travis Kelce"]}
+)
 
 
 def test_events_of_recovers_a_single_per_event_object() -> None:
@@ -66,49 +122,28 @@ def test_events_of_recovers_a_single_per_event_object() -> None:
 def test_normalize_player_props_validates_and_filters() -> None:
     props = normalize_player_props(_props_json())
     PropLines.validate(props)
-    # h2h is dropped; two sides each of Ks, total bases, hits = 6 prop rows.
-    assert set(props["market"]) == {"pitcher_strikeouts", "total_bases", "hits"}
+    # h2h is dropped; two sides each of pass yards + two receptions players = 6 rows.
+    assert set(props["market"]) == {"pass_yards", "receptions"}
     assert set(props["side"]) == {"over", "under"}
     assert len(props) == 6
-    kershaw = props[(props["market"] == "pitcher_strikeouts") & (props["side"] == "over")]
-    assert kershaw.iloc[0]["player"] == "Clayton Kershaw"
-    assert kershaw.iloc[0]["point"] == 4.5
+    allen = props[(props["market"] == "pass_yards") & (props["side"] == "over")]
+    assert allen.iloc[0]["player"] == "Josh Allen"
+    assert allen.iloc[0]["point"] == 249.5
 
 
 def test_name_index_and_resolution_are_normalized() -> None:
-    stats = pd.DataFrame(
-        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
-    )
-    index = build_name_index(stats)
-    assert resolve_player("clayton  kershaw", index) == "477132"  # spacing/case tolerant
+    index = build_name_index(STATS)
+    assert resolve_player("josh  allen", index) == "qb1"  # spacing/case tolerant
     assert resolve_player("Nobody At All", index) is None
-
-
-def _props_for_game() -> BaseballProps:
-    # Kershaw (477132) starts for the home side; Ohtani (660271) leads off.
-    home_lineup = [batter_from_rates("660271", AVG_BAT, AVG_BIP)]
-    home_lineup += [batter_from_rates(f"h{i}", AVG_BAT, AVG_BIP) for i in range(8)]
-    home = Team(lineup=home_lineup, pitcher=pitcher_from_rates("477132", HIGH_K_PIT))
-    away = Team(
-        lineup=[batter_from_rates(f"a{i}", AVG_BAT, AVG_BIP) for i in range(9)],
-        pitcher=pitcher_from_rates("away_p", AVG_PIT),
-    )
-    result = simulate_game(
-        home, away, np.random.default_rng(3), BaseballSimConfig(n_sims=2500, starter_outs=18)
-    )
-    return BaseballProps(result)
 
 
 def test_build_prop_slate_stakes_bets_and_reports_unresolved() -> None:
     props = _props_for_game()
     prop_lines = normalize_player_props(_props_json())
-    stats = pd.DataFrame(
-        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
-    )
-    name_to_id = build_name_index(stats)  # "Unknown Guy" deliberately absent
+    name_to_id = build_name_index(STATS)  # "Unknown Guy" deliberately absent
 
     log, unresolved = build_prop_slate(
-        {"evt-mlb-001": props},
+        {"evt-001": props},
         prop_lines,
         name_to_id,
         SlateConfig(exclude_closing=False, min_edge=0.0),
@@ -117,66 +152,34 @@ def test_build_prop_slate_stakes_bets_and_reports_unresolved() -> None:
     bets = list(log)
     assert bets, "beatable prop lines should clear a 0% edge threshold"
     for bet in bets:
-        assert bet.player in {"Clayton Kershaw", "Shohei Ohtani"}
-        assert bet.market in {"pitcher_strikeouts", "total_bases"}
+        assert bet.player in {"Josh Allen", "Travis Kelce"}
+        assert bet.market in {"pass_yards", "receptions"}
         assert bet.side in {"over", "under"}
         assert bet.stake > 0.0
     # The player with no model id is skipped and surfaced, not guessed.
     assert [u["player"] for u in unresolved] == ["Unknown Guy"]
 
 
-def test_mlb_prop_slate_resolves_events_and_prices() -> None:
-    """End-to-end: a game board + a prop board → staked prop bets, via the model."""
-    lad_lineup = [batter_from_rates("660271", AVG_BAT, AVG_BIP)]
-    lad_lineup += [batter_from_rates(f"lad{i}", AVG_BAT, AVG_BIP) for i in range(8)]
-    lad = Team(lineup=lad_lineup, pitcher=pitcher_from_rates("477132", HIGH_K_PIT))
-    sf = Team(
-        lineup=[batter_from_rates(f"sf{i}", AVG_BAT, AVG_BIP) for i in range(9)],
-        pitcher=pitcher_from_rates("sf_p", AVG_PIT),
-    )
-    model = MLBGameModel(
-        teams={"LAD": lad, "SF": sf},
-        config=BaseballSimConfig(n_sims=2000, starter_outs=18),
-        seed=3,
-    )
-    # The game board (LAD @ SF, id evt-mlb-001) and the prop board share the id.
-    events = extract_events(json.loads((FIXTURES / "theoddsapi_mlb.json").read_text()))
-    prop_lines = normalize_player_props(_props_json())
-    stats = pd.DataFrame(
-        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
-    )
-
-    log, unresolved = mlb_prop_slate(
-        model,
-        events,
-        prop_lines,
-        build_name_index(stats),
-        config=SlateConfig(exclude_closing=False, min_edge=0.0),
-    )
-    assert list(log), "resolved players on a beatable board should produce prop bets"
-    assert [u["player"] for u in unresolved] == ["Unknown Guy"]
-
-
 def test_resolved_but_unsimulated_player_is_skipped_not_crashed() -> None:
-    """A prop board offers lines for more players than the sim's nine-man lineup
-    (bench, pinch-hitters, relievers). One that resolves to a real id but was never
-    simulated must be skipped, not raise KeyError — the crash the live archive hit."""
-    props = _props_for_game()  # sim knows 477132 (Kershaw), 660271 (Ohtani), h*/a*
+    """A prop board offers lines for more players than the sim put on the field.
+    One that resolves to a real id but was never simulated must be skipped, not
+    raise KeyError."""
+    props = _props_for_game()
     prop_lines = normalize_player_props(_props_json())
     # "Unknown Guy" now resolves — to a real id the sim never put on the field.
-    stats = pd.DataFrame({
-        "player_id": ["477132", "660271", "693307"],
-        "player_name": ["Clayton Kershaw", "Shohei Ohtani", "Unknown Guy"],
-    })
+    stats = pd.concat(
+        [STATS, pd.DataFrame({"player_id": ["wr9"], "player_name": ["Unknown Guy"]})],
+        ignore_index=True,
+    )
     log, unresolved = build_prop_slate(
-        {"evt-mlb-001": props},
+        {"evt-001": props},
         prop_lines,
         build_name_index(stats),
         SlateConfig(exclude_closing=False, min_edge=0.0),
     )
     # No crash; the unsimulated player produced no bet and isn't a name-resolution miss.
     assert all(bet.player != "Unknown Guy" for bet in log)
-    assert unresolved == []  # he resolved — the skip is a pricing gap, not a name miss
+    assert unresolved == []  # resolved — the skip is a pricing gap, not a name miss
 
 
 def test_prob_shrink_pulls_prop_confidence_toward_half() -> None:
@@ -185,17 +188,14 @@ def test_prob_shrink_pulls_prop_confidence_toward_half() -> None:
     confident on every bet that survives."""
     props = _props_for_game()
     prop_lines = normalize_player_props(_props_json())
-    stats = pd.DataFrame(
-        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
-    )
-    name_to_id = build_name_index(stats)
+    name_to_id = build_name_index(STATS)
 
     raw, _ = build_prop_slate(
-        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        {"evt-001": props}, prop_lines, name_to_id,
         SlateConfig(exclude_closing=False, min_edge=0.0, prob_shrink=1.0),
     )
     shrunk, _ = build_prop_slate(
-        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        {"evt-001": props}, prop_lines, name_to_id,
         SlateConfig(exclude_closing=False, min_edge=0.0, prob_shrink=0.5),
     )
     raw_by_key = {(b.market, b.player, b.side): b.p_model for b in raw}
@@ -209,35 +209,32 @@ def test_prob_shrink_pulls_prop_confidence_toward_half() -> None:
 
 
 def test_exclude_markets_skips_a_no_edge_market() -> None:
-    """A market in SlateConfig.exclude_markets is never staked (total_bases lost at
-    every shrink in the backtest), while the others price normally."""
+    """A market in SlateConfig.exclude_markets is never staked, while the others
+    price normally."""
     props = _props_for_game()
     prop_lines = normalize_player_props(_props_json())
-    stats = pd.DataFrame(
-        {"player_id": ["477132", "660271"], "player_name": ["Clayton Kershaw", "Shohei Ohtani"]}
-    )
-    name_to_id = build_name_index(stats)
+    name_to_id = build_name_index(STATS)
 
     kept, _ = build_prop_slate(
-        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        {"evt-001": props}, prop_lines, name_to_id,
         SlateConfig(exclude_closing=False, min_edge=0.0),
     )
     excluded, _ = build_prop_slate(
-        {"evt-mlb-001": props}, prop_lines, name_to_id,
+        {"evt-001": props}, prop_lines, name_to_id,
         SlateConfig(
-            exclude_closing=False, min_edge=0.0, exclude_markets=frozenset({"total_bases"})
+            exclude_closing=False, min_edge=0.0, exclude_markets=frozenset({"receptions"})
         ),
     )
-    assert any(b.market == "total_bases" for b in kept)  # normally staked
-    assert all(b.market != "total_bases" for b in excluded)  # excluded → never staked
+    assert any(b.market == "receptions" for b in kept)  # normally staked
+    assert all(b.market != "receptions" for b in excluded)  # excluded → never staked
     # the other markets are unaffected
-    other = {b.market for b in kept if b.market != "total_bases"}
+    other = {b.market for b in kept if b.market != "receptions"}
     assert other and other == {b.market for b in excluded}
 
 
 def test_empty_prop_board_yields_no_bets() -> None:
     props = _props_for_game()
     empty = normalize_player_props([])
-    log, unresolved = build_prop_slate({"evt-mlb-001": props}, empty, {})
+    log, unresolved = build_prop_slate({"evt-001": props}, empty, {})
     assert len(log) == 0
     assert unresolved == []

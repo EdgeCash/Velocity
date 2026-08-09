@@ -1,0 +1,62 @@
+name: Collect DraftKings salaries
+
+# Snapshots DK draft groups (slates) and every player's salary into a PRIVATE
+# Actions artifact — the DFS layer's input archive (docs/FOOTBALL_CUTOVER.md
+# §5a). Salary-vs-projection history is the DFS analog of the CLV archive, so
+# it banks daily from before the season. Unauthenticated endpoints, no secret
+# needed; raw payloads are banked verbatim alongside the normalized parquet.
+# An empty lobby (off-season) succeeds.
+
+on:
+  schedule:
+    # Once daily at 15:00 UTC (late morning ET): after DK posts/moves salaries
+    # and before evening lock windows. Tighten toward slate lock if
+    # late-swap-relevant history is wanted.
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Leagues to snapshot (space-separated)"
+        required: false
+        default: "nfl ncaaf"
+
+concurrency:
+  group: collect-dk-salaries
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot DK salaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot salaries
+        run: |
+          python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
+            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf' }}"
+
+      - name: Upload salaries (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dk-salaries-${{ github.run_id }}
+          path: |
+            artifacts/dk_salaries/*.parquet
+            artifacts/dk_salaries/raw/*.json
+          if-no-files-found: warn
+          retention-days: 90

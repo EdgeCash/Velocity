@@ -10,10 +10,11 @@ conflicting legs never share a ticket, and staking respects the parlay cap.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
 import pytest
 from velocity.models.simulate import GameSim
-from velocity.models.simulate_baseball import BaseballSimResult
 from velocity.wagering.bet_log import Bet
 from velocity.wagering.parlay import (
     ParlayConfig,
@@ -30,25 +31,32 @@ def _sim(home: list[float], away: list[float]) -> GameSim:
     return GameSim(home_score=np.array(home, float), away_score=np.array(away, float))
 
 
+@dataclass(frozen=True)
+class PropSimResult:
+    """A sim result that also carries per-player prop sample arrays.
+
+    The score arrays satisfy the game-market side of the parlay protocol
+    (like :class:`GameSim`); ``player_samples`` is the optional prop hook.
+    """
+
+    home_score: np.ndarray
+    away_score: np.ndarray
+    samples: dict[str, np.ndarray] = field(default_factory=dict)
+
+    def player_samples(self, player: str, market: str) -> np.ndarray:
+        return self.samples[player]
+
+
 def _result(
     home: list[float],
     away: list[float],
     *,
-    f5_home: list[float] | None = None,
-    f5_away: list[float] | None = None,
-    i1_home: list[float] | None = None,
-    i1_away: list[float] | None = None,
-    pitcher_ks: dict[str, list[float]] | None = None,
-) -> BaseballSimResult:
-    n = len(home)
-    zeros = [0.0] * n
-    return BaseballSimResult(
-        full=_sim(home, away),
-        f5=_sim(f5_home or home, f5_away or away),
-        i1=_sim(i1_home or zeros, i1_away or zeros),
-        pitcher_strikeouts={
-            pid: np.array(v, float) for pid, v in (pitcher_ks or {}).items()
-        },
+    pass_yards: dict[str, list[float]] | None = None,
+) -> PropSimResult:
+    return PropSimResult(
+        home_score=np.array(home, float),
+        away_score=np.array(away, float),
+        samples={pid: np.array(v, float) for pid, v in (pass_yards or {}).items()},
     )
 
 
@@ -64,31 +72,33 @@ def _ml(game_id: str, side: str = "home", price: float = 100) -> ParlayLeg:
 # --- leg outcomes -------------------------------------------------------------
 
 
-def test_leg_outcomes_game_markets_read_the_right_segment() -> None:
-    result = _result(
-        [5, 0], [3, 2],
-        f5_home=[2, 0], f5_away=[2, 1],
-        i1_home=[1, 0], i1_away=[0, 0],
-    )
+def test_leg_outcomes_game_markets_read_the_score_arrays() -> None:
+    result = _result([5, 0], [3, 2])
     ml = leg_outcomes(_ml("g"), result)
     assert ml.tolist() == [1, -1]  # home wins sim 0, loses sim 1
-    f5_ml = leg_outcomes(
-        ParlayLeg(game_id="g", market="moneyline_f5", side="home", price=100), result
+    # A bare GameSim (no prop hook) works for game markets too.
+    assert leg_outcomes(_ml("g"), _sim([5, 0], [3, 2])).tolist() == [1, -1]
+    total = leg_outcomes(
+        ParlayLeg(game_id="g", market="total", side="over", price=-110, point=5.5), result
     )
-    assert f5_ml.tolist() == [0, -1]  # F5 tied in sim 0 → push
-    nrfi = leg_outcomes(
-        ParlayLeg(game_id="g", market="total_i1", side="under", price=-135, point=0.5), result
-    )
-    assert nrfi.tolist() == [-1, 1]  # a first-inning run in sim 0 only
+    assert total.tolist() == [1, -1]  # totals 8 and 2 around the 5.5
 
 
 def test_leg_outcomes_props_and_pushes() -> None:
-    result = _result([1, 1, 1], [0, 0, 0], pitcher_ks={"p1": [4, 6, 8]})
+    result = _result([1, 1, 1], [0, 0, 0], pass_yards={"p1": [220, 250, 280]})
     leg = ParlayLeg(
-        game_id="g", market="pitcher_strikeouts", side="over", price=-110, point=6.0,
+        game_id="g", market="pass_yards", side="over", price=-110, point=250.0,
         player="p1",
     )
     assert leg_outcomes(leg, result).tolist() == [-1, 0, 1]  # under / push / over
+
+
+def test_leg_outcomes_prop_without_hook_raises() -> None:
+    leg = ParlayLeg(
+        game_id="g", market="pass_yards", side="over", price=-110, point=250.0, player="p1"
+    )
+    with pytest.raises(KeyError, match="no player samples"):
+        leg_outcomes(leg, _sim([1, 0], [0, 1]))  # GameSim carries no prop arrays
 
 
 def test_leg_outcomes_unknown_market_raises() -> None:
@@ -163,37 +173,37 @@ def _bet(game_id: str, market: str, side: str, price: float, *, point: float | N
 
 
 def test_legs_from_bets_resolves_props_and_drops_unknowns() -> None:
-    results = {"g": _result([1, 0], [0, 1], pitcher_ks={"p1": [5, 7]})}
-    names = {"gerritcole": "p1"}
+    results = {"g": _result([1, 0], [0, 1], pass_yards={"p1": [220, 280]})}
+    names = {"joshallen": "p1"}
     bets = [
         _bet("g", "moneyline", "home", 100),
-        _bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Gerrit Cole"),
-        _bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Nobody Known"),
+        _bet("g", "pass_yards", "over", -110, point=249.5, player="Josh Allen"),
+        _bet("g", "pass_yards", "over", -110, point=249.5, player="Nobody Known"),
         _bet("other", "moneyline", "home", 100),  # no sim for this game
     ]
     pairs = legs_from_bets(bets, results, names)
     assert [leg.player for leg, _ in pairs] == [None, "p1"]
-    assert pairs[1][0].label == "Gerrit Cole"  # display keeps the provider name
+    assert pairs[1][0].label == "Josh Allen"  # display keeps the provider name
 
 
 def test_legs_from_bets_labels_game_legs_with_the_matchup() -> None:
-    results = {"g": _result([1, 0], [0, 1], pitcher_ks={"p1": [5, 7]})}
+    results = {"g": _result([1, 0], [0, 1], pass_yards={"p1": [220, 280]})}
     bets = [
         _bet("g", "moneyline", "home", 100),
-        _bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Gerrit Cole"),
+        _bet("g", "pass_yards", "over", -110, point=249.5, player="Josh Allen"),
     ]
-    pairs = legs_from_bets(bets, results, {"gerritcole": "p1"}, game_labels={"g": "SF@LAD"})
+    pairs = legs_from_bets(bets, results, {"joshallen": "p1"}, game_labels={"g": "BUF@KC"})
     game_leg, prop_leg = pairs[0][0], pairs[1][0]
     # A game leg carries the matchup so a cross-game parlay reads unambiguously;
     # a prop leg keeps the player's name.
-    assert game_leg.describe().startswith("SF@LAD moneyline home")
-    assert prop_leg.describe().startswith("Gerrit Cole pitcher_strikeouts over")
+    assert game_leg.describe().startswith("BUF@KC moneyline home")
+    assert prop_leg.describe().startswith("Josh Allen pass_yards over")
 
 
 def test_legs_from_bets_drops_unsimulated_stat() -> None:
-    results = {"g": _result([1, 0], [0, 1])}  # no pitcher arrays at all
-    bets = [_bet("g", "pitcher_strikeouts", "over", -110, point=5.5, player="Gerrit Cole")]
-    assert legs_from_bets(bets, results, {"gerritcole": "p1"}) == []
+    results = {"g": _sim([1, 0], [0, 1])}  # a bare GameSim: no prop arrays at all
+    bets = [_bet("g", "pass_yards", "over", -110, point=249.5, player="Josh Allen")]
+    assert legs_from_bets(bets, results, {"joshallen": "p1"}) == []
 
 
 # --- build_parlays ------------------------------------------------------------

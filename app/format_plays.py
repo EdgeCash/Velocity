@@ -2,8 +2,8 @@
 
 Turns the runner's persisted parquets (game slate, props, parlays, games map,
 projections) into the display shapes the app renders: a two-column
-matchup/play table in the reference style ("Tampa Bay ML +101",
-"Tatis O1.5 TB +109", "NRFI -135") and per-game matchup card dicts.
+matchup/play table in the reference style ("Kansas City ML -145",
+"Allen O249.5 PASS YDS +105") and per-game matchup card dicts.
 """
 
 from __future__ import annotations
@@ -14,29 +14,30 @@ from pathlib import Path
 
 import pandas as pd
 
-# MLB city prefixes, longest-match-first, so "Tampa Bay Rays" → "Tampa Bay" and
-# "Boston Red Sox" → "Boston" without guessing at nickname lengths. A name that
-# matches nothing (already a code, or another league) displays unchanged.
+# NFL city/region prefixes, longest-match-first, so "Kansas City Chiefs" →
+# "Kansas City" and "Buffalo Bills" → "Buffalo" without guessing at nickname
+# lengths. A name that matches nothing (already a code, or an NCAAF school,
+# whose name IS the display name) displays unchanged.
 _CITY_PREFIXES = sorted(
     [
-        "Arizona", "Atlanta", "Baltimore", "Boston", "Chicago", "Cincinnati",
-        "Cleveland", "Colorado", "Detroit", "Houston", "Kansas City",
-        "Los Angeles", "Miami", "Milwaukee", "Minnesota", "New York",
-        "Philadelphia", "Pittsburgh", "San Diego", "San Francisco", "Seattle",
-        "St. Louis", "St Louis", "Tampa Bay", "Texas", "Toronto", "Washington",
-        "Athletics",
+        "Arizona", "Atlanta", "Baltimore", "Buffalo", "Carolina", "Chicago",
+        "Cincinnati", "Cleveland", "Dallas", "Denver", "Detroit", "Green Bay",
+        "Houston", "Indianapolis", "Jacksonville", "Kansas City", "Las Vegas",
+        "Los Angeles", "Miami", "Minnesota", "New England", "New Orleans",
+        "New York", "Philadelphia", "Pittsburgh", "San Francisco", "Seattle",
+        "Tampa Bay", "Tennessee", "Washington",
     ],
     key=len,
     reverse=True,
 )
 
 _PROP_ABBREV = {
-    "pitcher_strikeouts": "K",
-    "pitcher_outs": "OUTS",
-    "total_bases": "TB",
-    "hits": "H",
-    "home_runs": "HR",
-    "strikeouts": "K",
+    "pass_yards": "PASS YDS",
+    "pass_tds": "PASS TD",
+    "rush_yards": "RUSH YDS",
+    "receiving_yards": "REC YDS",
+    "receptions": "REC",
+    "anytime_td": "ATD",
 }
 
 _STAMP = r"\d{8}T\d{6}Z"
@@ -72,8 +73,7 @@ def matchup_names(games_map: pd.DataFrame | None) -> dict[str, tuple[str, str]]:
 def game_play_label(row: Mapping[str, object], names: Mapping[str, tuple[str, str]]) -> str:
     """A game-market slate row → its compact play string.
 
-    "Tampa Bay ML +101", "San Diego +1.5 RL -140", "O8.5 -110", "F5 ML Toronto
-    -120", "F5 O4.5 -110", "NRFI -135" / "YRFI +115".
+    "Kansas City ML -145", "Buffalo +2.5 -110", "O47.5 -105".
     """
     market = str(row["market"])
     side = str(row["side"])
@@ -84,17 +84,9 @@ def game_play_label(row: Mapping[str, object], names: Mapping[str, tuple[str, st
     if market == "moneyline":
         return f"{team} ML {price}"
     if market == "spread":
-        return f"{team} {float(row['point']):+g} RL {price}"  # type: ignore[arg-type]
+        return f"{team} {float(row['point']):+g} {price}"  # type: ignore[arg-type]
     if market == "total":
         return f"{'O' if side == 'over' else 'U'}{_point(row['point'])} {price}"
-    if market == "moneyline_f5":
-        return f"F5 ML {team} {price}"
-    if market == "spread_f5":
-        return f"F5 {team} {float(row['point']):+g} {price}"  # type: ignore[arg-type]
-    if market == "total_f5":
-        return f"F5 {'O' if side == 'over' else 'U'}{_point(row['point'])} {price}"
-    if market == "total_i1":
-        return f"{'YRFI' if side == 'over' else 'NRFI'} {price}"
     return f"{market} {side} {price}"
 
 
@@ -112,7 +104,7 @@ def _surname(player: str) -> str:
 
 
 def prop_play_label(row: Mapping[str, object]) -> str:
-    """A prop slate row → "Tatis O1.5 TB +109" style ("Mesa Jr" keeps its suffix)."""
+    """A prop slate row → "Allen O249.5 PASS YDS +105" ("Mesa Jr" keeps its suffix)."""
     abbrev = _PROP_ABBREV.get(str(row["market"]), str(row["market"]).upper())
     side = "O" if str(row["side"]) == "over" else "U"
     return (
@@ -192,9 +184,6 @@ def matchup_cards(
             "mu_home": row.get("mu_home"),
             "fair_spread": row.get("fair_spread"),
             "fair_total": row.get("fair_total"),
-            "f5_fair_total": row.get("f5_fair_total"),
-            "p_home_win_f5": row.get("p_home_win_f5"),
-            "p_yrfi": row.get("p_yrfi"),
             "plays": plays_view.loc[plays_view["matchup"] == matchup, "play"].tolist(),
         }
         cards.append(card)
@@ -225,7 +214,7 @@ def _newest_stamp(folder: Path, prefix: str, league: str) -> str | None:
     return max(stamps) if stamps else None
 
 
-def card_images(folder: Path, league: str = "mlb") -> dict[str, object]:
+def card_images(folder: Path, league: str = "nfl") -> dict[str, object]:
     """The newest run's graphics: model cards, sim checks, record card, captions.
 
     Returns ``{"model": [(label, path)], "simcheck": [...], "record": path|None,
@@ -266,7 +255,7 @@ def card_images(folder: Path, league: str = "mlb") -> dict[str, object]:
     }
 
 
-def load_slate_frames(folder: Path, league: str = "mlb") -> dict[str, pd.DataFrame | None]:
+def load_slate_frames(folder: Path, league: str = "nfl") -> dict[str, pd.DataFrame | None]:
     """All the app's frames from a slate folder (or downloaded artifact dir)."""
     lg = re.escape(league)
     return {

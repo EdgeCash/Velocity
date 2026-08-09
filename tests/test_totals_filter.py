@@ -81,31 +81,6 @@ def test_filter_is_off_by_default() -> None:
     assert any(b.market == "total" for b in bets)  # unfiltered, as before
 
 
-def test_filter_never_touches_segment_totals() -> None:
-    """A points threshold calibrated on full-game totals must not reach NRFI.
-
-    ``total_i1`` lines sit at 0.5 runs; a 4-point filter would silently kill
-    every one of them, so the gate is scoped to the full-game market alone.
-    """
-    from types import SimpleNamespace
-
-    from velocity.models.game_mlb import MLBProjection
-
-    runs = GameSim(home_score=np.full(400, 2.0), away_score=np.full(400, 2.0))
-    i1_sim = GameSim(home_score=np.full(400, 1.0), away_score=np.zeros(400))
-    full_p = GameProjection("HOME", "AWAY", 2.0, 2.0, runs)
-    i1_p = GameProjection("HOME", "AWAY", 1.0, 0.0, i1_sim)
-    # Pricing reads only the projections; the raw sim result is unused here.
-    result = SimpleNamespace(full=runs, f5=runs, i1=i1_sim)
-    proj = MLBProjection(full=full_p, f5=full_p, i1=i1_p, result=result)  # type: ignore[arg-type]
-    cfg = SlateConfig(
-        exclude_closing=False, min_edge=0.0, min_total_disagreement=4.0,
-    )
-    bets = build_slate({"g1": proj}, _lines(0.5, market="total_i1"), GAMES, cfg).bets
-    # The first-inning market is priced normally despite the 4-point full-game gate.
-    assert any(b.market == "total_i1" for b in bets)
-
-
 def test_filter_composes_with_the_probability_gate() -> None:
     """Both gates apply: clearing the points cut does not bypass min_edge."""
     proj = _projection(60.0)

@@ -6,13 +6,13 @@ Four tabs over the live-slate workflow's persisted artifacts:
   card, each viewable and downloadable, with the caption copy alongside. This
   is the posting workflow on a phone.
 * **Plays** — the reference-style two-column board: matchup on the left, the
-  play in accent teal on the right ("Tampa Bay ML +101", "Tatis O1.5 TB +109",
-  "NRFI -135"), games → props → parlays.
-* **Matchups** — one card per game: teams, first pitch, win probabilities,
-  projected score, fair total/run line, F5 total, YRFI% — and that game's plays.
+  play in accent teal on the right ("Kansas City ML -145", "Allen O249.5
+  PASS YDS +105"), games → props → parlays.
+* **Matchups** — one card per game: teams, kickoff, win probabilities,
+  projected score, fair total/line — and that game's plays.
 * **Record** — yesterday's graded plays (the same record the email leads with).
 
-Data comes from the newest ``slate-mlb-*`` GitHub Actions artifact (the runner's
+Data comes from the newest ``slate-*`` GitHub Actions artifact (the runner's
 parquets), fetched with a token from Streamlit secrets — the paid-odds data
 itself never lives in the public repo. For local use, point
 ``VELOCITY_SLATE_DIR`` at a runner ``--out`` folder instead; no token needed.
@@ -44,7 +44,7 @@ from format_plays import (  # noqa: E402
     plays_table,
 )
 
-st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="⚾", layout="centered")
+st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="🏈", layout="centered")
 
 _API = "https://api.github.com"
 _ACCENT = "#3ddad0"
@@ -96,7 +96,7 @@ def fetch_artifact_dir(repo: str, token: str) -> str | None:
     """Download the newest slate artifact from recent workflow runs → local dir."""
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
     runs = requests.get(
-        f"{_API}/repos/{repo}/actions/workflows/live-slate-mlb.yml/runs",
+        f"{_API}/repos/{repo}/actions/workflows/live-slate.yml/runs",
         params={"status": "success", "per_page": 10},
         headers=headers,
         timeout=30,
@@ -106,7 +106,7 @@ def fetch_artifact_dir(repo: str, token: str) -> str | None:
         arts = requests.get(run["artifacts_url"], headers=headers, timeout=30)
         arts.raise_for_status()
         for art in arts.json().get("artifacts", []):
-            if not str(art.get("name", "")).startswith("slate-mlb") or art.get("expired"):
+            if not str(art.get("name", "")).startswith("slate-") or art.get("expired"):
                 continue
             payload = requests.get(
                 art["archive_download_url"], headers=headers, timeout=120
@@ -150,7 +150,7 @@ def _render_plays(view: pd.DataFrame) -> None:
     st.markdown(
         "<table class='v-table'>"
         "<tr><th>Matchup</th><th>Play</th></tr>"
-        f"<tr><td colspan='2' class='v-league'>MLB</td></tr>{rows}</table>",
+        f"<tr><td colspan='2' class='v-league'>NFL · NCAAF</td></tr>{rows}</table>",
         unsafe_allow_html=True,
     )
 
@@ -172,8 +172,6 @@ def _render_card(card: dict) -> None:
         ("proj score", f"{_fmt_num(card.get('mu_away'))}–{_fmt_num(card.get('mu_home'))}"),
         ("fair total", _fmt_num(card.get("fair_total"))),
         ("fair line", _fmt_num(card.get("fair_spread"))),
-        ("f5 total", _fmt_num(card.get("f5_fair_total"))),
-        ("yrfi", _fmt_pct(card.get("p_yrfi"))),
     ]
     nums_html = "".join(
         f"<div><div class='v-num-label'>{label}</div><div class='v-num'>{value}</div></div>"

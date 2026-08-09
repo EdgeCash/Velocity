@@ -36,31 +36,6 @@ from velocity.wagering.odds import american_to_decimal, net_payout
 _SPREAD_SIDES = {"home", "away"}
 _TOTAL_SIDES = {"over", "under"}
 
-# Segment markets grade exactly like their base market, against the segment's
-# scores (F5 = runs through five innings; i1 = first-inning runs). Settlement
-# reads those from optional ``home_score_f5``-style columns on the finals frame;
-# a finals frame without them leaves segment bets pending rather than mis-grading
-# them against the full-game score.
-_BASE_MARKETS = {
-    "moneyline_f5": "moneyline",
-    "spread_f5": "spread",
-    "total_f5": "total",
-    "total_i1": "total",
-}
-_SEGMENT_SCORE_COLUMNS = {
-    "_f5": ("home_score_f5", "away_score_f5"),
-    "_i1": ("home_score_i1", "away_score_i1"),
-}
-
-
-def _segment_suffix(market: str) -> str | None:
-    """The segment score-column suffix for a market, or ``None`` for full-game."""
-    for suffix in _SEGMENT_SCORE_COLUMNS:
-        if market.endswith(suffix):
-            return suffix
-    return None
-
-
 @dataclass(frozen=True)
 class Bet:
     """A single wager ticket plus the closing line, for CLV."""
@@ -97,7 +72,7 @@ class Bet:
         """
         if self.point is None or self.closing_point is None:
             return None
-        if _BASE_MARKETS.get(self.market, self.market) == "spread":
+        if self.market == "spread":
             # Higher handicap always helps the side holding it.
             return self.point - self.closing_point
         if self.side in _TOTAL_SIDES:
@@ -113,12 +88,10 @@ class Bet:
 
         ``result`` is one of ``"win"``, ``"loss"`` or ``"push"``; ``profit`` is
         in stake units (``+stake·b`` on a win, ``−stake`` on a loss, 0 on a push).
-        A segment bet (``*_f5``, ``total_i1``) grades by its base-market rule —
-        the caller passes that segment's scores (a tied F5 moneyline pushes).
         """
         margin = home_score - away_score
         total = home_score + away_score
-        market = _BASE_MARKETS.get(self.market, self.market)
+        market = self.market
 
         if market == "moneyline":
             edge = margin if self.side == "home" else -margin
@@ -191,33 +164,18 @@ class BetLog:
 
         Returns one row per bet (in bet order) with the result, profit, running
         bankroll, and both CLV measures. Bets on unplayed games (null scores) are
-        marked ``"pending"`` and leave the bankroll unchanged. Segment bets
-        (``*_f5``, ``total_i1``) grade against the optional segment score columns
-        (``home_score_f5``/``away_score_f5``, ``home_score_i1``/``away_score_i1``);
-        a finals frame without those columns leaves them pending.
+        marked ``"pending"`` and leave the bankroll unchanged.
         """
-
-        def _score_map(home_col: str, away_col: str) -> dict[str, tuple[float, float]]:
-            if home_col not in games.columns or away_col not in games.columns:
-                return {}
-            return {
-                gid: (h, a)
-                for gid, h, a in zip(
-                    games["game_id"], games[home_col], games[away_col], strict=True
-                )
-            }
-
-        scores = _score_map("home_score", "away_score")
-        segment_scores = {
-            suffix: _score_map(home_col, away_col)
-            for suffix, (home_col, away_col) in _SEGMENT_SCORE_COLUMNS.items()
+        scores = {
+            gid: (h, a)
+            for gid, h, a in zip(
+                games["game_id"], games["home_score"], games["away_score"], strict=True
+            )
         }
         rows: list[dict[str, object]] = []
         bankroll = starting_bankroll
         for bet in self._bets:
-            suffix = _segment_suffix(bet.market)
-            lookup = segment_scores[suffix] if suffix is not None else scores
-            final = lookup.get(bet.game_id)
+            final = scores.get(bet.game_id)
             if final is None:
                 # No final for this game (unplayed, postponed, or unmatched to the
                 # results feed). Ungraded → pending, but CLV below still counts.

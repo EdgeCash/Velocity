@@ -2,8 +2,8 @@
 
 A parlay multiplies its legs' payouts, and every leg must win. Books price a
 standard cross-game parlay as the product of the leg decimals — fair *only if
-the legs are independent*. Legs inside one game are anything but: the F5 total,
-the run line, and the starter's strikeout prop all move together. Pricing a
+the legs are independent*. Legs inside one game are anything but: the total,
+the spread, and the QB's passing-yards prop all move together. Pricing a
 parlay honestly therefore needs the **joint** distribution, and the Monte Carlo
 already is one: every leg of a game is a deterministic function of the same
 simulated game, so evaluating the legs *per simulation* prices their
@@ -37,29 +37,36 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
 
-from velocity.models.props_mlb import prop_samples
-from velocity.models.simulate_baseball import BaseballSimResult
 from velocity.wagering.bet_log import Bet
 from velocity.wagering.edge import expected_value
 from velocity.wagering.odds import american_to_decimal
 
+
+@runtime_checkable
+class SimResult(Protocol):
+    """What a game's simulation must expose to price parlay legs.
+
+    ``home_score``/``away_score`` are per-simulation sampled score arrays
+    (:class:`~velocity.models.simulate.GameSim` satisfies this). A result that
+    also carries correlated player outcomes may additionally provide
+    ``player_samples(player, market) -> np.ndarray`` to price prop legs; without
+    it, prop legs are dropped (never guessed).
+    """
+
+    home_score: np.ndarray
+    away_score: np.ndarray
+
+
 # Leg outcome codes, per simulation.
 _WIN, _PUSH, _LOSS = 1, 0, -1
 
-# Game market → (BaseballSimResult segment attribute, base market semantics).
-_GAME_MARKETS = {
-    "moneyline": ("full", "moneyline"),
-    "spread": ("full", "spread"),
-    "total": ("full", "total"),
-    "moneyline_f5": ("f5", "moneyline"),
-    "spread_f5": ("f5", "spread"),
-    "total_f5": ("f5", "total"),
-    "total_i1": ("i1", "total"),
-}
+# Game markets the sim's score arrays can grade.
+_GAME_MARKETS = ("moneyline", "spread", "total")
 
 
 @dataclass(frozen=True)
@@ -89,16 +96,19 @@ class ParlayLeg:
         return f"{who}{self.market} {self.side}{pt} ({self.price:+.0f})"
 
 
-def leg_outcomes(leg: ParlayLeg, result: BaseballSimResult) -> np.ndarray:
+def leg_outcomes(leg: ParlayLeg, result: SimResult) -> np.ndarray:
     """Per-simulation outcome codes for one leg: 1 win / 0 push / −1 loss.
 
-    Game markets read the segment score arrays (full game, F5, or first inning);
-    prop legs read the player's sample array. Every array comes from the same
+    Game markets read the sim's score arrays; prop legs read the player's sample
+    array via ``result.player_samples``. Every array comes from the same
     simulated games, so codes for two legs of one game are jointly distributed
     exactly as the sim says.
     """
     if leg.player is not None:
-        samples = prop_samples(result, leg.player, leg.market)
+        player_samples = getattr(result, "player_samples", None)
+        if player_samples is None:
+            raise KeyError(f"sim result carries no player samples for {leg.player!r}")
+        samples = player_samples(leg.player, leg.market)
         if leg.point is None:
             raise ValueError("prop leg requires a point")
         over = samples > leg.point
@@ -106,22 +116,19 @@ def leg_outcomes(leg: ParlayLeg, result: BaseballSimResult) -> np.ndarray:
         hit, miss = (over, under) if leg.side == "over" else (under, over)
         return np.where(hit, _WIN, np.where(miss, _LOSS, _PUSH)).astype(np.int8)
 
-    try:
-        attr, base = _GAME_MARKETS[leg.market]
-    except KeyError:
-        raise ValueError(f"unknown parlay market {leg.market!r}") from None
-    sim = getattr(result, attr)
-    margin = sim.home_score - sim.away_score
-    if base == "moneyline":
+    if leg.market not in _GAME_MARKETS:
+        raise ValueError(f"unknown parlay market {leg.market!r}")
+    margin = result.home_score - result.away_score
+    if leg.market == "moneyline":
         edge = margin if leg.side == "home" else -margin
-    elif base == "spread":
+    elif leg.market == "spread":
         if leg.point is None:
             raise ValueError("spread leg requires a point")
         edge = (margin + leg.point) if leg.side == "home" else (-margin + leg.point)
     else:  # total
         if leg.point is None:
             raise ValueError("total leg requires a point")
-        total = sim.home_score + sim.away_score
+        total = result.home_score + result.away_score
         edge = (total - leg.point) if leg.side == "over" else (leg.point - total)
     return np.where(edge > 0, _WIN, np.where(edge < 0, _LOSS, _PUSH)).astype(np.int8)
 
@@ -146,7 +153,7 @@ class ParlayEvaluation:
 
 def evaluate_parlay(
     legs: Sequence[ParlayLeg],
-    results_by_game: Mapping[str, BaseballSimResult],
+    results_by_game: Mapping[str, SimResult],
 ) -> ParlayEvaluation:
     """Price a parlay exactly under the sims: correlated within a game, independent across.
 
@@ -227,7 +234,7 @@ class ParlayTicket:
 
 def legs_from_bets(
     bets: Sequence[Bet],
-    results_by_game: Mapping[str, BaseballSimResult],
+    results_by_game: Mapping[str, SimResult],
     name_to_id: Mapping[str, str] | None = None,
     *,
     game_labels: Mapping[str, str] | None = None,
@@ -282,7 +289,7 @@ def _conflicts(a: ParlayLeg, b: ParlayLeg) -> bool:
 
 def build_parlays(
     bets: Sequence[Bet],
-    results_by_game: Mapping[str, BaseballSimResult],
+    results_by_game: Mapping[str, SimResult],
     *,
     bankroll: float,
     name_to_id: Mapping[str, str] | None = None,

@@ -17,31 +17,23 @@ import pandera.pandas as pa
 from pandera.pandas import Field
 from pandera.typing import Series
 
-LEAGUES = ["nfl", "ncaaf", "mlb"]
+LEAGUES = ["nfl", "ncaaf"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
-# Game-level markets. The first three are shared by every league (MLB's run line
-# is a ``spread``). The ``_f5`` segment markets are the MLB first-5-innings
-# derivatives (same semantics over the innings-1–5 scores), and ``total_i1`` is
-# the first-inning total — NRFI/YRFI as an under/over at the standard 0.5 point.
+# Game-level markets, shared by both leagues.
 MARKETS = [
     "spread",
     "total",
     "moneyline",
-    "spread_f5",
-    "total_f5",
-    "moneyline_f5",
-    "total_i1",
 ]
-# Baseball player roles for :class:`BaseballStats`.
-BASEBALL_ROLES = ["bat", "pit"]
-# Player-prop markets (canonical stat keys, matching props_mlb.BaseballProps).
+# Player-prop markets (canonical stat keys, matching the stats
+# :mod:`velocity.models.props` simulates).
 PROP_MARKETS = [
-    "pitcher_strikeouts",
-    "pitcher_outs",
-    "total_bases",
-    "hits",
-    "home_runs",
-    "strikeouts",
+    "pass_yards",
+    "pass_tds",
+    "rush_yards",
+    "receiving_yards",
+    "receptions",
+    "anytime_td",
 ]
 PROP_SIDES = ["over", "under"]
 
@@ -94,37 +86,6 @@ class Players(pa.DataFrameModel):
     position: Series[str] = pa.Field(nullable=True)
     team: Series[str] = pa.Field(nullable=True)
     season: Series[int] = pa.Field(ge=1999, le=2100)
-
-    class Config:
-        coerce = True
-
-
-class BaseballStats(pa.DataFrameModel):
-    """One row per player-season, per role — the rate inputs the MLB model consumes.
-
-    Counting stats over plate appearances (``pa`` is batters faced for pitchers),
-    left as counts here; the projection phase turns them into shrunk per-PA rates
-    (see docs/BUILD_MLB.md, Phase M2). Every count is nullable so a partial or
-    messy provider extract still validates rather than crashing the ingest.
-
-    Pitchers reliably own K/BB/HBP/HR; the single/double/triple breakdown of balls
-    in play is not part of the season pitching split, so those are left null for
-    ``pit`` rows (BABIP is handled separately downstream).
-    """
-
-    player_id: Series[str] = Field()
-    player_name: Series[str] = Field()
-    team: Series[str] = Field(nullable=True)
-    season: Series[int] = Field(ge=1999, le=2100)
-    role: Series[str] = Field(isin=BASEBALL_ROLES)
-    pa: Series[float] = Field(nullable=True, ge=0)
-    k: Series[float] = Field(nullable=True, ge=0)
-    bb: Series[float] = Field(nullable=True, ge=0)
-    hbp: Series[float] = Field(nullable=True, ge=0)
-    singles: Series[float] = Field(nullable=True, ge=0)
-    doubles: Series[float] = Field(nullable=True, ge=0)
-    triples: Series[float] = Field(nullable=True, ge=0)
-    hr: Series[float] = Field(nullable=True, ge=0)
 
     class Config:
         coerce = True
