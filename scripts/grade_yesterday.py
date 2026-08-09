@@ -46,6 +46,7 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
     lg = re.escape(league)
     patterns = {
         "slate": rf"slate_{lg}_{_STAMP}\.parquet",
+        "props": rf"slate_{lg}_props_{_STAMP}\.parquet",
         "parlays": rf"slate_{lg}_parlays_{_STAMP}\.parquet",
         "games": rf"games_{lg}_{_STAMP}\.parquet",
     }
@@ -119,6 +120,40 @@ def _aliases_for(league: str, schedule: pd.DataFrame) -> dict[str, str]:
     return {name: name for name in teams}
 
 
+def _grade_props(  # pragma: no cover - network
+    league: str,
+    props: pd.DataFrame | None,
+    schedule: pd.DataFrame,
+    slate_date: datetime,
+) -> pd.DataFrame | None:
+    """Grade the prop slate against nflverse weekly actuals (NFL only).
+
+    The slate's date pins the NFL week via the schedule (kickoffs within a day
+    of the slate); the weekly stats for those weeks are the actuals. Any
+    failure leaves props ungraded rather than blocking the record.
+    """
+    if props is None or props.empty or league != "nfl":
+        return None
+    try:
+        from velocity.backtest.props_football import grade_prop_ledger
+        from velocity.ingest.nfl import load_weekly_stats
+
+        kick = pd.to_datetime(schedule["kickoff"]).dt.normalize()
+        target = pd.Timestamp(slate_date.date())
+        window = schedule[(kick - target).abs() <= pd.Timedelta(days=1)]
+        weeks = set(window["week"].dropna().astype(int))
+        if not weeks:
+            print("prop grading skipped: no schedule games near the slate date")
+            return None
+        season = int(window["season"].iloc[0])
+        weekly = load_weekly_stats([season])
+        weekly = weekly[weekly["week"].isin(weeks)]
+        return grade_prop_ledger(props, weekly)
+    except Exception as exc:  # noqa: BLE001 - props grading never blocks the record
+        print(f"prop grading skipped ({exc})")
+        return None
+
+
 def main() -> None:  # pragma: no cover - network orchestration (pure parts live in report/)
     parser = argparse.ArgumentParser(description="Grade the previous day's slate")
     parser.add_argument("--prev-dir", required=True, help="downloaded previous artifacts")
@@ -144,9 +179,10 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         return
     paths = stamps[stamp]
     slate = _load(paths, "slate")
+    props = _load(paths, "props")
     parlays = _load(paths, "parlays")
     games_map = _load(paths, "games")
-    n_plays = sum(0 if f is None else len(f) for f in (slate, parlays))
+    n_plays = sum(0 if f is None else len(f) for f in (slate, props, parlays))
     print(f"grading slate {stamp}: {n_plays} play(s)")
 
     slate_date = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
@@ -163,6 +199,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             aliases = _aliases_for(args.league, schedule)
             finals = finals_for_slate(games_map, schedule, aliases=aliases)
             games_graded = None if slate is None or slate.empty else grade_slate(slate, finals)
+            props_graded = _grade_props(args.league, props, schedule, slate_date)
             parlays_graded = (
                 None if parlays is None or parlays.empty
                 else grade_parlay_frame(parlays, finals)
@@ -172,7 +209,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                 for r in games_map.to_dict("records")
             }
             record = build_daily_record(
-                games_graded, None, parlays_graded,
+                games_graded, props_graded, parlays_graded,
                 matchups=matchups, slate_date=slate_date,
             )
 

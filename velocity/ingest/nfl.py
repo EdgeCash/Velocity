@@ -178,3 +178,70 @@ def load_rosters(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - ne
     frames = [_read_parquet_url(NFLVERSE_ROSTER_URL.format(year=year)) for year in years]
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return normalize_rosters(combined)
+
+
+# nflverse weekly player stats (the prop-grading actuals): one row per
+# player-week with passing/rushing/receiving counting stats.
+NFLVERSE_WEEKLY_STATS_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "stats_player/stats_player_week_{year}.parquet"
+)
+
+# nflverse weekly-stat column → canonical prop market (the stats
+# velocity.models.props_football simulates and PropLines quotes).
+_WEEKLY_STAT_COLUMNS = {
+    "passing_yards": "pass_yards",
+    "passing_tds": "pass_tds",
+    "rushing_yards": "rush_yards",
+    "receiving_yards": "receiving_yards",
+    "receptions": "receptions",
+}
+
+
+def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
+    """Map an nflverse weekly player-stats frame onto the prop-market actuals.
+
+    One row per player-week, columns named as the canonical prop markets;
+    ``anytime_td`` is the rushing + receiving TD count (passing TDs don't count
+    for an anytime-TD prop). Tolerates both the ``player_name`` and
+    ``player_display_name`` spellings and ``team``/``recent_team``.
+    """
+    if "player_display_name" in raw.columns:
+        names = raw["player_display_name"]
+    elif "player_name" in raw.columns:
+        names = raw["player_name"]
+    else:
+        raise ValueError("weekly stats frame needs player_display_name or player_name")
+    team_col = "team" if "team" in raw.columns else "recent_team"
+
+    out = pd.DataFrame(
+        {
+            "season": raw["season"],
+            "week": raw["week"],
+            "player_id": raw["player_id"].astype(str),
+            "player_name": names.astype(str),
+            "team": raw[team_col] if team_col in raw.columns else pd.NA,
+            "position": raw["position"] if "position" in raw.columns else pd.NA,
+        }
+    )
+    for src, market in _WEEKLY_STAT_COLUMNS.items():
+        out[market] = pd.to_numeric(raw[src], errors="coerce") if src in raw.columns else 0.0
+    rushing_tds = pd.to_numeric(
+        raw["rushing_tds"], errors="coerce"
+    ) if "rushing_tds" in raw.columns else 0.0
+    receiving_tds = pd.to_numeric(
+        raw["receiving_tds"], errors="coerce"
+    ) if "receiving_tds" in raw.columns else 0.0
+    out["anytime_td"] = pd.Series(rushing_tds, index=raw.index).fillna(0.0) + pd.Series(
+        receiving_tds, index=raw.index
+    ).fillna(0.0)
+    return out
+
+
+def load_weekly_stats(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch and normalize nflverse weekly player stats for ``years`` (network)."""
+    frames = [
+        _read_parquet_url(NFLVERSE_WEEKLY_STATS_URL.format(year=year)) for year in years
+    ]
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return normalize_weekly_stats(combined)

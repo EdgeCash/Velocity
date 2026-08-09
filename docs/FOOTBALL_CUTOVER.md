@@ -208,7 +208,7 @@ The pre-existing `collect-odds` / `collect-bettingpros` / `collect-fantasypros`
 crons were already football-configured; verifying they're green with 2026
 markets is an operator check on `main`, not a code change.
 
-### Phase 3 — Model work (weeks 1–4, the real work — see §4)
+### Phase 3 — Model work (weeks 1–4, the real work — see §4) — 🔨 IN PROGRESS
 
 1. Wire `models/props.py` to live inputs: FantasyPros projections +
    nflverse rosters/depth for volume shares; injuries reprice the share room
@@ -227,6 +227,37 @@ markets is an operator check on `main`, not a code change.
 
 **DoD:** props slate generates from a real snapshot with calibrated
 confidence; backtest scorecards published in `docs/`.
+
+*Progress (2026-08-09):* the prop pipeline is built end to end and
+offline-tested; what remains is the *evidence* — real snapshots through the
+season and the calibration they feed.
+
+- `models/props_football.py` — FantasyPros consensus → correlated per-game
+  distributions: per-team lognormal pass/rush volume multipliers shared by
+  every teammate, Poisson receptions with per-catch yardage noise, QB passing
+  yards = the receivers' simulated sum (exact stack correlation), Poisson TDs
+  for anytime-TD. Dispersions are labeled priors, to be calibrated, not
+  trusted.
+- `run_live_slate.py --fp-projections … [--prop-lines-file …]` prices the
+  board off that sim (live per-event fetch otherwise), persists
+  `slate_<league>_props_*.parquet` carrying the raw `p_model`/`p_fair`, and
+  feeds the workbook's prop sheet. `--prop-shrink` defaults to **1.0 (raw)**
+  deliberately — the MLB shrink numbers do not carry over; the sweep decides.
+- Prop legs stay **out of parlays** for now: the game sim and prop sim are
+  independent draws, and index-pairing them would manufacture phantom
+  correlation. They join when the two sims share a draw.
+- `ingest/nfl.py` gained the nflverse weekly player-stats loader (canonical
+  prop-market columns; `anytime_td` = rushing + receiving TDs), and
+  `grade_yesterday.py` now grades NFL prop slates against it.
+- `backtest/props_football.py` + `scripts/backtest_props_football.py` — the
+  ported calibration loop: book-exact grading (push on the number, inactive =
+  pending) and the per-market shrink sweep whose output becomes
+  `prop_shrink_by_market` / `exclude_markets`.
+
+Still open in this phase: run the sweep on real banked weeks (needs the
+Phase 2 archives to accrue), NCAAF prop coverage (FP team-code resolution),
+derivatives (team totals / 1H), unifying the game + prop sims for mixed
+parlays, and re-running the game backtests on refreshed data.
 
 ### Phase 4 — Live surfaces cut over (weeks 2–4, parallel with Phase 3)
 

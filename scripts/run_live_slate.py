@@ -35,6 +35,7 @@ from velocity.report.slate_xlsx import (
     export_slate_workbook,
     plays_display,
     projections_display,
+    props_display,
 )
 from velocity.util.seed import make_rng
 from velocity.wagering.live import canonicalize_sides, project_board, slate_to_frame
@@ -93,6 +94,23 @@ def main() -> None:
     # showed no edge at any threshold, so nothing is bet there on this cut.
     parser.add_argument("--ncaaf-total-edge", type=float, default=4.0,
                         help="NCAAF: min points of total disagreement to bet (0 = off)")
+    # Player props: priced only when a FantasyPros projections snapshot is
+    # supplied (the collect-fantasypros artifact) — the prop model simulates
+    # correlated player outcomes from those consensus means. The board comes
+    # from --prop-lines-file (a banked collect-football-props parquet) or, live,
+    # from The Odds API's per-event endpoint. NFL-first: FP team codes resolve
+    # through the NFL alias table; unresolved teams are skipped, never guessed.
+    parser.add_argument("--fp-projections",
+                        help="FantasyPros projections parquet (enables the prop slate)")
+    parser.add_argument("--prop-lines-file",
+                        help="banked PropLines parquet (offline prop board)")
+    # Confidence calibration for props. 1.0 = the raw model: deliberately
+    # untuned until the football prop backtest's shrink sweep picks the values
+    # (docs/FOOTBALL_CUTOVER.md Phase 3) — the MLB numbers do not carry over.
+    parser.add_argument("--prop-shrink", type=float, default=1.0,
+                        help="prop confidence shrink toward 0.5 (1.0 = raw model)")
+    parser.add_argument("--exclude-props", default="",
+                        help="comma-separated prop markets to skip; '' bets all")
     # Parlays: legs come only from bets that already cleared the single-bet gate, are
     # priced sim-exactly (correlated within a game, independent across), and must
     # clear their own higher EV bar. Same-game combos are flagged — books reprice
@@ -158,9 +176,19 @@ def main() -> None:
             for u in unresolved:
                 print(f"  {u['away_team']} @ {u['home_team']} ({u['reason']})")
 
+    # Player-prop slate — priced off the FantasyPros-driven correlated prop sim
+    # when a projections snapshot is supplied. Best-effort: never breaks the
+    # game slate.
+    props_frame = None
+    if args.fp_projections and projections and not events.empty:
+        props_frame = _prop_slate(args, events, projections, now, generated_at)
+
     # Parlay slate — combine the qualifying single game bets into sim-exact
-    # correlated parlays. Works offline too. (Prop legs return with the football
-    # prop slate — docs/FOOTBALL_CUTOVER.md Phase 3.)
+    # correlated parlays. Works offline too. Prop legs stay out deliberately:
+    # the game sim and the prop sim are independent draws, so a mixed same-game
+    # ticket would index-pair unrelated sample arrays — the exact phantom
+    # correlation the parlay engine's docstring warns against. They join once
+    # the two sims share a draw.
     if projections and args.parlay_max_legs >= 2:
         _parlay_slate(args, projections, game_log, now, generated_at)
 
@@ -186,7 +214,8 @@ def main() -> None:
             proj_frame.assign(league=args.league, generated_at=generated_at).to_parquet(
                 out_dir / f"projections_{args.league}_{stamp}.parquet", index=False
             )
-        _write_workbook(out_dir, stamp, args, events, projections, frame, generated_at)
+        _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame,
+                        generated_at)
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
@@ -196,15 +225,21 @@ def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
     events: pd.DataFrame,
     projections: dict,
     frame: pd.DataFrame,
+    props_frame: pd.DataFrame | None,
     generated_at: pd.Timestamp,
 ) -> None:
     """Write the slate as a formatted workbook alongside the parquet (best-effort)."""
     try:
         proj_disp = projections_display(projections, events)
         plays_disp = plays_display(frame, events, args.bankroll)
+        props_disp = (
+            props_display(props_frame, events, args.bankroll)
+            if props_frame is not None and not props_frame.empty
+            else None
+        )
         dest = out_dir / f"slate_{args.league}_{stamp}.xlsx"
         export_slate_workbook(
-            dest, proj_disp, plays_disp, None,
+            dest, proj_disp, plays_disp, props_disp,
             league=args.league, generated_at=str(generated_at), bankroll=args.bankroll,
         )
         print(f"wrote workbook to {dest}")
@@ -228,6 +263,101 @@ def _projections_frame(projections: dict) -> pd.DataFrame:
             "fair_total": round(float(proj.fair_total()), 2),
         })
     return pd.DataFrame(rows)
+
+
+def _prop_slate(
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> pd.DataFrame | None:
+    """Price the prop board off the FantasyPros-driven correlated sim.
+
+    Returns the persisted prop-slate frame (it carries the raw ``p_model`` and
+    ``p_fair`` per bet, which is exactly what the shrink-sweep backtest
+    replays), or ``None`` when the board or projections don't materialize.
+    """
+    try:
+        from velocity.models.props_football import game_props, name_index_from_fp
+        from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
+        from velocity.wagering.props_slate import build_prop_slate, prop_slate_to_frame
+
+        fp = pd.read_parquet(args.fp_projections)
+        if "league" in fp.columns:
+            fp = fp[fp["league"].astype(str) == args.league]
+        if fp.empty:
+            print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
+            return None
+
+        if args.prop_lines_file:
+            prop_lines = pd.read_parquet(args.prop_lines_file)
+        elif args.snapshot_file:
+            print("prop slate skipped: offline run needs --prop-lines-file")
+            return None
+        else:
+            from velocity.ingest.theoddsapi import TheOddsAPIClient
+
+            prop_lines = TheOddsAPIClient.from_env().player_props(args.league)
+        if prop_lines.empty:
+            print("prop slate: no prop lines on the board")
+            return None
+
+        codes = sorted(set(NFL_TEAM_ALIASES.values()))
+        fp_teams = set(fp["team"].astype(str))
+        props_by_game: dict[str, object] = {}
+        for event in events.to_dict("records"):
+            gid = str(event["game_id"])
+            if gid not in projections:
+                continue
+            home = resolve_team(str(event["home_team"]), codes, NFL_TEAM_ALIASES)
+            away = resolve_team(str(event["away_team"]), codes, NFL_TEAM_ALIASES)
+            if home not in fp_teams or away not in fp_teams:
+                continue  # a team FP doesn't cover is skipped, never guessed
+            props_by_game[gid] = game_props(fp, home, away, make_rng(),
+                                            _prop_config(args))
+        if not props_by_game:
+            print("prop slate: no games matched FantasyPros team coverage")
+            return None
+
+        log, unresolved = build_prop_slate(
+            props_by_game,
+            prop_lines,
+            name_index_from_fp(fp),
+            config=SlateConfig(
+                exclude_closing=False, min_edge=args.min_edge,
+                starting_bankroll=args.bankroll,
+                prob_shrink=args.prop_shrink,
+                exclude_markets=frozenset(
+                    m.strip() for m in args.exclude_props.split(",") if m.strip()
+                ),
+            ),
+        )
+        frame = prop_slate_to_frame(log)
+        print(f"\n=== {args.league.upper()} props — {len(prop_lines)} lines, "
+              f"{len(frame)} recommended ===")
+        if not frame.empty:
+            with pd.option_context("display.width", 160, "display.max_columns", None):
+                print(frame.to_string(index=False))
+        if unresolved:
+            print(f"{len(unresolved)} prop player(s) unresolved (skipped, never guessed)")
+        if args.out:
+            stamp = now.strftime("%Y%m%dT%H%M%SZ")
+            dest = Path(args.out) / f"slate_{args.league}_props_{stamp}.parquet"
+            frame.assign(league=args.league, generated_at=generated_at).to_parquet(
+                dest, index=False
+            )
+            print(f"wrote {len(frame)} prop rows to {dest}")
+        return frame
+    except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
+        print(f"prop slate skipped: {exc}")
+        return None
+
+
+def _prop_config(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    from velocity.models.props_football import FootballPropConfig
+
+    return FootballPropConfig(n_sims=args.n_sims)
 
 
 def _parlay_slate(
