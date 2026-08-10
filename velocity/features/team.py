@@ -76,13 +76,17 @@ def fit_ratings(
     *,
     ridge_lambda: float = DEFAULT_RIDGE_LAMBDA,
     epa_col: str = "epa",
+    weights: pd.Series | None = None,
 ) -> TeamRatings:
     """Fit ridge-adjusted offense/defense EPA/play ratings from ``plays``.
 
     ``plays`` must have ``posteam``, ``defteam`` and ``epa_col`` columns (the
     canonical :class:`~velocity.store.schema.Plays` frame does). Rows with a
-    null team or null EPA are dropped. The fit is fully deterministic — the same
-    plays and ``ridge_lambda`` always produce identical ratings.
+    null team or null EPA are dropped. ``weights`` (aligned to ``plays``' index)
+    turns the fit into weighted ridge — e.g. exponential recency decay so last
+    month's plays count more than last season's; ``None`` weights every play
+    equally (bit-identical to the unweighted fit). The fit is fully
+    deterministic — the same inputs always produce identical ratings.
     """
     if ridge_lambda <= 0:
         raise ValueError("ridge_lambda must be positive for an identifiable fit")
@@ -108,10 +112,19 @@ def fit_ratings(
     y = df[epa_col].to_numpy(dtype=float)
 
     # Ridge normal equations; the intercept (column 0) is left unpenalized.
+    # With weights this is weighted ridge: X'WX + λI and X'Wy.
     penalty = np.ones(n_cols)
     penalty[0] = 0.0
-    gram = x.T @ x + ridge_lambda * np.diag(penalty)
-    beta = np.linalg.solve(gram, x.T @ y)
+    if weights is not None:
+        w = weights.reindex(df.index).to_numpy(dtype=float)
+        if np.any(~np.isfinite(w)) or np.any(w < 0):
+            raise ValueError("weights must be finite and non-negative for every kept play")
+        xw = x * w[:, None]
+        gram = xw.T @ x + ridge_lambda * np.diag(penalty)
+        beta = np.linalg.solve(gram, xw.T @ y)
+    else:
+        gram = x.T @ x + ridge_lambda * np.diag(penalty)
+        beta = np.linalg.solve(gram, x.T @ y)
 
     intercept = float(beta[0])
     offense = {team: float(beta[1 + index[team]]) for team in teams}
