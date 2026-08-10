@@ -1,0 +1,116 @@
+# Model Lab — NFL variant benchmarks
+
+**Status:** living results log (v0.1)
+**Harness:** `scripts/model_lab.py` over `velocity/backtest/lab.py` — every
+variant runs through the identical walk-forward gate (train strictly before
+each predicted week; metrics fully out-of-sample) on the committed
+`datasets/nfl/` (now **2011–2025**, 4,096 games / 681k plays, 100% closing-line
+coverage).
+**Rule:** nothing is promoted into the live slate without winning here first.
+
+The variant families come from the public state of the art — Elo-style recency
+(nfelo/538), DVOA-style phase splits, shrinkage sweeps — plus the
+market-regression insight ([nfelo's finding](https://www.nfeloapp.com/analysis/using-market-regression-to-improve-prediction-accuracy-in-the-nfl/))
+that model-vs-close *disagreement thresholds*, not raw model output, are where
+a bettable cut lives (this is exactly the NCAAF totals filter already shipped).
+
+---
+
+## Round 1 — 2021–2025 window (1,392 predicted games)
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| baseline (EPA, λ=200) | 0.2370 | 0.6677 | 0.0397 | 48.8% (1293) | 48.9% (1329) |
+| **recency-17** (half-life 17 wks) | **0.2284** | **0.6491** | 0.0394 | 48.2% | 48.3% |
+| recency-34 | 0.2317 | 0.6561 | **0.0297** | 47.7% | 47.5% |
+| split-0.60 (pass/rush phases) | 0.2428 | 0.6829 | 0.0814 | 48.2% | 49.4% |
+| split-0.75 | 0.2478 | 0.6983 | 0.1023 | 48.2% | 48.8% |
+| ridge-100 | 0.2378 | 0.6702 | 0.0446 | 48.7% | 49.6% |
+| ridge-400 | 0.2362 | 0.6650 | 0.0280 | 48.8% | 49.5% |
+
+**Readings, honestly:**
+
+1. **Recency weighting is a genuine forecasting improvement.** Brier drops
+   ~0.009 vs baseline at half-life 17 — a large gap for this metric — with
+   log-loss confirming. Recent form carries real signal a flat all-history fit
+   dilutes.
+2. **Phase splits (as implemented) are rejected.** Fitting pass/rush
+   separately and recombining hurt both accuracy and calibration badly.
+   Whatever DVOA-style value exists in phase decomposition, this simple blend
+   does not capture it.
+3. **λ=400 beats the λ=200 default slightly** on every probability metric —
+   the default was a touch under-shrunk.
+4. **Nothing beats the closing line on sides or totals.** Every ATS/O/U figure
+   sits below the 52.4% break-even, and no disagreement threshold (0–6 points)
+   produced a robust cut in either market. The NFL close stays efficient
+   against this model family — consistent with `docs/BACKTEST_NFL.md` and with
+   the plan's thesis that the edge lives in props/derivatives, not full-game
+   NFL sides. Better Brier still matters: it means better win probabilities
+   for moneyline pricing and Kelly staking, not better picks against the
+   spread.
+
+## Round 2 — 2014–2025 evaluation (3,295 games; trailing-4-season training)
+
+Contenders: `baseline`, `scores` (the schedule-only fit the live slate ran for
+NFL until this round), `recency-17`, `recency-34-r400`. Training capped at the
+trailing four seasons for every variant (identical data horizon, constant
+per-week cost); evaluation is twelve full seasons.
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| baseline | 0.2354 | 0.6637 | 0.0247 | 50.2% (3096) | 50.8% (3130) |
+| scores (old live fit) | 0.2343 | 0.6609 | 0.0175 | 50.0% | 49.8% |
+| **recency-17** | **0.2234** | **0.6379** | 0.0309 | 49.9% | 50.5% |
+| recency-34-r400 | 0.2275 | 0.6464 | **0.0174** | 50.0% | 50.3% |
+
+The Round-1 recency finding **replicates on a 12-season window**: `recency-17`
+beats both the flat EPA fit and the scores fit by ~0.011 Brier — a decisive
+forecasting gap, stable across the widened sample.
+
+**Disagreement sweeps** (recency-17, per-season robustness on the same
+ledger):
+
+| cut | overall | bets | seasons > 52.4% |
+|---|---|---|---|
+| spread ≥ 3 | 51.5% | 1,299 | 7/12 |
+| spread ≥ 6 | 55.2% | 301 | 8/12 |
+| total ≥ 4 | 52.3% | 1,086 | 6/12 |
+| total ≥ 6 | 53.4% | 470 | 8/12 |
+
+Read honestly: the extreme-disagreement cuts lean the right way — and did not
+in Round 1's short window — but 55.2% on 301 bets is **under one standard
+error above break-even** (se ≈ 2.9% at that n), with ugly seasons mixed in
+(2017: 33%, 2025: 35%). Suggestive, not proof. Contrast NCAAF's shipped
+totals filter: 52.8% on 5,477 bets.
+
+---
+
+## Promotion decisions (made this round)
+
+- **PROMOTED:** the live NFL slate now fits **recency-weighted EPA ratings**
+  (half-life 17 weeks, trailing four seasons — exactly the validated
+  configuration; `DEFAULT_RECENCY_HALF_LIFE` in `features/team.py`), replacing
+  the schedule-only scores fit. Better probabilities feed moneyline pricing
+  and Kelly staking directly.
+- **NOT promoted:** an NFL spread/total disagreement filter. The ≥6-point
+  cuts are promising but statistically thin; the burden of proof stays a
+  robust >52.4% across seasons at real sample size. Re-test after the QB
+  adjustment lands — sharper ratings should concentrate the disagreement
+  signal.
+- NCAAF is untouched: the scores fit + the backtested totals filter remain.
+
+## Backlog (next experiments, in rough order of expected value)
+
+1. **QB adjustment** — the single feature every successful public NFL model
+   carries (nfelo, 538 Elo). Needs passer identity on the canonical plays
+   (nflverse carries it; a dataset rebuild adds `passer_player_id`), then a
+   starter-change adjustment at projection time.
+2. **Rest / schedule spots** — bye weeks, short weeks (Thu), divisional-game
+   HFA discount; all computable from the committed schedules.
+3. **Weather on totals** — wind above ~15 mph measurably depresses totals;
+   Open-Meteo history is free; stadium coordinates are a small static table.
+4. **Success-rate / early-down EPA blends** — alternative efficiency
+   definitions per the DVOA/PFF literature, testable as drop-in `epa_col`
+   variants.
+5. **NCAAF lab** — port the harness to the scores model + pace variants; the
+   totals filter's threshold re-validated on 2011–2025 style windows.
