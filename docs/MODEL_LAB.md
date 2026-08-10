@@ -49,23 +49,55 @@ a bettable cut lives (this is exactly the NCAAF totals filter already shipped).
    for moneyline pricing and Kelly staking, not better picks against the
    spread.
 
-## Round 2 — 2011–2025 window (validation + the live-model bar)
+## Round 2 — 2014–2025 evaluation (3,295 games; trailing-4-season training)
 
-Contenders: `baseline`, `scores` (the schedule-only fit the live slate
-currently runs for NFL), `recency-17`, `recency-34-r400`.
+Contenders: `baseline`, `scores` (the schedule-only fit the live slate ran for
+NFL until this round), `recency-17`, `recency-34-r400`. Training capped at the
+trailing four seasons for every variant (identical data horizon, constant
+per-week cost); evaluation is twelve full seasons.
 
-<!-- RESULTS-15 -->
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| baseline | 0.2354 | 0.6637 | 0.0247 | 50.2% (3096) | 50.8% (3130) |
+| scores (old live fit) | 0.2343 | 0.6609 | 0.0175 | 50.0% | 49.8% |
+| **recency-17** | **0.2234** | **0.6379** | 0.0309 | 49.9% | 50.5% |
+| recency-34-r400 | 0.2275 | 0.6464 | **0.0174** | 50.0% | 50.3% |
+
+The Round-1 recency finding **replicates on a 12-season window**: `recency-17`
+beats both the flat EPA fit and the scores fit by ~0.011 Brier — a decisive
+forecasting gap, stable across the widened sample.
+
+**Disagreement sweeps** (recency-17, per-season robustness on the same
+ledger):
+
+| cut | overall | bets | seasons > 52.4% |
+|---|---|---|---|
+| spread ≥ 3 | 51.5% | 1,299 | 7/12 |
+| spread ≥ 6 | 55.2% | 301 | 8/12 |
+| total ≥ 4 | 52.3% | 1,086 | 6/12 |
+| total ≥ 6 | 53.4% | 470 | 8/12 |
+
+Read honestly: the extreme-disagreement cuts lean the right way — and did not
+in Round 1's short window — but 55.2% on 301 bets is **under one standard
+error above break-even** (se ≈ 2.9% at that n), with ugly seasons mixed in
+(2017: 33%, 2025: 35%). Suggestive, not proof. Contrast NCAAF's shipped
+totals filter: 52.8% on 5,477 bets.
 
 ---
 
-## Promotion decisions
+## Promotion decisions (made this round)
 
-- Pending Round 2: if `recency-17` (or `-34-r400`) beats both `baseline` and
-  `scores` on the long window, the live NFL slate switches its ratings fit to
-  the recency-weighted EPA model.
-- The disagreement-sweep machinery stays the gate for any future "bet NFL
-  sides/totals" proposal — the burden of proof is a robust >52.4% cut across
-  seasons, which no current variant provides.
+- **PROMOTED:** the live NFL slate now fits **recency-weighted EPA ratings**
+  (half-life 17 weeks, trailing four seasons — exactly the validated
+  configuration; `DEFAULT_RECENCY_HALF_LIFE` in `features/team.py`), replacing
+  the schedule-only scores fit. Better probabilities feed moneyline pricing
+  and Kelly staking directly.
+- **NOT promoted:** an NFL spread/total disagreement filter. The ≥6-point
+  cuts are promising but statistically thin; the burden of proof stays a
+  robust >52.4% across seasons at real sample size. Re-test after the QB
+  adjustment lands — sharper ratings should concentrate the disagreement
+  signal.
+- NCAAF is untouched: the scores fit + the backtested totals filter remain.
 
 ## Backlog (next experiments, in rough order of expected value)
 

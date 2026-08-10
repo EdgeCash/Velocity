@@ -39,6 +39,24 @@ import pandas as pd
 
 DEFAULT_RIDGE_LAMBDA = 200.0
 
+# Exponential recency half-life (in on-field weeks) for the NFL ratings fit.
+# Promoted by the model lab (docs/MODEL_LAB.md): Brier 0.2234 vs 0.2354 for the
+# flat fit over a 2014–2025 walk-forward — recent form carries real signal.
+DEFAULT_RECENCY_HALF_LIFE = 17.0
+
+
+def recency_weights(plays: pd.DataFrame, half_life_weeks: float) -> pd.Series:
+    """Exponential play weights by age in on-field weeks (newest = 1.0).
+
+    Age counts (season, week) steps on a contiguous key — the offseason gap is
+    deliberately not inflated, so a half-life of ~17 weighs last season's plays
+    at roughly half of this week's. Feed the result to
+    :func:`fit_ratings`' ``weights``.
+    """
+    key = plays["season"].astype(int) * 25 + plays["week"].astype(int)
+    age = key.max() - key
+    return pd.Series(np.power(0.5, age / half_life_weeks), index=plays.index)
+
 
 @dataclass(frozen=True)
 class TeamRatings:

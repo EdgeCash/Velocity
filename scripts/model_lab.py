@@ -94,6 +94,7 @@ def main() -> None:
 
     rows = []
     sweeps = {}
+    ledgers = {}
     for name, (train_kind, factory) in chosen.items():
         train_frame = games if train_kind == "games" else plays
         result = walk_forward(
@@ -106,6 +107,7 @@ def main() -> None:
                 row[key] = result.metrics[key]
         row.update(ats_ou_vs_close(result.projections, games))
         rows.append(row)
+        ledgers[name] = result.projections
         sweeps[name] = {
             market: disagreement_sweep(result.projections, games, market=market)
             for market in ("spread", "total")
@@ -129,6 +131,8 @@ def main() -> None:
         for name, by_market in sweeps.items():
             for market, sweep in by_market.items():
                 sweep.to_parquet(out / f"sweep_{name}_{market}.parquet", index=False)
+        for name, projections in ledgers.items():
+            projections.to_parquet(out / f"projections_{name}.parquet", index=False)
         print(f"\nwrote comparison tables to {out}")
 
 

@@ -59,13 +59,54 @@ def _load_snapshot(args: argparse.Namespace) -> object:
     return client.odds_payload(args.league)
 
 
+def _find_plays(folder: Path) -> Path | None:
+    for ext in (".parquet", ".pq", ".csv"):
+        candidate = folder / f"plays{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _build_projection(
     args: argparse.Namespace,
 ) -> tuple[Callable[[str, str], GameProjection], list[str]]:
-    """Fit the scores ratings from the committed games file → ``(project, teams)``."""
+    """Fit the league's promoted ratings from the committed data → ``(project, teams)``.
+
+    NFL: the recency-weighted EPA fit (docs/MODEL_LAB.md — Brier 0.2234 vs
+    0.2343 for the schedule-only fit over 2014–2025), trained on the trailing
+    four seasons exactly as validated; falls back to the scores fit when the
+    data folder carries no plays file. NCAAF: the scores fit.
+    """
     if not args.data:
         raise SystemExit(f"--data is required for {args.league} (a folder with a games file)")
-    games = load_games(_find_games(Path(args.data)), league=args.league)
+    folder = Path(args.data)
+    plays_path = _find_plays(folder) if args.league == "nfl" else None
+
+    if plays_path is not None:
+        from velocity.features.team import (
+            DEFAULT_RECENCY_HALF_LIFE,
+            fit_ratings,
+            recency_weights,
+        )
+        from velocity.ingest.local import load_plays
+        from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+
+        plays = load_plays(plays_path)
+        cutoff = int(plays["season"].max()) - 3
+        plays = plays[plays["season"] >= cutoff]
+        ratings = fit_ratings(
+            plays, weights=recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
+        )
+        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))
+        print(f"NFL ratings: recency-weighted EPA fit on {len(plays)} plays "
+              f"(seasons {cutoff}+, half-life {DEFAULT_RECENCY_HALF_LIFE:g} wks)")
+
+        def project_epa(home: str, away: str) -> GameProjection:
+            return nfl_model.project(home, away, rng=make_rng())
+
+        return project_epa, list(ratings.teams)
+
+    games = load_games(_find_games(folder), league=args.league)
     sim = (
         SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
         if args.league == "ncaaf"

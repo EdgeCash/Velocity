@@ -28,31 +28,32 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pandas as pd
 
 from velocity.features.scores import fit_scores_ratings
-from velocity.features.team import DEFAULT_RIDGE_LAMBDA, TeamRatings, fit_ratings
+from velocity.features.team import (
+    DEFAULT_RIDGE_LAMBDA,
+    TeamRatings,
+    fit_ratings,
+    recency_weights,
+)
 from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
+
+__all__ = [
+    "ats_ou_vs_close",
+    "combine_ratings",
+    "disagreement_sweep",
+    "fit_split_ratings",
+    "nfl_variants",
+    "recency_weights",
+]
 
 # A variant maps a training frame to a projection model. `train` names which
 # frame the engine should slice for it: "plays" (EPA fits) or "games" (the
 # schedule-only scores fit — what the live slate currently runs).
 VariantFactory = Callable[[pd.DataFrame], object]
-
-
-def recency_weights(plays: pd.DataFrame, half_life_weeks: float) -> pd.Series:
-    """Exponential play weights by age in on-field weeks (newest = 1.0).
-
-    Age counts (season, week) steps on a contiguous key — the offseason gap is
-    deliberately not inflated, so a half-life of ~17 weighs last season's plays
-    at roughly half of this week's.
-    """
-    key = plays["season"].astype(int) * 25 + plays["week"].astype(int)
-    age = key.max() - key
-    return pd.Series(np.power(0.5, age / half_life_weeks), index=plays.index)
 
 
 def combine_ratings(
