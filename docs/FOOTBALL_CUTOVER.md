@@ -446,8 +446,11 @@ against actuals.
 - `dfs/optimizer.py` — **exact**, not MILP and not heuristic: DK salaries
   are $100 multiples, so the cap discretizes to 500 buckets and the problem
   solves as a choose-k knapsack per position group convolved across groups,
-  once per FLEX shape. Pinned against brute force in tests. No solver
-  dependency.
+  once per flex shape. Pinned against brute force in tests. No solver
+  dependency. Roster formats are `RosterSpec`s: NFL classic
+  (QB/2RB/3WR/TE/FLEX/DST) and CFB classic (QB/2RB/3WR/FLEX/S-FLEX — DK
+  college has no TE slot or DST, and the Super-FLEX admits a second QB;
+  the tests pin the two-QB optimum against brute force).
 - `dfs/pipeline.py` — main-slate auto-pick (most games on the board) +
   frames-to-lineup glue; `scripts/build_dfs_lineup.py` CLI (all failure
   modes exit 0 — the DFS surface never blocks the slate).
@@ -455,8 +458,9 @@ against actuals.
   team, salary, proj), QB-stack players in the teal accent with a stack
   callout, salary-used bar, projected total, source + cash-objective notes.
   No ownership column until an ownership feed exists.
-- `live-slate.yml` fetches the newest DK salary artifact and builds the NFL
-  lineup into the same private slate artifact.
+- `live-slate.yml` fetches the newest DK salary artifact and builds both
+  leagues' lineups into the same private slate artifact (NCAAF needs the FP
+  snapshot to carry NCAAF rows — currently blocked on the FP key tier).
 
 Still open from the 5b plan: FD scoring, sim-based GPP construction
 (distribution objective, multi-lineup exposure caps), and lineup grading

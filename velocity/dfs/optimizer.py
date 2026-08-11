@@ -1,11 +1,13 @@
 """DFS lineup optimizer — the exact best DK classic roster under the cap.
 
-Builds the highest-projected legal lineup: QB / 2 RB / 3 WR / TE / FLEX
-(RB-WR-TE) / DST under the $50,000 cap. The search is **exact**, not
-heuristic: DK salaries are multiples of $100, so the cap discretizes into 500
-buckets and the problem solves as a choose-k knapsack per position group,
-convolved across groups, once per FLEX shape (extra RB, WR, or TE). The test
-suite pins the result against brute force.
+Builds the highest-projected legal lineup for a roster spec — NFL classic
+(QB / 2 RB / 3 WR / TE / FLEX / DST) or CFB classic (QB / 2 RB / 3 WR /
+FLEX / S-FLEX; DK college has no TE slot or DST, and the Super-FLEX admits a
+second QB) — under the $50,000 cap. The search is **exact**, not heuristic:
+DK salaries are multiples of $100, so the cap discretizes into 500 buckets
+and the problem solves as a choose-k knapsack per position group, convolved
+across groups, once per flex shape (every way the flex slots can distribute
+across positions). The test suite pins the result against brute force.
 
 Cash-game objective only (maximize projected points). GPP construction —
 distribution targets, stacking constraints, ownership leverage — arrives with
@@ -15,17 +17,44 @@ the sim-based scoring (docs/FOOTBALL_CUTOVER.md §5b).
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import permutations, product
 
 import pandas as pd
 
 SALARY_CAP = 50_000
 _BUCKET = 100  # DK salaries are $100 multiples; non-multiples round UP (never over cap)
 
-# DK classic slots, in display order. FLEX accepts any of the flex positions.
-SLOTS: tuple[str, ...] = ("QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST")
+
+@dataclass(frozen=True)
+class RosterSpec:
+    """One contest format: display slots, fixed position counts, flex slots."""
+
+    name: str
+    slots: tuple[str, ...]  # display order, flex slots by label
+    base_counts: Mapping[str, int]  # position → dedicated slot count
+    flex: tuple[tuple[str, tuple[str, ...]], ...]  # (slot label, eligible positions)
+
+
+NFL_CLASSIC = RosterSpec(
+    "nfl_classic",
+    ("QB", "RB", "RB", "WR", "WR", "WR", "TE", "FLEX", "DST"),
+    {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "DST": 1},
+    (("FLEX", ("RB", "WR", "TE")),),
+)
+# DK college classic: no TE slot (DK lists college TEs as WR), no DST, and the
+# Super-FLEX admits a second QB.
+CFB_CLASSIC = RosterSpec(
+    "cfb_classic",
+    ("QB", "RB", "RB", "WR", "WR", "WR", "FLEX", "S-FLEX"),
+    {"QB": 1, "RB": 2, "WR": 3},
+    (("FLEX", ("RB", "WR")), ("S-FLEX", ("QB", "RB", "WR"))),
+)
+
+# NFL-classic aliases, kept for callers/tests that predate roster specs.
+SLOTS: tuple[str, ...] = NFL_CLASSIC.slots
 FLEX_POSITIONS = ("RB", "WR", "TE")
-_BASE_COUNTS = {"QB": 1, "RB": 2, "WR": 3, "TE": 1, "DST": 1}
 
 _REQUIRED_COLUMNS = ("player_name", "position", "salary", "points")
 
@@ -135,12 +164,70 @@ def _convolve(
     return out
 
 
-def build_lineup(pool: pd.DataFrame, *, cap: int = SALARY_CAP) -> Lineup | None:
+def _flex_shapes(spec: RosterSpec) -> set[tuple[tuple[str, int], ...]]:
+    """Every distinct position-count multiset the flex slots can produce."""
+    shapes: set[tuple[tuple[str, int], ...]] = set()
+    for combo in product(*[eligible for _, eligible in spec.flex]):
+        counts = dict(spec.base_counts)
+        for position in combo:
+            counts[position] = counts.get(position, 0) + 1
+        shapes.add(tuple(sorted(counts.items())))
+    return shapes
+
+
+def _assign_slots(rows: pd.DataFrame, spec: RosterSpec) -> list[LineupSlot] | None:
+    """Chosen rows → display slots: base slots by position, extras to flex.
+
+    Per position, the top-point players take the dedicated slots (display
+    convention); the leftovers must fill the flex slots in some eligible
+    order — with at most a couple of flex slots, trying permutations is exact
+    and cheap.
+    """
+    by_position: dict[str, list] = {}
+    for _idx, row in rows.sort_values("points", ascending=False).iterrows():
+        by_position.setdefault(str(row.position), []).append(row)
+    base_queues: dict[str, list] = {}
+    extras: list = []
+    for position, group in by_position.items():
+        base = int(spec.base_counts.get(position, 0))
+        base_queues[position] = group[:base]
+        extras.extend(group[base:])
+    assignment = None
+    for perm in permutations(extras):
+        if all(
+            str(row.position) in eligible
+            for row, (_label, eligible) in zip(perm, spec.flex, strict=True)
+        ):
+            assignment = {label: row for row, (label, _e) in
+                          zip(perm, spec.flex, strict=True)}
+            break
+    if assignment is None:
+        return None
+    slots: list[LineupSlot] = []
+    for slot in spec.slots:
+        row = assignment[slot] if slot in assignment else base_queues[slot].pop(0)
+        slots.append(
+            LineupSlot(
+                slot=slot,
+                player_name=str(row.player_name),
+                position=str(row.position),
+                team=None if pd.isna(row.team) else str(row.team),
+                salary=int(row.salary),
+                points=float(row.points),
+            )
+        )
+    return slots
+
+
+def build_lineup(
+    pool: pd.DataFrame, *, cap: int = SALARY_CAP, spec: RosterSpec = NFL_CLASSIC
+) -> Lineup | None:
     """The exact best legal lineup from a player pool, or ``None`` if infeasible.
 
     ``pool`` needs ``player_name``/``position``/``salary``/``points`` (``team``
     optional, used for stack callouts). Rows with missing salary or points are
-    dropped; duplicate player names keep their highest-point row.
+    dropped; duplicate player names keep their highest-point row. ``spec``
+    selects the contest format (NFL classic by default).
     """
     pool = pool.dropna(subset=["salary", "points"]).copy()
     for col in _REQUIRED_COLUMNS:
@@ -158,19 +245,18 @@ def build_lineup(pool: pd.DataFrame, *, cap: int = SALARY_CAP) -> Lineup | None:
     buckets = cap // _BUCKET
 
     best_total: tuple[float, tuple[int, ...]] | None = None
-    best_flex: str | None = None
-    for flex in FLEX_POSITIONS:
-        counts = dict(_BASE_COUNTS)
-        counts[flex] += 1
+    for shape in sorted(_flex_shapes(spec)):
         frontiers = []
         feasible = True
-        for position, k in counts.items():
+        for position, k in shape:
+            if k == 0:
+                continue
             frontier = _group_frontier(pool, position, k, buckets)
             if frontier is None:
                 feasible = False
                 break
             frontiers.append(frontier)
-        if not feasible:
+        if not feasible or not frontiers:
             continue
         combined = frontiers[0]
         for frontier in frontiers[1:]:
@@ -182,32 +268,15 @@ def build_lineup(pool: pd.DataFrame, *, cap: int = SALARY_CAP) -> Lineup | None:
         candidate = max(combined.values())
         if best_total is None or candidate > best_total:
             best_total = candidate
-            best_flex = flex
 
-    if best_total is None or best_flex is None:
+    if best_total is None:
         return None
 
     _, chosen_ids = best_total
     rows = pool.loc[list(chosen_ids)]
-    # Assign display slots: base slots by position; the extra flex-position
-    # player (the lowest-point one of their position group) takes FLEX.
-    slots: list[LineupSlot] = []
-    by_position: dict[str, list] = {}
-    for _idx, row in rows.sort_values("points", ascending=False).iterrows():
-        by_position.setdefault(str(row.position), []).append(row)
-    flex_row = by_position[best_flex].pop()  # lowest-point of the flexed group
-    for slot in SLOTS:
-        row = flex_row if slot == "FLEX" else by_position[slot].pop(0)
-        slots.append(
-            LineupSlot(
-                slot=slot,
-                player_name=str(row.player_name),
-                position=str(row.position),
-                team=None if pd.isna(row.team) else str(row.team),
-                salary=int(row.salary),
-                points=float(row.points),
-            )
-        )
+    slots = _assign_slots(rows, spec)
+    if slots is None:  # cannot happen for counts produced by _flex_shapes
+        return None
     return Lineup(
         slots=tuple(slots),
         total_salary=int(rows["salary"].sum()),
