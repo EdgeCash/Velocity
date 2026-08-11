@@ -57,6 +57,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bp-lines-${{ github.run_id }}
-          path: artifacts/bp/*.parquet
+          path: |
+            artifacts/bp/*.parquet
+            artifacts/bp/raw/*.json
           if-no-files-found: warn
           retention-days: 30

@@ -3,7 +3,9 @@
 BettingPros has **no historical archive** — a line only exists while it's live —
 so building line history means snapshotting the current board on a schedule. This
 script takes one snapshot of the three game markets (spread / total / moneyline)
-for both leagues and writes a single timestamped parquet.
+for both leagues and writes a single timestamped parquet, then snapshots the
+NFL ``/props`` board (BettingPros prop projections + EV; premium fields need
+the ``BP_USER_ID``/``BP_USER_KEY`` pair, and the endpoint has no NCAAF).
 
 It is designed to run as a **GitHub Actions** job (where the ``BP_*`` secrets
 live) and to upload its output as a **private Actions artifact**. It deliberately
@@ -19,13 +21,17 @@ Credentials come from the environment only — ``BP_API_KEY`` and the optional
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.bettingpros import BettingProsClient
+from velocity.ingest.bettingpros import BettingProsClient, normalize_props
 
 SPORTS = ("NFL", "NCAAF")
+# The /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport
+# enum has no NCAAF) — college props stay model-generated.
+PROP_SPORTS = ("NFL",)
 
 
 def collect(sports: tuple[str, ...], collected_at: pd.Timestamp) -> pd.DataFrame:
@@ -66,6 +72,29 @@ def main() -> None:
         # Off-season / no board yet is not an error — the job still succeeds so the
         # schedule keeps running; the artifact just carries an empty frame.
         print("note: no live lines right now (off-season or no board posted yet)")
+
+    # Prop board snapshot — the BettingPros projections + EV per prop (premium
+    # fields null on free-tier credentials). Raw payload banked verbatim,
+    # normalized frame alongside the lines parquet. Best-effort: prop trouble
+    # never sinks the lines snapshot above.
+    client = BettingProsClient.from_env()
+    tag = now.strftime("%Y%m%dT%H%M%SZ")
+    for sport in PROP_SPORTS:
+        try:
+            payload = client.props(sport)
+            raw_dir = out / "raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            (raw_dir / f"props_{sport.lower()}_{tag}.json").write_text(json.dumps(payload))
+            props = normalize_props(payload).assign(
+                league=sport.lower(), collected_at=stamp
+            )
+            dest = out / f"bp_props_{sport.lower()}_{tag}.parquet"
+            props.to_parquet(dest, index=False)
+            n_proj = int(props["projection"].notna().sum()) if not props.empty else 0
+            print(f"  {sport} props: {len(props)} rows "
+                  f"({n_proj} with projections{'* premium' if n_proj else ''}) → {dest}")
+        except Exception as exc:  # noqa: BLE001 - props are additive, lines already saved
+            print(f"  {sport} props skipped ({exc})")
 
 
 if __name__ == "__main__":

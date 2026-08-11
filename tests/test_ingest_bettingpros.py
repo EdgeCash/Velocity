@@ -218,3 +218,60 @@ def test_stale_and_replaced_lines_dropped() -> None:
     ]
     assert normalize_offers(offers, MARKETS).empty
     assert isinstance(to_lines(normalize_offers(offers, MARKETS)), pd.DataFrame)
+
+
+def test_normalize_props_flattens_the_board() -> None:
+    from velocity.ingest.bettingpros import normalize_props
+
+    payload = {
+        "props": [
+            {
+                "sport": "NFL",
+                "market_id": 102,
+                "event_id": 555,
+                "participant": {
+                    "id": "p1", "name": "Josh Allen",
+                    "player": {"team": "BUF", "position": "QB"},
+                },
+                "over": {"line": 249.5, "odds": -115, "book": 12,
+                         "consensus_line": 250.5},
+                "under": {"line": 249.5, "odds": -105, "book": 10,
+                          "consensus_line": 250.5},
+                "projection": {
+                    "recommended_side": "over", "value": 264.2,
+                    "probability": 0.58, "expected_value": 4.1,
+                    "bet_rating": 4, "diff": 14.7,
+                },
+            },
+            {  # free-tier row: premium projection fields nulled by the API
+                "sport": "NFL",
+                "market_id": 103,
+                "event_id": 555,
+                "participant": {"id": "p2", "name": "James Cook",
+                                "player": {"team": "BUF", "position": "RB"}},
+                "over": {"line": 84.5, "odds": -110, "book": 12},
+                "under": {"line": 84.5, "odds": -110, "book": 12},
+                "projection": {"recommended_side": None, "value": None,
+                               "probability": None, "expected_value": None,
+                               "bet_rating": None, "diff": None},
+            },
+            {"sport": "NFL", "participant": {"id": "x"}},  # no market_id → dropped
+            "junk",
+        ]
+    }
+    df = normalize_props(payload)
+    assert len(df) == 2
+    allen = df[df["player_name"] == "Josh Allen"].iloc[0]
+    assert allen["market_id"] == 102
+    assert allen["team"] == "BUF"
+    assert allen["over_line"] == 249.5
+    assert allen["over_book"] == 12
+    assert allen["consensus_over_line"] == 250.5
+    assert allen["projection"] == 264.2
+    assert allen["recommended_side"] == "over"
+    assert allen["expected_value"] == 4.1
+    cook = df[df["player_name"] == "James Cook"].iloc[0]
+    assert pd.isna(cook["projection"])  # premium-nulled stays NaN, not an error
+    assert pd.isna(cook["expected_value"])
+    assert normalize_props(None).empty
+    assert normalize_props({}).empty

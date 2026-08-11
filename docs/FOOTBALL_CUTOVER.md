@@ -178,7 +178,13 @@ Start these **now**, weeks before kickoff.
 2. **Football props collection:** successor to `collect-mlb-props.yml` —
    The Odds API + BettingPros NFL/NCAAF player-prop markets (pass/rush/rec
    yards, receptions, anytime TD), snapshotted into the same private-artifact
-   CLV archive pattern.
+   CLV archive pattern. *2026-08-11:* the BP collector also snapshots the
+   partner `/props` board — best/consensus lines per book plus the
+   BettingPros projection block (projection, recommended side, probability,
+   EV, bet rating; premium fields need the `BP_USER_ID`/`BP_USER_KEY` pair).
+   NFL only — the partner spec's prop sport enum has no NCAAF, so college
+   props remain model-generated. Rate budget: one request per snapshot
+   against a 5 RPS / 5,000-per-day cap.
 3. Verify the existing `collect-odds` / `collect-bettingpros` /
    `collect-fantasypros` crons are green and capturing 2026 markets.
 4. **DK salary snapshots** (see §5a) — start banking alongside the props
@@ -342,9 +348,13 @@ to end — and surfaced four defects, all fixed same-day:
 
 1. **FantasyPros collector** crashed whole runs when one league's endpoint
    404s (every scheduled run since July had failed) → per-league guard.
-   *Open operator item:* the NFL payload is `public_api_limited` with zero
-   player rows — the FP key's tier/coverage needs resolving with FantasyPros
-   before the prop slate has consensus projections.
+   *Resolved 2026-08-11 against the published OpenAPI specs:* the NCAAF 404
+   is permanent — the public v2 API has **no NCAAF projections endpoint**
+   (projections exist for NFL/MLB/NBA only), so the collector is NFL-only
+   now and college projections need another source. The NFL
+   `public_api_limited`/zero-rows payload is the free tier answering
+   `position=ALL`; the collector now falls back to per-position fetches
+   (QB/RB/WR/TE/K/DST) and merges. Needs one live dispatch to confirm.
 2. **No board window:** the August board carries the whole season at stale
    openers; the first run priced 272 NFL events, staked 20× bankroll on
    paper, and rendered 272 cards → `--max-days` window (default 6).
