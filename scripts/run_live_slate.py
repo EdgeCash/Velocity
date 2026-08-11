@@ -128,6 +128,12 @@ def main() -> None:
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
     parser.add_argument("--bankroll", type=float, default=100.0)
+    # The August board carries the whole season's games at stale opening
+    # numbers (the first live run priced 272 NFL events and "staked" 20x the
+    # bankroll). A slate is this week's games: only events kicking off inside
+    # the window are priced, staked, and carded.
+    parser.add_argument("--max-days", type=float, default=6.0,
+                        help="only price games kicking off within this many days (0 = all)")
     # NCAAF selectivity, in POINTS of total disagreement — the edge exactly as
     # backtested (docs/BACKTEST_NCAAF.md): flat totals 51.6%, but 52.8% when the
     # model differs from the number by ≥4 points (5,477 bets, positive in 7 of 10
@@ -176,7 +182,15 @@ def main() -> None:
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
-    print(f"=== Live slate: {args.league.upper()} — {len(events)} games on the board ===")
+    n_board = len(events)
+    if args.max_days > 0 and not events.empty:
+        kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
+        window = (kickoff >= generated_at - pd.Timedelta(hours=6)) & (
+            kickoff <= generated_at + pd.Timedelta(days=args.max_days)
+        )
+        events = events[window].reset_index(drop=True)
+    print(f"=== Live slate: {args.league.upper()} — {len(events)} of {n_board} board "
+          f"games inside the {args.max_days:g}-day window ===")
 
     frame = pd.DataFrame()
     projections: dict = {}
@@ -196,7 +210,15 @@ def main() -> None:
             print(f"NCAAF totals filter: model must differ from the number by "
                   f"≥ {total_edge:g} points")
         # Project once, then price off those projections (reused for the workbook).
-        projections, unresolved = project_board(events, project, known_teams)
+        # NCAAF: the provider names carry nicknames ("Georgia Bulldogs") while the
+        # CFBD-fit model keys by school ("Georgia") — bridge by prefix match.
+        aliases = None
+        if args.league == "ncaaf":
+            from velocity.wagering.live import nickname_aliases
+
+            provider_names = set(events["home_team"]) | set(events["away_team"])
+            aliases = nickname_aliases(provider_names, known_teams)
+        projections, unresolved = project_board(events, project, known_teams, aliases)
         canonical = canonicalize_sides(lines, events)
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
         games_min = events[["game_id", "kickoff"]].copy()

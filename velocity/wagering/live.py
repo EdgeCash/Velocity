@@ -112,6 +112,34 @@ def resolve_team(
     return None
 
 
+def nickname_aliases(
+    provider_names: Iterable[str], known_teams: Iterable[str]
+) -> dict[str, str]:
+    """Provider "School Nickname" names → a school-keyed team universe.
+
+    The Odds API names NCAAF teams with their nickname ("Georgia Bulldogs",
+    "Ole Miss Rebels"); CFBD — and therefore the fitted model — keys them by
+    school ("Georgia", "Ole Miss"). A provider name resolves to the known team
+    whose normalized name is a **prefix** of the provider's; when several known
+    schools prefix-match ("Georgia" and "Georgia Southern" against
+    "Georgia Southern Eagles"), the longest school name wins. A name with no
+    prefix match is simply absent — the caller's resolve path skips and
+    reports it, never guesses.
+    """
+    known_by_norm = {_normalize(team): team for team in known_teams}
+    out: dict[str, str] = {}
+    for name in provider_names:
+        norm = _normalize(str(name))
+        candidates = [
+            (len(known_norm), team)
+            for known_norm, team in known_by_norm.items()
+            if known_norm and norm.startswith(known_norm)
+        ]
+        if candidates:
+            out[str(name)] = max(candidates)[1]
+    return out
+
+
 def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     """Remap provider side labels to ``home``/``away``/``over``/``under``.
 

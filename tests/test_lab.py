@@ -136,3 +136,22 @@ def test_total_sweep_and_flat_summary() -> None:
     summary = ats_ou_vs_close(PROJECTIONS, GAMES)
     assert summary["ats_bets"] == 2.0
     assert summary["ou_win_rate"] == pytest.approx(1.0)
+
+
+def test_nickname_aliases_prefix_matches_schools() -> None:
+    from velocity.wagering.live import nickname_aliases
+
+    known = ["Georgia", "Georgia Southern", "Ole Miss", "Miami", "Miami (OH)", "Texas",
+             "Texas A&M"]
+    aliases = nickname_aliases(
+        ["Georgia Bulldogs", "Georgia Southern Eagles", "Ole Miss Rebels",
+         "Miami Hurricanes", "Texas A&M Aggies", "Fresno State Bulldogs"],
+        known,
+    )
+    assert aliases["Georgia Bulldogs"] == "Georgia"
+    # Several schools prefix-match; the longest school name wins.
+    assert aliases["Georgia Southern Eagles"] == "Georgia Southern"
+    assert aliases["Ole Miss Rebels"] == "Ole Miss"
+    assert aliases["Miami Hurricanes"] == "Miami"  # "Miami (OH)" is not a prefix
+    assert aliases["Texas A&M Aggies"] == "Texas A&M"
+    assert "Fresno State Bulldogs" not in aliases  # no match → absent, never guessed
