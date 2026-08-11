@@ -213,6 +213,76 @@ def to_lines(long: pd.DataFrame, is_closing: bool = False) -> pd.DataFrame:
     return Lines.validate(out)
 
 
+_PROP_COLUMNS = [
+    "sport", "market_id", "event_id", "player_id", "player_name", "team",
+    "position", "over_line", "over_odds", "over_book", "under_line",
+    "under_odds", "under_book", "consensus_over_line", "consensus_under_line",
+    "projection", "recommended_side", "probability", "expected_value",
+    "bet_rating", "diff",
+]
+
+
+def normalize_props(payload: Mapping[str, Any] | None) -> pd.DataFrame:
+    """Flatten a ``/props`` response into one row per (player, market) prop.
+
+    Best over/under lines with their books, consensus lines, and the
+    BettingPros projection block. Premium-gated fields (projection value,
+    probability, EV, bet rating) are null on free-tier credentials and stay
+    NaN here — absence of a paid field is data, not an error. Rows without a
+    participant or market are dropped.
+    """
+
+    def _num(value: Any) -> float | None:
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
+
+    rows: list[dict[str, object]] = []
+    for prop in (payload or {}).get("props") or []:
+        if not isinstance(prop, Mapping):
+            continue
+        market_id = prop.get("market_id")
+        participant = prop.get("participant") or {}
+        if market_id is None or not isinstance(participant, Mapping):
+            continue
+        player = participant.get("player") or {}
+        over = prop.get("over") or {}
+        under = prop.get("under") or {}
+        projection = prop.get("projection") or {}
+        rows.append(
+            {
+                "sport": str(prop.get("sport") or ""),
+                "market_id": int(market_id),
+                "event_id": None if prop.get("event_id") is None
+                else str(prop.get("event_id")),
+                "player_id": None if participant.get("id") is None
+                else str(participant.get("id")),
+                "player_name": None if participant.get("name") is None
+                else str(participant.get("name")),
+                "team": None if player.get("team") is None else str(player.get("team")),
+                "position": None if player.get("position") is None
+                else str(player.get("position")),
+                "over_line": _num(over.get("line")),
+                "over_odds": _num(over.get("odds")),
+                "over_book": None if over.get("book") is None else int(over["book"]),
+                "under_line": _num(under.get("line")),
+                "under_odds": _num(under.get("odds")),
+                "under_book": None if under.get("book") is None else int(under["book"]),
+                "consensus_over_line": _num(over.get("consensus_line")),
+                "consensus_under_line": _num(under.get("consensus_line")),
+                "projection": _num(projection.get("value")),
+                "recommended_side": None if projection.get("recommended_side") is None
+                else str(projection.get("recommended_side")),
+                "probability": _num(projection.get("probability")),
+                "expected_value": _num(projection.get("expected_value")),
+                "bet_rating": _num(projection.get("bet_rating")),
+                "diff": _num(projection.get("diff")),
+            }
+        )
+    return pd.DataFrame(rows, columns=_PROP_COLUMNS)
+
+
 @dataclass
 class BettingProsClient:
     """Network client for the BettingPros partner API (premium tier when keyed).
@@ -266,6 +336,23 @@ class BettingProsClient:
         return self._get(
             "offers", sport=sport, market_id=market_id, event_id=event_id, **params
         ).get("offers", [])
+
+    def props(self, sport: str, **params: object) -> dict:  # pragma: no cover - network
+        """One page of the ``/props`` board (prop projections + EV) for ``sport``.
+
+        The endpoint serves NFL/NBA/MLB/NHL only (no NCAAF — the spec's prop
+        sport enum). Projection/EV/bet-rating fields are premium-gated: they
+        come back null on a free-tier key pair, and :func:`normalize_props`
+        keeps them as NaN.
+        """
+        defaults: dict[str, object] = {
+            "limit": 5000,
+            "ev_threshold": "false",  # the full board, not just the flagged edges
+            "include_selections": "false",
+            "include_markets": "false",
+        }
+        defaults.update(params)
+        return self._get("props", sport=sport, **defaults)
 
     def game_lines(
         self, sport: str, event_ids: Iterable[object] | None = None

@@ -133,3 +133,36 @@ def test_source_override() -> None:
     df = normalize_projections(NESTED, season=2026, week=0, source="fp-consensus")
     assert (df["source"] == "fp-consensus").all()
     assert isinstance(df, pd.DataFrame)
+
+
+class _StubClient:
+    """raw_projections stub: position=ALL comes back tier-limited and empty."""
+
+    def raw_projections(self, sport, season, position="ALL", week=0):
+        if position == "ALL":
+            return {"public_api_limited": True, "players": []}
+        if position in ("QB", "RB"):
+            return {"players": [{
+                "fpid": f"{position}-1", "name": f"{position} One",
+                "team_id": "BUF", "position_id": position,
+                "stats": {"pass_yds" if position == "QB" else "rush_yds": 100.0},
+            }]}
+        return {"players": []}
+
+
+def test_fetch_league_frame_falls_back_per_position() -> None:
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "collect_fantasypros",
+        Path(__file__).resolve().parents[1] / "scripts" / "collect_fantasypros.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    frame, notes = mod.fetch_league_frame(_StubClient(), "nfl", 2026, 0)
+    assert any("public_api_limited" in n for n in notes)  # limitation surfaced
+    assert any("per-position" in n for n in notes)  # fallback taken
+    assert set(frame["player_name"]) == {"QB One", "RB One"}
+    assert len(frame) == 2

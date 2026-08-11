@@ -1,10 +1,12 @@
 """Snapshot FantasyPros player projections to a private parquet + dump raw shape.
 
-FantasyPros consensus projections feed the props model as an external prior. This
-snapshots the current projections for both leagues into a private parquet and —
-because we don't have a pinned FantasyPros schema — can also dump the raw JSON of
-the first player so the tolerant normalizer can be tightened against the real
-response.
+FantasyPros consensus projections feed the props model as an external prior.
+This snapshots the current **NFL** projections into a private parquet (the
+public v2 API has no NCAAF projections endpoint — see the OpenAPI spec — so
+college projections come from elsewhere). The free public tier can answer a
+``position=ALL`` request tier-limited with zero players, so the collector
+falls back to per-position fetches when that happens. ``--inspect`` dumps the
+first normalized row for schema discovery.
 
 Runs as a **GitHub Actions** job (where ``FP_API_KEY`` lives) and uploads its
 output as a **private Actions artifact**; it never commits. Triggering the
@@ -24,7 +26,59 @@ from pathlib import Path
 import pandas as pd
 from velocity.ingest.fantasypros import FantasyProsClient, normalize_projections
 
-LEAGUES = ("nfl", "ncaaf")
+# The FantasyPros public v2 API serves projections for NFL, MLB and NBA only —
+# there is no NCAAF projections path (confirmed against the published OpenAPI
+# spec), which is why the college endpoint 404s. College projections need a
+# different source; this collector is NFL-only.
+LEAGUES = ("nfl",)
+
+# The free public tier serves per-position requests reliably; a position=ALL
+# request can come back tier-limited (`public_api_limited`) with zero players.
+# The collector tries ALL first and falls back to fetching these one by one.
+NFL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
+
+
+def _players_of(raw: object) -> list:
+    if isinstance(raw, dict):
+        return raw.get("players") or raw.get("data") or []
+    return list(raw or [])
+
+
+def fetch_league_frame(
+    client: FantasyProsClient, league: str, season: int, week: int
+) -> tuple[pd.DataFrame, list[str]]:
+    """One league's normalized projections, with the tier-limit fallback.
+
+    Returns ``(frame, notes)`` — notes carry anything worth surfacing in the
+    log (limitation keys, the fallback being taken). ``position=ALL`` is
+    schema-valid but the limited public tier can answer it with zero players;
+    when that happens each position is fetched individually and the results
+    are concatenated.
+    """
+    notes: list[str] = []
+    raw = client.raw_projections(league, season, week=week)
+    if isinstance(raw, dict):
+        odd_keys = sorted(set(raw) - {"season", "week", "count", "positions",
+                                      "scoring", "players", "data"})
+        if odd_keys:
+            notes.append(f"non-standard response keys: {odd_keys}")
+    if _players_of(raw):
+        return normalize_projections(raw, season=season, week=week), notes
+    if league != "nfl":
+        return normalize_projections(raw, season=season, week=week), notes
+    notes.append("position=ALL returned no players; falling back to per-position fetches")
+    frames = []
+    for position in NFL_POSITIONS:
+        part = client.raw_projections(league, season, position=position, week=week)
+        got = normalize_projections(part, season=season, week=week)
+        if not got.empty:
+            frames.append(got)
+    if not frames:
+        return normalize_projections(raw, season=season, week=week), notes
+    merged = pd.concat(frames, ignore_index=True).drop_duplicates(
+        subset=["player_id", "player_name", "stat"]
+    )
+    return merged.reset_index(drop=True), notes
 
 
 def main() -> None:
@@ -46,26 +100,29 @@ def main() -> None:
     frames: list[pd.DataFrame] = []
     failed: list[str] = []
     for league in args.leagues:
+        if league == "ncaaf":
+            # No NCAAF projections path exists in the public v2 API — requesting
+            # it can only 404. Skipped by design (not counted as a failure).
+            print("  ncaaf: the FantasyPros public API has no NCAAF projections "
+                  "endpoint; skipping")
+            continue
         try:
-            raw = client.raw_projections(league, args.season, week=args.week)
+            df, notes = fetch_league_frame(client, league, args.season, args.week)
         except Exception as exc:  # noqa: BLE001 - one league's feed never blocks the other
-            # Seen live: the NCAAF path 404s while NFL answers — a dead league
-            # endpoint must not sink the snapshot the other league produced.
             print(f"  {league}: fetch failed ({exc}); skipping")
             failed.append(league)
             continue
-        if args.inspect:
-            players = raw.get("players") or raw.get("data") or [] if isinstance(raw, dict) else raw
-            top_keys = sorted(raw.keys()) if isinstance(raw, dict) else "(list payload)"
-            print(f"  [{league}] top-level keys: {top_keys}")
-            if players:
-                print(f"  [{league}] first player raw:\n{json.dumps(players[0], indent=2)[:1200]}")
-        df = normalize_projections(raw, season=args.season, week=args.week)
+        for note in notes:
+            print(f"  [{league}] {note}")
+        if args.inspect and not df.empty:
+            first = df.iloc[0].to_dict()
+            print(f"  [{league}] first normalized row:\n{json.dumps(first, indent=2, default=str)}")
         df = df.assign(league=league, collected_at=stamp)
         frames.append(df)
         print(f"  {league}: {len(df)} projection rows, {df['player_name'].nunique()} players")
 
-    if failed and len(failed) == len(args.leagues):
+    attempted = [lg for lg in args.leagues if lg != "ncaaf"]
+    if failed and len(failed) == len(attempted):
         raise SystemExit(f"every league fetch failed: {failed}")
 
     out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
