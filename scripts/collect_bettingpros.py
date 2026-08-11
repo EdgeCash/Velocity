@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -76,12 +78,26 @@ def main() -> None:
     # Prop board snapshot — the BettingPros projections + EV per prop (premium
     # fields null on free-tier credentials). Raw payload banked verbatim,
     # normalized frame alongside the lines parquet. Best-effort: prop trouble
-    # never sinks the lines snapshot above.
+    # never sinks the lines snapshot above. The game-lines batch just spent
+    # several requests in quick succession, so a 429 here is the partner
+    # throttle (5 RPS) still cooling — proven on the first live dispatch —
+    # hence the backoff retries.
     client = BettingProsClient.from_env()
     tag = now.strftime("%Y%m%dT%H%M%SZ")
     for sport in PROP_SPORTS:
         try:
-            payload = client.props(sport)
+            payload = None
+            for attempt, delay in enumerate((0, 15, 30)):
+                if delay:
+                    print(f"  {sport} props throttled (429); retrying in {delay}s")
+                    time.sleep(delay)
+                try:
+                    payload = client.props(sport)
+                    break
+                except urllib.error.HTTPError as exc:
+                    if exc.code != 429 or attempt == 2:
+                        raise
+            assert payload is not None
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             (raw_dir / f"props_{sport.lower()}_{tag}.json").write_text(json.dumps(payload))
