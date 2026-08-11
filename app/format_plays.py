@@ -249,10 +249,12 @@ def card_images(folder: Path, league: str = "nfl") -> dict[str, object]:
 
     return {
         "model": _pngs("social"),
+        "deepdive": _pngs("deepdive"),
         "simcheck": _pngs("simcheck"),
         "record": _single("recordcard"),
         "dfs": _single("dfs"),
         "model_captions": _captions("social"),
+        "deepdive_captions": _captions("deepdive"),
         "simcheck_captions": _captions("simcheck"),
         "dfs_captions": _captions("dfs"),
     }

@@ -496,25 +496,48 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
         asset_dir = Path(args.out) / ".assets"  # hidden: outside the upload globs
         aliases = None
         team_colors = None
+        code_to_team: dict[str, str] = {}
         if args.league == "ncaaf":
-            aliases, team_colors = _ncaaf_identity(events, asset_dir)
+            aliases, team_colors, code_to_team = _ncaaf_identity(events, asset_dir)
+        # max_watch=6: the hero card renders its top three; the deep dive
+        # carries the full six.
         cards = build_social_cards(
             projections, events,
             props_by_game=props_by_game, key_to_name=key_to_name,
             prop_lines=prop_lines, record_line=record_line, lines=canonical,
-            aliases=aliases, team_colors=team_colors,
+            aliases=aliases, team_colors=team_colors, max_watch=6,
         )
         paths = render_cards(cards, Path(args.out), stamp,
                              asset_dir=asset_dir, league=args.league)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
+
+        # Deep Dive companions — the analytical page behind each matchup card
+        # (form/EPA table, margin vs the market, extended props). Best-effort
+        # like everything else on this surface.
+        try:
+            from velocity.ingest.local import load_games, load_plays
+            from velocity.report.deepdive import build_deep_dives
+            from velocity.report.deepdive_png import render_deep_dives
+
+            games = load_games(_find_games(Path(args.data)), league=args.league)
+            plays_path = _find_plays(Path(args.data)) if args.league == "nfl" else None
+            plays = load_plays(plays_path) if plays_path is not None else None
+            dives = build_deep_dives(cards, projections, games, plays,
+                                     team_names=code_to_team)
+            dive_paths = render_deep_dives(dives, Path(args.out), stamp,
+                                           asset_dir=asset_dir, league=args.league)
+            print(f"wrote {len(dive_paths)} deep dive card(s) to {args.out}")
+        except Exception as exc:  # noqa: BLE001 - the companion never blocks the card run
+            print(f"deep dives skipped: {exc}")
     except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
         print(f"social cards skipped: {exc}")
 
 
 def _ncaaf_identity(
     events: pd.DataFrame, asset_dir: Path
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Provider-name → school-abbreviation aliases + abbreviation → color map.
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Provider-name → school-abbreviation aliases, abbreviation → color map,
+    and abbreviation → school (the datasets' team key, for the deep dive).
 
     Built from the cached CFBD identity table (``CFBD_API_KEY``); provider
     names bridge to schools via the same nickname-prefix logic the slate
@@ -532,6 +555,7 @@ def _ncaaf_identity(
     }
     aliases = {name: name for name in provider_names}
     team_colors: dict[str, str] = {}
+    code_to_team: dict[str, str] = {}
     meta = ncaaf_team_index(os.environ.get("CFBD_API_KEY"), asset_dir)
     if meta:
         to_school = nickname_aliases(sorted(provider_names), sorted(meta))
@@ -540,7 +564,8 @@ def _ncaaf_identity(
         team_colors = {
             m.abbreviation: m.color for m in meta.values() if m.color
         }
-    return aliases, team_colors
+        code_to_team = {m.abbreviation: school for school, m in meta.items()}
+    return aliases, team_colors, code_to_team
 
 
 def _parlay_slate(
