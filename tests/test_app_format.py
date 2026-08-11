@@ -132,7 +132,22 @@ def test_card_images_finds_the_newest_run(tmp_path: Path) -> None:
     assert images["simcheck_captions"] is None  # no captions file written
 
 
+def test_card_images_finds_dfs_and_leagues(tmp_path: Path) -> None:
+    stamp = "20260914T140000Z"
+    (tmp_path / f"dfs_nfl_{stamp}.png").write_bytes(b"x")
+    (tmp_path / f"dfs_nfl_{stamp}_captions.md").write_text("lineup copy")
+    (tmp_path / f"social_ncaaf_{stamp}_UGA_at_ALA.png").write_bytes(b"x")
+
+    nfl = fp.card_images(tmp_path, "nfl")
+    assert nfl["dfs"] is not None and stamp in str(nfl["dfs"])
+    assert nfl["dfs_captions"] == "lineup copy"
+    assert nfl["model"] == []  # the NCAAF card never leaks into the NFL view
+    ncaaf = fp.card_images(tmp_path, "ncaaf")
+    assert [label for label, _ in ncaaf["model"]] == ["UGA @ ALA"]
+    assert ncaaf["dfs"] is None
+
+
 def test_card_images_empty_folder(tmp_path: Path) -> None:
     images = fp.card_images(tmp_path)
     assert images["model"] == [] and images["simcheck"] == []
-    assert images["record"] is None
+    assert images["record"] is None and images["dfs"] is None

@@ -143,12 +143,15 @@ graphic. The footer marks every card "model output, informational only".
 ## The plays app (optional, free)
 
 `app/streamlit_app.py` is a dark, phone-friendly board over the same persisted
-slate the email uses: a **Plays** tab (matchup | play — "Tampa Bay ML +101",
-"Cole O6.5 K -106", "NRFI -135"), a **Matchups** tab (per-game card with win
-probabilities, projected score, fair total/run line, F5 total, YRFI%, and that
-game's plays), and a **Record** tab (yesterday's graded plays).
+slate the email uses. The **Cards** tab is the posting workflow: every graphic
+from the newest run — market-vs-model matchup cards, Sim Checks, the record
+card, and the DFS lineup card — viewable per league (NFL / NCAAF), each with a
+download button and the pre-written caption copy in an expander, so posting
+from a phone is view → download → paste caption. **Plays** is the two-column
+board (matchup | play), **Matchups** the per-game numbers, **Record**
+yesterday's graded plays.
 
-It reads the newest `slate-mlb-*` Actions artifact through the GitHub API — the
+It reads the newest `slate-*` Actions artifact through the GitHub API — the
 paid-odds data itself stays out of the repo. Deploy free on
 [Streamlit Community Cloud](https://share.streamlit.io):
 
