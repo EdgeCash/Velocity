@@ -110,6 +110,9 @@ jobs:
       - name: Build slates
         env:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
+          # NCAAF card identity (school abbreviations + colors) fetches the
+          # CFBD teams table at render time — same key the grading step uses.
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
