@@ -8,9 +8,12 @@ one-line consensus market strip — SportsCenter grammar without the stat wall.
 
 Three cards, one visual language:
 
-* **Model card** (pregame) — team blocks with logos, the team-colored win
-  split, hero tiles (projected score, fair line, fair total), the simulated
-  total-points distribution, players to watch, and the season receipt line.
+* **Market vs Model card** (pregame) — team blocks with logos, the
+  team-colored win split, then the heart of the card: the market's consensus
+  numbers over the model's numbers in equal type (spread / total / win prob),
+  a verdict strip that only wears color where disagreement clears the
+  published thresholds, a top-props strip in the same micro-grammar, and the
+  season receipt line. The market is the benchmark; the delta is the content.
 * **Sim Check** (post-game) — the actual result pinned on the pregame
   distribution, percentile as the hero number.
 * **Model record** — yesterday graded plus the season line.
@@ -37,7 +40,7 @@ from matplotlib.patches import FancyBboxPatch
 
 from velocity.report.assets import logo_path, register_fonts, team_bar_colors
 from velocity.report.sim_check import SimCheckCard, ordinal, sim_check_caption
-from velocity.report.social import _WATCH_MARKETS, SocialCard
+from velocity.report.social import _WATCH_MARKETS, MarketView, SocialCard
 
 # Surfaces + ink (text) tokens.
 BG = "#0b0f14"
@@ -200,11 +203,11 @@ def _trim_pmf(
     return {v: pmf.get(v, 0.0) for v in range(lo, hi + 1)}
 
 
-# --- the pregame model card ---------------------------------------------------
+# --- the pregame MARKET vs MODEL card ------------------------------------------
 
 
 def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None) -> None:
-    """Away block left, home block right — logo + code — time + market center."""
+    """Away block left, home block right — logo + code — time + projection center."""
     away_logo = _image(fig, logo_path(card.away_code, asset_dir), 0.065, 0.83, 0.115)
     home_logo = _image(fig, logo_path(card.home_code, asset_dir), 0.873, 0.83, 0.115)
     away_x = 0.145 if away_logo else 0.07
@@ -221,8 +224,8 @@ def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None) -> N
     if when:
         _display(fig, 0.5, 0.805, when, color=INK, fontsize=24, ha="center",
                  fontweight="semibold")
-    if card.market:
-        _text(fig, 0.5, 0.768, card.market, color=INK_DIM, fontsize=14, ha="center")
+    _text(fig, 0.5, 0.768, f"model projects {card.mu_away:.1f} – {card.mu_home:.1f}",
+          color=INK_DIM, fontsize=14, ha="center")
 
 
 def _win_bar(fig: plt.Figure, card: SocialCard) -> None:
@@ -242,42 +245,115 @@ def _win_bar(fig: plt.Figure, card: SocialCard) -> None:
              fontsize=21, ha="right", fontweight="semibold")
 
 
-def _tiles(fig: plt.Figure, card: SocialCard) -> None:
-    tiles = [
-        ("PROJECTED SCORE", f"{card.mu_away:.1f} – {card.mu_home:.1f}"),
-        ("FAIR LINE", card.spread_label()),
-        ("FAIR TOTAL", f"{card.fair_total:.1f}"),
-    ]
-    for i, (label, value) in enumerate(tiles):
-        x = 0.065 + i * 0.30
-        _text(fig, x, 0.595, label, color=INK_DIM, fontsize=13.5)
-        _display(fig, x, 0.532, value, color=INK, fontsize=40)
+# Matrix geometry: three market columns, centered; the row-label gutter left.
+_COLS = (("spread", 0.335), ("total", 0.585), ("win", 0.825))
 
 
-def _watch(fig: plt.Figure, card: SocialCard) -> None:
-    _text(fig, 0.635, 0.452, "PLAYERS TO WATCH", color=INK_DIM, fontsize=13.5)
+def _matrix(fig: plt.Figure, card: SocialCard) -> None:
+    """The heart of the card: MARKET on top, MODEL under it in equal type, and
+    a verdict strip that only wears the edge color past the thresholds."""
+    view = card.market_view or MarketView()
+    heads = {"spread": "SPREAD", "total": "TOTAL", "win": "WIN PROB"}
+    for key, cx in _COLS:
+        _text(fig, cx, 0.578, heads[key], color=INK_DIM, fontsize=13.5, ha="center")
+    for label, y in (("MARKET", 0.495), ("MODEL", 0.385)):
+        _text(fig, 0.068, y + 0.008, label, color=INK_DIM, fontsize=14.5)
+    _text(fig, 0.068, 0.298, "EDGE", color=INK_DIM, fontsize=14.5)
+
+    implied = view.implied_home_prob()
+    market_cells = {
+        "spread": "—" if view.spread_home is None
+        else f"{card.home_code} {view.spread_home:+g}",
+        "total": "—" if view.total is None else f"{view.total:g}",
+        "win": "—" if implied is None else f"{card.home_code} {implied:.0%}",
+    }
+    model_cells = {
+        "spread": card.spread_label(),
+        "total": f"{card.fair_total:.1f}",
+        "win": f"{card.home_code} {card.p_home_win:.0%}",
+    }
+    for key, cx in _COLS:
+        color = INK if market_cells[key] != "—" else INK_DIM
+        # Equal type size on both rows — the honesty signal: neither number outranks.
+        _display(fig, cx, 0.475, market_cells[key], color=color, fontsize=36,
+                 ha="center")
+        _display(fig, cx, 0.365, model_cells[key], color=INK, fontsize=36,
+                 ha="center")
+    if view.ml_away is not None and view.ml_home is not None:
+        _text(fig, _COLS[2][1], 0.443,
+              f"{card.away_code} {view.ml_away:+d} · {card.home_code} {view.ml_home:+d}",
+              color=INK_DIM, fontsize=11.5, ha="center")
+
+    edges = card.edges()
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    for key, cx in _COLS:
+        call = edges[key]
+        if call.fired:
+            ax.add_patch(FancyBboxPatch(
+                (cx - 0.105, 0.272), 0.21, 0.062,
+                boxstyle="round,pad=0,rounding_size=0.012", mutation_aspect=9 / 16,
+                facecolor=TRACK, edgecolor=_GOOD, linewidth=2.0,
+            ))
+            _display(fig, cx, 0.308, f"LEAN {call.label}", color=_GOOD, fontsize=19,
+                     ha="center", fontweight="semibold")
+            _text(fig, cx, 0.280, call.detail, color=INK_DIM, fontsize=11.5,
+                  ha="center")
+        else:
+            _text(fig, cx, 0.298, call.detail, color=INK_DIM, fontsize=14,
+                  ha="center")
+
+
+def _props_strip(fig: plt.Figure, card: SocialCard) -> None:
+    """Up to three prop chips, each repeating the market-vs-model micro-grammar."""
+    _text(fig, 0.065, 0.192, "TOP PROPS · MARKET LINE vs MODEL",
+          color=INK_DIM, fontsize=13.5)
     if not card.watch:
-        _text(fig, 0.635, 0.39, "projections not posted yet", color=INK_DIM, fontsize=15)
+        _text(fig, 0.065, 0.128, "no prop board posted yet", color=INK_DIM,
+              fontsize=15)
         return
     for i, entry in enumerate(card.watch[:3]):
-        y = 0.398 - i * 0.108
-        x = 0.635
-        _display(fig, x, y, entry.player, color=INK, fontsize=21,
+        x = 0.075 + i * 0.30
+        # The teal accent bar marks a board-lined prop where the model's
+        # probability sits well off 50% — the same "edge only" color logic.
+        if entry.from_board and abs(entry.p_over - 0.5) >= 0.10:
+            ax = fig.add_axes((x - 0.010, 0.108, 0.0035, 0.055))
+            ax.axis("off")
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.add_patch(FancyBboxPatch(
+                (0, 0), 1, 1, boxstyle="round,pad=0,rounding_size=0.2",
+                facecolor=MODEL, edgecolor="none"))
+        _display(fig, x, 0.146, entry.player, color=INK, fontsize=18,
                  fontweight="semibold")
-        _text(fig, 0.933, y, _WATCH_MARKETS.get(entry.market, (entry.market, ""))[0],
-              color=INK_DIM, fontsize=13, ha="right")
-        _text(fig, x, y - 0.035, entry.fact(), color=INK_DIM, fontsize=13.5)
-        ax = fig.add_axes((x, y - 0.062, 0.933 - x, 0.011))
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.axis("off")
-        _rounded(ax, 0.0, 1.0, TRACK)
-        _rounded(ax, 0.0, max(entry.p_over, 0.012), MODEL)
+        unit = _WATCH_MARKETS.get(entry.market, (entry.market, entry.market))[1]
+        avg = f"{entry.mean:.1f}" if entry.mean < 20 else f"{entry.mean:.0f}"
+        line_kind = "line" if entry.from_board else "model line"
+        _text(fig, x, 0.113,
+              f"{unit} · {line_kind} {entry.line:g} · model {avg} · "
+              f"{entry.p_over:.0%} over",
+              color=INK_DIM, fontsize=12.5)
+
+
+def _matchup_footer_note(card: SocialCard) -> str:
+    view = card.market_view
+    if view is None:
+        return "no market board captured · model output, informational only"
+    parts = []
+    if view.books:
+        noun = "book" if view.books == 1 else "books"
+        parts.append(f"lines: consensus of {view.books} {noun}")
+    if view.captured is not None:
+        parts.append(f"captured {view.captured.strftime('%b %-d %H:%M')} UTC")
+    parts.append("leans fire only past fixed thresholds · informational only")
+    return " · ".join(parts)
 
 
 def render_card(card: SocialCard, path: Path | str,
                 asset_dir: Path | str | None = None) -> Path:
-    """Render one pregame model card to ``path`` (1600×900 PNG)."""
+    """Render one pregame MARKET vs MODEL card to ``path`` (1600×900 PNG)."""
     assets = None if asset_dir is None else Path(asset_dir)
     fig = _fig()
     when = ""
@@ -285,21 +361,17 @@ def render_card(card: SocialCard, path: Path | str,
         central = card.kickoff.tz_localize("UTC").tz_convert("America/Chicago")
         when = central.strftime("%A, %b %-d").upper()
     _panel(fig, (0.04, 0.655, 0.92, 0.245))
-    _panel(fig, (0.04, 0.09, 0.565, 0.40))
-    _panel(fig, (0.62, 0.09, 0.34, 0.40))
-    _brand_header(fig, "MODEL CARD", when)
+    _panel(fig, (0.04, 0.245, 0.92, 0.375))
+    _panel(fig, (0.04, 0.085, 0.92, 0.135))
+    _brand_header(fig, "MARKET vs MODEL", when)
     _team_blocks(fig, card, assets)
     _win_bar(fig, card)
-    _tiles(fig, card)
-    _text(fig, 0.065, 0.452, f"SIMULATED TOTAL POINTS · {card.n_sims:,} GAMES",
-          color=INK_DIM, fontsize=13.5)
-    _histogram_axes(fig, (0.075, 0.125, 0.5, 0.30),
-                    _trim_pmf(dict(card.total_points_pmf)), card.fair_total)
-    _watch(fig, card)
+    _matrix(fig, card)
+    _props_strip(fig, card)
     if card.record_line:
-        _text(fig, 0.95, 0.898, f"{card.record_line} · GRADED WEEKLY",
+        _text(fig, 0.95, 0.898, f"{card.record_line} · GRADED DAILY, LOSSES INCLUDED",
               color=INK, fontsize=13, ha="right")
-    _footer(fig, "Monte Carlo simulation · model output, informational only")
+    _footer(fig, _matchup_footer_note(card))
     out = Path(path)
     fig.savefig(out, dpi=DPI, facecolor=BG)
     plt.close(fig)

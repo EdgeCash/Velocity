@@ -127,6 +127,35 @@ jobs:
             echo "::endgroup::"
           done
 
+      # ---- the optimal DK lineup (DFS surface) --------------------------------
+      # Needs both a DK salary snapshot and an FP projections snapshot; missing
+      # either just skips the lineup. The lineup parquet + card land in the same
+      # private artifact (DK salaries are collected data — never public repo).
+      - name: Fetch DraftKings salaries
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/dk
+          id=$(gh run list --workflow collect-dk-salaries.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$id" ]; then
+            gh run download "$id" --dir artifacts/dk || true
+          fi
+
+      - name: Build DFS lineup
+        continue-on-error: true
+        run: |
+          FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
+          DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_nfl_*.parquet 2>/dev/null | head -1 || true)
+          if [ -n "$FP_FILE" ] && [ -n "$DK_FILE" ]; then
+            python scripts/build_dfs_lineup.py \
+              --salaries "$DK_FILE" --fp "$FP_FILE" \
+              --out artifacts/slate --league nfl
+          else
+            echo "missing DK salaries or FP projections; skipping DFS lineup"
+          fi
+
       - name: Upload slates (private artifact)
         uses: actions/upload-artifact@v4
         with:

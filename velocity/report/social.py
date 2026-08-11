@@ -1,17 +1,17 @@
 """Social model cards — the shareable per-game breakdown, data side.
 
-The public face of a slate run: one card per game carrying **only model
-facts** — win probabilities, projected score, fair spread and total, the
-simulated total-points distribution, and a "players to watch" strip. No odds,
-no picks, no verdicts: every number is a checkable output of the same Monte
-Carlo the slate prices from, so tomorrow's graded record can be laid directly
-against today's card.
+The public face of a slate run: one **MARKET vs MODEL** card per game. The
+market's consensus numbers sit on top as the benchmark; the model's numbers
+sit directly under them in equal type; the delta between the two is the
+content. A lean is stated only where the disagreement clears a fixed,
+published threshold — everything else renders "no edge", because a board
+where every cell has a play is a tout sheet, and the empty leans are what
+make the highlighted ones credible.
 
-The one quietly sharp element: **players to watch are chosen where the model
-most disagrees with the market's prop line** (when a board is available) — but
-the card states only the model's probability at that line, never the price.
-A reader who knows what a line is can do the rest; the card never does it for
-them.
+The props strip repeats the same micro-grammar: **players to watch are chosen
+where the model most disagrees with the market's prop line** (when a board is
+available) — the market's line and the model's number, side by side, never a
+price and never an imperative.
 
 Pure and offline-testable; rendering lives in :mod:`social_png`.
 """
@@ -61,6 +61,47 @@ class WatchEntry:
 
 
 @dataclass(frozen=True)
+class MarketView:
+    """One game's consensus market numbers, as numerics the matrix can lay out.
+
+    ``spread_home`` is the modal home spread point (negative = home favored),
+    moneylines are median American prices per side, ``total`` the modal O/U
+    point. ``books`` and ``captured`` feed the trust footer — a market number
+    without a source and a timestamp is just an assertion.
+    """
+
+    spread_home: float | None = None
+    total: float | None = None
+    ml_away: int | None = None
+    ml_home: int | None = None
+    books: int = 0
+    captured: pd.Timestamp | None = None
+
+    def implied_home_prob(self) -> float | None:
+        """The market's de-vigged home win probability (two-way multiplicative)."""
+        if self.ml_away is None or self.ml_home is None:
+            return None
+        from velocity.wagering.devig import devig
+
+        return float(devig([self.ml_away, self.ml_home])[1])
+
+
+# Published lean thresholds — a disagreement below these renders "no edge".
+SPREAD_EDGE_PTS = 2.5
+TOTAL_EDGE_PTS = 3.0
+WIN_EDGE_PROB = 0.07
+
+
+@dataclass(frozen=True)
+class EdgeCall:
+    """One market's verdict strip: a lean label when the threshold fires."""
+
+    fired: bool
+    label: str  # "DET +6.5" / "OVER 51.5" / "" — the lean at the market number
+    detail: str  # "model diff 4.5 pts" / "no edge"
+
+
+@dataclass(frozen=True)
 class SocialCard:
     """Everything the renderer needs for one game's graphic."""
 
@@ -84,6 +125,8 @@ class SocialCard:
     # The market strip ("BUF +125 · KC -145 · KC -2.5 · O/U 47.5") — consensus
     # board numbers stated as fact, broadcast-style; never a recommendation.
     market: str | None = None
+    # The same board as numerics — powers the MARKET vs MODEL matrix.
+    market_view: MarketView | None = None
 
     def spread_label(self) -> str:
         """The fair line as a team-anchored string ("KC -2.7", or "PK")."""
@@ -92,6 +135,49 @@ class SocialCard:
         if self.fair_spread < 0:  # home favored
             return f"{self.home_code} {self.fair_spread:+.1f}"
         return f"{self.away_code} {-self.fair_spread:+.1f}"
+
+    def edges(self) -> dict[str, EdgeCall]:
+        """The matrix's verdict row: one :class:`EdgeCall` per market.
+
+        A lean is always stated **at the market's own number** (the bettable
+        thing), and fires only past the published thresholds. Missing market
+        numbers yield unfired calls with an em-dash detail — absence of a
+        board is not an edge.
+        """
+        view = self.market_view or MarketView()
+        none = EdgeCall(False, "", "—")
+        out = {"spread": none, "total": none, "win": none}
+
+        if view.spread_home is not None:
+            diff = self.fair_spread - view.spread_home
+            if diff >= SPREAD_EDGE_PTS:  # model likes home less than the market
+                out["spread"] = EdgeCall(
+                    True, f"{self.away_code} {-view.spread_home:+g}",
+                    f"model diff {abs(diff):.1f} pts")
+            elif diff <= -SPREAD_EDGE_PTS:
+                out["spread"] = EdgeCall(
+                    True, f"{self.home_code} {view.spread_home:+g}",
+                    f"model diff {abs(diff):.1f} pts")
+            else:
+                out["spread"] = EdgeCall(False, "", "no edge")
+        if view.total is not None:
+            diff = self.fair_total - view.total
+            if abs(diff) >= TOTAL_EDGE_PTS:
+                side = "OVER" if diff > 0 else "UNDER"
+                out["total"] = EdgeCall(
+                    True, f"{side} {view.total:g}", f"model diff {abs(diff):.1f} pts")
+            else:
+                out["total"] = EdgeCall(False, "", "no edge")
+        implied = view.implied_home_prob()
+        if implied is not None:
+            diff = self.p_home_win - implied
+            if abs(diff) >= WIN_EDGE_PROB:
+                code = self.home_code if diff > 0 else self.away_code
+                out["win"] = EdgeCall(
+                    True, f"{code} ML", f"model diff {abs(diff):.0%}")
+            else:
+                out["win"] = EdgeCall(False, "", "no edge")
+        return out
 
 
 def _pmf(samples: np.ndarray) -> dict[int, float]:
@@ -258,9 +344,49 @@ def build_social_cards(
                 watch=watch,
                 record_line=record_line,
                 market=market_strip(lines, gid, away_code, home_code),
+                market_view=market_view(lines, gid),
             )
         )
     return cards
+
+
+def market_view(lines: pd.DataFrame | None, game_id: str) -> MarketView | None:
+    """One game's board condensed to numerics: the matrix's MARKET row.
+
+    Same consensus statistics as :func:`market_strip` (median moneylines,
+    modal spread/total points), plus the book count and the newest quote
+    timestamp for the trust footer. ``None`` when the board carries nothing
+    for the game.
+    """
+    if lines is None or lines.empty:
+        return None
+    game = lines[lines["game_id"].astype(str) == str(game_id)]
+    if game.empty:
+        return None
+    ml = game[game["market"] == "moneyline"]
+    prices: dict[str, int | None] = {}
+    for side in ("away", "home"):
+        quoted = ml.loc[ml["side"] == side, "price"].dropna()
+        prices[side] = None if quoted.empty else int(quoted.median())
+    spreads = game.loc[
+        (game["market"] == "spread") & (game["side"] == "home"), "point"
+    ].dropna()
+    totals = game.loc[game["market"] == "total", "point"].dropna()
+    captured = None
+    if "timestamp" in game.columns:
+        stamps = pd.to_datetime(game["timestamp"], errors="coerce").dropna()
+        captured = None if stamps.empty else pd.Timestamp(stamps.max())
+    view = MarketView(
+        spread_home=None if spreads.empty else float(spreads.mode().iloc[0]),
+        total=None if totals.empty else float(totals.mode().iloc[0]),
+        ml_away=prices["away"],
+        ml_home=prices["home"],
+        books=int(game["book"].nunique()) if "book" in game.columns else 0,
+        captured=captured,
+    )
+    if (view.spread_home, view.total, view.ml_away, view.ml_home) == (None,) * 4:
+        return None
+    return view
 
 
 def market_strip(
@@ -318,7 +444,7 @@ def distributions_frame(projections: Mapping[str, GameProjection]) -> pd.DataFra
 
 
 def caption(card: SocialCard) -> str:
-    """Post copy for one card: plain model facts, no odds, no imperatives."""
+    """Post copy for one card: market vs model stated as fact, no imperatives."""
     favorite = card.home_code if card.p_home_win >= 0.5 else card.away_code
     p_fav = max(card.p_home_win, 1.0 - card.p_home_win)
     lines = [
@@ -326,5 +452,13 @@ def caption(card: SocialCard) -> str:
         f"projected {card.mu_away:.1f}-{card.mu_home:.1f} "
         f"(fair line {card.spread_label()}, fair total {card.fair_total:.1f}).",
     ]
+    if card.market:
+        lines.append(f"Market: {card.market}.")
+    leans = [
+        f"{call.label} ({call.detail})"
+        for call in card.edges().values() if call.fired
+    ]
+    lines.append("Model lean: " + ("; ".join(leans) + "." if leans
+                                   else "no edge on this board."))
     lines.extend(f"{entry.player}: {entry.fact()}." for entry in card.watch)
     return "\n".join(lines)
