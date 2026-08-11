@@ -92,22 +92,33 @@ def lighten_for_dark(color: str, floor: float = 0.32) -> str:
     return _rgb_to_hex(colorsys.hls_to_rgb(h, floor, s))
 
 
-def team_bar_colors(away_code: str, home_code: str) -> tuple[str, str]:
+def bar_colors(away_hex: str | None, home_hex: str | None) -> tuple[str, str]:
     """Display colors for the away/home win-split bar, guaranteed distinct.
 
     Both brand colors are lifted to dark-surface visibility; when the pair is
     still too similar (a red-vs-red matchup), the away side steps further
     toward white so the two segments never merge. Identity also rides on the
-    direct code labels, so color is never the only cue.
+    direct code labels, so color is never the only cue. ``None`` sides fall
+    back to the neutral amber/teal pair.
     """
-    away = lighten_for_dark(TEAM_META[away_code].color) if away_code in TEAM_META else "#d97706"
-    home = lighten_for_dark(TEAM_META[home_code].color) if home_code in TEAM_META else "#0d9488"
+    away = lighten_for_dark(away_hex) if away_hex else "#d97706"
+    home = lighten_for_dark(home_hex) if home_hex else "#0d9488"
     a_rgb, h_rgb = _hex_to_rgb(away), _hex_to_rgb(home)
     distance = sum(abs(a - b) for a, b in zip(a_rgb, h_rgb, strict=True))
     if distance < 0.55:
         h, lightness, s = colorsys.rgb_to_hls(*a_rgb)
         away = _rgb_to_hex(colorsys.hls_to_rgb(h, min(lightness + 0.28, 0.85), max(s * 0.7, 0.1)))
     return away, home
+
+
+def team_bar_colors(away_code: str, home_code: str) -> tuple[str, str]:
+    """The win-split pair for NFL club codes (the fixed brand table)."""
+    away_meta = TEAM_META.get(away_code)
+    home_meta = TEAM_META.get(home_code)
+    return bar_colors(
+        away_meta.color if away_meta else None,
+        home_meta.color if home_meta else None,
+    )
 
 
 def logo_url(logo_slug: str) -> str:
@@ -137,6 +148,86 @@ def logo_path(team_code: str, cache_dir: Path | str | None) -> Path | None:
     if meta is None or cache_dir is None:
         return None
     return _fetch(logo_url(meta.logo_slug), Path(cache_dir) / f"logo_{meta.logo_slug}.png")
+
+
+# --- NCAAF school identity ----------------------------------------------------
+#
+# College marks are owned by each university (licensed via CLC/Learfield), so
+# NCAAF cards deliberately carry **no logos and no player imagery** — identity
+# is the school's abbreviation plus its official colors, both plain facts.
+# The identity table comes from the CFBD teams endpoint (the same source the
+# model's schedule uses), cached to the asset dir; with no API key the cards
+# fall back to provider names and the neutral bar colors.
+
+_CFBD_TEAMS_URL = "https://api.collegefootballdata.com/teams/fbs"
+
+
+@dataclass(frozen=True)
+class SchoolMeta:
+    """A school's display abbreviation and official colors (no marks)."""
+
+    abbreviation: str
+    color: str | None = None
+    alt_color: str | None = None
+
+
+def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
+    """CFBD ``/teams/fbs`` payload → ``{school: SchoolMeta}``.
+
+    Rows without a school name are dropped; a missing abbreviation falls back
+    to the school name uppercased (the renderer auto-shrinks long labels).
+    Colors pass through only when they look like hex.
+    """
+
+    def _hex(value: object) -> str | None:
+        s = str(value or "")
+        if not s.startswith("#"):
+            s = f"#{s}" if s else ""
+        return s if len(s) == 7 else None
+
+    out: dict[str, SchoolMeta] = {}
+    for row in payload:
+        school = row.get("school")
+        if not school:
+            continue
+        abbrev = str(row.get("abbreviation") or school).upper()
+        out[str(school)] = SchoolMeta(
+            abbreviation=abbrev,
+            color=_hex(row.get("color")),
+            alt_color=_hex(row.get("altColor") or row.get("alt_color")),
+        )
+    return out
+
+
+def ncaaf_team_index(
+    api_key: str | None, cache_dir: Path | str | None
+) -> dict[str, SchoolMeta]:  # pragma: no cover - network + cache orchestration
+    """The FBS identity table, fetched once and cached; ``{}`` on any failure."""
+    import json
+
+    cache = None if cache_dir is None else Path(cache_dir) / "ncaaf_teams.json"
+    if cache is not None and cache.exists():
+        try:
+            return parse_ncaaf_teams(json.loads(cache.read_text()))
+        except Exception:  # noqa: BLE001 - a corrupt cache entry just refetches
+            pass
+    if not api_key:
+        return {}
+    try:
+        request = urllib.request.Request(  # noqa: S310 - fixed https host
+            _CFBD_TEAMS_URL, headers={"Authorization": f"Bearer {api_key}"}
+        )
+        with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
+            payload = json.loads(resp.read())
+    except Exception:  # noqa: BLE001 - identity is a nicety, never fatal
+        return {}
+    if cache is not None:
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(payload))
+        except Exception:  # noqa: BLE001 - caching is best-effort
+            pass
+    return parse_ncaaf_teams(payload)
 
 
 _FONT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"

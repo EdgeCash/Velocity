@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -292,9 +293,12 @@ def main() -> None:
             )
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame,
                         generated_at)
-        # Social model cards — one shareable X-frame PNG per game plus a captions
-        # file of post copy. Best-effort, like every report surface.
-        if args.league == "nfl" and projections:
+        # Social market-vs-model cards — one shareable X-frame PNG per game plus
+        # a captions file of post copy. Best-effort, like every report surface.
+        # NFL identity = club codes + logos; NCAAF identity = school
+        # abbreviation + official colors only (no marks — licensing posture,
+        # see report/assets.py).
+        if projections:
             _write_social_cards(
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
@@ -481,17 +485,54 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                 record_line = season_record_line(pd.read_parquet(chain[-1]))
         except Exception as exc:  # noqa: BLE001 - the record line is optional decoration
             print(f"record line skipped: {exc}")
+        asset_dir = Path(args.out) / ".assets"  # hidden: outside the upload globs
+        aliases = None
+        team_colors = None
+        if args.league == "ncaaf":
+            aliases, team_colors = _ncaaf_identity(events, asset_dir)
         cards = build_social_cards(
             projections, events,
             props_by_game=props_by_game, key_to_name=key_to_name,
             prop_lines=prop_lines, record_line=record_line, lines=canonical,
+            aliases=aliases, team_colors=team_colors,
         )
-        asset_dir = Path(args.out) / ".assets"  # hidden: outside the upload globs
         paths = render_cards(cards, Path(args.out), stamp,
                              asset_dir=asset_dir, league=args.league)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
     except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
         print(f"social cards skipped: {exc}")
+
+
+def _ncaaf_identity(
+    events: pd.DataFrame, asset_dir: Path
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Provider-name → school-abbreviation aliases + abbreviation → color map.
+
+    Built from the cached CFBD identity table (``CFBD_API_KEY``); provider
+    names bridge to schools via the same nickname-prefix logic the slate
+    resolution uses. Any name the table can't place falls back to itself —
+    the card renders the provider name at a smaller size rather than guessing.
+    No logos anywhere on this path (school marks are licensed; abbreviation +
+    colors are plain facts).
+    """
+    from velocity.report.assets import ncaaf_team_index
+    from velocity.wagering.live import nickname_aliases
+
+    provider_names = {
+        str(n) for n in
+        pd.concat([events["away_team"], events["home_team"]]).dropna()
+    }
+    aliases = {name: name for name in provider_names}
+    team_colors: dict[str, str] = {}
+    meta = ncaaf_team_index(os.environ.get("CFBD_API_KEY"), asset_dir)
+    if meta:
+        to_school = nickname_aliases(sorted(provider_names), sorted(meta))
+        for provider, school in to_school.items():
+            aliases[provider] = meta[school].abbreviation
+        team_colors = {
+            m.abbreviation: m.color for m in meta.values() if m.color
+        }
+    return aliases, team_colors
 
 
 def _parlay_slate(

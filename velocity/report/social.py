@@ -127,6 +127,10 @@ class SocialCard:
     market: str | None = None
     # The same board as numerics — powers the MARKET vs MODEL matrix.
     market_view: MarketView | None = None
+    # Explicit brand colors (hex) for the win split — set for leagues without
+    # a fixed club table (NCAAF); None falls back to the NFL table / neutrals.
+    away_color: str | None = None
+    home_color: str | None = None
 
     def spread_label(self) -> str:
         """The fair line as a team-anchored string ("KC -2.7", or "PK")."""
@@ -293,12 +297,14 @@ def build_social_cards(
     max_watch: int = 3,
     record_line: str | None = None,
     lines: pd.DataFrame | None = None,
+    team_colors: Mapping[str, str] | None = None,
 ) -> list[SocialCard]:
     """One :class:`SocialCard` per projected event, in board order.
 
     ``props_by_game`` + ``key_to_name`` power the watch strip (both optional —
     cards render without them); ``lines`` is the canonical game board, from
-    which each card's market strip is condensed.
+    which each card's market strip is condensed. ``team_colors`` (display code
+    → hex) carries brand colors for leagues without a fixed club table.
     """
     from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
 
@@ -326,6 +332,7 @@ def build_social_cards(
             )
         away_code = resolve_team(away_name, codes, alias_map) or away_name
         home_code = resolve_team(home_name, codes, alias_map) or home_name
+        colors = dict(team_colors or {})
         cards.append(
             SocialCard(
                 game_id=gid,
@@ -345,6 +352,8 @@ def build_social_cards(
                 record_line=record_line,
                 market=market_strip(lines, gid, away_code, home_code),
                 market_view=market_view(lines, gid),
+                away_color=colors.get(away_code),
+                home_color=colors.get(home_code),
             )
         )
     return cards

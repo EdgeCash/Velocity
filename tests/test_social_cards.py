@@ -198,6 +198,55 @@ def test_distributions_frame_sums_to_one_per_kind() -> None:
     assert set(frame["kind"]) == {"margin", "total"}
 
 
+# --- NCAAF identity (logo-free) -----------------------------------------------
+
+
+def test_parse_ncaaf_teams_yields_abbrevs_and_colors() -> None:
+    from velocity.report.assets import parse_ncaaf_teams
+
+    payload = [
+        {"school": "Georgia", "abbreviation": "UGA", "color": "#BA0C2F",
+         "altColor": "#000000"},
+        {"school": "Alabama", "abbreviation": "ALA", "color": "9E1B32"},
+        {"school": "Coastal Carolina", "abbreviation": None, "color": "notahex"},
+        {"school": None, "abbreviation": "XX"},  # dropped: no school
+    ]
+    index = parse_ncaaf_teams(payload)
+    assert index["Georgia"].abbreviation == "UGA"
+    assert index["Georgia"].color == "#BA0C2F"
+    assert index["Alabama"].color == "#9E1B32"  # bare hex normalized
+    assert index["Coastal Carolina"].abbreviation == "COASTAL CAROLINA"
+    assert index["Coastal Carolina"].color is None  # junk color dropped
+    assert len(index) == 3
+
+
+def test_bar_colors_separates_similar_brands_and_defaults() -> None:
+    from velocity.report.assets import bar_colors
+
+    crimson_a, crimson_b = bar_colors("#BA0C2F", "#9E1B32")  # red-vs-red
+    assert crimson_a != crimson_b
+    neutral = bar_colors(None, None)
+    assert neutral == ("#d97706", "#0d9488")  # the fallback pair, distinct
+
+
+def test_build_social_cards_carries_school_identity() -> None:
+    events = pd.DataFrame({
+        "game_id": ["g2"],
+        "away_team": ["Georgia Bulldogs"],
+        "home_team": ["Alabama Crimson Tide"],
+        "kickoff": pd.to_datetime(["2026-09-05 23:30"]),
+    })
+    proj = _projection()
+    cards = build_social_cards(
+        {"g2": proj}, events,
+        aliases={"Georgia Bulldogs": "UGA", "Alabama Crimson Tide": "ALA"},
+        team_colors={"UGA": "#BA0C2F", "ALA": "#9E1B32"},
+    )
+    card = cards[0]
+    assert (card.away_code, card.home_code) == ("UGA", "ALA")
+    assert (card.away_color, card.home_color) == ("#BA0C2F", "#9E1B32")
+
+
 # --- sim check ----------------------------------------------------------------
 
 
@@ -257,6 +306,27 @@ def test_render_model_card_writes_a_png(tmp_path: Path) -> None:
     assert paths[0].stat().st_size > 20_000  # a real rendered frame, not a stub
     captions = tmp_path / "social_nfl_20260910T120000Z_captions.md"
     assert "BUF @ KC" in captions.read_text()
+
+
+def test_render_ncaaf_card_without_logos(tmp_path: Path) -> None:
+    """School identity: colors + labels only — and long fallback names still fit."""
+    from velocity.report.social_png import render_cards
+
+    events = pd.DataFrame({
+        "game_id": ["g2"],
+        "away_team": ["Georgia Southern Eagles"],  # no alias → long fallback label
+        "home_team": ["Alabama Crimson Tide"],
+        "kickoff": pd.to_datetime(["2026-09-05 23:30"]),
+    })
+    cards = build_social_cards(
+        {"g2": _projection()}, events,
+        aliases={"Alabama Crimson Tide": "ALA"},
+        team_colors={"ALA": "#9E1B32"},
+    )
+    assert cards[0].away_code == "Georgia Southern Eagles"  # honest fallback
+    paths = render_cards(cards, tmp_path, "20260905T120000Z", league="ncaaf")
+    assert paths and paths[0].stat().st_size > 20_000
+    assert paths[0].name.startswith("social_ncaaf_")
 
 
 def test_render_sim_check_and_record_card(tmp_path: Path) -> None:

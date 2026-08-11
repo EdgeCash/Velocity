@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.patches import FancyBboxPatch
 
-from velocity.report.assets import logo_path, register_fonts, team_bar_colors
+from velocity.report.assets import bar_colors, logo_path, register_fonts
 from velocity.report.sim_check import SimCheckCard, ordinal, sim_check_caption
 from velocity.report.social import _WATCH_MARKETS, MarketView, SocialCard
 
@@ -206,14 +206,30 @@ def _trim_pmf(
 # --- the pregame MARKET vs MODEL card ------------------------------------------
 
 
+def _label_size(label: str, base: float) -> float:
+    """Auto-shrink for long display labels (school names have no fixed code)."""
+    n = len(label)
+    if n <= 4:
+        return base
+    if n <= 9:
+        return base * 0.74
+    return base * 0.55
+
+
 def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None) -> None:
-    """Away block left, home block right — logo + code — time + projection center."""
+    """Away block left, home block right — logo + code — time + projection center.
+
+    Logos render only for clubs in the NFL table (``logo_path`` returns None
+    otherwise) — NCAAF identity is deliberately the school label + colors.
+    """
     away_logo = _image(fig, logo_path(card.away_code, asset_dir), 0.065, 0.83, 0.115)
     home_logo = _image(fig, logo_path(card.home_code, asset_dir), 0.873, 0.83, 0.115)
     away_x = 0.145 if away_logo else 0.07
-    _display(fig, away_x, 0.815, card.away_code, color=INK, fontsize=46)
+    _display(fig, away_x, 0.815, card.away_code, color=INK,
+             fontsize=_label_size(card.away_code, 46))
     home_x = 0.855 if home_logo else 0.93
-    _display(fig, home_x, 0.815, card.home_code, color=INK, fontsize=46, ha="right")
+    _display(fig, home_x, 0.815, card.home_code, color=INK,
+             fontsize=_label_size(card.home_code, 46), ha="right")
 
     when = ""
     if card.kickoff is not None:
@@ -229,7 +245,15 @@ def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None) -> N
 
 
 def _win_bar(fig: plt.Figure, card: SocialCard) -> None:
-    away_color, home_color = team_bar_colors(card.away_code, card.home_code)
+    from velocity.report.assets import TEAM_META
+
+    away_hex = card.away_color or (
+        TEAM_META[card.away_code].color if card.away_code in TEAM_META else None
+    )
+    home_hex = card.home_color or (
+        TEAM_META[card.home_code].color if card.home_code in TEAM_META else None
+    )
+    away_color, home_color = bar_colors(away_hex, home_hex)
     ax = fig.add_axes((0.065, 0.675, 0.87, 0.042))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -240,9 +264,11 @@ def _win_bar(fig: plt.Figure, card: SocialCard) -> None:
     _rounded(ax, 0.0, max(p_away - gap, 0.0), away_color)
     _rounded(ax, p_away + gap, max(p_home - gap, 0.0), home_color)
     _display(fig, 0.065, 0.726, f"{card.away_code} {p_away:.0%}", color=INK,
-             fontsize=21, fontweight="semibold")
+             fontsize=min(21.0, _label_size(card.away_code, 46) * 0.62),
+             fontweight="semibold")
     _display(fig, 0.935, 0.726, f"{p_home:.0%} {card.home_code}", color=INK,
-             fontsize=21, ha="right", fontweight="semibold")
+             fontsize=min(21.0, _label_size(card.home_code, 46) * 0.62),
+             ha="right", fontweight="semibold")
 
 
 # Matrix geometry: three market columns, centered; the row-label gutter left.
@@ -272,12 +298,18 @@ def _matrix(fig: plt.Figure, card: SocialCard) -> None:
         "total": f"{card.fair_total:.1f}",
         "win": f"{card.home_code} {card.p_home_win:.0%}",
     }
+    # Equal type size on both rows — the honesty signal: neither number
+    # outranks. One shared size per column, shrunk only when a long school
+    # label would overflow the column.
     for key, cx in _COLS:
+        size = 36.0
+        longest = max(len(market_cells[key]), len(model_cells[key]))
+        if longest > 12:
+            size = 36.0 * min(1.0, 12 / longest)
         color = INK if market_cells[key] != "—" else INK_DIM
-        # Equal type size on both rows — the honesty signal: neither number outranks.
-        _display(fig, cx, 0.475, market_cells[key], color=color, fontsize=36,
+        _display(fig, cx, 0.475, market_cells[key], color=color, fontsize=size,
                  ha="center")
-        _display(fig, cx, 0.365, model_cells[key], color=INK, fontsize=36,
+        _display(fig, cx, 0.365, model_cells[key], color=INK, fontsize=size,
                  ha="center")
     if view.ml_away is not None and view.ml_home is not None:
         _text(fig, _COLS[2][1], 0.443,
@@ -297,7 +329,9 @@ def _matrix(fig: plt.Figure, card: SocialCard) -> None:
                 boxstyle="round,pad=0,rounding_size=0.012", mutation_aspect=9 / 16,
                 facecolor=TRACK, edgecolor=_GOOD, linewidth=2.0,
             ))
-            _display(fig, cx, 0.308, f"LEAN {call.label}", color=_GOOD, fontsize=19,
+            lean = f"LEAN {call.label}"
+            _display(fig, cx, 0.308, lean, color=_GOOD,
+                     fontsize=19.0 * min(1.0, 15 / len(lean)),
                      ha="center", fontweight="semibold")
             _text(fig, cx, 0.280, call.detail, color=INK_DIM, fontsize=11.5,
                   ha="center")
