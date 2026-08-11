@@ -29,6 +29,10 @@ on:
         description: "Bankroll for stake sizing"
         required: false
         default: "100"
+      demo:
+        description: "Render demo cards from a historical week instead of the live board"
+        required: false
+        default: "false"
 
 concurrency:
   group: live-slate
@@ -107,7 +111,24 @@ jobs:
             gh run download "$id" --dir artifacts/fp || true
           fi
 
+      # Demo mode: cards for a real historical week (genuine closing lines from
+      # the committed schedules) through the same artifact the app reads — a
+      # look-and-feel preview with no odds spend and nothing for the grader.
+      - name: Render demo cards (historical week)
+        if: github.event.inputs.demo == 'true'
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          python scripts/render_demo_cards.py \
+            --league nfl --data datasets/nfl --season 2025 --week 10 \
+            --out artifacts/slate --max-games 6
+          python scripts/render_demo_cards.py \
+            --league ncaaf --data datasets/ncaaf --season 2024 --week 10 \
+            --teams "Penn State,Michigan,Georgia,Miami,Tennessee,Arkansas" \
+            --out artifacts/slate --max-games 6
+
       - name: Build slates
+        if: github.event.inputs.demo != 'true'
         env:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
           # NCAAF card identity (school abbreviations + colors) fetches the
@@ -180,7 +201,7 @@ jobs:
       # in this public file), and the mail carries paid-odds-derived data, so it
       # must go to a private inbox.
       - name: Render slate email
-        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != '' && github.event.inputs.demo != 'true'
         id: email
         run: |
           python scripts/render_slate_email.py \
@@ -188,7 +209,7 @@ jobs:
           echo "subject=$(cat artifacts/email/subject.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Email the slate
-        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != '' && github.event.inputs.demo != 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.MAIL_SERVER || 'smtp.gmail.com' }}
