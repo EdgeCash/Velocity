@@ -51,13 +51,44 @@ def collect(sports: tuple[str, ...], collected_at: pd.Timestamp) -> pd.DataFrame
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def probe_props() -> None:
+    """Status-code probe of ``/props`` across sports — settles provisioning.
+
+    MLB runs midsummer, so a live board definitely exists for it: an MLB 200
+    (even with few props) alongside football 429s would mean the route works
+    and football is seasonal; 429 on every sport — in-season and off — means
+    the partner key has no ``/props`` provisioning at all. limit=1, one
+    request per sport, spaced under the 5 RPS budget; nothing is banked.
+    """
+    client = BettingProsClient.from_env()
+    for sport in ("NFL", "MLB", "NBA", "NHL"):
+        time.sleep(3)
+        try:
+            payload = client.props(sport, limit=1)
+            n = len(payload.get("props") or [])
+            print(f"  {sport}: HTTP 200 — {n} prop(s) returned")
+        except urllib.error.HTTPError as exc:
+            print(f"  {sport}: HTTP {exc.code}")
+        except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
+            print(f"  {sport}: {exc}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot BettingPros game lines")
     parser.add_argument("--out", default="artifacts/bp", help="output folder (private, not git)")
     parser.add_argument(
         "--sports", nargs="+", default=list(SPORTS), help="sports to snapshot (default NFL NCAAF)"
     )
+    parser.add_argument(
+        "--probe-props", action="store_true",
+        help="probe /props status codes across sports and exit (no snapshot)",
+    )
     args = parser.parse_args()
+
+    if args.probe_props:
+        print("probing /props availability per sport")
+        probe_props()
+        return
 
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
