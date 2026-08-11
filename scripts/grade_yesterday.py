@@ -224,13 +224,23 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     print(record_headline(record))
     print(f"wrote {len(record)} graded row(s) to {dest}")
 
-    # Season chain: fold the day into the newest cumulative record and carry it
-    # forward in this run's artifact (the next run downloads it and continues).
-    cumulative = accumulate_record(_newest_cumulative(Path(args.prev_dir), args.league), record)
+    # Season chain: fold the day's SETTLED plays into the newest cumulative
+    # record and carry it forward in this run's artifact (the next run downloads
+    # it and continues). Pending rows never enter the chain: a bet the chain
+    # can't settle today is never revisited (only the latest prior-date slate is
+    # ever graded), so a pending row would be permanent noise — the first live
+    # run proved it by folding 715 stale future-game bets into the season line.
+    # Filtering the downloaded chain too heals any history that already
+    # carries them.
+    prior = _newest_cumulative(Path(args.prev_dir), args.league)
+    if prior is not None and "result" in prior.columns:
+        prior = prior[prior["result"] != "pending"]
+    settled_record = record[record["result"] != "pending"] if not record.empty else record
+    cumulative = accumulate_record(prior, settled_record)
     cumulative.to_parquet(
         out / f"cumulative_record_{args.league}_{out_stamp}.parquet", index=False
     )
-    print(f"season record: {len(cumulative)} graded row(s) accumulated")
+    print(f"season record: {len(cumulative)} settled row(s) accumulated")
 
     # Post-game graphics — the Sim Check cards (actual result on the pregame
     # distribution) and the model record card. Best-effort: rendering trouble

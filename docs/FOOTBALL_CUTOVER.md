@@ -301,13 +301,37 @@ Remaining for the DoD: one live dispatch on `main` (needs `THE_ODDS_API`)
 and the record chain accruing through Week 0/1 paper slates (Phase 5).
 NCAAF cards need a team-identity table (school colors/logos) — NFL-first.
 
-### Phase 5 — Season readiness gate
+### Phase 5 — Season readiness gate — 🔨 DRESS REHEARSAL RUN 2026-08-11
 
 - **NCAAF Week 0 (~Aug 22) and Week 1:** paper slates only — full pipeline
   live, stakes logged but not bet, CLV vs close measured.
 - **NFL Week 1 (~Sep 10):** same paper discipline.
 - Real staking turns on only when the paper CLV is positive over a
   meaningful sample, per the CLV-first principle in `README.md`.
+
+*Dress-rehearsal notes (2026-08-11):* the full daily loop ran live on `main`
+twice (real `THE_ODDS_API` board, grading, cards, artifact upload) — green end
+to end — and surfaced four defects, all fixed same-day:
+
+1. **FantasyPros collector** crashed whole runs when one league's endpoint
+   404s (every scheduled run since July had failed) → per-league guard.
+   *Open operator item:* the NFL payload is `public_api_limited` with zero
+   player rows — the FP key's tier/coverage needs resolving with FantasyPros
+   before the prop slate has consensus projections.
+2. **No board window:** the August board carries the whole season at stale
+   openers; the first run priced 272 NFL events, staked 20× bankroll on
+   paper, and rendered 272 cards → `--max-days` window (default 6).
+3. **NCAAF resolution:** all 111 board games skipped on nickname-vs-school
+   naming → `nickname_aliases` longest-prefix bridge.
+4. **Record-chain pollution:** grading folded 715 permanently-pending
+   future-game bets into the season chain → the chain now carries settled
+   rows only (and heals polluted history on load).
+
+Post-fix state: a Tuesday off-week run correctly produces empty slates ("no
+games with posted lines inside the window"), an intact-but-empty record
+chain, and no cards — the honest quiet day. The next scheduled runs (Thu
+cron) hit NFL preseason boards; NCAAF Week 0 (Aug 22) is the first real
+paper slate.
 
 ---
 
