@@ -16,6 +16,10 @@ on:
         description: "Sports to snapshot (space-separated)"
         required: false
         default: "NFL NCAAF"
+      probe_props:
+        description: "Probe /props status codes per sport instead of snapshotting"
+        required: false
+        default: "false"
 
 concurrency:
   group: collect-bp
@@ -49,9 +53,13 @@ jobs:
           BP_USER_ID: ${{ secrets.BP_USER_ID }}
           BP_USER_KEY: ${{ secrets.BP_USER_KEY }}
         run: |
+          EXTRA=""
+          if [ "${{ github.event.inputs.probe_props || 'false' }}" = "true" ]; then
+            EXTRA="--probe-props"
+          fi
           python scripts/collect_bettingpros.py \
             --out artifacts/bp \
-            --sports ${{ github.event.inputs.sports || 'NFL NCAAF' }}
+            --sports ${{ github.event.inputs.sports || 'NFL NCAAF' }} $EXTRA
 
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4
