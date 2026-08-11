@@ -44,8 +44,16 @@ def main() -> None:
     print(f"FantasyPros snapshot @ {now.isoformat()} (season {args.season}, week {args.week})")
 
     frames: list[pd.DataFrame] = []
+    failed: list[str] = []
     for league in args.leagues:
-        raw = client.raw_projections(league, args.season, week=args.week)
+        try:
+            raw = client.raw_projections(league, args.season, week=args.week)
+        except Exception as exc:  # noqa: BLE001 - one league's feed never blocks the other
+            # Seen live: the NCAAF path 404s while NFL answers — a dead league
+            # endpoint must not sink the snapshot the other league produced.
+            print(f"  {league}: fetch failed ({exc}); skipping")
+            failed.append(league)
+            continue
         if args.inspect:
             players = raw.get("players") or raw.get("data") or [] if isinstance(raw, dict) else raw
             top_keys = sorted(raw.keys()) if isinstance(raw, dict) else "(list payload)"
@@ -57,6 +65,9 @@ def main() -> None:
         frames.append(df)
         print(f"  {league}: {len(df)} projection rows, {df['player_name'].nunique()} players")
 
+    if failed and len(failed) == len(args.leagues):
+        raise SystemExit(f"every league fetch failed: {failed}")
+
     out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     dest_dir = Path(args.out)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +75,8 @@ def main() -> None:
     out.to_parquet(dest, index=False)
     print(f"wrote {len(out)} rows to {dest}")
     if out.empty:
-        print("note: no projections returned (off-season or wrong season/week)")
+        print("note: no projections returned (off-season, wrong season/week, "
+              "or a limited public API tier)")
 
 
 if __name__ == "__main__":
