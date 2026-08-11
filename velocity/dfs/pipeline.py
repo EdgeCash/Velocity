@@ -12,7 +12,13 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from velocity.dfs.optimizer import Lineup, build_lineup, lineup_pool
+from velocity.dfs.optimizer import (
+    NFL_CLASSIC,
+    Lineup,
+    RosterSpec,
+    build_lineup,
+    lineup_pool,
+)
 from velocity.dfs.scoring import dk_expected_points
 
 
@@ -50,14 +56,16 @@ def solve_slate(
     fp: pd.DataFrame,
     *,
     draft_group: str | None = None,
+    spec: RosterSpec = NFL_CLASSIC,
 ) -> LineupRun:
     """Solve one draft group's optimal lineup from raw frames.
 
     ``salaries`` is the collector's normalized frame (any number of draft
     groups — the main slate is auto-picked unless ``draft_group`` pins one);
-    ``fp`` is the FantasyPros long frame. An unsolvable slate (no group, or
-    an infeasible pool) returns a run with ``lineup=None`` rather than
-    raising — an empty board is a state, not an error.
+    ``fp`` is the FantasyPros long frame; ``spec`` the contest format. An
+    unsolvable slate (no group, or an infeasible pool) returns a run with
+    ``lineup=None`` rather than raising — an empty board is a state, not an
+    error.
     """
     group = draft_group or main_slate_group(salaries)
     if group is None:
@@ -65,7 +73,7 @@ def solve_slate(
     board = salaries[salaries["draft_group_id"].astype(str) == str(group)]
     points = dk_expected_points(fp)
     pool = lineup_pool(board, points)
-    lineup = None if pool.empty else build_lineup(pool)
+    lineup = None if pool.empty else build_lineup(pool, spec=spec)
     return LineupRun(
         lineup=lineup,
         draft_group_id=str(group),

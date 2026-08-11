@@ -37,6 +37,7 @@ def main() -> None:
                         help="pin a draft group id (default: auto-pick main slate)")
     args = parser.parse_args()
 
+    from velocity.dfs.optimizer import CFB_CLASSIC, NFL_CLASSIC
     from velocity.dfs.pipeline import lineup_frame, solve_slate
     from velocity.report.dfs_png import dfs_caption, render_dfs_card
 
@@ -44,11 +45,14 @@ def main() -> None:
     if "league" in salaries.columns:
         salaries = salaries[salaries["league"] == args.league]
     fp = pd.read_parquet(args.fp)
+    if "league" in fp.columns:
+        fp = fp[fp["league"] == args.league]
     if salaries.empty or fp.empty:
         print("empty salaries or projections; no lineup to build")
         return
 
-    run = solve_slate(salaries, fp, draft_group=args.draft_group)
+    spec = NFL_CLASSIC if args.league == "nfl" else CFB_CLASSIC
+    run = solve_slate(salaries, fp, draft_group=args.draft_group, spec=spec)
     if run.lineup is None:
         print(f"no solvable lineup (group {run.draft_group_id or 'none'}: "
               f"{run.n_salaried} salaried, {run.n_pool} projected)")
@@ -65,14 +69,16 @@ def main() -> None:
     lineup_frame(run).to_parquet(frame_dest, index=False)
     print(f"wrote lineup frame to {frame_dest}")
 
-    slate_label = f"DK CLASSIC · {run.n_games} GAMES"
+    kind = "DK CLASSIC" if args.league == "nfl" else "DK CFB CLASSIC"
+    slate_label = f"{kind} · {run.n_games} GAMES"
     when = datetime.now(UTC).strftime("%A, %b %-d").upper()
     card_dest = out / f"dfs_{args.league}_{stamp}.png"
     render_dfs_card(run.lineup, card_dest, when=when, slate_label=slate_label)
     print(f"rendered lineup card to {card_dest}")
     captions = out / f"dfs_{args.league}_{stamp}_captions.md"
     captions.write_text(
-        dfs_caption(run.lineup, slate_label=f"DK classic ({run.n_games} games)") + "\n"
+        dfs_caption(run.lineup, slate_label=f"{kind.lower()} ({run.n_games} games)")
+        + "\n"
     )
 
 

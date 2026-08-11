@@ -143,18 +143,20 @@ jobs:
             gh run download "$id" --dir artifacts/dk || true
           fi
 
-      - name: Build DFS lineup
+      - name: Build DFS lineups
         continue-on-error: true
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
-          DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_nfl_*.parquet 2>/dev/null | head -1 || true)
-          if [ -n "$FP_FILE" ] && [ -n "$DK_FILE" ]; then
-            python scripts/build_dfs_lineup.py \
-              --salaries "$DK_FILE" --fp "$FP_FILE" \
-              --out artifacts/slate --league nfl
-          else
-            echo "missing DK salaries or FP projections; skipping DFS lineup"
-          fi
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
+            DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$FP_FILE" ] && [ -n "$DK_FILE" ]; then
+              python scripts/build_dfs_lineup.py \
+                --salaries "$DK_FILE" --fp "$FP_FILE" \
+                --out artifacts/slate --league "${league}" || true
+            else
+              echo "${league}: missing DK salaries or FP projections; skipping DFS lineup"
+            fi
+          done
 
       - name: Upload slates (private artifact)
         uses: actions/upload-artifact@v4

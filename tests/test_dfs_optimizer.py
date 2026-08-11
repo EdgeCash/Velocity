@@ -7,13 +7,17 @@ its output must be *legal* (slots, cap, no duplicate players).
 
 from __future__ import annotations
 
-from itertools import combinations, permutations
+from collections import Counter
+from itertools import combinations, product
 
 import pandas as pd
 import pytest
 from velocity.dfs.optimizer import (
+    CFB_CLASSIC,
+    NFL_CLASSIC,
     SALARY_CAP,
     SLOTS,
+    RosterSpec,
     build_lineup,
     lineup_pool,
 )
@@ -65,24 +69,32 @@ def _pool() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["player_name", "position", "team", "salary", "points"])
 
 
-def _brute_force_best(pool: pd.DataFrame, cap: int) -> float:
-    """The true optimum by exhaustive slot assignment (small pools only)."""
+def _legal_multiset(positions: list[str], spec: RosterSpec) -> bool:
+    """Roster legality straight from the contest rules: the position counts
+    must equal the dedicated slots plus one eligible position per flex slot,
+    for some choice of flex fills. Independent of the optimizer's search."""
+    have = Counter(positions)
+    for fills in product(*[eligible for _, eligible in spec.flex]):
+        need = Counter(dict(spec.base_counts))
+        for position in fills:
+            need[position] += 1
+        if have == +need:  # +need drops zero-count entries
+            return True
+    return False
+
+
+def _brute_force_best(
+    pool: pd.DataFrame, cap: int, spec: RosterSpec = NFL_CLASSIC
+) -> float:
+    """The true optimum by exhaustive enumeration (small pools only)."""
     idx = list(pool.index)
     best = -1.0
-    for combo in combinations(idx, len(SLOTS)):
+    for combo in combinations(idx, len(spec.slots)):
         rows = pool.loc[list(combo)]
         if rows["salary"].sum() > cap:
             continue
-        positions = list(rows["position"])
-        # Can this multiset legally fill the slots? Try assignments.
-        for perm in set(permutations(positions)):
-            ok = all(
-                (s == p) or (s == "FLEX" and p in ("RB", "WR", "TE"))
-                for s, p in zip(SLOTS, perm, strict=True)
-            )
-            if ok:
-                best = max(best, float(rows["points"].sum()))
-                break
+        if _legal_multiset(list(rows["position"]), spec):
+            best = max(best, float(rows["points"].sum()))
     return best
 
 
@@ -126,6 +138,64 @@ def test_stack_callout_names_qb_and_mates() -> None:
     # QB A (AAA) rosters with AAA teammates in the optimal lineup.
     if any(s.position == "QB" and s.team == "AAA" for s in lineup.slots):
         assert any(stack.startswith("AAA:") for stack in lineup.stacks())
+
+
+def _cfb_pool() -> pd.DataFrame:
+    """A small CFB board (no TE, no DST) with a strong second QB.
+
+    QB B outscores every RB/WR flex option per dollar, so the true optimum
+    plays two QBs — the Super-FLEX case a fixed-shape optimizer misses.
+    """
+    rows = [
+        ("QB A", "QB", "UGA", 9000, 26.0),
+        ("QB B", "QB", "ALA", 7500, 24.0),
+        ("QB C", "QB", "TEX", 6000, 18.0),
+        ("RB A", "RB", "UGA", 7800, 19.0),
+        ("RB B", "RB", "ALA", 6200, 15.0),
+        ("RB C", "RB", "OSU", 4800, 11.0),
+        ("RB D", "RB", "TEX", 4000, 8.5),
+        ("WR A", "WR", "UGA", 8200, 18.5),
+        ("WR B", "WR", "ALA", 6600, 14.5),
+        ("WR C", "WR", "OSU", 5200, 11.5),
+        ("WR D", "WR", "TEX", 4200, 9.0),
+        ("WR E", "WR", "LSU", 3400, 6.5),
+    ]
+    return pd.DataFrame(rows, columns=["player_name", "position", "team", "salary", "points"])
+
+
+def test_cfb_classic_matches_brute_force_and_plays_two_qbs() -> None:
+    pool = _cfb_pool()
+    lineup = build_lineup(pool, cap=SALARY_CAP, spec=CFB_CLASSIC)
+    assert lineup is not None
+    assert lineup.total_points == pytest.approx(
+        _brute_force_best(pool, SALARY_CAP, CFB_CLASSIC)
+    )
+    assert tuple(s.slot for s in lineup.slots) == CFB_CLASSIC.slots
+    names = [s.player_name for s in lineup.slots]
+    assert len(names) == len(set(names))
+    assert lineup.total_salary <= SALARY_CAP
+    for s in lineup.slots:
+        if s.slot == "FLEX":
+            assert s.position in ("RB", "WR")
+        elif s.slot == "S-FLEX":
+            assert s.position in ("QB", "RB", "WR")
+        else:
+            assert s.position == s.slot
+    # The Super-FLEX earns its keep: two QBs in the optimal build.
+    assert sum(1 for s in lineup.slots if s.position == "QB") == 2
+
+
+def test_cfb_classic_never_rosters_a_te() -> None:
+    pool = pd.concat([
+        _cfb_pool(),
+        pd.DataFrame([("TE X", "TE", "UGA", 100, 99.0)],
+                     columns=["player_name", "position", "team", "salary", "points"]),
+    ], ignore_index=True)
+    lineup = build_lineup(pool, spec=CFB_CLASSIC)
+    assert lineup is not None
+    # DK college has no TE slot and no TE-eligible flex; the bargain TE is
+    # ignored even at 99 projected points.
+    assert all(s.position != "TE" for s in lineup.slots)
 
 
 def test_lineup_pool_join_rules() -> None:

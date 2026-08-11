@@ -1,10 +1,11 @@
 """DFS lineup card — the optimizer's best DK classic roster as a graphic.
 
 Same visual language as the matchup cards (1600×900 X frame, dark ground,
-surface panels, Barlow display type). Left panel: the nine roster rows —
-slot chip, player, team, salary, projected DK points — with the QB-stack
-players carrying the teal accent. Right panel: the context a DFS reader
-actually needs — salary used vs the cap (with the bar), projected total,
+surface panels, Barlow display type). Left panel: one row per roster slot
+(NFL classic 9, CFB classic 8) — slot chip, player, team, salary, projected
+DK points — with the QB-stack players carrying the teal accent. Right panel:
+the context a DFS reader needs — salary used vs the cap (with the bar),
+projected total,
 the stack callout, and the projection source. Footer states what this is
 (a projection-maximizing cash lineup) and what it is not (advice).
 
@@ -66,8 +67,11 @@ def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
     ax.axis("off")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
+    # Row pitch adapts to the roster size (NFL classic 9 rows, CFB classic 8)
+    # so every format fills the same panel envelope.
+    step = 0.648 / max(len(lineup.slots), 9)
     for i, slot in enumerate(lineup.slots):
-        y = 0.735 - i * 0.072
+        y = 0.735 - i * step
         in_stack = slot.player_name in stacked
         chip_edge = MODEL if in_stack else EDGE
         ax.add_patch(FancyBboxPatch(
@@ -76,7 +80,8 @@ def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
             facecolor=TRACK, edgecolor=chip_edge, linewidth=1.6,
         ))
         _display(fig, _X_CHIP + 0.024, y - 0.001, slot.slot, color=INK,
-                 fontsize=14, ha="center", fontweight="semibold")
+                 fontsize=14 if len(slot.slot) <= 4 else 9.5, ha="center",
+                 fontweight="semibold")
         _display(fig, _X_NAME, y - 0.004, slot.player_name, color=INK,
                  fontsize=20, fontweight="semibold")
         _text(fig, _X_TEAM, y, slot.team or "—", color=INK_DIM, fontsize=14)
