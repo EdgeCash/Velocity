@@ -105,8 +105,9 @@ def main() -> None:
     asset_dir = out / ".assets"
     aliases = None
     team_colors = None
+    code_to_team: dict[str, str] = {}
     if args.league == "ncaaf":
-        aliases, team_colors = runner._ncaaf_identity(events, asset_dir)
+        aliases, team_colors, code_to_team = runner._ncaaf_identity(events, asset_dir)
 
     cards = build_social_cards(
         projections, events, lines=demo_lines(week),
@@ -115,6 +116,19 @@ def main() -> None:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     paths = render_cards(cards, out, stamp, asset_dir=asset_dir, league=args.league)
     print(f"rendered {len(paths)} demo card(s) to {out}")
+
+    # The Deep Dive companions, from the same committed data.
+    from velocity.ingest.local import load_plays
+    from velocity.report.deepdive import build_deep_dives
+    from velocity.report.deepdive_png import render_deep_dives
+
+    plays_path = runner._find_plays(Path(args.data)) if args.league == "nfl" else None
+    plays = load_plays(plays_path) if plays_path is not None else None
+    dives = build_deep_dives(cards, projections, games, plays,
+                             team_names=code_to_team)
+    dive_paths = render_deep_dives(dives, out, stamp, asset_dir=asset_dir,
+                                   league=args.league)
+    print(f"rendered {len(dive_paths)} demo deep dive(s) to {out}")
 
     # The Matchups tab's frames — but deliberately no slate/props/parlays, so
     # the grader sees zero plays and the record chain stays untouched.

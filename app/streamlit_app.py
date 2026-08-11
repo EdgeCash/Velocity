@@ -230,7 +230,8 @@ def _render_cards_tab(folder: Path) -> None:
     images = card_images(folder, league)
     model, checks = images["model"], images["simcheck"]
     record, dfs = images["record"], images["dfs"]
-    if not model and not checks and record is None and dfs is None:
+    if (not model and not checks and not images["deepdive"]
+            and record is None and dfs is None):
         st.info("No cards in the latest slate yet — they render with each run.")
         return
 
@@ -268,6 +269,19 @@ def _render_cards_tab(folder: Path) -> None:
         if images["model_captions"]:
             with st.expander("Matchup card captions"):
                 st.code(images["model_captions"], language=None)
+
+    if images["deepdive"]:
+        st.markdown("#### Deep dives — the analytical companion")
+        for label, path in images["deepdive"]:  # type: ignore[misc]
+            st.image(str(path), caption=label, width="stretch")
+            st.download_button(
+                f"Download deep dive {label}", Path(path).read_bytes(),
+                file_name=Path(path).name, mime="image/png",
+                key=f"dl-dive-{league}-{label}",
+            )
+        if images["deepdive_captions"]:
+            with st.expander("Deep dive captions"):
+                st.code(images["deepdive_captions"], language=None)
 
     if dfs is not None:
         st.markdown("#### DFS lineup")
