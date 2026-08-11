@@ -240,18 +240,21 @@ def card_images(folder: Path, league: str = "nfl") -> dict[str, object]:
         matches = list(folder.rglob(f"{prefix}_{league}_{stamp}_captions.md"))
         return matches[0].read_text() if matches else None
 
-    record_stamp = _newest_stamp(folder, "recordcard", league)
-    record = None
-    if record_stamp is not None:
-        matches = list(folder.rglob(f"recordcard_{league}_{record_stamp}.png"))
-        record = matches[0] if matches else None
+    def _single(prefix: str) -> Path | None:
+        stamp = _newest_stamp(folder, prefix, league)
+        if stamp is None:
+            return None
+        matches = list(folder.rglob(f"{prefix}_{league}_{stamp}.png"))
+        return matches[0] if matches else None
 
     return {
         "model": _pngs("social"),
         "simcheck": _pngs("simcheck"),
-        "record": record,
+        "record": _single("recordcard"),
+        "dfs": _single("dfs"),
         "model_captions": _captions("social"),
         "simcheck_captions": _captions("simcheck"),
+        "dfs_captions": _captions("dfs"),
     }
 
 

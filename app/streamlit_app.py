@@ -224,9 +224,13 @@ def _render_record(record: pd.DataFrame | None) -> None:
 
 def _render_cards_tab(folder: Path) -> None:
     """The day's graphics: view, download, and copy the post copy — phone-first."""
-    images = card_images(folder)
-    model, checks, record = images["model"], images["simcheck"], images["record"]
-    if not model and not checks and record is None:
+    league = str(
+        st.radio("League", ["NFL", "NCAAF"], horizontal=True, key="cards-league")
+    ).lower()
+    images = card_images(folder, league)
+    model, checks = images["model"], images["simcheck"]
+    record, dfs = images["record"], images["dfs"]
+    if not model and not checks and record is None and dfs is None:
         st.info("No cards in the latest slate yet — they render with each run.")
         return
 
@@ -236,6 +240,7 @@ def _render_cards_tab(folder: Path) -> None:
         st.download_button(
             "Download record card", Path(str(record)).read_bytes(),
             file_name=Path(str(record)).name, mime="image/png",
+            key=f"dl-record-{league}",
         )
 
     if checks:
@@ -245,24 +250,36 @@ def _render_cards_tab(folder: Path) -> None:
             st.download_button(
                 f"Download {label}", Path(path).read_bytes(),
                 file_name=Path(path).name, mime="image/png",
-                key=f"dl-check-{label}",
+                key=f"dl-check-{league}-{label}",
             )
         if images["simcheck_captions"]:
             with st.expander("Sim Check captions"):
                 st.code(images["simcheck_captions"], language=None)
 
     if model:
-        st.markdown("#### Today's model cards")
+        st.markdown("#### Today's matchup cards — market vs model")
         for label, path in model:  # type: ignore[misc]
             st.image(str(path), caption=label, width="stretch")
             st.download_button(
                 f"Download {label}", Path(path).read_bytes(),
                 file_name=Path(path).name, mime="image/png",
-                key=f"dl-model-{label}",
+                key=f"dl-model-{league}-{label}",
             )
         if images["model_captions"]:
-            with st.expander("Model card captions"):
+            with st.expander("Matchup card captions"):
                 st.code(images["model_captions"], language=None)
+
+    if dfs is not None:
+        st.markdown("#### DFS lineup")
+        st.image(str(dfs), width="stretch")
+        st.download_button(
+            "Download DFS lineup card", Path(str(dfs)).read_bytes(),
+            file_name=Path(str(dfs)).name, mime="image/png",
+            key=f"dl-dfs-{league}",
+        )
+        if images["dfs_captions"]:
+            with st.expander("DFS lineup caption"):
+                st.code(images["dfs_captions"], language=None)
 
 
 def main() -> None:
