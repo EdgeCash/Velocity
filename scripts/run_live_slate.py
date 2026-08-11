@@ -180,6 +180,7 @@ def main() -> None:
 
     frame = pd.DataFrame()
     projections: dict = {}
+    canonical = pd.DataFrame()
     game_log = None
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
@@ -221,8 +222,13 @@ def main() -> None:
     # when a projections snapshot is supplied. Best-effort: never breaks the
     # game slate.
     props_frame = None
+    props_by_game: dict = {}
+    key_to_name: dict[str, str] = {}
+    prop_lines_used: pd.DataFrame | None = None
     if args.fp_projections and projections and not events.empty:
-        props_frame = _prop_slate(args, events, projections, now, generated_at)
+        props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
+            args, events, projections, now, generated_at
+        )
 
     # Parlay slate — combine the qualifying single game bets into sim-exact
     # correlated parlays. Works offline too. Prop legs stay out deliberately:
@@ -255,8 +261,22 @@ def main() -> None:
             proj_frame.assign(league=args.league, generated_at=generated_at).to_parquet(
                 out_dir / f"projections_{args.league}_{stamp}.parquet", index=False
             )
+            # Pregame total/margin distributions — tomorrow's Sim Check pins the
+            # actual result at its true percentile on these.
+            from velocity.report.social import distributions_frame
+
+            distributions_frame(projections).assign(league=args.league).to_parquet(
+                out_dir / f"distributions_{args.league}_{stamp}.parquet", index=False
+            )
         _write_workbook(out_dir, stamp, args, events, projections, frame, props_frame,
                         generated_at)
+        # Social model cards — one shareable X-frame PNG per game plus a captions
+        # file of post copy. Best-effort, like every report surface.
+        if args.league == "nfl" and projections:
+            _write_social_cards(
+                args, events, projections, canonical, props_by_game, key_to_name,
+                prop_lines_used, stamp,
+            )
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
@@ -312,12 +332,14 @@ def _prop_slate(
     projections: dict,
     now: datetime,
     generated_at: pd.Timestamp,
-) -> pd.DataFrame | None:
+) -> tuple[pd.DataFrame | None, dict, dict[str, str], pd.DataFrame | None]:
     """Price the prop board off the FantasyPros-driven correlated sim.
 
-    Returns the persisted prop-slate frame (it carries the raw ``p_model`` and
-    ``p_fair`` per bet, which is exactly what the shrink-sweep backtest
-    replays), or ``None`` when the board or projections don't materialize.
+    Returns ``(frame, props_by_game, key_to_name, prop_lines)`` — the persisted
+    prop-slate frame (it carries the raw ``p_model``/``p_fair`` per bet, which
+    is exactly what the shrink-sweep backtest replays) plus the per-game sims
+    and the name index, which the social cards' watch strip reuses. Empty
+    results when the board or projections don't materialize.
     """
     try:
         from velocity.models.props_football import game_props, name_index_from_fp
@@ -329,20 +351,20 @@ def _prop_slate(
             fp = fp[fp["league"].astype(str) == args.league]
         if fp.empty:
             print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
-            return None
+            return None, {}, {}, None
 
         if args.prop_lines_file:
             prop_lines = pd.read_parquet(args.prop_lines_file)
         elif args.snapshot_file:
             print("prop slate skipped: offline run needs --prop-lines-file")
-            return None
+            return None, {}, {}, None
         else:
             from velocity.ingest.theoddsapi import TheOddsAPIClient
 
             prop_lines = TheOddsAPIClient.from_env().player_props(args.league)
         if prop_lines.empty:
             print("prop slate: no prop lines on the board")
-            return None
+            return None, {}, {}, None
 
         codes = sorted(set(NFL_TEAM_ALIASES.values()))
         fp_teams = set(fp["team"].astype(str))
@@ -359,8 +381,15 @@ def _prop_slate(
                                             _prop_config(args))
         if not props_by_game:
             print("prop slate: no games matched FantasyPros team coverage")
-            return None
+            return None, {}, {}, None
 
+        key_to_name = {}
+        for r in fp.drop_duplicates(subset=["player_name"]).to_dict("records"):
+            from velocity.models.props_football import player_key
+
+            key_to_name[player_key(r.get("player_id"), r.get("player_name"))] = str(
+                r.get("player_name")
+            )
         log, unresolved = build_prop_slate(
             props_by_game,
             prop_lines,
@@ -389,16 +418,58 @@ def _prop_slate(
                 dest, index=False
             )
             print(f"wrote {len(frame)} prop rows to {dest}")
-        return frame
+        return frame, props_by_game, key_to_name, prop_lines
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"prop slate skipped: {exc}")
-        return None
+        return None, {}, {}, None
 
 
 def _prop_config(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     from velocity.models.props_football import FootballPropConfig
 
     return FootballPropConfig(n_sims=args.n_sims)
+
+
+def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    canonical: pd.DataFrame,
+    props_by_game: dict,
+    key_to_name: dict[str, str],
+    prop_lines: pd.DataFrame | None,
+    stamp: str,
+) -> None:
+    """Render the per-game social model cards + captions into the out folder.
+
+    The season record chain (written by the grading step, which runs before the
+    slate build) puts the receipt line on every card. Logos are fetched into a
+    hidden cache under the out folder (never uploaded). Best-effort: a card
+    problem never breaks the slate.
+    """
+    try:
+        from velocity.report.daily_record import season_record_line
+        from velocity.report.social import build_social_cards
+        from velocity.report.social_png import render_cards
+
+        record_line = None
+        try:
+            chain = sorted(Path(args.out).glob(f"cumulative_record_{args.league}_*.parquet"))
+            if chain:
+                record_line = season_record_line(pd.read_parquet(chain[-1]))
+        except Exception as exc:  # noqa: BLE001 - the record line is optional decoration
+            print(f"record line skipped: {exc}")
+        cards = build_social_cards(
+            projections, events,
+            props_by_game=props_by_game, key_to_name=key_to_name,
+            prop_lines=prop_lines, record_line=record_line, lines=canonical,
+        )
+        asset_dir = Path(args.out) / ".assets"  # hidden: outside the upload globs
+        paths = render_cards(cards, Path(args.out), stamp,
+                             asset_dir=asset_dir, league=args.league)
+        print(f"wrote {len(paths)} social card(s) to {args.out}")
+    except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
+        print(f"social cards skipped: {exc}")
 
 
 def _parlay_slate(

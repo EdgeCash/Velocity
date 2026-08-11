@@ -1,10 +1,11 @@
 name: Live slate
 
-# The launch job: on game days, fit the model on committed history, pull the
+# The daily loop: on game days, grade yesterday's slate into the record chain
+# (with Sim Check + record cards), fit the model on committed history, pull the
 # current board from The Odds API, and produce a staked slate of recommended
-# bets for both leagues — persisted as a PRIVATE Actions artifact (the slate is
-# derived from paid odds, so it never lands in the public repo). Off-season runs
-# find an empty board and succeed, writing an empty slate.
+# bets plus the shareable model cards — all persisted as a PRIVATE Actions
+# artifact (the slate is derived from paid odds, so it never lands in the
+# public repo). Off-season runs find an empty board and succeed.
 #
 # Read the slate from the run's artifact (or the job log). This does not place
 # bets — a human acts on it. Tune the cron to the real game-day windows.
@@ -35,11 +36,17 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read  # download previous runs' slate artifacts for the yesterday record
 
 jobs:
   slate:
     name: build staked slate
     runs-on: ubuntu-latest
+    # Mail secrets surfaced as env so the email steps can be skipped cleanly when
+    # they are not configured (a step `if:` cannot read `secrets` directly).
+    env:
+      MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,18 +62,68 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      # ---- yesterday's record, Sim Check cards, and the season chain ----------
+      # Runs BEFORE the slate build so today's model cards can carry the season
+      # record line, and the Sim Check cards (yesterday's results on the pregame
+      # distributions) land in the same artifact. Both best-effort: grading
+      # trouble never blocks the slate or its email. Previous slates live only
+      # in private run artifacts (paid-odds data never lands in the public
+      # repo); grading uses the free schedule feeds (nflverse; CFBD when
+      # CFBD_API_KEY is set).
+      - name: Fetch previous slates
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/previous
+          for id in $(gh run list --workflow live-slate.yml --status success \
+              --limit 6 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/previous/$id" || true
+          done
+
+      - name: Grade yesterday's slates
+        continue-on-error: true
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
+            python scripts/grade_yesterday.py \
+              --prev-dir artifacts/previous --out-dir artifacts/slate \
+              --league "${league}" || true
+          done
+
+      # ---- the freshest FantasyPros projections, for the prop slate -----------
+      # Best-effort: with no FP artifact banked yet, the slate simply prices
+      # game markets alone.
+      - name: Fetch FantasyPros projections
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/fp
+          id=$(gh run list --workflow collect-fantasypros.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$id" ]; then
+            gh run download "$id" --dir artifacts/fp || true
+          fi
+
       - name: Build slates
         env:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
         run: |
+          FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
             echo "::group::${league} slate"
+            EXTRA=""
+            if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
+              EXTRA="--fp-projections $FP_FILE"
+            fi
             python scripts/run_live_slate.py \
               --league "${league}" \
               --data "datasets/${league}" \
               --min-edge ${{ github.event.inputs.min_edge || '0.02' }} \
               --bankroll ${{ github.event.inputs.bankroll || '100' }} \
-              --out artifacts/slate
+              --out artifacts/slate $EXTRA
             echo "::endgroup::"
           done
 
@@ -77,6 +134,36 @@ jobs:
           path: |
             artifacts/slate/*.parquet
             artifacts/slate/*.xlsx
-            artifacts/slate/*.html
+            artifacts/slate/*.png
+            artifacts/slate/*.md
           if-no-files-found: warn
           retention-days: 60
+
+      # ---- email delivery (optional) ------------------------------------------
+      # Sends the day's plays to MAIL_TO after the artifact is safely uploaded.
+      # Skipped entirely until the mail secrets are configured — see
+      # docs/LAUNCH.md "Email delivery". The recipient lives in a secret (never
+      # in this public file), and the mail carries paid-odds-derived data, so it
+      # must go to a private inbox.
+      - name: Render slate email
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        id: email
+        run: |
+          python scripts/render_slate_email.py \
+            --slate-dir artifacts/slate --out-dir artifacts/email --league nfl
+          echo "subject=$(cat artifacts/email/subject.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Email the slate
+        if: env.MAIL_USERNAME != '' && env.MAIL_TO != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER || 'smtp.gmail.com' }}
+          server_port: ${{ secrets.MAIL_PORT || '465' }}
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: Velocity <${{ secrets.MAIL_USERNAME }}>
+          to: ${{ secrets.MAIL_TO }}
+          subject: ${{ steps.email.outputs.subject }}
+          html_body: file://artifacts/email/slate_email.html
+          attachments: artifacts/slate/*.xlsx
