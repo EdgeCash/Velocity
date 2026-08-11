@@ -316,6 +316,18 @@ header. The total-points histogram moved off the pregame card (it lives on
 the Sim Check). Captions state leans as facts ("Model lean: … / no edge on
 this board"), never imperatives.
 
+*NCAAF cards (2026-08-11):* the same market-vs-model card now renders for
+NCAAF with a deliberately **logo-free identity**: school abbreviation +
+official colors from the CFBD teams endpoint (cached in the asset dir;
+needs `CFBD_API_KEY`), provider names bridged via the same nickname-prefix
+logic the slate uses. College marks are university-owned (CLC/Learfield
+licensing) and player imagery raises NIL/right-of-publicity issues, so
+NCAAF cards carry no logos and no headshots — abbreviations and color pairs
+are plain facts. Unmatched schools fall back to the provider name at a
+smaller size (labels auto-shrink; the win-bar pair auto-separates when two
+brand colors are near-identical, e.g. crimson vs crimson). Without the CFBD
+key the cards still render with neutral bar colors and provider names.
+
 ### Phase 5 — Season readiness gate — 🔨 DRESS REHEARSAL RUN 2026-08-11
 
 - **NCAAF Week 0 (~Aug 22) and Week 1:** paper slates only — full pipeline
