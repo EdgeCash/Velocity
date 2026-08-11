@@ -99,3 +99,15 @@ def test_render_dfs_card_writes_a_png(tmp_path: Path) -> None:
     copy = dfs_caption(run.lineup)
     assert f"${run.lineup.total_salary:,}" in copy
     assert "QB:" in copy
+
+
+def test_is_season_long_flags_week_zero_frames() -> None:
+    from velocity.dfs.pipeline import is_season_long
+
+    week0 = pd.DataFrame({"week": [0, 0], "value": [372.0, 250.0]})
+    weekly = pd.DataFrame({"week": [4, 4], "value": [24.7, 18.0]})
+    mixed = pd.DataFrame({"week": [0, 4]})
+    assert is_season_long(week0)
+    assert not is_season_long(weekly)
+    assert not is_season_long(mixed)  # any weekly rows → usable
+    assert not is_season_long(pd.DataFrame())  # empty is a different problem

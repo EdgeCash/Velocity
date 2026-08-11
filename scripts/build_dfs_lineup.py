@@ -38,7 +38,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from velocity.dfs.optimizer import CFB_CLASSIC, NFL_CLASSIC
-    from velocity.dfs.pipeline import lineup_frame, solve_slate
+    from velocity.dfs.pipeline import is_season_long, lineup_frame, solve_slate
     from velocity.report.dfs_png import dfs_caption, render_dfs_card
 
     salaries = pd.read_parquet(args.salaries)
@@ -49,6 +49,10 @@ def main() -> None:
         fp = fp[fp["league"] == args.league]
     if salaries.empty or fp.empty:
         print("empty salaries or projections; no lineup to build")
+        return
+    if is_season_long(fp):
+        print("FP snapshot carries season-long (week 0) projections — a weekly "
+              "lineup can't be priced from season totals; skipping")
         return
 
     spec = NFL_CLASSIC if args.league == "nfl" else CFB_CLASSIC

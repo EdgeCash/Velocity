@@ -44,6 +44,27 @@ def _players_of(raw: object) -> list:
     return list(raw or [])
 
 
+def current_week(games: pd.DataFrame, today: pd.Timestamp) -> int:
+    """The in-season NFL week to snapshot, or 0 outside the season window.
+
+    Week 0 (season-long) projections are useless to the weekly consumers —
+    the DFS lineup and the prop sim both refuse them — so in-season the
+    collector must ask for the week actually being played: the smallest week
+    of the newest season whose last kickoff is still ahead of ``today``.
+    Before the season opener (minus a few days of lead-in) and after the
+    final kickoff this returns 0, and the consumers skip honestly.
+    """
+    if games.empty or "kickoff" not in games.columns:
+        return 0
+    season = games[games["season"] == games["season"].max()].copy()
+    kick = pd.to_datetime(season["kickoff"])
+    if today < kick.min() - pd.Timedelta(days=4):
+        return 0
+    by_week = season.assign(_kick=kick).groupby("week")["_kick"].max()
+    ahead = by_week[by_week >= today]
+    return int(ahead.index.min()) if len(ahead) else 0
+
+
 def fetch_league_frame(
     client: FantasyProsClient, league: str, season: int, week: int
 ) -> tuple[pd.DataFrame, list[str]]:
@@ -84,7 +105,12 @@ def fetch_league_frame(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot FantasyPros projections")
     parser.add_argument("--season", type=int, required=True, help="projection season, e.g. 2026")
-    parser.add_argument("--week", type=int, default=0, help="0 = full-season projections")
+    parser.add_argument("--week", default="auto",
+                        help="'auto' derives the in-season week from the committed "
+                             "schedule (0 outside the season); an integer pins it "
+                             "(0 = full-season projections)")
+    parser.add_argument("--schedule", default="datasets/nfl/games.parquet",
+                        help="games parquet used by --week auto")
     parser.add_argument("--leagues", nargs="+", default=list(LEAGUES))
     parser.add_argument("--out", default="artifacts/fp", help="output folder (private, not git)")
     parser.add_argument(
@@ -95,6 +121,18 @@ def main() -> None:
     client = FantasyProsClient.from_env()
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
+    if str(args.week) == "auto":
+        try:
+            schedule = pd.read_parquet(args.schedule)
+            week = current_week(schedule, pd.Timestamp(now).tz_localize(None))
+            print(f"auto week from {args.schedule}: {week}"
+                  + (" (outside the season window)" if week == 0 else ""))
+        except Exception as exc:  # noqa: BLE001 - a broken schedule falls back to 0
+            print(f"auto week failed ({exc}); using 0")
+            week = 0
+    else:
+        week = int(args.week)
+    args.week = week
     print(f"FantasyPros snapshot @ {now.isoformat()} (season {args.season}, week {args.week})")
 
     frames: list[pd.DataFrame] = []

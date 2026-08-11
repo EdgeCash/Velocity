@@ -18,9 +18,9 @@ on:
         required: true
         default: "2026"
       week:
-        description: "Week (0 = full-season)"
+        description: "Week (auto = derive in-season week; 0 = full-season)"
         required: false
-        default: "0"
+        default: "auto"
 
 concurrency:
   group: collect-fp
@@ -54,7 +54,7 @@ jobs:
         run: |
           python scripts/collect_fantasypros.py \
             --season ${{ github.event.inputs.season || '2026' }} \
-            --week ${{ github.event.inputs.week || '0' }} \
+            --week ${{ github.event.inputs.week || 'auto' }} \
             --out artifacts/fp \
             --inspect
 

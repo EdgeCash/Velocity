@@ -166,3 +166,32 @@ def test_fetch_league_frame_falls_back_per_position() -> None:
     assert any("per-position" in n for n in notes)  # fallback taken
     assert set(frame["player_name"]) == {"QB One", "RB One"}
     assert len(frame) == 2
+
+
+def test_current_week_tracks_the_schedule() -> None:
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "collect_fp_week",
+        Path(__file__).resolve().parents[1] / "scripts" / "collect_fantasypros.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    games = pd.DataFrame({
+        "season": [2026] * 4 + [2025],
+        "week": [1, 1, 2, 3, 18],
+        "kickoff": pd.to_datetime([
+            "2026-09-10 20:20", "2026-09-13 17:00",  # week 1
+            "2026-09-20 17:00", "2026-09-27 17:00",  # weeks 2-3
+            "2026-01-04 18:00",  # old season, ignored
+        ]),
+    })
+    ts = pd.Timestamp
+    assert mod.current_week(games, ts("2026-08-11")) == 0  # preseason: too early
+    assert mod.current_week(games, ts("2026-09-08")) == 1  # opener lead-in
+    assert mod.current_week(games, ts("2026-09-12")) == 1  # mid-week 1
+    assert mod.current_week(games, ts("2026-09-15")) == 2  # week 1 finished
+    assert mod.current_week(games, ts("2026-10-15")) == 0  # season over
+    assert mod.current_week(games.iloc[0:0], ts("2026-09-12")) == 0  # no schedule
