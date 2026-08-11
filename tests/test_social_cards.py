@@ -23,11 +23,13 @@ from velocity.report.sim_check import (
     sim_check_caption,
 )
 from velocity.report.social import (
+    MarketView,
     SocialCard,
     build_social_cards,
     caption,
     distributions_frame,
     market_strip,
+    market_view,
 )
 
 RNG = np.random.default_rng(9)
@@ -117,6 +119,69 @@ def test_market_strip_condenses_the_board() -> None:
     assert market_strip(lines, "gX", "A", "B") is None
 
 
+def _card(**overrides: object) -> SocialCard:
+    base: dict = {
+        "game_id": "g", "away_name": "A", "home_name": "H", "away_code": "BUF",
+        "home_code": "KC", "kickoff": None, "p_home_win": 0.60, "mu_away": 21.0,
+        "mu_home": 25.0, "fair_spread": -2.0, "fair_total": 46.0,
+        "total_points_pmf": {46: 1.0},
+    }
+    base.update(overrides)
+    return SocialCard(**base)
+
+
+def test_market_view_condenses_the_board_to_numerics() -> None:
+    lines = pd.DataFrame([
+        {"game_id": "g1", "market": "moneyline", "side": "away", "price": 125,
+         "point": None, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+        {"game_id": "g1", "market": "moneyline", "side": "home", "price": -145,
+         "point": None, "book": "b", "timestamp": pd.Timestamp("2026-09-10 13:00")},
+        {"game_id": "g1", "market": "spread", "side": "home", "price": -110,
+         "point": -2.5, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+        {"game_id": "g1", "market": "total", "side": "over", "price": -105,
+         "point": 47.5, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+    ])
+    view = market_view(lines, "g1")
+    assert view is not None
+    assert view.spread_home == -2.5
+    assert view.total == 47.5
+    assert (view.ml_away, view.ml_home) == (125, -145)
+    assert view.books == 2
+    assert view.captured == pd.Timestamp("2026-09-10 13:00")
+    implied = view.implied_home_prob()
+    assert implied is not None and 0.55 < implied < 0.62  # de-vigged, not raw
+    assert market_view(lines, "gX") is None
+    assert market_view(None, "g1") is None
+
+
+def test_edges_fire_only_past_the_published_thresholds() -> None:
+    # Market has KC -6.5; model says KC -2.0 → 4.5-pt disagreement, lean BUF +6.5.
+    view = MarketView(spread_home=-6.5, total=47.5, ml_away=125, ml_home=-145)
+    edges = _card(market_view=view).edges()
+    assert edges["spread"].fired
+    assert edges["spread"].label == "BUF +6.5"
+    assert "4.5" in edges["spread"].detail
+    # Total diff 1.5 < 3.0 and win diff < 7 pts → honest no-edge cells.
+    assert not edges["total"].fired and edges["total"].detail == "no edge"
+    assert not edges["win"].fired
+
+    # The other spread direction: model likes home MORE than the market does.
+    strong_home = _card(fair_spread=-10.0, market_view=view).edges()
+    assert strong_home["spread"].label == "KC -6.5"
+    # Total and moneyline leans at magnitude.
+    hot = _card(fair_total=52.0, p_home_win=0.75, market_view=view).edges()
+    assert hot["total"].fired and hot["total"].label == "OVER 47.5"
+    assert hot["win"].fired and hot["win"].label == "KC ML"
+    cold = _card(fair_total=40.0, p_home_win=0.40, market_view=view).edges()
+    assert cold["total"].label == "UNDER 47.5"
+    assert cold["win"].label == "BUF ML"
+
+
+def test_edges_without_a_board_never_claim_anything() -> None:
+    edges = _card().edges()
+    assert all(not call.fired and call.detail == "—" for call in edges.values())
+
+
 def test_caption_states_facts_without_odds() -> None:
     proj = _projection()
     card = build_social_cards({"g1": proj}, EVENTS)[0]
@@ -169,11 +234,23 @@ def test_build_sim_checks_places_the_actual_result() -> None:
 def test_render_model_card_writes_a_png(tmp_path: Path) -> None:
     from velocity.report.social_png import render_cards
 
+    lines = pd.DataFrame([
+        {"game_id": "g1", "market": "moneyline", "side": "away", "price": 125,
+         "point": None, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+        {"game_id": "g1", "market": "moneyline", "side": "home", "price": -145,
+         "point": None, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+        {"game_id": "g1", "market": "spread", "side": "home", "price": -110,
+         "point": -7.5, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+        {"game_id": "g1", "market": "total", "side": "over", "price": -105,
+         "point": 47.5, "book": "a", "timestamp": pd.Timestamp("2026-09-10 12:00")},
+    ])
     cards = build_social_cards(
         {"g1": _projection()}, EVENTS,
         props_by_game={"g1": _props()},
         key_to_name={"qb1": "Patrick Mahomes", "te1": "Travis Kelce"},
+        lines=lines,
     )
+    assert cards[0].market_view is not None  # the matrix has a MARKET row
     paths = render_cards(cards, tmp_path, "20260910T120000Z", league="nfl")
     assert len(paths) == 1
     assert paths[0].name == "social_nfl_20260910T120000Z_BUF_at_KC.png"

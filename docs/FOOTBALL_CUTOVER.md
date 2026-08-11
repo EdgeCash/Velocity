@@ -301,6 +301,21 @@ Remaining for the DoD: one live dispatch on `main` (needs `THE_ODDS_API`)
 and the record chain accruing through Week 0/1 paper slates (Phase 5).
 NCAAF cards need a team-identity table (school colors/logos) — NFL-first.
 
+*Graphics v2 (2026-08-11), research-driven redesign:* the pregame card is now
+**MARKET vs MODEL** (the Josh Pate / nfelo / Unabated grammar, from a 3-agent
+research pass): the market's consensus numbers on top as the benchmark, the
+model's numbers directly under them in equal type (spread / total / win prob,
+moneylines de-vigged to probabilities), and a verdict strip that wears the
+edge color **only** past published thresholds (`social.py`: 2.5 spread pts,
+3.0 total pts, 7 win-prob pts) — sub-threshold cells say "no edge", because
+the empty leans are what make the fired ones credible. Top-props strip
+repeats the same micro-grammar (market line vs model number, accent only when
+the board line is present and the model sits ≥10 pts off 50%). Trust footer:
+book count + capture timestamp + threshold statement; season record rides the
+header. The total-points histogram moved off the pregame card (it lives on
+the Sim Check). Captions state leans as facts ("Model lean: … / no edge on
+this board"), never imperatives.
+
 ### Phase 5 — Season readiness gate — 🔨 DRESS REHEARSAL RUN 2026-08-11
 
 - **NCAAF Week 0 (~Aug 22) and Week 1:** paper slates only — full pipeline
@@ -409,6 +424,30 @@ lineups are the calibration proof; GPPs are where the sim earns its keep.
 
 **DoD:** dress-rehearsal on a real DK NFL slate — salaries ingested, 20
 lineups generated (1 cash, 19 GPP with exposure caps), scored post-slate
+against actuals.
+
+*Execution notes (2026-08-11), cash-game track built:*
+
+- `dfs/scoring.py` — FantasyPros long frame → expected DK classic points
+  (full PPR, 4-pt pass TD). Milestone bonuses deliberately excluded at the
+  mean (a bonus is a tail event; the sim-based pass prices it later).
+- `dfs/optimizer.py` — **exact**, not MILP and not heuristic: DK salaries
+  are $100 multiples, so the cap discretizes to 500 buckets and the problem
+  solves as a choose-k knapsack per position group convolved across groups,
+  once per FLEX shape. Pinned against brute force in tests. No solver
+  dependency.
+- `dfs/pipeline.py` — main-slate auto-pick (most games on the board) +
+  frames-to-lineup glue; `scripts/build_dfs_lineup.py` CLI (all failure
+  modes exit 0 — the DFS surface never blocks the slate).
+- `report/dfs_png.py` — the lineup card: 9 roster rows (slot chip, player,
+  team, salary, proj), QB-stack players in the teal accent with a stack
+  callout, salary-used bar, projected total, source + cash-objective notes.
+  No ownership column until an ownership feed exists.
+- `live-slate.yml` fetches the newest DK salary artifact and builds the NFL
+  lineup into the same private slate artifact.
+
+Still open from the 5b plan: FD scoring, sim-based GPP construction
+(distribution objective, multi-lineup exposure caps), and lineup grading
 against actuals.
 
 ---
