@@ -184,11 +184,13 @@ Start these **now**, weeks before kickoff.
    EV, bet rating; premium fields need the `BP_USER_ID`/`BP_USER_KEY` pair).
    NFL only — the partner spec's prop sport enum has no NCAAF, so college
    props remain model-generated. Rate budget: one request per snapshot
-   against a 5 RPS / 5,000-per-day cap. *Live finding (2026-08-11): `/props`
-   returns 429 instantly and still after 15s/30s backoffs while `/events`,
-   `/markets` and `/offers` answer normally — the partner key appears not to
-   be provisioned for the props route (the spec throttles unprovisioned
-   routes at 0 RPS, served as 429).* **Operator item:** ask BettingPros
+   against a 5 RPS / 5,000-per-day cap. *Live finding (2026-08-11),
+   confirmed by the per-sport probe (`--probe-props`): `/props` returns 429
+   for NFL, MLB, NBA and NHL alike — including mid-season MLB, which rules
+   out seasonal gating — while `/events`, `/markets` and `/offers` answer
+   normally. The partner key is not provisioned for the props route (the
+   spec throttles unprovisioned routes at 0 RPS, served as 429).*
+   **Operator item:** ask BettingPros
    (api@fantasypros.com) to enable `GET /props` for the partner key; the
    collector will start banking the board on its next run with no code
    change.
