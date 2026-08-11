@@ -378,6 +378,14 @@ def _prop_slate(
         if fp.empty:
             print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
             return None, {}, {}, None
+        from velocity.dfs.pipeline import is_season_long
+
+        if is_season_long(fp):
+            # Season totals would price a 4,800-yard passing prop as a weekly
+            # mean — refuse rather than misprice (same guard as the DFS lineup).
+            print("prop slate skipped: FP snapshot is season-long (week 0); "
+                  "weekly props can't be priced from season totals")
+            return None, {}, {}, None
 
         if args.prop_lines_file:
             prop_lines = pd.read_parquet(args.prop_lines_file)

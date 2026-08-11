@@ -363,7 +363,13 @@ to end — and surfaced four defects, all fixed same-day:
    now and college projections need another source. The NFL
    `public_api_limited`/zero-rows payload is the free tier answering
    `position=ALL`; the collector now falls back to per-position fetches
-   (QB/RB/WR/TE/K/DST) and merges. Needs one live dispatch to confirm.
+   (QB/RB/WR/TE/K/DST) and merges. Confirmed live: 9,803 rows / 600
+   players. *Follow-up defect, caught by the first demo run:* a week-0
+   (season-long) snapshot priced a 1,761-point DFS "lineup" — season
+   totals must never reach weekly consumers. The DFS lineup and the prop
+   slate now refuse week-0 frames (`is_season_long`), and the collector
+   defaults to `--week auto` (in-season week derived from the committed
+   schedule; 0 outside the season, which the consumers skip honestly).
 2. **No board window:** the August board carries the whole season at stale
    openers; the first run priced 272 NFL events, staked 20× bankroll on
    paper, and rendered 272 cards → `--max-days` window (default 6).

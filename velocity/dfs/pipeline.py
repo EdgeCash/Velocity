@@ -33,6 +33,20 @@ class LineupRun:
     n_pool: int  # players surviving the projection join
 
 
+def is_season_long(fp: pd.DataFrame) -> bool:
+    """True when a FantasyPros frame carries season-long (week 0) projections.
+
+    Season totals collapse to absurd weekly numbers (a 372-point QB), so
+    weekly consumers — the DFS lineup and the prop sim — must refuse them
+    rather than price nonsense. Proven live: the first demo run built a
+    1,761-point "lineup" from a week-0 snapshot.
+    """
+    if fp.empty or "week" not in fp.columns:
+        return False
+    weeks = pd.to_numeric(fp["week"], errors="coerce").fillna(0)
+    return bool((weeks == 0).all())
+
+
 def main_slate_group(salaries: pd.DataFrame) -> str | None:
     """The draft group that looks like the classic main slate.
 
