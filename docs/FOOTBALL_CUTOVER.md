@@ -259,7 +259,7 @@ Phase 2 archives to accrue), NCAAF prop coverage (FP team-code resolution),
 derivatives (team totals / 1H), unifying the game + prop sims for mixed
 parlays, and re-running the game backtests on refreshed data.
 
-### Phase 4 — Live surfaces cut over (weeks 2–4, parallel with Phase 3)
+### Phase 4 — Live surfaces cut over (weeks 2–4, parallel with Phase 3) — ✅ BUILT 2026-08-11 (needs live verification)
 
 1. `live-slate.yml` becomes the only live workflow: add the grade-yesterday →
    slate → email → artifact chain that `live-slate-mlb.yml` had (the football
@@ -272,6 +272,34 @@ parlays, and re-running the game backtests on refreshed data.
 
 **DoD:** a full dress-rehearsal run of the daily loop off a live snapshot —
 slate, email, cards, grading — with no MLB residue in any surface.
+
+*Execution notes:* the football card system is rebuilt from the `mlb-final`
+reference and wired end to end:
+
+- `report/assets.py` — NFL brand colors + ESPN logo CDN (cached,
+  best-effort), vendored Barlow type. `report/social.py` — card facts (win
+  split, projected score, fair line/total, market strip, watch strip chosen
+  where the model most disagrees with the prop board), pregame
+  total/margin distributions persisted per run. `report/social_png.py` —
+  the 1600×900 X-frame renderers: model card, post-game Sim Check
+  (percentile vs the pregame distribution), and the model record card.
+  Display tails are trimmed, never folded into a phantom spike.
+- `run_live_slate` persists distributions and renders model cards (NFL) with
+  the season record line; `grade_yesterday` renders Sim Checks + the record
+  card after grading. The Streamlit Cards tab already reads these filename
+  patterns.
+- `live-slate.yml` now carries the whole daily loop ported from the MLB
+  workflow: fetch previous artifacts → grade both leagues (Sim Check/record
+  cards) → fetch the freshest FantasyPros artifact → build slates (props
+  enabled for NFL when FP data exists) → upload parquets/xlsx/PNGs/captions
+  → optional email (skipped until mail secrets exist).
+- Offline dress rehearsal done: snapshot fixture → staked slate, prop slate,
+  parlays, workbook, two rendered cards + captions, with live-fetched logos.
+  The X posting itself stays human (captions are pre-written per card).
+
+Remaining for the DoD: one live dispatch on `main` (needs `THE_ODDS_API`)
+and the record chain accruing through Week 0/1 paper slates (Phase 5).
+NCAAF cards need a team-identity table (school colors/logos) — NFL-first.
 
 ### Phase 5 — Season readiness gate
 

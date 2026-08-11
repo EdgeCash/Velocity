@@ -49,6 +49,8 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
         "props": rf"slate_{lg}_props_{_STAMP}\.parquet",
         "parlays": rf"slate_{lg}_parlays_{_STAMP}\.parquet",
         "games": rf"games_{lg}_{_STAMP}\.parquet",
+        "projections": rf"projections_{lg}_{_STAMP}\.parquet",
+        "distributions": rf"distributions_{lg}_{_STAMP}\.parquet",
     }
     out: dict[str, dict[str, Path]] = {}
     for path in prev_dir.rglob("*.parquet"):
@@ -187,6 +189,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
 
     slate_date = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
     record = None
+    finals = None
     if n_plays == 0 or games_map is None or games_map.empty:
         record = empty_record()
         record["slate_date"] = pd.Timestamp(slate_date)
@@ -228,6 +231,35 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         out / f"cumulative_record_{args.league}_{out_stamp}.parquet", index=False
     )
     print(f"season record: {len(cumulative)} graded row(s) accumulated")
+
+    # Post-game graphics — the Sim Check cards (actual result on the pregame
+    # distribution) and the model record card. Best-effort: rendering trouble
+    # never blocks the graded record itself.
+    try:
+        from velocity.report.sim_check import build_sim_checks
+        from velocity.report.social_png import render_record_card, render_sim_checks
+
+        projections_frame = _load(paths, "projections")
+        distributions = _load(paths, "distributions")
+        if (
+            projections_frame is not None
+            and distributions is not None
+            and finals is not None
+            and games_map is not None
+        ):
+            checks = build_sim_checks(projections_frame, distributions, finals, games_map)
+            rendered = render_sim_checks(checks, out, out_stamp,
+                                         asset_dir=out / ".assets", league=args.league)
+            print(f"rendered {len(rendered)} sim check card(s)")
+        settled = record[record["result"].isin(["win", "loss", "push"])]
+        if not settled.empty:
+            when = record["slate_date"].dropna()
+            date_label = "" if when.empty else pd.Timestamp(when.iloc[0]).strftime("%b %-d")
+            card_dest = out / f"recordcard_{args.league}_{out_stamp}.png"
+            render_record_card(record, cumulative, card_dest, date_label=date_label)
+            print(f"rendered model record card to {card_dest}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"post-game cards skipped: {exc}")
 
 
 if __name__ == "__main__":
