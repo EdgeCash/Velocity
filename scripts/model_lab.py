@@ -114,6 +114,14 @@ def main() -> None:
         }
         print(f"  {name}: done ({int(row.get('n_games', 0))} games)")
 
+    # Market blend (nfelo's market-regression insight): sweep
+    # p_blend = w·model + (1−w)·market per ledger, weight chosen on the select
+    # window and judged on the holdout — the accuracy ceiling for staking.
+    from velocity.backtest.lab import market_blend_sweep
+
+    blends = {name: market_blend_sweep(projections, games)
+              for name, projections in ledgers.items()}
+
     table = pd.DataFrame(rows)
     with pd.option_context("display.width", 160, "display.max_columns", None):
         print("\n=== Variant comparison (walk-forward, out-of-sample) ===")
@@ -123,6 +131,16 @@ def main() -> None:
                 for market, sweep in by_market.items():
                     print(f"\n--- {name} · {market} disagreement sweep ---")
                     print(sweep.to_string(index=False))
+        for name, blend in blends.items():
+            if blend.empty:
+                continue
+            print(f"\n--- {name} · market blend sweep (select ≤2019 / holdout) ---")
+            print(blend.to_string(index=False))
+            best = blend.loc[blend["brier_select"].idxmin()]
+            print(f"    select-chosen weight w={best['weight']:.1f} → "
+                  f"holdout Brier {best['brier_holdout']:.4f} "
+                  f"(pure model {blend.loc[blend['weight'] == 1.0, 'brier_holdout'].iloc[0]:.4f}, "
+                  f"pure market {blend.loc[blend['weight'] == 0.0, 'brier_holdout'].iloc[0]:.4f})")
 
     if args.out:
         out = Path(args.out)
@@ -133,6 +151,9 @@ def main() -> None:
                 sweep.to_parquet(out / f"sweep_{name}_{market}.parquet", index=False)
         for name, projections in ledgers.items():
             projections.to_parquet(out / f"projections_{name}.parquet", index=False)
+        for name, blend in blends.items():
+            if not blend.empty:
+                blend.to_parquet(out / f"blend_{name}.parquet", index=False)
         print(f"\nwrote comparison tables to {out}")
 
 

@@ -25,12 +25,23 @@ they are tuned so the model is calibrated against closing lines.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import numpy as np
 
-from velocity.features.team import TeamRatings
 from velocity.models.simulate import GameSim, SimConfig, simulate_game
 from velocity.util.seed import make_rng
+
+
+class MatchupRatings(Protocol):
+    """Anything that prices an offense-vs-defense matchup in EPA/play.
+
+    Satisfied by :class:`~velocity.features.team.TeamRatings` and the
+    QB-decomposed :class:`~velocity.features.team.QBTeamRatings` alike — the
+    game model only ever asks for the matchup delta.
+    """
+
+    def matchup_delta(self, off_team: str, def_team: str) -> float: ...
 
 # League priors for the NFL (points per team per game, offensive plays per game,
 # and home-field advantage in points). Tuned on real data in the backtest phase.
@@ -97,7 +108,7 @@ class GameProjection:
 class NFLGameModel:
     """Projects NFL games from fitted team ratings."""
 
-    def __init__(self, ratings: TeamRatings, config: NFLModelConfig | None = None) -> None:
+    def __init__(self, ratings: MatchupRatings, config: NFLModelConfig | None = None) -> None:
         self.ratings = ratings
         self.config = config or NFLModelConfig()
 
