@@ -113,20 +113,23 @@ class NFLGameModel:
         self.config = config or NFLModelConfig()
 
     def expected_points(
-        self, home_team: str, away_team: str, *, neutral_site: bool = False
+        self, home_team: str, away_team: str, *, neutral_site: bool = False,
+        home_bonus: float = 0.0, away_bonus: float = 0.0,
     ) -> tuple[float, float]:
         """Expected points for (home, away), before simulation.
 
         Combines each offense's adjusted efficiency against the opposing defense,
         scales by pace into points over the league baseline, and applies
         home-field advantage unless the game is at a neutral site.
+        ``home_bonus``/``away_bonus`` are additive point adjustments for
+        situational wrappers (rest spots, weather) — zero by default.
         """
         cfg = self.config
         home_delta = self.ratings.matchup_delta(home_team, away_team)
         away_delta = self.ratings.matchup_delta(away_team, home_team)
 
-        mu_home = cfg.base_points + cfg.plays_per_game * home_delta
-        mu_away = cfg.base_points + cfg.plays_per_game * away_delta
+        mu_home = cfg.base_points + cfg.plays_per_game * home_delta + home_bonus
+        mu_away = cfg.base_points + cfg.plays_per_game * away_delta + away_bonus
 
         if not neutral_site:
             mu_home += cfg.hfa_points / 2.0
@@ -141,6 +144,8 @@ class NFLGameModel:
         *,
         neutral_site: bool = False,
         rng: np.random.Generator | None = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
     ) -> GameProjection:
         """Simulate the matchup and return a priced :class:`GameProjection`.
 
@@ -150,7 +155,8 @@ class NFLGameModel:
         """
         rng = rng if rng is not None else make_rng()
         mu_home, mu_away = self.expected_points(
-            home_team, away_team, neutral_site=neutral_site
+            home_team, away_team, neutral_site=neutral_site,
+            home_bonus=home_bonus, away_bonus=away_bonus,
         )
         sim = simulate_game(
             mu_margin=mu_home - mu_away,

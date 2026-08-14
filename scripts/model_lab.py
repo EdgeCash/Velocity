@@ -65,7 +65,7 @@ def main() -> None:
         # before each predicted week (plays are passed unrestricted).
         games = games[games["season"] >= args.eval_from].reset_index(drop=True)
 
-    chosen = nfl_variants(args.n_sims)
+    chosen = nfl_variants(args.n_sims, schedule=games)
     if args.variants:
         names = [v.strip() for v in args.variants.split(",") if v.strip()]
         unknown = [n for n in names if n not in chosen]

@@ -197,3 +197,40 @@ def test_market_blend_sweep_empty_when_no_lines() -> None:
                                 "fair_spread": [0.0], "fair_total": [44.0]})
     games = pd.DataFrame({"game_id": ["g1"], "spread_line": [None]})
     assert market_blend_sweep(projections, games).empty
+
+
+def test_rest_adjusted_model_applies_bye_and_short_week() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import RestAdjustedModel
+
+    captured = {}
+
+    class _Inner:
+        def project(self, home, away, *, neutral_site=False, rng=None,
+                    home_bonus=0.0, away_bonus=0.0):
+            captured.update(home_bonus=home_bonus, away_bonus=away_bonus)
+            return "proj"
+
+    schedule = pd.DataFrame({
+        "home_team": ["KC", "BUF", "KC"],
+        "away_team": ["DEN", "KC", "BUF"],
+        "kickoff": pd.to_datetime([
+            "2025-09-07",  # KC and DEN play
+            "2025-09-14",  # BUF hosts KC (KC on 7 days rest)
+            "2025-09-28",  # KC hosts BUF: KC off 14 days (bye), BUF off 14 too
+        ]),
+    })
+    model = RestAdjustedModel(_Inner(), schedule, bye_points=1.5, short_points=1.0)
+
+    # Week 3 game: both teams coming off 14 days rest → both get the bye bonus.
+    assert model.project("KC", "BUF", kickoff=pd.Timestamp("2025-09-28")) == "proj"
+    assert captured == {"home_bonus": 1.5, "away_bonus": 1.5}
+
+    # A Thursday game 4 days after playing → short-week penalty; opponent
+    # with no prior game gets nothing.
+    model.project("KC", "NYJ", kickoff=pd.Timestamp("2025-09-11"))
+    assert captured == {"home_bonus": -1.0, "away_bonus": 0.0}
+
+    # No kickoff supplied → no adjustment either way.
+    model.project("KC", "BUF", kickoff=None)
+    assert captured == {"home_bonus": 0.0, "away_bonus": 0.0}

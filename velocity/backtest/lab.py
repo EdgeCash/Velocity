@@ -119,8 +119,15 @@ def fit_split_ratings(
     )
 
 
-def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
-    """The benchmark slate of NFL variants: name → (train frame kind, factory)."""
+def nfl_variants(
+    n_sims: int, schedule: pd.DataFrame | None = None
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The benchmark slate of NFL variants: name → (train frame kind, factory).
+
+    ``schedule`` (the full games frame) enables the rest-spot wrappers — rest
+    days are preseason-public schedule knowledge, so the closure is not
+    leakage. Without it the rest variants are simply absent.
+    """
     sim = SimConfig(n_sims=n_sims)
 
     def _model(ratings: object) -> NFLGameModel:
@@ -165,7 +172,7 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
 
-    return {
+    variants: dict[str, tuple[str, VariantFactory]] = {
         "baseline": ("plays", baseline),
         "scores": ("games", scores),
         "recency-17": ("plays", recency(17.0)),
@@ -176,13 +183,103 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         "split-0.75": ("plays", split(0.75)),
         "ridge-100": ("plays", ridge(100.0)),
         "ridge-400": ("plays", ridge(400.0)),
-        # QB adjustment (docs/MODEL_LAB.md backlog #1): the recency fit with
+        # QB adjustment (docs/MODEL_LAB.md Round 3): the recency fit with
         # the passer decomposed out of the offense and the detected starter
-        # priced back in at projection time.
+        # priced back in at projection time. The bare name runs the promoted
+        # config (DEFAULT_QB_LAMBDA).
         "qb-recency-17": ("plays", qb_recency(17.0)),
         "qb-recency-17-q75": ("plays", qb_recency(17.0, 75.0)),
         "qb-recency-17-q300": ("plays", qb_recency(17.0, 300.0)),
     }
+
+    if schedule is not None:
+        def rest(bye_pts: float, short_pts: float) -> VariantFactory:
+            base = qb_recency(17.0)
+
+            def factory(train: pd.DataFrame) -> RestAdjustedModel:
+                return RestAdjustedModel(
+                    base(train), schedule,  # type: ignore[arg-type]
+                    bye_points=bye_pts, short_points=short_pts,
+                )
+
+            return factory
+
+        variants.update({
+            "rest-1.0-1.0": ("plays", rest(1.0, 1.0)),
+            "rest-0.5-1.5": ("plays", rest(0.5, 1.5)),
+            "rest-2.0-1.0": ("plays", rest(2.0, 1.0)),
+        })
+    return variants
+
+
+class RestAdjustedModel:
+    """A situational wrapper: rest-spot point bonuses on top of any NFL model.
+
+    Rest days are pure schedule knowledge (known before the season), so
+    computing them from the full schedule is not leakage. A team coming off a
+    bye (rest ≥ ``bye_days``) gets ``bye_points``; a team on a short week
+    (rest ≤ ``short_days``) gets ``-short_points``. Teams with no prior game
+    (week 1) get no adjustment.
+    """
+
+    def __init__(
+        self,
+        inner: NFLGameModel,
+        schedule: pd.DataFrame,
+        *,
+        bye_points: float = 1.0,
+        short_points: float = 1.0,
+        bye_days: int = 12,
+        short_days: int = 5,
+    ) -> None:
+        self.inner = inner
+        self.bye_points = bye_points
+        self.short_points = short_points
+        self.bye_days = bye_days
+        self.short_days = short_days
+        sched = schedule.dropna(subset=["kickoff"]).copy()
+        sched["kickoff"] = pd.to_datetime(sched["kickoff"])
+        long = pd.concat([
+            sched[["home_team", "kickoff"]].rename(columns={"home_team": "team"}),
+            sched[["away_team", "kickoff"]].rename(columns={"away_team": "team"}),
+        ], ignore_index=True)
+        self._games_by_team = {
+            str(team): group["kickoff"].sort_values().to_numpy()
+            for team, group in long.groupby("team")
+        }
+
+    def _bonus(self, team: str, kickoff: object) -> float:
+        if kickoff is None or pd.isna(kickoff):  # type: ignore[call-overload]
+            return 0.0
+        played = self._games_by_team.get(team)
+        if played is None:
+            return 0.0
+        when = pd.Timestamp(kickoff).to_datetime64()  # type: ignore[arg-type]
+        prior = played[played < when]
+        if len(prior) == 0:
+            return 0.0
+        rest = (when - prior[-1]) / np.timedelta64(1, "D")
+        if rest >= self.bye_days:
+            return self.bye_points
+        if rest <= self.short_days:
+            return -self.short_points
+        return 0.0
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+    ) -> object:
+        return self.inner.project(
+            home_team, away_team, neutral_site=neutral_site,
+            rng=rng,  # type: ignore[arg-type]
+            home_bonus=self._bonus(home_team, kickoff),
+            away_bonus=self._bonus(away_team, kickoff),
+        )
 
 
 def market_blend_sweep(
