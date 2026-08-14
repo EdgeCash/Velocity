@@ -86,6 +86,7 @@ def _build_projection(
     if plays_path is not None:
         from velocity.features.team import (
             DEFAULT_RECENCY_HALF_LIFE,
+            fit_qb_ratings,
             fit_ratings,
             recency_weights,
         )
@@ -95,11 +96,17 @@ def _build_projection(
         plays = load_plays(plays_path)
         cutoff = int(plays["season"].max()) - 3
         plays = plays[plays["season"] >= cutoff]
-        ratings = fit_ratings(
-            plays, weights=recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
-        )
-        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))
-        print(f"NFL ratings: recency-weighted EPA fit on {len(plays)} plays "
+        weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
+        if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
+            # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
+            # of the offense, detected starter priced back in at projection.
+            ratings: object = fit_qb_ratings(plays, weights=weights)
+            kind = "QB-adjusted recency EPA"
+        else:  # plays without passer identity (older datasets, fixtures)
+            ratings = fit_ratings(plays, weights=weights)
+            kind = "recency-weighted EPA"
+        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))  # type: ignore[arg-type]
+        print(f"NFL ratings: {kind} fit on {len(plays)} plays "
               f"(seasons {cutoff}+, half-life {DEFAULT_RECENCY_HALF_LIFE:g} wks)")
 
         def project_epa(home: str, away: str) -> GameProjection:

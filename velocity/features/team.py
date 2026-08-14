@@ -158,6 +158,155 @@ def fit_ratings(
     )
 
 
+# QB effects shrink harder than team effects: a passer's dummy only fires on
+# his own dropbacks, so the pseudo-play prior needs to dominate small samples
+# (a 30-dropback backup should look near league-average, not like his box
+# scores). Passers under the dropback floor get no dummy at all — their plays
+# price into the team offense like any other play. λ=300 won the lab's
+# three-way sweep (docs/MODEL_LAB.md Round 3: Brier 0.2205 vs 0.2233 for the
+# QB-blind recency fit, calibration error 0.0148 vs 0.0335).
+DEFAULT_QB_LAMBDA = 300.0
+DEFAULT_MIN_DROPBACKS = 40
+
+
+@dataclass(frozen=True)
+class QBTeamRatings:
+    """Team ratings with the QB decomposed out of the offense.
+
+    Same model as :class:`TeamRatings` plus a passer effect on dropbacks::
+
+        epa = intercept + offense[posteam] + defense[defteam] + qb[passer]
+
+    ``offense`` is therefore the QB-neutral team component and ``qb`` the
+    passer's own EPA/dropback deviation. ``starters`` maps each team to its
+    most recent primary passer in the training slice (the passer with the most
+    dropbacks in the team's latest game) — the projection-time starter guess
+    when no better information is supplied. ``pass_rate`` converts a per-
+    dropback QB effect into a per-play matchup quantity.
+    """
+
+    offense: dict[str, float]
+    defense: dict[str, float]
+    qb: dict[str, float]
+    starters: dict[str, str]
+    pass_rate: dict[str, float]
+    league_epa: float
+    ridge_lambda: float
+    qb_lambda: float
+    n_plays: int
+    teams: tuple[str, ...] = field(default_factory=tuple)
+
+    def matchup_delta(
+        self, off_team: str, def_team: str, qb_id: str | None = None
+    ) -> float:
+        """Per-play EPA deviation for the matchup with the starter priced in.
+
+        ``qb_id`` overrides the detected starter (an announced change the
+        training data hasn't seen yet); ``None`` uses ``starters``. An unknown
+        team or passer contributes 0 — league average, never a guess.
+        """
+        starter = qb_id if qb_id is not None else self.starters.get(off_team)
+        qb_effect = self.qb.get(starter, 0.0) if starter else 0.0
+        rate = self.pass_rate.get(off_team, 0.6)
+        return (
+            self.offense.get(off_team, 0.0)
+            + self.defense.get(def_team, 0.0)
+            + rate * qb_effect
+        )
+
+    def expected_epa(self, off_team: str, def_team: str) -> float:
+        return self.league_epa + self.matchup_delta(off_team, def_team)
+
+
+def fit_qb_ratings(
+    plays: pd.DataFrame,
+    *,
+    ridge_lambda: float = DEFAULT_RIDGE_LAMBDA,
+    qb_lambda: float = DEFAULT_QB_LAMBDA,
+    min_dropbacks: int = DEFAULT_MIN_DROPBACKS,
+    epa_col: str = "epa",
+    weights: pd.Series | None = None,
+) -> QBTeamRatings:
+    """Fit ridge ratings with QB effects decomposed out of the offense.
+
+    Requires a ``passer_player_id`` column (the rebuilt canonical plays carry
+    it); plays without one — every rush, plus scrambles/sacks some seasons —
+    simply have no QB dummy. Deterministic like :func:`fit_ratings`.
+    """
+    if ridge_lambda <= 0 or qb_lambda <= 0:
+        raise ValueError("ridge_lambda and qb_lambda must be positive")
+    if "passer_player_id" not in plays.columns:
+        raise ValueError("plays need a passer_player_id column (rebuild the dataset)")
+
+    df = plays.dropna(subset=["posteam", "defteam", epa_col])
+    if df.empty:
+        raise ValueError("no usable plays (need non-null posteam, defteam and epa)")
+
+    teams = sorted(set(df["posteam"]) | set(df["defteam"]))
+    index = {team: i for i, team in enumerate(teams)}
+    n_teams = len(teams)
+    n_plays = len(df)
+
+    dropbacks = df["passer_player_id"].notna()
+    counts = df.loc[dropbacks, "passer_player_id"].value_counts()
+    passers = sorted(counts[counts >= min_dropbacks].index.astype(str))
+    qb_index = {qb: i for i, qb in enumerate(passers)}
+
+    n_cols = 1 + 2 * n_teams + len(passers)
+    x = np.zeros((n_plays, n_cols))
+    rows = np.arange(n_plays)
+    x[:, 0] = 1.0
+    x[rows, df["posteam"].map(index).to_numpy() + 1] = 1.0
+    x[rows, df["defteam"].map(index).to_numpy() + 1 + n_teams] = 1.0
+    qb_col = df["passer_player_id"].map(qb_index)
+    has_qb = qb_col.notna().to_numpy()
+    x[rows[has_qb], qb_col.to_numpy(dtype=float)[has_qb].astype(int)
+      + 1 + 2 * n_teams] = 1.0
+    y = df[epa_col].to_numpy(dtype=float)
+
+    penalty = np.concatenate([
+        [0.0],
+        np.full(2 * n_teams, ridge_lambda),
+        np.full(len(passers), qb_lambda),
+    ])
+    if weights is not None:
+        w = weights.reindex(df.index).to_numpy(dtype=float)
+        if np.any(~np.isfinite(w)) or np.any(w < 0):
+            raise ValueError("weights must be finite and non-negative for every kept play")
+        xw = x * w[:, None]
+        gram = xw.T @ x + np.diag(penalty)
+        beta = np.linalg.solve(gram, xw.T @ y)
+    else:
+        gram = x.T @ x + np.diag(penalty)
+        beta = np.linalg.solve(gram, x.T @ y)
+
+    # Starter detection: each team's primary passer in its latest game.
+    starters: dict[str, str] = {}
+    game_key = df["season"].astype(int) * 100 + df["week"].astype(int)
+    db = df.loc[dropbacks].assign(_key=game_key[dropbacks])
+    for team, group in db.groupby("posteam"):
+        latest = group[group["_key"] == group["_key"].max()]
+        primary = latest["passer_player_id"].value_counts()
+        if len(primary):
+            starters[str(team)] = str(primary.index[0])
+
+    scrimmage = df[df["play_type"].isin(["pass", "run"])]
+    rate = (scrimmage["play_type"] == "pass").groupby(scrimmage["posteam"]).mean()
+
+    return QBTeamRatings(
+        offense={t: float(beta[1 + index[t]]) for t in teams},
+        defense={t: float(beta[1 + n_teams + index[t]]) for t in teams},
+        qb={qb: float(beta[1 + 2 * n_teams + qb_index[qb]]) for qb in passers},
+        starters=starters,
+        pass_rate={str(t): float(r) for t, r in rate.items()},
+        league_epa=float(beta[0]),
+        ridge_lambda=ridge_lambda,
+        qb_lambda=qb_lambda,
+        n_plays=n_plays,
+        teams=tuple(teams),
+    )
+
+
 def team_pace(plays: pd.DataFrame) -> dict[str, float]:
     """Offensive plays per game for each team.
 

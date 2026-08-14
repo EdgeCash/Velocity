@@ -26,8 +26,10 @@ rate as a function of model-vs-close disagreement, per variant.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
+import numpy as np
 import pandas as pd
 
 from velocity.features.scores import fit_scores_ratings
@@ -46,9 +48,15 @@ __all__ = [
     "combine_ratings",
     "disagreement_sweep",
     "fit_split_ratings",
+    "market_blend_sweep",
     "nfl_variants",
     "recency_weights",
 ]
+
+# The classic NFL margin standard deviation, used to convert a point spread
+# into a win probability (probit link). A fixed historical constant, never fit
+# on the evaluation data.
+NFL_MARGIN_SIGMA = 13.45
 
 # A variant maps a training frame to a projection model. `train` names which
 # frame the engine should slice for it: "plays" (EPA fits) or "games" (the
@@ -115,8 +123,8 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
     """The benchmark slate of NFL variants: name → (train frame kind, factory)."""
     sim = SimConfig(n_sims=n_sims)
 
-    def _model(ratings: TeamRatings) -> NFLGameModel:
-        return NFLGameModel(ratings, NFLModelConfig(sim=sim))
+    def _model(ratings: object) -> NFLGameModel:
+        return NFLGameModel(ratings, NFLModelConfig(sim=sim))  # type: ignore[arg-type]
 
     def baseline(train: pd.DataFrame) -> NFLGameModel:
         return _model(fit_ratings(train))
@@ -141,6 +149,18 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
 
         return factory
 
+    def qb_recency(half_life: float, qb_lam: float | None = None) -> VariantFactory:
+        from velocity.features.team import DEFAULT_QB_LAMBDA, fit_qb_ratings
+
+        def factory(train: pd.DataFrame) -> NFLGameModel:
+            return _model(fit_qb_ratings(
+                train,
+                qb_lambda=qb_lam if qb_lam is not None else DEFAULT_QB_LAMBDA,
+                weights=recency_weights(train, half_life),
+            ))
+
+        return factory
+
     def scores(train_games: pd.DataFrame) -> ScoresGameModel:
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
@@ -156,7 +176,68 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         "split-0.75": ("plays", split(0.75)),
         "ridge-100": ("plays", ridge(100.0)),
         "ridge-400": ("plays", ridge(400.0)),
+        # QB adjustment (docs/MODEL_LAB.md backlog #1): the recency fit with
+        # the passer decomposed out of the offense and the detected starter
+        # priced back in at projection time.
+        "qb-recency-17": ("plays", qb_recency(17.0)),
+        "qb-recency-17-q75": ("plays", qb_recency(17.0, 75.0)),
+        "qb-recency-17-q300": ("plays", qb_recency(17.0, 300.0)),
     }
+
+
+def market_blend_sweep(
+    projections: pd.DataFrame,
+    games: pd.DataFrame,
+    *,
+    sigma: float = NFL_MARGIN_SIGMA,
+    weights: tuple[float, ...] = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    select_through: int = 2019,
+) -> pd.DataFrame:
+    """Brier of market-blended win probabilities across model weights.
+
+    The nfelo finding: regressing a model *toward* the market maximizes
+    forecasting accuracy, because the close is the best single predictor in
+    existence. This sweeps ``p_blend = w·p_model + (1−w)·p_market`` where
+    ``p_market`` is the closing spread through a fixed probit link
+    (``Φ(spread_margin/σ)`` — σ is a historical constant, nothing fit here).
+
+    Honesty split: ``w`` must not be chosen on the games it is judged on, so
+    every weight is scored separately on the **select** window (seasons ≤
+    ``select_through``) and the **holdout** (later seasons). The promotion
+    read is: pick argmin Brier on select, report that weight's holdout Brier.
+    Returns one row per weight: ``weight, brier_select, brier_holdout,
+    n_select, n_holdout``.
+    """
+    line_cols = games[["game_id", "spread_line"]].copy()
+    line_cols["game_id"] = line_cols["game_id"].astype(str)
+    df = projections.copy()
+    df["game_id"] = df["game_id"].astype(str)
+    df = df.merge(line_cols, on="game_id", how="inner").dropna(
+        subset=["spread_line", "p_home_win", "home_win"]
+    )
+    if df.empty:
+        return pd.DataFrame(columns=["weight", "brier_select", "brier_holdout",
+                                     "n_select", "n_holdout"])
+    # spread_line is positive when home is favored → it *is* the market's
+    # expected home margin in this dataset's convention. Φ via erf — no scipy.
+    z = df["spread_line"].to_numpy(dtype=float) / (sigma * math.sqrt(2.0))
+    p_market = 0.5 * (1.0 + np.vectorize(math.erf)(z))
+    p_model = df["p_home_win"].to_numpy(dtype=float)
+    outcome = df["home_win"].to_numpy(dtype=float)
+    in_select = (df["season"].astype(int) <= select_through).to_numpy()
+
+    rows = []
+    for w in weights:
+        blend = w * p_model + (1.0 - w) * p_market
+        sq = (blend - outcome) ** 2
+        rows.append({
+            "weight": float(w),
+            "brier_select": float(sq[in_select].mean()) if in_select.any() else float("nan"),
+            "brier_holdout": float(sq[~in_select].mean()) if (~in_select).any() else float("nan"),
+            "n_select": int(in_select.sum()),
+            "n_holdout": int((~in_select).sum()),
+        })
+    return pd.DataFrame(rows)
 
 
 def disagreement_sweep(

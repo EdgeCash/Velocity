@@ -155,3 +155,45 @@ def test_nickname_aliases_prefix_matches_schools() -> None:
     assert aliases["Miami Hurricanes"] == "Miami"  # "Miami (OH)" is not a prefix
     assert aliases["Texas A&M Aggies"] == "Texas A&M"
     assert "Fresno State Bulldogs" not in aliases  # no match → absent, never guessed
+
+
+def test_market_blend_sweep_scores_select_and_holdout() -> None:
+    import numpy as np
+    import pandas as pd
+    from velocity.backtest.lab import market_blend_sweep
+
+    rng = np.random.default_rng(3)
+    n = 400
+    seasons = np.where(np.arange(n) < 200, 2018, 2022)  # half select, half holdout
+    # The market is well calibrated; the model is pure noise → the sweep must
+    # prefer w=0 (all market) on both windows.
+    spread = rng.normal(0, 6, n)
+    import math
+    p_true = 0.5 * (1.0 + np.vectorize(math.erf)(spread / (13.45 * math.sqrt(2))))
+    outcome = (rng.random(n) < p_true).astype(float)
+    projections = pd.DataFrame({
+        "season": seasons, "week": 1, "game_id": [f"g{i}" for i in range(n)],
+        "p_home_win": rng.random(n), "home_win": outcome,
+        "fair_spread": 0.0, "fair_total": 44.0,
+    })
+    games = pd.DataFrame({"game_id": [f"g{i}" for i in range(n)],
+                          "spread_line": spread})
+    sweep = market_blend_sweep(projections, games, select_through=2019)
+    assert list(sweep["weight"]) == sorted(sweep["weight"])
+    assert (sweep["n_select"] == 200).all() and (sweep["n_holdout"] == 200).all()
+    best = sweep.loc[sweep["brier_select"].idxmin()]
+    assert best["weight"] <= 0.2  # a noise model should be regressed to the market
+    # And the pure-model endpoint must be the worst of all weights here.
+    w1 = sweep.loc[sweep["weight"] == 1.0].iloc[0]
+    assert w1["brier_select"] == sweep["brier_select"].max()
+
+
+def test_market_blend_sweep_empty_when_no_lines() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import market_blend_sweep
+
+    projections = pd.DataFrame({"season": [2020], "week": [1], "game_id": ["g1"],
+                                "p_home_win": [0.5], "home_win": [1.0],
+                                "fair_spread": [0.0], "fair_total": [44.0]})
+    games = pd.DataFrame({"game_id": ["g1"], "spread_line": [None]})
+    assert market_blend_sweep(projections, games).empty
