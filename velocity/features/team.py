@@ -162,8 +162,10 @@ def fit_ratings(
 # his own dropbacks, so the pseudo-play prior needs to dominate small samples
 # (a 30-dropback backup should look near league-average, not like his box
 # scores). Passers under the dropback floor get no dummy at all — their plays
-# price into the team offense like any other play.
-DEFAULT_QB_LAMBDA = 150.0
+# price into the team offense like any other play. λ=300 won the lab's
+# three-way sweep (docs/MODEL_LAB.md Round 3: Brier 0.2205 vs 0.2233 for the
+# QB-blind recency fit, calibration error 0.0148 vs 0.0335).
+DEFAULT_QB_LAMBDA = 300.0
 DEFAULT_MIN_DROPBACKS = 40
 
 
