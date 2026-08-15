@@ -1,0 +1,64 @@
+name: Collect PrizePicks board
+
+# PrizePicks has no historical archive — a board line exists only while it is
+# live — so we build pick'em history by snapshotting the board on a schedule
+# and storing each snapshot as a PRIVATE Actions artifact. Nothing is
+# committed: the repo is public, and both ToS hygiene and our own edge say
+# board snapshots never land in it. The feed is keyless; the collector is
+# deliberately polite (one request per league, spaced, backoff) and reports
+# bot-protection blocks instead of fighting them.
+
+on:
+  schedule:
+    # Every 3 hours, mirroring the BettingPros cadence: in-season this brackets
+    # board moves toward lock; off-season the snapshot is small or empty and
+    # the job still succeeds.
+    - cron: "30 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "PrizePicks league names to snapshot (space-separated)"
+        required: false
+        default: "NFL CFB"
+
+concurrency:
+  group: collect-pp
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot pick'em board
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot PrizePicks board
+        run: |
+          python scripts/collect_prizepicks.py \
+            --out artifacts/pp \
+            --leagues ${{ github.event.inputs.leagues || 'NFL CFB' }}
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pp-board-${{ github.run_id }}
+          path: |
+            artifacts/pp/*.parquet
+            artifacts/pp/raw/*.json
+          if-no-files-found: warn
+          retention-days: 30
