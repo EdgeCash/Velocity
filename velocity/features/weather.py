@@ -114,3 +114,50 @@ def wind_total_bonus(
     if excess <= 0:
         return 0.0
     return -min(excess * points_per_mph, cap_points)
+
+
+# Teams whose current home is weatherproof (dome or reliably-closed roof) —
+# the live forecast path skips them; historical joins use the per-game roof.
+INDOOR_TEAMS = frozenset(
+    {"ARI", "ATL", "DAL", "DET", "HOU", "IND", "LA", "LAC", "LV", "MIN", "NO"}
+)
+
+
+def forecast_frame(days: int = 7) -> pd.DataFrame:  # pragma: no cover - network
+    """Open-Meteo wind *forecast* for every outdoor home stadium, next ``days``.
+
+    The live sibling of the archive fetch: one request per outdoor team's
+    current location, returning the ``join_weather``-shaped frame
+    (``home_team``/``kickoff``/``roof``/``wind_max``) that
+    ``WeatherAdjustedModel`` keys on. Best-effort per team — a failed fetch
+    just means no adjustment for that stadium (never a fake calm zero).
+    """
+    import json
+    import urllib.parse
+    import urllib.request
+
+    rows: list[dict[str, object]] = []
+    for team, _first, last, lat, lon in STADIUM_ERAS:
+        if last is not None or team in INDOOR_TEAMS:
+            continue  # historical era, or weatherproof
+        query = urllib.parse.urlencode({
+            "latitude": lat, "longitude": lon,
+            "daily": "wind_speed_10m_max", "wind_speed_unit": "mph",
+            "forecast_days": max(1, min(days, 16)), "timezone": "UTC",
+        })
+        try:
+            with urllib.request.urlopen(  # noqa: S310 - fixed https host
+                f"https://api.open-meteo.com/v1/forecast?{query}", timeout=20
+            ) as resp:
+                daily = json.loads(resp.read()).get("daily") or {}
+        except Exception:  # noqa: BLE001 - a stadium without forecast gets no adjustment
+            continue
+        for date, wind in zip(daily.get("time", []),
+                              daily.get("wind_speed_10m_max", []), strict=False):
+            rows.append({"home_team": team, "kickoff": pd.Timestamp(date),
+                         "roof": "outdoors", "wind_max": wind,
+                         "temp_mean": None, "precip": None})
+    return pd.DataFrame(
+        rows, columns=["home_team", "kickoff", "roof", "wind_max",
+                       "temp_mean", "precip"]
+    )

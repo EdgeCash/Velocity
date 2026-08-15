@@ -116,10 +116,27 @@ def _build_projection(
         schedule = load_games(_find_games(folder), league="nfl")
         rest_model = RestAdjustedModel(nfl_model, schedule)
 
+        # Wind on totals (Round 5 constants, live forecast): best-effort — a
+        # failed forecast fetch just leaves totals unadjusted.
+        model: object = rest_model
+        try:
+            if args.snapshot_file:  # offline runs (tests/CI) skip the network
+                raise RuntimeError("offline snapshot run")
+            from velocity.backtest.lab import WeatherAdjustedModel
+            from velocity.features.weather import forecast_frame
+
+            forecast = forecast_frame(days=max(args.max_days, 1) + 1)
+            if not forecast.empty:
+                model = WeatherAdjustedModel(rest_model, forecast,  # type: ignore[arg-type]
+                                             points_per_mph=0.30)
+                print(f"wind forecast: {len(forecast)} stadium-days fetched")
+        except Exception as exc:  # noqa: BLE001 - weather is a nicety live
+            print(f"wind forecast skipped ({exc})")
+
         def project_epa(
             home: str, away: str, kickoff: object = None
         ) -> GameProjection:
-            return rest_model.project(  # type: ignore[return-value]
+            return model.project(  # type: ignore[attr-defined,return-value]
                 home, away, rng=make_rng(), kickoff=kickoff
             )
 
