@@ -56,6 +56,14 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
+    # Market anchoring (docs/MODEL_LAB.md Round 3): the close's Brier beats
+    # every pure model, so the *belief* probability used for staking may be
+    # regressed toward the market's devigged probability:
+    #   p_belief = p_market + model_weight · (p_model − p_market)
+    # 1.0 = pure model (default, bit-identical to before). The weight is a
+    # wagering-policy choice to be set from live paper CLV, not a fit change —
+    # leans and cards always keep the pure model.
+    model_weight: float = 1.0
     # Confidence calibration: shrink the model's probability toward 0.5 (the
     # no-information point) before measuring edge and staking. 1.0 = the raw model
     # (default, bit-identical to before); < 1.0 tempers an over-confident model so a
@@ -251,6 +259,9 @@ def _best_opportunity(
             continue
         if config.prob_shrink != 1.0:  # temper an over-confident model toward 0.5
             p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
+        if config.model_weight != 1.0:  # market anchoring (Round 3): regress the
+            # staking belief toward this line's own devigged probability.
+            p_model = p_fair + config.model_weight * (p_model - p_fair)
         signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
         if not signal.qualifies:
             continue

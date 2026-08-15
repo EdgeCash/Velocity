@@ -80,3 +80,41 @@ def test_config_validation() -> None:
         PortfolioConfig(max_portfolio_fraction=0.0)
     with pytest.raises(ValueError):
         PortfolioConfig(group_correlation=1.5)
+
+
+def test_model_weight_anchors_belief_to_the_market() -> None:
+    """model_weight=0 collapses every edge to the market's own probability —
+    nothing can clear min_edge, so the slate goes empty; 1.0 is bit-identical
+    to the default. The knob is wagering policy, never a fit change."""
+    from dataclasses import replace
+
+    import numpy as np
+    import pandas as pd
+    from velocity.models.game_nfl import GameProjection
+    from velocity.models.simulate import GameSim
+    from velocity.wagering.slate import SlateConfig, build_slate
+
+    rng = np.random.default_rng(5)
+    home = np.maximum(rng.normal(30.0, 10.0, 4000).round(), 0)
+    away = np.maximum(rng.normal(17.0, 10.0, 4000).round(), 0)
+    proj = {"g1": GameProjection("KC", "BUF", 30.0, 17.0, GameSim(home, away))}
+    ts = pd.Timestamp("2026-09-10 12:00")
+    lines = pd.DataFrame([
+        {"line_id": "l1", "game_id": "g1", "book": "b", "market": "moneyline",
+         "side": "home", "price": -110, "point": None, "timestamp": ts,
+         "is_closing": False},
+        {"line_id": "l2", "game_id": "g1", "book": "b", "market": "moneyline",
+         "side": "away", "price": -110, "point": None, "timestamp": ts,
+         "is_closing": False},
+    ])
+    games = pd.DataFrame([{"game_id": "g1", "home_team": "KC", "away_team": "BUF",
+                           "kickoff": pd.Timestamp("2026-09-11 00:20"),
+                           "neutral_site": False}])
+    cfg = SlateConfig(exclude_closing=False)
+
+    raw = build_slate(proj, lines, games, cfg)
+    assert len(raw) >= 1  # the mispriced coin-flip line is a fat raw edge
+    anchored = build_slate(proj, lines, games, replace(cfg, model_weight=0.0))
+    assert len(anchored) == 0  # full anchoring = the market is the belief: no bets
+    same = build_slate(proj, lines, games, replace(cfg, model_weight=1.0))
+    assert len(same) == len(raw)  # 1.0 is bit-identical to the default
