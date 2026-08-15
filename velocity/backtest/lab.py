@@ -358,6 +358,8 @@ def ncaaf_variants(
             return factory
 
         variants.update({
+            "epa-r50": ("plays", epa(50.0)),
+            "epa-r100": ("plays", epa(100.0)),
             "epa-r200": ("plays", epa(200.0)),
             "epa-r400": ("plays", epa(400.0)),
             "epa-r800": ("plays", epa(800.0)),
