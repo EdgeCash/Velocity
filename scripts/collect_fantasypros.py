@@ -169,6 +169,25 @@ def main() -> None:
     dest = dest_dir / f"fp_projections_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
     out.to_parquet(dest, index=False)
     print(f"wrote {len(out)} rows to {dest}")
+
+    # Injury report snapshot — banked alongside the projections. There is no
+    # historical injuries feed, so an availability adjustment can only be
+    # lab-validated against history we collect ourselves; every snapshot
+    # builds that dataset. Best-effort: injuries never sink the projections.
+    try:
+        from velocity.ingest.fantasypros import normalize_injuries
+
+        raw_inj = client.raw_injuries("nfl", args.season,
+                                      week=args.week if args.week else None)
+        injuries = normalize_injuries(raw_inj).assign(
+            league="nfl", season=args.season, week=args.week, collected_at=stamp
+        )
+        inj_dest = dest_dir / f"fp_injuries_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+        injuries.to_parquet(inj_dest, index=False)
+        n_out = int(injuries["is_out"].sum()) if not injuries.empty else 0
+        print(f"wrote {len(injuries)} injury rows ({n_out} out) to {inj_dest}")
+    except Exception as exc:  # noqa: BLE001 - additive surface
+        print(f"injuries snapshot skipped ({exc})")
     if out.empty:
         print("note: no projections returned (off-season, wrong season/week, "
               "or a limited public API tier)")

@@ -195,3 +195,26 @@ def test_current_week_tracks_the_schedule() -> None:
     assert mod.current_week(games, ts("2026-09-15")) == 2  # week 1 finished
     assert mod.current_week(games, ts("2026-10-15")) == 0  # season over
     assert mod.current_week(games.iloc[0:0], ts("2026-09-12")) == 0  # no schedule
+
+
+def test_normalize_injuries_flags_out_statuses() -> None:
+    from velocity.ingest.fantasypros import normalize_injuries
+
+    payload = {"injuries": [
+        {"fpid": 1, "name": "QB One", "team": "BUF", "position": "QB",
+         "status": "Out", "injury": "ankle"},
+        {"fpid": 2, "name": "WR Two", "team": "KC", "position": "WR",
+         "status": "Questionable"},
+        {"fpid": 3, "name": "RB Three", "team": "KC", "position": "RB",
+         "injury_status": "IR"},
+        {"fpid": 4, "name": "No Status"},  # says nothing → dropped
+        "junk",
+    ]}
+    df = normalize_injuries(payload)
+    assert len(df) == 3
+    by_name = df.set_index("player_name")
+    assert bool(by_name.loc["QB One", "is_out"])
+    assert not bool(by_name.loc["WR Two", "is_out"])  # questionables mostly play
+    assert bool(by_name.loc["RB Three", "is_out"])  # alias status key + IR
+    assert normalize_injuries(None).empty
+    assert normalize_injuries({}).empty
