@@ -47,9 +47,11 @@ from velocity.models.simulate import SimConfig
 __all__ = [
     "ats_ou_vs_close",
     "combine_ratings",
+    "compress_plays",
     "disagreement_sweep",
     "fit_split_ratings",
     "market_blend_sweep",
+    "ncaaf_walk_order",
     "nfl_variants",
     "recency_weights",
 ]
@@ -238,13 +240,133 @@ def nfl_variants(
     return variants
 
 
-def ncaaf_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
-    """The NCAAF benchmark slate — scores-fit variants (no committed plays yet).
+def compress_plays(plays: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate plays to ``(posteam, defteam, season, week)`` cells for the ridge fit.
+
+    The one-hot design matrix in :func:`fit_ratings` is identical for every
+    play in the same cell, so the play-level ridge loss decomposes cell by
+    cell: fitting the cell **means** with the cell **counts** as weights
+    reproduces the play-level fit exactly (the within-cell variance is a
+    constant the minimizer never sees). Recency weights compose too — every
+    play in a cell shares its (season, week), hence its decay factor, so
+    ``count × recency(cell)`` equals the summed play weights.
+
+    This matters for college: ~1.4M plays × ~500 one-hot columns is a dense
+    matrix in the gigabytes, refit every walk-forward week; the cells are a
+    few thousand rows. The returned frame carries ``epa`` (the cell mean) and
+    ``n`` (the cell count).
+    """
+    cells = (
+        plays.dropna(subset=["posteam", "defteam", "epa"])
+        .groupby(["posteam", "defteam", "season", "week"], observed=True)["epa"]
+        .agg(epa="mean", n="count")
+        .reset_index()
+    )
+    return cells
+
+
+def ncaaf_walk_order(games: pd.DataFrame) -> pd.DataFrame:
+    """Renumber NCAAF postseason weeks so they sort **after** the regular season.
+
+    CFBD labels most bowls week 1 of the postseason, and the committed games
+    file keeps that label. The walk-forward engine slices training data by
+    ``week <`` alone, so a week-1 bowl slots *before* the same season's
+    regular weeks: bowls trained on nothing from their own season, and — the
+    real leak — regular-season predictions from week 2 on trained on that
+    season's bowls. This maps POST week → 17 + its dense rank within the
+    season (REG tops out at 16), preserving postseason order. Capped at 24:
+    the schema allows 25, but ``recency_weights``' season×25+week key would
+    fold a week-25 label into the next season.
+    """
+    out = games.copy()
+    post = out["season_type"] == "POST"
+    if post.any():
+        rank = (
+            out.loc[post].groupby("season")["week"].rank(method="dense").astype(int)
+        )
+        out.loc[post, "week"] = (17 + rank).clip(upper=24)
+    return out
+
+
+class BlendedGameModel:
+    """Average the expected points of two projection models, simulate once.
+
+    Both inner models expose ``expected_points(home, away, neutral_site=...)``;
+    the blend is ``w·primary + (1−w)·secondary`` on each team's expected
+    points, priced through one shared simulation. Linear in the μs, so the
+    blended margin/total are the same weighted blend of the components'.
+    """
+
+    def __init__(
+        self, primary: object, secondary: object, weight: float, sim: SimConfig
+    ) -> None:
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError("weight must be in [0, 1]")
+        self.primary = primary
+        self.secondary = secondary
+        self.weight = weight
+        self.sim = sim
+
+    def expected_points(
+        self, home_team: str, away_team: str, *, neutral_site: bool = False
+    ) -> tuple[float, float]:
+        w = self.weight
+        p_home, p_away = self.primary.expected_points(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site
+        )
+        s_home, s_away = self.secondary.expected_points(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site
+        )
+        return w * p_home + (1 - w) * s_home, w * p_away + (1 - w) * s_away
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: np.random.Generator | None = None,
+    ) -> object:
+        from velocity.models.game_nfl import GameProjection
+        from velocity.models.simulate import simulate_game
+        from velocity.util.seed import make_rng
+
+        rng = rng if rng is not None else make_rng()
+        mu_home, mu_away = self.expected_points(
+            home_team, away_team, neutral_site=neutral_site
+        )
+        sim = simulate_game(
+            mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away,
+            rng=rng, config=self.sim,
+        )
+        return GameProjection(
+            home_team=home_team, away_team=away_team,
+            mu_home=mu_home, mu_away=mu_away, sim=sim,
+        )
+
+
+def ncaaf_variants(
+    n_sims: int, plays: pd.DataFrame | None = None
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The NCAAF benchmark slate: scores-fit variants, plus EPA fits and
+    EPA×scores blends when the committed college plays frame is passed.
 
     College schedules are thin and non-connective, so shrinkage and recency
     matter differently than the NFL; the sim SDs are the live slate's wider
-    college calibration. ``scores`` is the shipped configuration and the
-    promotion bar.
+    college calibration. ``ridge-10`` is the shipped configuration and the
+    promotion bar (docs/MODEL_LAB.md NCAAF Round 1).
+
+    The EPA variants fit :func:`fit_ratings` on :func:`compress_plays` cells
+    (exactly the play-level fit, at college scale) and price through the same
+    pace/base scoring shape as the NFL model with college constants. College
+    ridge sweeps start heavier than the NFL's λ=200 — 130+ FBS programs plus
+    FCS opponents on a barely-connected schedule graph.
+
+    The blend variants average the μs of the two best single fits (EPA λ=50,
+    scores λ=10). They train from the **games** frame — the engine's own
+    point-in-time slice — and cut the closed-over ``plays`` to exactly those
+    game_ids, so the plays side sees precisely the games the engine would
+    have trained on (no leakage, no drift between the two fits).
     """
     from velocity.features.scores import scores_recency_weights
 
@@ -271,7 +393,7 @@ def ncaaf_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
 
         return factory
 
-    return {
+    variants: dict[str, tuple[str, VariantFactory]] = {
         "scores": ("games", scores),
         "ridge-10": ("games", ridge(10.0)),
         "ridge-50": ("games", ridge(50.0)),
@@ -279,6 +401,57 @@ def ncaaf_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         "recency-34": ("games", recency(34.0)),
         "recency-17-r50": ("games", recency(17.0, 50.0)),
     }
+
+    if plays is not None:
+        # College scoring/pace constants (calibration priors, not fits):
+        # ~28.5 points per team, ~65 offensive scrimmage plays, HFA ~2.5.
+        cfg = NFLModelConfig(
+            base_points=28.5, plays_per_game=65.0, hfa_points=2.5, sim=sim
+        )
+
+        def epa(lam: float, half_life: float | None = None) -> VariantFactory:
+            def factory(train: pd.DataFrame) -> NFLGameModel:
+                cells = compress_plays(train)
+                weights = cells["n"].astype(float)
+                if half_life is not None:
+                    weights = weights * recency_weights(cells, half_life)
+                ratings = fit_ratings(cells, ridge_lambda=lam, weights=weights)
+                return NFLGameModel(ratings, cfg)
+
+            return factory
+
+        variants.update({
+            "epa-r50": ("plays", epa(50.0)),
+            "epa-r100": ("plays", epa(100.0)),
+            "epa-r200": ("plays", epa(200.0)),
+            "epa-r400": ("plays", epa(400.0)),
+            "epa-r800": ("plays", epa(800.0)),
+            "epa-recency-17": ("plays", epa(400.0, 17.0)),
+        })
+
+        all_plays = plays
+
+        def blend(epa_weight: float) -> VariantFactory:
+            def factory(train_games: pd.DataFrame) -> BlendedGameModel:
+                sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                cells = compress_plays(sub)
+                epa_model = NFLGameModel(
+                    fit_ratings(cells, ridge_lambda=50.0,
+                                weights=cells["n"].astype(float)),
+                    cfg,
+                )
+                scores_model = _model(fit_scores_ratings(train_games, ridge_lambda=10.0))
+                return BlendedGameModel(epa_model, scores_model, epa_weight, sim)
+
+            return factory
+
+        variants.update({
+            "blend-epa30": ("games", blend(0.30)),
+            "blend-epa50": ("games", blend(0.50)),
+            "blend-epa70": ("games", blend(0.70)),
+        })
+
+    return variants
 
 
 class RestAdjustedModel:

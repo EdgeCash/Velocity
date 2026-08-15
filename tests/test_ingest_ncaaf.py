@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from velocity.ingest.ncaaf import normalize_games, normalize_plays
+from velocity.ingest.ncaaf import distill_rest_plays, normalize_games, normalize_plays
 from velocity.store.io import read_table, write_table
 from velocity.store.schema import Games, Plays
 
@@ -80,3 +80,31 @@ def test_games_round_trip_through_store(raw_games: pd.DataFrame, tmp_path) -> No
     path = write_table(games, tmp_path / "ncaaf_games.parquet", schema=Games)
     back = read_table(path, schema=Games)
     assert list(back["game_id"]) == list(games["game_id"])
+
+
+# --- distill_rest_plays: the REST /plays payload → the committed plays rows ---
+
+_REST_ROWS = [
+    # camelCase, as the REST API answers; no season/week in the rows.
+    {"id": "a1", "gameId": 401550883, "offense": "Georgia", "defense": "UT Martin",
+     "playType": "Rush", "down": 1, "yardsGained": 6, "ppa": 0.32},
+    {"id": "a2", "gameId": 401550883, "offense": "UT Martin", "defense": "Georgia",
+     "playType": "Pass Incompletion", "down": 2, "yardsGained": 0, "ppa": -0.44},
+    # kickoff: CFBD leaves ppa null — the distilled frame must drop it.
+    {"id": "a3", "gameId": 401550883, "offense": "Georgia", "defense": "UT Martin",
+     "playType": "Kickoff", "down": 0, "yardsGained": 0, "ppa": None},
+]
+
+
+def test_distill_rest_plays_renames_stamps_and_filters() -> None:
+    plays = distill_rest_plays(_REST_ROWS, season=2023, week=5)
+    Plays.validate(plays)
+    assert list(plays["play_id"]) == ["a1", "a2"]  # unscored kickoff dropped
+    assert set(plays["season"]) == {2023}
+    assert set(plays["week"]) == {5}
+    assert plays.set_index("play_id").loc["a2", "epa"] == pytest.approx(-0.44)
+    assert set(plays["game_id"]) == {"401550883"}
+
+
+def test_distill_rest_plays_empty_payload() -> None:
+    assert distill_rest_plays([], season=2023, week=5).empty
