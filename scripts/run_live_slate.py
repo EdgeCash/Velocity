@@ -152,14 +152,39 @@ def _build_projection(
     # 0.1983 vs 0.2076 at the old default 25 over 2019–2024). The NFL scores
     # path is only a no-plays fallback and keeps the default.
     ridge = 10.0 if args.league == "ncaaf" else 25.0
-    model = ScoresGameModel(
+    scores_model = ScoresGameModel(
         fit_scores_ratings(games, ridge_lambda=ridge), ScoresModelConfig(sim=sim)
     )
+    model: object = scores_model
+    kind = f"scores fit (λ={ridge:g})"
+
+    ncaaf_plays = folder / "plays.parquet"
+    if args.league == "ncaaf" and ncaaf_plays.exists():
+        # The promoted college configuration (docs/MODEL_LAB.md NCAAF Round
+        # 2): a 50/50 blend of the EPA fit (CFBD ppa, λ=50 on compressed
+        # cells) and the scores fit above — Brier 0.1949 vs 0.1976 for the
+        # scores fit alone, the best calibration recorded for college.
+        from velocity.backtest.lab import BlendedGameModel, compress_plays
+        from velocity.features.team import fit_ratings
+        from velocity.ingest.local import load_plays
+        from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+
+        plays = load_plays(ncaaf_plays)
+        cells = compress_plays(plays)
+        epa_model = NFLGameModel(
+            fit_ratings(cells, ridge_lambda=50.0, weights=cells["n"].astype(float)),
+            NFLModelConfig(base_points=28.5, plays_per_game=65.0,
+                           hfa_points=2.5, sim=sim),
+        )
+        model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
+        kind = f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5) on {len(plays)} plays"
+
+    print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
 
     def project(home: str, away: str) -> GameProjection:
-        return model.project(home, away, rng=make_rng())
+        return model.project(home, away, rng=make_rng())  # type: ignore[attr-defined,return-value]
 
-    return project, list(model.ratings.teams)
+    return project, list(scores_model.ratings.teams)
 
 
 def main() -> None:

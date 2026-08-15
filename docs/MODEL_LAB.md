@@ -201,6 +201,56 @@ plays dataset lands).
 queued: a finer λ sweep (5/10/15) and, longer-term, a CFBD play-by-play EPA
 fit.
 
+## Round 2 — college EPA fit + EPA×scores blend (2015–2024, 10,157 games)
+
+The queued play-by-play round. Data: `datasets/ncaaf/plays.parquet` —
+1.18M scored plays (CFBD `/plays`, `ppa` as the EPA column) across 8,534
+games, backfilled by `build_ncaaf_pbp_datasets.py` and topped up weekly by
+the refresh workflow. Two pieces of new machinery, both exact:
+
+* **`compress_plays`** — plays aggregated to `(posteam, defteam, season,
+  week)` cells reproduce the play-level ridge fit bit-for-bit (the one-hot
+  design is constant within a cell) at ~1/70th the matrix size; a 1.4M-play
+  college fit refits in well under a second per walk-forward week.
+* **`ncaaf_walk_order`** — fixes a walk-forward label leak affecting every
+  earlier college number: bowls are labeled POST week 1, so the engine's
+  `week <` slice trained regular-season predictions on that season's
+  *bowls*. POST weeks now renumber to 17 + dense rank. All Round 2 numbers
+  (the re-run bar included) are leak-free; Round 1 numbers are not directly
+  comparable (different eval window and ordering).
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| ridge-10 (promotion bar, re-run) | 0.19756 | 0.5761 | 0.0161 | 49.9% | 51.4% |
+| epa-r50 (best pure EPA) | 0.19832 | 0.5772 | 0.0200 | 50.2% | 50.9% |
+| epa-r100 | 0.19848 | 0.5774 | 0.0229 | 50.0% | 51.0% |
+| epa-r200 | 0.19955 | 0.5803 | 0.0246 | 50.2% | 51.3% |
+| epa-r400 / r800 / recency-17 | 0.2019–0.2057 | — | — | — | — |
+| blend-epa30 | 0.19514 | 0.5699 | 0.0145 | 49.9% | 51.5% |
+| **blend-epa50** | **0.19486** | **0.5690** | **0.0119** | 49.9% | 51.1% |
+| blend-epa70 | 0.19558 | 0.5705 | 0.0144 | 50.0% | 51.2% |
+
+**Readings, honestly:**
+
+1. **The pure EPA fit loses.** Its ridge sweep bottoms at λ=50 (extended
+   downward after the first pass came back monotone), 0.0008 Brier short of
+   the scores bar with worse calibration. Play-level efficiency alone does
+   not beat final scores in college.
+2. **The 50/50 blend wins decisively** — Brier −0.0027 vs the bar (a larger
+   gap than the one pure EPA lost by), calibration error 0.0119, the best
+   recorded for college. The optimum is an interior one with both
+   neighboring weights also beating the bar — a robust ensemble of two
+   near-equal fits carrying different information, not a knife-edge.
+3. The market close remains untouchable (blend Brier at w=0 in the
+   market-regression sweep: 0.1652) — same doctrine as the NFL: the model's
+   value is no-line pricing and disagreement, and ATS/O/U flat rates stay
+   where the shipped totals filter already operates.
+
+**PROMOTED (blend-epa50):** the live NCAAF slate now prices a 50/50 blend
+of the EPA fit (λ=50 on compressed cells) and the scores fit (λ=10)
+whenever the committed plays file is present, falling back to the pure
+scores fit otherwise (`run_live_slate._build_projection`).
+
 ## Round 4 — rest spots (NFL, 2014–2025, 3,295 games)
 
 Bye-week bonus / short-week penalty on top of the promoted QB fit
