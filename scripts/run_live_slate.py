@@ -120,7 +120,13 @@ def _build_projection(
         if args.league == "ncaaf"
         else SimConfig(n_sims=args.n_sims)
     )
-    model = ScoresGameModel(fit_scores_ratings(games), ScoresModelConfig(sim=sim))
+    # NCAAF: λ=10 promoted by the college lab (docs/MODEL_LAB.md — Brier
+    # 0.1983 vs 0.2076 at the old default 25 over 2019–2024). The NFL scores
+    # path is only a no-plays fallback and keeps the default.
+    ridge = 10.0 if args.league == "ncaaf" else 25.0
+    model = ScoresGameModel(
+        fit_scores_ratings(games, ridge_lambda=ridge), ScoresModelConfig(sim=sim)
+    )
 
     def project(home: str, away: str) -> GameProjection:
         return model.project(home, away, rng=make_rng())
