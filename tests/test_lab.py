@@ -340,9 +340,10 @@ def test_ncaaf_variants_gate_epa_on_plays() -> None:
     from velocity.backtest.lab import ncaaf_variants
 
     without = ncaaf_variants(64)
-    assert not any(name.startswith("epa") for name in without)
-    with_plays = ncaaf_variants(64, has_plays=True)
-    assert {"epa-r200", "epa-r400", "epa-r800", "epa-recency-17"} <= set(with_plays)
+    assert not any(name.startswith(("epa", "blend")) for name in without)
+    with_plays = ncaaf_variants(64, plays=_plays().assign(game_id="g1"))
+    assert {"epa-r200", "epa-r400", "epa-r800", "epa-recency-17",
+            "blend-epa50"} <= set(with_plays)
     # The factory prices a matchup end-to-end from a plays frame.
     kind, factory = with_plays["epa-r400"]
     assert kind == "plays"
@@ -350,3 +351,30 @@ def test_ncaaf_variants_gate_epa_on_plays() -> None:
     proj = model.project("A", "B")
     assert proj.mu_margin > 0  # A's offense is clearly better in the fixture
     assert 40 < proj.mu_total < 80  # college scoring shape, not NFL's
+
+
+def test_blended_model_is_the_linear_blend_of_its_parts() -> None:
+    from velocity.backtest.lab import BlendedGameModel
+    from velocity.features.team import fit_ratings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.simulate import SimConfig
+
+    sim = SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=64)
+    cfg_a = NFLModelConfig(base_points=28.5, plays_per_game=65.0, hfa_points=2.5, sim=sim)
+    cfg_b = NFLModelConfig(base_points=24.0, plays_per_game=60.0, hfa_points=3.0, sim=sim)
+    ratings = fit_ratings(_plays())
+    a = NFLGameModel(ratings, cfg_a)
+    b = NFLGameModel(ratings, cfg_b)
+
+    blend = BlendedGameModel(a, b, 0.30, sim)
+    mu_a = a.expected_points("A", "B")
+    mu_b = b.expected_points("A", "B")
+    mu = blend.expected_points("A", "B")
+    assert mu[0] == pytest.approx(0.30 * mu_a[0] + 0.70 * mu_b[0])
+    assert mu[1] == pytest.approx(0.30 * mu_a[1] + 0.70 * mu_b[1])
+    # Weight 1 recovers the primary exactly; a projection carries the blend μs.
+    assert BlendedGameModel(a, b, 1.0, sim).expected_points("A", "B") == mu_a
+    proj = blend.project("A", "B")
+    assert proj.mu_margin == pytest.approx(mu[0] - mu[1])
+    with pytest.raises(ValueError):
+        BlendedGameModel(a, b, 1.5, sim)

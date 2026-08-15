@@ -91,7 +91,7 @@ def main() -> None:
     else:
         from velocity.backtest.lab import ncaaf_variants
 
-        chosen = ncaaf_variants(args.n_sims, has_plays=has_college_plays)
+        chosen = ncaaf_variants(args.n_sims, plays=plays if has_college_plays else None)
     if args.variants:
         names = [v.strip() for v in args.variants.split(",") if v.strip()]
         unknown = [n for n in names if n not in chosen]
