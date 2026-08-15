@@ -23,6 +23,9 @@ on:
         description: "League to refresh (nfl, ncaaf, both)"
         required: false
         default: "both"
+      ncaaf_pbp_seasons:
+        description: "One-off: backfill NCAAF play-by-play for this inclusive season range (e.g. '2015 2024') instead of the weekly refresh"
+        required: false
 
 concurrency:
   group: refresh-datasets
@@ -51,6 +54,7 @@ jobs:
           pip install -e .
 
       - name: Refresh datasets
+        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' }}
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
@@ -60,9 +64,17 @@ jobs:
           fi
           python scripts/refresh_datasets.py $ARGS
 
+      - name: Backfill NCAAF play-by-play
+        if: ${{ github.event.inputs.ncaaf_pbp_seasons != '' }}
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          python scripts/build_ncaaf_pbp_datasets.py \
+            --seasons ${{ github.event.inputs.ncaaf_pbp_seasons }}
+
       - name: Commit refreshed datasets
         run: |
-          if git diff --quiet -- datasets/; then
+          if git diff --quiet -- datasets/ && [ -z "$(git status --porcelain datasets/)" ]; then
             echo "datasets unchanged — nothing to commit"
             exit 0
           fi

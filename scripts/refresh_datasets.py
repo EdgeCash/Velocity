@@ -188,6 +188,41 @@ def refresh_ncaaf(out: Path, season: int) -> None:  # pragma: no cover - network
         return
     _refresh_file(out / "games.parquet", games, season, "ncaaf games")
 
+    # College plays top-up (the EPA feed) — only once the backfill has
+    # committed a plays file, and best-effort: a CFBD pbp hiccup never sinks
+    # the games refresh above. Weeks come from the games just fetched, so the
+    # calls match the season's actual shape.
+    plays_path = out / "plays.parquet"
+    if not plays_path.exists():
+        return
+    try:
+        from velocity.ingest.ncaaf import distill_rest_plays
+
+        combos = sorted({
+            (int(g["week"]), str(g.get("seasonType", "regular")))
+            for g in games_json
+            if g.get("homePoints") is not None and g.get("week") is not None
+        })
+        frames = []
+        for week, stype in combos:
+            payload = _cfbd_get(
+                "plays", key, year=season, week=week,
+                seasonType="postseason" if stype == "postseason" else "regular",
+                classification="fbs",
+            )
+            plays = distill_rest_plays(payload, season, week)
+            if not plays.empty:
+                frames.append(plays)
+        if not frames:
+            print(f"  ncaaf plays: nothing scored for {season} yet")
+            return
+        fresh = pd.concat(frames, ignore_index=True)
+        merged = merge_season(pd.read_parquet(plays_path), fresh, season)
+        merged.to_parquet(plays_path, index=False)
+        print(f"  ncaaf plays: {len(fresh)} season rows ({len(merged)} total)")
+    except Exception as exc:  # noqa: BLE001 - plays are additive to the refresh
+        print(f"  ncaaf plays skipped ({exc}); games refreshed alone")
+
 
 def main() -> None:  # pragma: no cover - network orchestration
     parser = argparse.ArgumentParser(description="Refresh datasets with the current season")

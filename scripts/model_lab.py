@@ -59,8 +59,27 @@ def main() -> None:
 
     folder = Path(args.data)
     games = load_games(_find(folder, "games"), league=args.league)
-    # NCAAF is games-only until a college plays dataset lands.
-    plays = load_plays(_find(folder, "plays")) if args.league == "nfl" else games
+    has_college_plays = False
+    if args.league == "nfl":
+        plays = load_plays(_find(folder, "plays"))
+    else:
+        from velocity.backtest.lab import ncaaf_walk_order
+
+        # Bowls are labeled week 1 in the raw CFBD numbering; renumber them
+        # after the regular season so the walk-forward's `week <` slice
+        # neither trains bowls on nothing nor leaks them into the season.
+        games = ncaaf_walk_order(games)
+        plays_file = folder / "plays.parquet"
+        if plays_file.exists():
+            has_college_plays = True
+            # Rebuild the plays' (season, week) labels from the renumbered
+            # games so both train frames slice identically; the inner join
+            # also drops plays for games outside the committed frame.
+            plays = load_plays(plays_file).drop(columns=["season", "week"]).merge(
+                games[["game_id", "season", "week"]], on="game_id", how="inner"
+            )
+        else:
+            plays = games  # scores-fit variants only
     lines = _empty_lines()
     if args.eval_from is not None:
         # Predict only recent seasons; the engine still trains on everything
@@ -72,7 +91,7 @@ def main() -> None:
     else:
         from velocity.backtest.lab import ncaaf_variants
 
-        chosen = ncaaf_variants(args.n_sims)
+        chosen = ncaaf_variants(args.n_sims, has_plays=has_college_plays)
     if args.variants:
         names = [v.strip() for v in args.variants.split(",") if v.strip()]
         unknown = [n for n in names if n not in chosen]
@@ -143,6 +162,10 @@ def main() -> None:
                 continue
             print(f"\n--- {name} · market blend sweep (select ≤2019 / holdout) ---")
             print(blend.to_string(index=False))
+            if blend["brier_select"].isna().all():
+                # eval window starts after the select split — no honest way to
+                # choose a weight, so report the sweep alone.
+                continue
             best = blend.loc[blend["brier_select"].idxmin()]
             print(f"    select-chosen weight w={best['weight']:.1f} → "
                   f"holdout Brier {best['brier_holdout']:.4f} "

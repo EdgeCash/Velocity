@@ -118,6 +118,36 @@ def normalize_plays(raw: pd.DataFrame) -> pd.DataFrame:
     return Plays.validate(out)
 
 
+# CFBD's REST API answers in camelCase; the canonical frame (and the cfbd
+# python client's to_dict) speak snake_case. Only the columns normalize_plays
+# actually reads need mapping.
+_REST_PLAY_RENAMES = {
+    "gameId": "game_id",
+    "playType": "play_type",
+    "yardsGained": "yards_gained",
+}
+
+
+def distill_rest_plays(rows: list[dict] | pd.DataFrame, season: int, week: int) -> pd.DataFrame:
+    """One CFBD REST ``/plays`` payload → the canonical rows the EPA fit consumes.
+
+    Renames the REST camelCase onto the canonical spelling, stamps the
+    ``season``/``week`` the payload was requested for (the REST rows don't
+    carry them), normalizes, and keeps only rows with a possession team and a
+    non-null ``ppa`` — kickoffs, penalties and other plays CFBD didn't score
+    carry nothing the ratings can use. An empty payload returns an empty frame.
+    """
+    raw = pd.DataFrame(rows)
+    if raw.empty:
+        return pd.DataFrame()
+    raw = raw.rename(columns=_REST_PLAY_RENAMES)
+    raw["season"] = season
+    raw["week"] = week
+    plays = normalize_plays(raw)
+    keep = plays["posteam"].notna() & plays["epa"].notna()
+    return plays[keep].reset_index(drop=True)
+
+
 def _import_cfbd():  # type: ignore[no-untyped-def]
     """Lazily import the ``cfbd`` client, with a helpful error if it is absent."""
     try:
