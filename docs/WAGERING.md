@@ -251,3 +251,38 @@ and every other phase depends on its state. The very next MLB slate after it
 merges becomes the first Velocity run staked against a real, compounding
 bankroll — and starts accumulating exactly the placed-vs-recommended history
 that W3's monitor and W4's re-tunes need.
+
+## 5. Pick'em slips (`velocity/wagering/pickem.py`)
+
+Fixed-payout pick'em boards (PrizePicks-style) are parlays against a posted
+line, not markets — no vig, no price discovery, just a payout table per slip
+shape. The engine prices them exactly:
+
+- **`PAYOUTS`** — the official structures (help-center, fetched 2026-08),
+  as total-return multiples: power 2/3/4/5/6 at 3/6/10/20/37.5x; flex
+  2–6 with their partial-payout tiers. `reverted_table` implements the
+  published DNP/void rule (revert one structure smaller; a 2-pick reverts
+  to a refund). A frozen test is the tripwire for payout changes.
+- **`slip_ev`** — exact Poisson-binomial hit distribution for independent
+  legs; **`slip_ev_from_hits`** — the correlated path, a boolean hit matrix
+  read off the correlated prop sim (`PropSim` samples every player
+  conditioned on the same simulated game). Fixed payout tables implicitly
+  assume independence, so positively correlated same-game stacks push
+  power-play EV above what the multiplier prices — that joint-vs-marginal
+  gap is the engine's structural edge, and the sampled path measures it
+  directly.
+- **`breakeven_leg_prob`** — the uniform per-leg probability where a shape
+  returns 1.0 (power-2 = 1/√3 ≈ 57.7%; the big flexes sit in the mid-50s).
+- **`fair_leg_prob`** — devigged P(over) from a book's two-sided prices at
+  the board's line: the leg-probability source until our own prop model is
+  lab-validated per stat.
+- **`best_slips`** — enumerates candidate combinations across shapes and
+  ranks by EV; correlation-aware when given a samples source, independent
+  screening otherwise.
+
+Not modeled on purpose: demon/goblin alternates (unpublished payout deltas —
+they arrive flagged from the collector and are excluded from standard legs)
+and promos. The board feed itself is phase-gated on a transport decision
+(docs/DATA_PROVIDERS.md); until then leg probabilities come from our own
+Odds API props snapshots, which is also exactly how the engine gets
+lab-validated before anything is published.
