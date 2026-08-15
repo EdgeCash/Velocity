@@ -49,7 +49,7 @@ def test_hit_distribution_matches_brute_force() -> None:
     dist = hit_distribution(probs)
     brute = np.zeros(5)
     for outcome in product([0, 1], repeat=4):
-        p = np.prod([pr if o else 1 - pr for pr, o in zip(probs, outcome)])
+        p = np.prod([pr if o else 1 - pr for pr, o in zip(probs, outcome, strict=True)])
         brute[sum(outcome)] += p
     assert dist == pytest.approx(brute, abs=1e-12)
     assert dist.sum() == pytest.approx(1.0)
