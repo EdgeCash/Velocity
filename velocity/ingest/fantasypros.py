@@ -135,6 +135,50 @@ def normalize_projections(
     return pd.DataFrame(rows, columns=_OUTPUT_COLUMNS)
 
 
+_INJURY_STATUS_KEYS = ("status", "injury_status", "designation", "game_status")
+
+# Statuses that mean the player is genuinely unavailable (the adjustment
+# trigger). "Questionable" deliberately excluded — most questionables play.
+OUT_STATUSES = frozenset({"out", "ir", "injured reserve", "pup", "doubtful",
+                          "suspended", "nfi"})
+
+
+def normalize_injuries(payload: Any) -> pd.DataFrame:
+    """Melt an ``/injuries`` response into ``player/team/position/status/is_out``.
+
+    Tolerant like :func:`normalize_projections` — identity read through the
+    alias keys, status through its own aliases; rows without a status are
+    dropped (an injury report row that says nothing adjusts nothing).
+    """
+    if isinstance(payload, Mapping):
+        rows_in = payload.get("injuries") or payload.get("players") or []
+    else:
+        rows_in = payload or []
+    rows: list[dict[str, object]] = []
+    for player in rows_in:
+        if not isinstance(player, Mapping):
+            continue
+        status = _first(player, _INJURY_STATUS_KEYS)
+        if status is None:
+            continue
+        rows.append({
+            "player_id": _as_str(_first(player, _ID_KEYS)),
+            "player_name": _as_str(_first(player, _NAME_KEYS)),
+            "team": _as_str(_first(player, _TEAM_KEYS)),
+            "position": _as_str(_first(player, _POSITION_KEYS)),
+            "status": str(status),
+            "is_out": str(status).strip().lower() in OUT_STATUSES,
+        })
+    return pd.DataFrame(
+        rows, columns=["player_id", "player_name", "team", "position",
+                       "status", "is_out"]
+    )
+
+
+def _as_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
 @dataclass
 class FantasyProsClient:
     """Network client for the FantasyPros projections API. Build with :meth:`from_env`.
@@ -167,6 +211,12 @@ class FantasyProsClient:
         return self._get(
             f"{sport.lower()}/{season}/projections", position=position, week=week
         )
+
+    def raw_injuries(
+        self, sport: str, year: int, week: int | None = None
+    ) -> Any:  # pragma: no cover - network
+        """Fetch the raw ``/{sport}/injuries`` payload (documented public v2 path)."""
+        return self._get(f"{sport.lower()}/injuries", year=year, week=week)
 
     def projections(
         self, sport: str, season: int, position: str = "ALL", week: int = 0

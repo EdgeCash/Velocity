@@ -36,19 +36,42 @@ SPORTS = ("NFL", "NCAAF")
 PROP_SPORTS = ("NFL",)
 
 
-def collect(sports: tuple[str, ...], collected_at: pd.Timestamp) -> pd.DataFrame:
-    """Return one canonical ``Lines`` frame for ``sports``, tagged with league + snapshot time."""
+def collect(
+    sports: tuple[str, ...], collected_at: pd.Timestamp
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One canonical ``Lines`` frame + the events map for ``sports``.
+
+    The events frame (``game_id``/``home_team``/``away_team``/``kickoff``)
+    is what lets a grader bridge our Odds-API-keyed bets to these BP
+    snapshots by team names — the missing link for CLV-vs-close.
+    """
     client = BettingProsClient.from_env()
     frames: list[pd.DataFrame] = []
+    event_rows: list[dict[str, object]] = []
     for sport in sports:
-        lines = client.game_lines(sport)
+        events = client.events(sport)
+        for e in events:
+            participants = e.get("participants") or []
+            names = [p.get("name") for p in participants if isinstance(p, dict)]
+            event_rows.append({
+                "game_id": str(e.get("id")),
+                "home_team": e.get("home") or (names[1] if len(names) > 1 else None),
+                "away_team": e.get("visitor") or (names[0] if names else None),
+                "kickoff": e.get("scheduled"),
+                "league": sport.lower(),
+            })
+        lines = client.game_lines(sport, event_ids=[e["id"] for e in events])
         lines = lines.assign(league=sport.lower(), collected_at=collected_at)
         frames.append(lines)
         print(
             f"  {sport}: {len(lines)} lines "
             f"({lines['game_id'].nunique()} games, {lines['book'].nunique()} books)"
         )
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    lines_out = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    events_out = pd.DataFrame(
+        event_rows, columns=["game_id", "home_team", "away_team", "kickoff", "league"]
+    ).assign(collected_at=collected_at)
+    return lines_out, events_out
 
 
 def probe_props() -> None:
@@ -93,14 +116,18 @@ def main() -> None:
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
     print(f"BettingPros snapshot @ {now.isoformat()}")
-    df = collect(tuple(args.sports), stamp)
+    df, events = collect(tuple(args.sports), stamp)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    fname = f"bp_lines_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
-    dest = out / fname
+    tag_now = now.strftime("%Y%m%dT%H%M%SZ")
+    dest = out / f"bp_lines_{tag_now}.parquet"
     df.to_parquet(dest, index=False)
     print(f"wrote {len(df)} rows to {dest}")
+    # The events map — game_id ↔ team names ↔ kickoff — is what a grader
+    # needs to bridge Odds-API-keyed bets onto these snapshots for CLV.
+    events.to_parquet(out / f"bp_events_{tag_now}.parquet", index=False)
+    print(f"wrote {len(events)} event rows")
     if df.empty:
         # Off-season / no board yet is not an error — the job still succeeds so the
         # schedule keeps running; the artifact just carries an empty frame.
