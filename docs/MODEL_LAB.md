@@ -222,3 +222,24 @@ moderate 1.0/1.0 grid** (best-balanced: second-best Brier, calibration flat)
 — near-free, literature-standard, and consistent across every setting
 tested. The aggressive 2.0 bye bonus buys a hair more Brier at a visible
 calibration cost; not worth it.
+
+## Round 5 — wind on totals (NFL, 2014–2025)
+
+Symmetric wind suppression past a threshold (`WeatherAdjustedModel` over the
+QB fit; `datasets/nfl/weather.parquet`, Open-Meteo daily-max wind). Aggregate
+Brier is structurally blind to a symmetric totals shift, so the verdict
+lives in the windy-game conditional (422 eval games with max wind ≥15 mph):
+
+| | O/U vs close, windy games only |
+|---|---|
+| control (no wind) | **46.3%** (406 bets) |
+| wind-15-0.30 | 48.1% (395 bets) |
+
+**Reading:** the control's windy-game deficit is the finding — the market
+prices wind and the bare model demonstrably over-projects windy totals. The
+adjustment recovers ~1.8 pts of that with aggregate metrics and ATS flat.
+**PROMOTED (wind-15-0.30) as a bias correction, not an edge** — it makes
+fair totals honest on windy days; it does not beat the close there.
+*Wiring note:* the backtest prices historical actuals; the live slate needs
+the Open-Meteo *forecast* endpoint at slate time — queued as the next
+plumbing item, the model constants are settled.
