@@ -106,6 +106,32 @@ prints the raw top-level keys and first-player JSON to the log — that's how we
 verify the `FP_API_KEY` secret and tighten the tolerant normalizer against the
 real response. Same rules: never commits, `artifacts/` gitignored.
 
+## The PrizePicks collector (`scripts/collect_prizepicks.py` + workflow)
+
+`.github/workflows/collect-prizepicks.yml` runs every 3 hours (and on manual
+dispatch), snapshotting the pick'em board per league — the raw material for
+the future slip-EV engine (devigged book props vs the board line, priced
+through the correlated prop sim). The board API is keyless; the client is
+deliberately polite (one request per league, spaced pagination, backoff).
+
+**Transport status: blocked from datacenter IPs.** The endpoint sits behind
+DataDome, and the first live dispatch confirmed GitHub Actions runners are
+challenged (captcha 403). The collector treats a known block as a **green
+skip** so the schedule keeps running and banks boards opportunistically.
+Relay options, in preference order, when this pipeline gets prioritized:
+
+1. **A licensed aggregator** that carries pick'em lines alongside books
+   (e.g. SportsGameOdds' props feed includes PrizePicks/Underdog and a
+   no-vig consensus) — cleanest legally, one normalizer swap.
+2. **A residential-connection cron** running this same collector from an
+   operator machine and uploading the parquet (the collector itself needs
+   no code change — only the network it runs from).
+3. Third-party scraper relays (Apify-style) — workable, but adds a paid
+   dependency of unknown reliability.
+
+What we do *not* do: fight the bot protection with headless-browser
+evasion — an arms race with ToS problems on both ends.
+
 ## How this plugs into the stack
 
 `BettingProsClient.game_lines` returns the same canonical `Lines` frame the
