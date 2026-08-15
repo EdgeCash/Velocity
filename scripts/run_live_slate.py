@@ -109,8 +109,19 @@ def _build_projection(
         print(f"NFL ratings: {kind} fit on {len(plays)} plays "
               f"(seasons {cutoff}+, half-life {DEFAULT_RECENCY_HALF_LIFE:g} wks)")
 
-        def project_epa(home: str, away: str) -> GameProjection:
-            return nfl_model.project(home, away, rng=make_rng())
+        # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
+        # top of the fit — small, consistent across every tested grid.
+        from velocity.backtest.lab import RestAdjustedModel
+
+        schedule = load_games(_find_games(folder), league="nfl")
+        rest_model = RestAdjustedModel(nfl_model, schedule)
+
+        def project_epa(
+            home: str, away: str, kickoff: object = None
+        ) -> GameProjection:
+            return rest_model.project(  # type: ignore[return-value]
+                home, away, rng=make_rng(), kickoff=kickoff
+            )
 
         return project_epa, list(ratings.teams)
 

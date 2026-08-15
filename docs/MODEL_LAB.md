@@ -200,3 +200,25 @@ plays dataset lands).
 (`run_live_slate`); the NFL scores fallback keeps its default. Follow-up
 queued: a finer λ sweep (5/10/15) and, longer-term, a CFBD play-by-play EPA
 fit.
+
+## Round 4 — rest spots (NFL, 2014–2025, 3,295 games)
+
+Bye-week bonus / short-week penalty on top of the promoted QB fit
+(`RestAdjustedModel`; rest days are preseason-public schedule knowledge).
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ |
+|---|---|---|---|
+| qb-recency-17 (control) | 0.22053 | 0.63127 | 0.0148 |
+| rest-1.0-1.0 | 0.22032 | 0.63072 | 0.0149 |
+| rest-0.5-1.5 | 0.22040 | 0.63091 | **0.0146** |
+| rest-2.0-1.0 | **0.22028** | **0.63058** | 0.0166 |
+
+**Reading, honestly:** every grid improves Brier and log-loss over the
+control — consistent direction, tiny magnitude (~0.0002 Brier, an order of
+magnitude below the QB adjustment). That is exactly what a real but rare
+feature looks like: byes and short weeks touch ~11% of games, so a ~1-point
+correction on those games barely moves the aggregate. **PROMOTED at the
+moderate 1.0/1.0 grid** (best-balanced: second-best Brier, calibration flat)
+— near-free, literature-standard, and consistent across every setting
+tested. The aggressive 2.0 bye bonus buys a hair more Brier at a visible
+calibration cost; not worth it.
