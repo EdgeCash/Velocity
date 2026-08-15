@@ -88,3 +88,36 @@ def test_shrink_series_aligns_and_defaults() -> None:
     out = shrink_series(prior, observed, n_games, prior_strength=6.0)
     assert out["A"] == pytest.approx(0.5 * 0.1 + 0.5 * 0.3)  # 6/(6+6)=0.5
     assert out["B"] == pytest.approx(-0.1)  # no data → stays at prior
+
+
+def test_scores_recency_weights_favor_recent_games() -> None:
+    import pandas as pd
+    from velocity.features.scores import fit_scores_ratings, scores_recency_weights
+
+    games = pd.DataFrame({
+        "season": [2024, 2024, 2025, 2025],
+        "week": [1, 10, 1, 10],
+        "home_team": ["A", "A", "A", "A"],
+        "away_team": ["B", "B", "B", "B"],
+        "home_score": [10.0, 10.0, 30.0, 30.0],  # A's offense transformed in 2025
+        "away_score": [20.0, 20.0, 14.0, 14.0],
+    })
+    w = scores_recency_weights(games, 17.0)
+    assert w.iloc[3] == 1.0  # newest game
+    assert w.iloc[0] < w.iloc[2] < w.iloc[3]  # strictly fresher = heavier
+
+    flat = fit_scores_ratings(games, ridge_lambda=1.0)
+    weighted = fit_scores_ratings(games, ridge_lambda=1.0, weights=w)
+    # The recency fit believes the 2025 version of the matchup (30-14) more
+    # than the flat fit, which averages the eras.
+    # A hosts in every fixture game, so evaluate the at-home expectation.
+    flat_mu = flat.expected_points("A", "B", at_home=True)
+    weighted_mu = weighted.expected_points("A", "B", at_home=True)
+    assert weighted_mu > flat_mu
+    assert weighted_mu > 24.0  # pulled toward the 2025 scoring level (30)
+
+    bad = w.copy()
+    bad.iloc[0] = float("nan")
+    import pytest
+    with pytest.raises(ValueError, match="finite"):
+        fit_scores_ratings(games, weights=bad)

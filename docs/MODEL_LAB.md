@@ -163,3 +163,83 @@ its latest game — priced back in at projection time, honest in walk-forward).
    question.
 8. **CLV per flagged lean** — the in-season leading indicator; the 3-hourly
    BettingPros snapshots exist precisely for this join.
+
+---
+
+# NCAAF lab — college variant benchmarks
+
+## Round 1 — 2019–2024 evaluation (6,640 games; trailing-4-season training)
+
+First college benchmark: the shipped scores fit (λ=25) against shrinkage and
+recency sweeps, `model_lab.py --league ncaaf` (games-only until a college
+plays dataset lands).
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| scores (shipped, λ=25) | 0.2076 | 0.6011 | 0.0523 | 50.0% | 52.0% |
+| **ridge-10** | **0.1983** | **0.5786** | **0.0293** | 49.6% | 51.7% |
+| ridge-50 | 0.2160 | 0.6206 | 0.0640 | 49.9% | 52.2% |
+| recency-17 | 0.2148 | 0.6180 | 0.0813 | 50.0% | 51.9% |
+| recency-34 | 0.2106 | 0.6085 | 0.0756 | 49.9% | 52.0% |
+| recency-17-r50 | 0.2247 | 0.6400 | 0.0748 | 49.8% | 51.9% |
+
+**Readings, honestly:**
+
+1. **λ=10 is a decisive promotion** — Brier −0.0093 vs the shipped default
+   with calibration error nearly halved. The old λ=25 over-shrank college
+   ratings; thin schedules still carry more signal than the default trusted.
+2. **Recency does not transfer to the college scores fit.** Every recency
+   variant is *worse* than the flat fit — the opposite of the NFL result.
+   Plausible mechanism: game-level down-weighting starves an already
+   sparse, weakly-connected schedule graph. Rejected; revisit only with a
+   play-level college fit.
+3. The flat O/U rates (~52%) sit exactly where the shipped totals filter
+   already operates (52.8% with its threshold) — consistent, no change.
+
+**PROMOTED:** the live NCAAF slate fits at `ridge_lambda=10`
+(`run_live_slate`); the NFL scores fallback keeps its default. Follow-up
+queued: a finer λ sweep (5/10/15) and, longer-term, a CFBD play-by-play EPA
+fit.
+
+## Round 4 — rest spots (NFL, 2014–2025, 3,295 games)
+
+Bye-week bonus / short-week penalty on top of the promoted QB fit
+(`RestAdjustedModel`; rest days are preseason-public schedule knowledge).
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ |
+|---|---|---|---|
+| qb-recency-17 (control) | 0.22053 | 0.63127 | 0.0148 |
+| rest-1.0-1.0 | 0.22032 | 0.63072 | 0.0149 |
+| rest-0.5-1.5 | 0.22040 | 0.63091 | **0.0146** |
+| rest-2.0-1.0 | **0.22028** | **0.63058** | 0.0166 |
+
+**Reading, honestly:** every grid improves Brier and log-loss over the
+control — consistent direction, tiny magnitude (~0.0002 Brier, an order of
+magnitude below the QB adjustment). That is exactly what a real but rare
+feature looks like: byes and short weeks touch ~11% of games, so a ~1-point
+correction on those games barely moves the aggregate. **PROMOTED at the
+moderate 1.0/1.0 grid** (best-balanced: second-best Brier, calibration flat)
+— near-free, literature-standard, and consistent across every setting
+tested. The aggressive 2.0 bye bonus buys a hair more Brier at a visible
+calibration cost; not worth it.
+
+## Round 5 — wind on totals (NFL, 2014–2025)
+
+Symmetric wind suppression past a threshold (`WeatherAdjustedModel` over the
+QB fit; `datasets/nfl/weather.parquet`, Open-Meteo daily-max wind). Aggregate
+Brier is structurally blind to a symmetric totals shift, so the verdict
+lives in the windy-game conditional (422 eval games with max wind ≥15 mph):
+
+| | O/U vs close, windy games only |
+|---|---|
+| control (no wind) | **46.3%** (406 bets) |
+| wind-15-0.30 | 48.1% (395 bets) |
+
+**Reading:** the control's windy-game deficit is the finding — the market
+prices wind and the bare model demonstrably over-projects windy totals. The
+adjustment recovers ~1.8 pts of that with aggregate metrics and ATS flat.
+**PROMOTED (wind-15-0.30) as a bias correction, not an edge** — it makes
+fair totals honest on windy days; it does not beat the close there.
+*Wiring note:* the backtest prices historical actuals; the live slate needs
+the Open-Meteo *forecast* endpoint at slate time — queued as the next
+plumbing item, the model constants are settled.

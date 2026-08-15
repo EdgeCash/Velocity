@@ -181,7 +181,11 @@ def project_board(
     projections (e.g. for a report) without simulating twice. A game whose teams
     don't resolve is skipped and reported.
     """
+    import inspect
+
     known = list(known_teams)
+    # Schedule-aware projectors (rest spots) take the event's kickoff too.
+    accepts_kickoff = "kickoff" in inspect.signature(project).parameters
     projections: dict[str, GameProjection] = {}
     unresolved: list[dict[str, str]] = []
     for event in events.to_dict("records"):
@@ -198,7 +202,10 @@ def project_board(
                 }
             )
             continue
-        projections[gid] = project(home, away)
+        if accepts_kickoff:
+            projections[gid] = project(home, away, kickoff=event.get("kickoff"))  # type: ignore[call-arg]
+        else:
+            projections[gid] = project(home, away)
     return projections, unresolved
 
 

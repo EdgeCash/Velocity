@@ -104,11 +104,21 @@ def walk_forward(
         week_games = played[(played["season"] == season) & (played["week"] == week)]
         rng = make_rng(config.seed + int(week))
 
+        # Schedule-aware models (rest spots) take the game's kickoff; plain
+        # models keep the two-team signature. Rest is public schedule
+        # knowledge, so passing the kickoff is not leakage.
+        import inspect
+
+        accepts_kickoff = "kickoff" in inspect.signature(model.project).parameters
+
         projections: dict[str, GameProjection] = {}
         for g in week_games.itertuples(index=False):
-            proj = model.project(
-                g.home_team, g.away_team, neutral_site=bool(g.neutral_site), rng=rng
-            )
+            kwargs: dict[str, object] = {
+                "neutral_site": bool(g.neutral_site), "rng": rng,
+            }
+            if accepts_kickoff:
+                kwargs["kickoff"] = getattr(g, "kickoff", None)
+            proj = model.project(g.home_team, g.away_team, **kwargs)  # type: ignore[arg-type]
             projections[g.game_id] = proj
             home_win = 1.0 if g.home_score > g.away_score else 0.0
             proj_rows.append(

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -119,8 +120,15 @@ def fit_split_ratings(
     )
 
 
-def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
-    """The benchmark slate of NFL variants: name → (train frame kind, factory)."""
+def nfl_variants(
+    n_sims: int, schedule: pd.DataFrame | None = None
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The benchmark slate of NFL variants: name → (train frame kind, factory).
+
+    ``schedule`` (the full games frame) enables the rest-spot wrappers — rest
+    days are preseason-public schedule knowledge, so the closure is not
+    leakage. Without it the rest variants are simply absent.
+    """
     sim = SimConfig(n_sims=n_sims)
 
     def _model(ratings: object) -> NFLGameModel:
@@ -165,7 +173,7 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
 
-    return {
+    variants: dict[str, tuple[str, VariantFactory]] = {
         "baseline": ("plays", baseline),
         "scores": ("games", scores),
         "recency-17": ("plays", recency(17.0)),
@@ -176,13 +184,225 @@ def nfl_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
         "split-0.75": ("plays", split(0.75)),
         "ridge-100": ("plays", ridge(100.0)),
         "ridge-400": ("plays", ridge(400.0)),
-        # QB adjustment (docs/MODEL_LAB.md backlog #1): the recency fit with
+        # QB adjustment (docs/MODEL_LAB.md Round 3): the recency fit with
         # the passer decomposed out of the offense and the detected starter
-        # priced back in at projection time.
+        # priced back in at projection time. The bare name runs the promoted
+        # config (DEFAULT_QB_LAMBDA).
         "qb-recency-17": ("plays", qb_recency(17.0)),
         "qb-recency-17-q75": ("plays", qb_recency(17.0, 75.0)),
         "qb-recency-17-q300": ("plays", qb_recency(17.0, 300.0)),
     }
+
+    if schedule is not None:
+        def rest(bye_pts: float, short_pts: float) -> VariantFactory:
+            base = qb_recency(17.0)
+
+            def factory(train: pd.DataFrame) -> RestAdjustedModel:
+                return RestAdjustedModel(
+                    base(train), schedule,  # type: ignore[arg-type]
+                    bye_points=bye_pts, short_points=short_pts,
+                )
+
+            return factory
+
+        variants.update({
+            "rest-1.0-1.0": ("plays", rest(1.0, 1.0)),
+            "rest-0.5-1.5": ("plays", rest(0.5, 1.5)),
+            "rest-2.0-1.0": ("plays", rest(2.0, 1.0)),
+        })
+
+        # Wind on totals: needs the fetched weather archive joined onto the
+        # schedule (scripts/fetch_weather.py → datasets/nfl/weather.parquet).
+        weather_path = Path("datasets/nfl/weather.parquet")
+        if weather_path.exists():
+            from velocity.features.weather import join_weather
+
+            joined = join_weather(schedule, pd.read_parquet(weather_path))
+
+            def wind(threshold: float, per_mph: float) -> VariantFactory:
+                base = qb_recency(17.0)
+
+                def factory(train: pd.DataFrame) -> WeatherAdjustedModel:
+                    return WeatherAdjustedModel(
+                        base(train), joined,  # type: ignore[arg-type]
+                        threshold_mph=threshold, points_per_mph=per_mph,
+                    )
+
+                return factory
+
+            variants.update({
+                "wind-15-0.15": ("plays", wind(15.0, 0.15)),
+                "wind-15-0.30": ("plays", wind(15.0, 0.30)),
+                "wind-12-0.15": ("plays", wind(12.0, 0.15)),
+            })
+    return variants
+
+
+def ncaaf_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
+    """The NCAAF benchmark slate — scores-fit variants (no committed plays yet).
+
+    College schedules are thin and non-connective, so shrinkage and recency
+    matter differently than the NFL; the sim SDs are the live slate's wider
+    college calibration. ``scores`` is the shipped configuration and the
+    promotion bar.
+    """
+    from velocity.features.scores import scores_recency_weights
+
+    sim = SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
+
+    def _model(ratings: object) -> ScoresGameModel:
+        return ScoresGameModel(ratings, ScoresModelConfig(sim=sim))  # type: ignore[arg-type]
+
+    def scores(train: pd.DataFrame) -> ScoresGameModel:
+        return _model(fit_scores_ratings(train))
+
+    def ridge(lam: float) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(train, ridge_lambda=lam))
+
+        return factory
+
+    def recency(half_life: float, lam: float = 25.0) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(
+                train, ridge_lambda=lam,
+                weights=scores_recency_weights(train, half_life),
+            ))
+
+        return factory
+
+    return {
+        "scores": ("games", scores),
+        "ridge-10": ("games", ridge(10.0)),
+        "ridge-50": ("games", ridge(50.0)),
+        "recency-17": ("games", recency(17.0)),
+        "recency-34": ("games", recency(34.0)),
+        "recency-17-r50": ("games", recency(17.0, 50.0)),
+    }
+
+
+class RestAdjustedModel:
+    """A situational wrapper: rest-spot point bonuses on top of any NFL model.
+
+    Rest days are pure schedule knowledge (known before the season), so
+    computing them from the full schedule is not leakage. A team coming off a
+    bye (rest ≥ ``bye_days``) gets ``bye_points``; a team on a short week
+    (rest ≤ ``short_days``) gets ``-short_points``. Teams with no prior game
+    (week 1) get no adjustment.
+    """
+
+    def __init__(
+        self,
+        inner: NFLGameModel,
+        schedule: pd.DataFrame,
+        *,
+        bye_points: float = 1.0,
+        short_points: float = 1.0,
+        bye_days: int = 12,
+        short_days: int = 5,
+    ) -> None:
+        self.inner = inner
+        self.bye_points = bye_points
+        self.short_points = short_points
+        self.bye_days = bye_days
+        self.short_days = short_days
+        sched = schedule.dropna(subset=["kickoff"]).copy()
+        sched["kickoff"] = pd.to_datetime(sched["kickoff"])
+        long = pd.concat([
+            sched[["home_team", "kickoff"]].rename(columns={"home_team": "team"}),
+            sched[["away_team", "kickoff"]].rename(columns={"away_team": "team"}),
+        ], ignore_index=True)
+        self._games_by_team = {
+            str(team): group["kickoff"].sort_values().to_numpy()
+            for team, group in long.groupby("team")
+        }
+
+    def _bonus(self, team: str, kickoff: object) -> float:
+        if kickoff is None or pd.isna(kickoff):  # type: ignore[call-overload]
+            return 0.0
+        played = self._games_by_team.get(team)
+        if played is None:
+            return 0.0
+        when = pd.Timestamp(kickoff).to_datetime64()  # type: ignore[arg-type]
+        prior = played[played < when]
+        if len(prior) == 0:
+            return 0.0
+        rest = (when - prior[-1]) / np.timedelta64(1, "D")
+        if rest >= self.bye_days:
+            return self.bye_points
+        if rest <= self.short_days:
+            return -self.short_points
+        return 0.0
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+    ) -> object:
+        return self.inner.project(
+            home_team, away_team, neutral_site=neutral_site,
+            rng=rng,  # type: ignore[arg-type]
+            home_bonus=self._bonus(home_team, kickoff),
+            away_bonus=self._bonus(away_team, kickoff),
+        )
+
+
+class WeatherAdjustedModel:
+    """A situational wrapper: wind suppression on totals over any NFL model.
+
+    Wind is forecastable before kickoff, so pricing it from the historical
+    archive in walk-forward mirrors what a live model would do with a
+    forecast (an optimistic-but-small information edge: actuals vs forecast).
+    The bonus is symmetric and negative — wind takes points off both teams,
+    moving the total while leaving the margin untouched.
+    """
+
+    def __init__(
+        self,
+        inner: NFLGameModel,
+        weather: pd.DataFrame,  # join_weather() output: home_team/kickoff keyed
+        *,
+        threshold_mph: float = 15.0,
+        points_per_mph: float = 0.15,
+    ) -> None:
+        self.inner = inner
+        self.threshold_mph = threshold_mph
+        self.points_per_mph = points_per_mph
+        keyed = weather.dropna(subset=["kickoff"]).copy()
+        keyed["_date"] = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        self._wind = {
+            (str(r["home_team"]), r["_date"]): r["wind_max"]
+            for r in keyed.to_dict("records")
+        }
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+    ) -> object:
+        from velocity.features.weather import wind_total_bonus
+
+        bonus = 0.0
+        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            bonus = wind_total_bonus(
+                self._wind.get((home_team, date)),
+                threshold_mph=self.threshold_mph,
+                points_per_mph=self.points_per_mph,
+            )
+        return self.inner.project(
+            home_team, away_team, neutral_site=neutral_site,
+            rng=rng,  # type: ignore[arg-type]
+            home_bonus=bonus, away_bonus=bonus,
+        )
 
 
 def market_blend_sweep(
