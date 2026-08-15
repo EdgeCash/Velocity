@@ -47,7 +47,18 @@ def main() -> None:  # pragma: no cover - network orchestration
     client = PrizePicksClient()
     try:
         available = client.leagues()
-    except Exception as exc:  # noqa: BLE001 - a blocked /leagues sinks the whole run
+    except Exception as exc:  # noqa: BLE001 - classify: known block vs real breakage
+        message = str(exc)
+        if "403" in message or "bot protection" in message:
+            # DataDome challenges datacenter IPs (verified: GitHub runners are
+            # blocked). A known block is a skip, not a failure — the schedule
+            # keeps running so boards bank opportunistically if the door ever
+            # opens, and a relay transport can be slotted in without red runs
+            # in between.
+            print(f"PrizePicks board unreachable from this network ({message})")
+            print("skipping snapshot (bot-protection block — expected from "
+                  "datacenter IPs; see docs/DATA_PROVIDERS.md for the relay plan)")
+            return
         raise SystemExit(f"could not list PrizePicks leagues ({exc})") from exc
     by_lower = {name.lower(): (name, lid) for name, lid in available.items()}
 
