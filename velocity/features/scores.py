@@ -50,16 +50,31 @@ class ScoresRatings:
         return mu + (self.home_edge if at_home else 0.0)
 
 
+def scores_recency_weights(games: pd.DataFrame, half_life_weeks: float) -> pd.Series:
+    """Exponential game weights by age in on-field weeks (newest = 1.0).
+
+    The scores-fit sibling of :func:`velocity.features.team.recency_weights` —
+    same contiguous (season, week) key, same deliberate non-inflation of the
+    offseason gap. Feed to :func:`fit_scores_ratings`' ``weights``.
+    """
+    key = games["season"].astype(int) * 25 + games["week"].astype(int)
+    age = key.max() - key
+    return pd.Series(np.power(0.5, age / half_life_weeks), index=games.index)
+
+
 def fit_scores_ratings(
     games: pd.DataFrame,
     *,
     ridge_lambda: float = DEFAULT_RIDGE_LAMBDA,
+    weights: pd.Series | None = None,
 ) -> ScoresRatings:
     """Fit ridge-adjusted offense/defense points ratings from played games.
 
     ``games`` needs ``home_team``, ``away_team``, ``home_score``, ``away_score``
     (and optionally ``neutral_site``). Unplayed games (null scores) are dropped.
-    The fit is deterministic.
+    ``weights`` (aligned to ``games``' index) turns the fit into weighted
+    ridge — both of a game's scoring observations share its weight. The fit is
+    deterministic.
     """
     if ridge_lambda <= 0:
         raise ValueError("ridge_lambda must be positive for an identifiable fit")
@@ -107,7 +122,15 @@ def fit_scores_ratings(
     penalty = np.ones(n_cols)
     penalty[0] = 0.0
     penalty[home_col] = 0.0
-    beta = np.linalg.solve(x.T @ x + ridge_lambda * np.diag(penalty), x.T @ y)
+    if weights is not None:
+        w_game = weights.reindex(df.index).to_numpy(dtype=float)
+        if np.any(~np.isfinite(w_game)) or np.any(w_game < 0):
+            raise ValueError("weights must be finite and non-negative for every kept game")
+        w = np.concatenate([w_game, w_game])  # both scoring rows share the game weight
+        xw = x * w[:, None]
+        beta = np.linalg.solve(xw.T @ x + ridge_lambda * np.diag(penalty), xw.T @ y)
+    else:
+        beta = np.linalg.solve(x.T @ x + ridge_lambda * np.diag(penalty), x.T @ y)
 
     offense = {team: float(beta[1 + index[team]]) for team in teams}
     defense = {team: float(beta[1 + n_teams + index[team]]) for team in teams}

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -209,7 +210,75 @@ def nfl_variants(
             "rest-0.5-1.5": ("plays", rest(0.5, 1.5)),
             "rest-2.0-1.0": ("plays", rest(2.0, 1.0)),
         })
+
+        # Wind on totals: needs the fetched weather archive joined onto the
+        # schedule (scripts/fetch_weather.py → datasets/nfl/weather.parquet).
+        weather_path = Path("datasets/nfl/weather.parquet")
+        if weather_path.exists():
+            from velocity.features.weather import join_weather
+
+            joined = join_weather(schedule, pd.read_parquet(weather_path))
+
+            def wind(threshold: float, per_mph: float) -> VariantFactory:
+                base = qb_recency(17.0)
+
+                def factory(train: pd.DataFrame) -> WeatherAdjustedModel:
+                    return WeatherAdjustedModel(
+                        base(train), joined,  # type: ignore[arg-type]
+                        threshold_mph=threshold, points_per_mph=per_mph,
+                    )
+
+                return factory
+
+            variants.update({
+                "wind-15-0.15": ("plays", wind(15.0, 0.15)),
+                "wind-15-0.30": ("plays", wind(15.0, 0.30)),
+                "wind-12-0.15": ("plays", wind(12.0, 0.15)),
+            })
     return variants
+
+
+def ncaaf_variants(n_sims: int) -> dict[str, tuple[str, VariantFactory]]:
+    """The NCAAF benchmark slate — scores-fit variants (no committed plays yet).
+
+    College schedules are thin and non-connective, so shrinkage and recency
+    matter differently than the NFL; the sim SDs are the live slate's wider
+    college calibration. ``scores`` is the shipped configuration and the
+    promotion bar.
+    """
+    from velocity.features.scores import scores_recency_weights
+
+    sim = SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
+
+    def _model(ratings: object) -> ScoresGameModel:
+        return ScoresGameModel(ratings, ScoresModelConfig(sim=sim))  # type: ignore[arg-type]
+
+    def scores(train: pd.DataFrame) -> ScoresGameModel:
+        return _model(fit_scores_ratings(train))
+
+    def ridge(lam: float) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(train, ridge_lambda=lam))
+
+        return factory
+
+    def recency(half_life: float, lam: float = 25.0) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(
+                train, ridge_lambda=lam,
+                weights=scores_recency_weights(train, half_life),
+            ))
+
+        return factory
+
+    return {
+        "scores": ("games", scores),
+        "ridge-10": ("games", ridge(10.0)),
+        "ridge-50": ("games", ridge(50.0)),
+        "recency-17": ("games", recency(17.0)),
+        "recency-34": ("games", recency(34.0)),
+        "recency-17-r50": ("games", recency(17.0, 50.0)),
+    }
 
 
 class RestAdjustedModel:
@@ -279,6 +348,60 @@ class RestAdjustedModel:
             rng=rng,  # type: ignore[arg-type]
             home_bonus=self._bonus(home_team, kickoff),
             away_bonus=self._bonus(away_team, kickoff),
+        )
+
+
+class WeatherAdjustedModel:
+    """A situational wrapper: wind suppression on totals over any NFL model.
+
+    Wind is forecastable before kickoff, so pricing it from the historical
+    archive in walk-forward mirrors what a live model would do with a
+    forecast (an optimistic-but-small information edge: actuals vs forecast).
+    The bonus is symmetric and negative — wind takes points off both teams,
+    moving the total while leaving the margin untouched.
+    """
+
+    def __init__(
+        self,
+        inner: NFLGameModel,
+        weather: pd.DataFrame,  # join_weather() output: home_team/kickoff keyed
+        *,
+        threshold_mph: float = 15.0,
+        points_per_mph: float = 0.15,
+    ) -> None:
+        self.inner = inner
+        self.threshold_mph = threshold_mph
+        self.points_per_mph = points_per_mph
+        keyed = weather.dropna(subset=["kickoff"]).copy()
+        keyed["_date"] = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        self._wind = {
+            (str(r["home_team"]), r["_date"]): r["wind_max"]
+            for r in keyed.to_dict("records")
+        }
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+    ) -> object:
+        from velocity.features.weather import wind_total_bonus
+
+        bonus = 0.0
+        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            bonus = wind_total_bonus(
+                self._wind.get((home_team, date)),
+                threshold_mph=self.threshold_mph,
+                points_per_mph=self.points_per_mph,
+            )
+        return self.inner.project(
+            home_team, away_team, neutral_site=neutral_site,
+            rng=rng,  # type: ignore[arg-type]
+            home_bonus=bonus, away_bonus=bonus,
         )
 
 

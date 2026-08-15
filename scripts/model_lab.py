@@ -43,6 +43,7 @@ def _empty_lines() -> pd.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser(description="NFL model-variant benchmark")
     parser.add_argument("--data", default="datasets/nfl", help="folder with games+plays")
+    parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
     parser.add_argument("--n-sims", type=int, default=4000)
     parser.add_argument("--min-train-games", type=int, default=20)
     parser.add_argument("--variants", default="",
@@ -57,15 +58,21 @@ def main() -> None:
     args = parser.parse_args()
 
     folder = Path(args.data)
-    games = load_games(_find(folder, "games"), league="nfl")
-    plays = load_plays(_find(folder, "plays"))
+    games = load_games(_find(folder, "games"), league=args.league)
+    # NCAAF is games-only until a college plays dataset lands.
+    plays = load_plays(_find(folder, "plays")) if args.league == "nfl" else games
     lines = _empty_lines()
     if args.eval_from is not None:
         # Predict only recent seasons; the engine still trains on everything
         # before each predicted week (plays are passed unrestricted).
         games = games[games["season"] >= args.eval_from].reset_index(drop=True)
 
-    chosen = nfl_variants(args.n_sims, schedule=games)
+    if args.league == "nfl":
+        chosen = nfl_variants(args.n_sims, schedule=games)
+    else:
+        from velocity.backtest.lab import ncaaf_variants
+
+        chosen = ncaaf_variants(args.n_sims)
     if args.variants:
         names = [v.strip() for v in args.variants.split(",") if v.strip()]
         unknown = [n for n in names if n not in chosen]

@@ -234,3 +234,65 @@ def test_rest_adjusted_model_applies_bye_and_short_week() -> None:
     # No kickoff supplied → no adjustment either way.
     model.project("KC", "BUF", kickoff=None)
     assert captured == {"home_bonus": 0.0, "away_bonus": 0.0}
+
+
+def test_wind_total_bonus_and_weather_wrapper() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import WeatherAdjustedModel
+    from velocity.features.weather import wind_total_bonus
+
+    assert wind_total_bonus(None) == 0.0
+    assert wind_total_bonus(float("nan")) == 0.0
+    assert wind_total_bonus(10.0) == 0.0  # below threshold
+    assert wind_total_bonus(25.0) == pytest.approx(-1.5)  # (25-15)*0.15
+    assert wind_total_bonus(60.0) == pytest.approx(-3.0)  # capped
+
+    captured = {}
+
+    class _Inner:
+        def project(self, home, away, *, neutral_site=False, rng=None,
+                    home_bonus=0.0, away_bonus=0.0):
+            captured.update(home_bonus=home_bonus, away_bonus=away_bonus)
+            return "proj"
+
+    weather = pd.DataFrame({
+        "home_team": ["GB", "MIA"],
+        "kickoff": pd.to_datetime(["2025-12-14", "2025-10-05"]),
+        "roof": ["outdoors", "outdoors"],
+        "wind_max": [25.0, 8.0],
+        "temp_mean": [20.0, 85.0],
+        "precip": [0.0, 0.0],
+    })
+    model = WeatherAdjustedModel(_Inner(), weather)
+    model.project("GB", "CHI", kickoff=pd.Timestamp("2025-12-14"))
+    assert captured == {"home_bonus": -1.5, "away_bonus": -1.5}  # symmetric
+    model.project("MIA", "NYJ", kickoff=pd.Timestamp("2025-10-05"))
+    assert captured == {"home_bonus": 0.0, "away_bonus": 0.0}  # calm day
+    model.project("GB", "CHI", kickoff=None)  # no kickoff → no adjustment
+    assert captured == {"home_bonus": 0.0, "away_bonus": 0.0}
+
+
+def test_join_weather_leaves_domes_unmeasured() -> None:
+    import pandas as pd
+    from velocity.features.weather import join_weather, stadium_coords
+
+    games = pd.DataFrame({
+        "game_id": ["g1", "g2"],
+        "home_team": ["GB", "MIN"],
+        "roof": ["outdoors", "dome"],
+        "kickoff": pd.to_datetime(["2025-12-14", "2025-12-14"]),
+    })
+    daily = pd.DataFrame({
+        "team": ["GB", "MIN"],
+        "date": pd.to_datetime(["2025-12-14", "2025-12-14"]),
+        "wind_max": [22.0, 30.0],
+        "temp_mean": [15.0, 10.0],
+        "precip": [0.1, 0.0],
+    })
+    joined = join_weather(games, daily)
+    assert joined.loc[joined.game_id == "g1", "wind_max"].iloc[0] == 22.0
+    # A dome has no wind *measurement* — NaN, never a fake calm zero.
+    assert pd.isna(joined.loc[joined.game_id == "g2", "wind_max"].iloc[0])
+    # Relocation eras resolve: St. Louis before 2016, LA after.
+    assert stadium_coords("LA", 2014) != stadium_coords("LA", 2020)
+    assert stadium_coords("XXX", 2020) is None
