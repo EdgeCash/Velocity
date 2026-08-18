@@ -1,6 +1,6 @@
 """MatchUp Labs app — the day's slate as a dark, readable board.
 
-Four tabs over the live-slate workflow's persisted artifacts:
+Five tabs over the live-slate workflow's persisted artifacts:
 
 * **Cards** — the day's graphics: model cards, Sim Checks, and the record
   card, each viewable and downloadable, with the caption copy alongside. This
@@ -10,6 +10,8 @@ Four tabs over the live-slate workflow's persisted artifacts:
   PASS YDS +105"), games → props → parlays.
 * **Matchups** — one card per game: teams, kickoff, win probabilities,
   projected score, fair total/line — and that game's plays.
+* **Pick'em** — the slip-EV board: ranked slips (book-fair marginals ×
+  model correlation) and the qualifying legs behind them.
 * **Record** — yesterday's graded plays (the same record the email leads with).
 
 Data comes from the newest ``slate-*`` GitHub Actions artifact (the runner's
@@ -194,6 +196,55 @@ def _render_card(card: dict) -> None:
     )
 
 
+def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> None:
+    """Ranked pick'em slips + the qualifying legs board."""
+    if (slips is None or slips.empty) and (legs is None or legs.empty):
+        st.info(
+            "No pick'em board in the latest slate — it builds alongside the "
+            "prop slate once prop lines and projections are live."
+        )
+        return
+    st.caption(
+        "Book-fair leg probabilities × model correlation. Lines are the "
+        "sharp books' own numbers until the board feed lands — the "
+        "divergence edge switches on with it."
+    )
+    if slips is not None and not slips.empty:
+        st.markdown("#### Ranked slips")
+        rows = "".join(
+            f"<tr><td class='v-play'>{r['slip']}</td>"
+            f"<td>{float(r['ev']):.2f}x</td>"
+            f"<td>{float(r['p_all']):.0%}</td>"
+            f"<td>{r['legs']}</td></tr>"
+            for r in slips.to_dict("records")
+        )
+        st.markdown(
+            "<table class='v-table'>"
+            "<tr><th>Slip</th><th>EV</th><th>All hit</th><th>Legs</th></tr>"
+            f"{rows}</table>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("No slip cleared the EV floor today — that is a result, not a bug.")
+    if legs is not None and not legs.empty:
+        st.markdown("#### Qualifying legs")
+        rows = "".join(
+            f"<tr><td>{r['player']}</td>"
+            f"<td class='v-play'>{r['side']} {float(r['line']):g}</td>"
+            f"<td>{r['market']}</td>"
+            f"<td>{float(r['p_book']):.0%}</td>"
+            f"<td class='v-dim'>{float(r['p_model']):.0%}</td></tr>"
+            for r in legs.to_dict("records")
+        )
+        st.markdown(
+            "<table class='v-table'>"
+            "<tr><th>Player</th><th>Pick</th><th>Market</th>"
+            "<th>Fair %</th><th>Model %</th></tr>"
+            f"{rows}</table>",
+            unsafe_allow_html=True,
+        )
+
+
 def _render_record(record: pd.DataFrame | None) -> None:
     if record is None or record.empty:
         st.info("No graded record yet — it appears once a prior slate has been graded.")
@@ -329,8 +380,8 @@ def main() -> None:
     if generated is not None:
         st.caption(f"Slate generated {pd.Timestamp(generated):%b %-d, %H:%M} UTC")
 
-    tab_cards, tab_plays, tab_matchups, tab_record = st.tabs(
-        ["Cards", "Plays", "Matchups", "Record"]
+    tab_cards, tab_plays, tab_matchups, tab_pickem, tab_record = st.tabs(
+        ["Cards", "Plays", "Matchups", "Pick'em", "Record"]
     )
     with tab_cards:
         _render_cards_tab(folder)
@@ -342,6 +393,8 @@ def main() -> None:
             st.info("No projections persisted in the latest slate.")
         for card in cards:
             _render_card(card)
+    with tab_pickem:
+        _render_pickem(frames.get("pickem"), frames.get("pickem_legs"))
     with tab_record:
         _render_record(frames["record"])
 
