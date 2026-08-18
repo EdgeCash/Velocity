@@ -17,7 +17,7 @@ import pandera.pandas as pa
 from pandera.pandas import Field
 from pandera.typing import Series
 
-LEAGUES = ["nfl", "ncaaf"]
+LEAGUES = ["nfl", "ncaaf", "mlb", "wnba"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
 # Game-level markets, shared by both leagues.
 MARKETS = [
