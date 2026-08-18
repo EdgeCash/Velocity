@@ -92,7 +92,7 @@ def test_join_closes_handles_doubleheaders() -> None:
 
 
 def test_inseason_variants_shapes() -> None:
-    for league, bar in (("mlb", 5.0), ("wnba", 10.0)):
+    for league in ("mlb", "wnba"):
         variants = inseason_variants(league, 64)
         assert "scores" in variants and "recency-4" in variants
         assert all(kind == "games" for kind, _ in variants.values())
