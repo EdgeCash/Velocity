@@ -555,10 +555,12 @@ def inseason_variants(
     variants.update({
         f"ridge-{lam:g}": ("games", ridge(lam)) for lam in sweep
     })
+    # WNBA's ladder extends past 8: round 1 came back monotone through 8, so
+    # the sweep brackets the bottom (as half-life → ∞ this is the flat fit).
+    rec_sweep = {"mlb": (2.0, 4.0, 8.0),
+                 "wnba": (2.0, 4.0, 8.0, 12.0, 16.0, 24.0)}[league]
     variants.update({
-        "recency-2": ("games", recency(2.0, live_ridge)),
-        "recency-4": ("games", recency(4.0, live_ridge)),
-        "recency-8": ("games", recency(8.0, live_ridge)),
+        f"recency-{hl:g}": ("games", recency(hl, live_ridge)) for hl in rec_sweep
     })
 
     def park(shrink_games: float = 40.0) -> VariantFactory:

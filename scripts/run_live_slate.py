@@ -155,14 +155,22 @@ def _build_projection(
     sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
     # NCAAF: λ=10 promoted by the college lab; MLB: λ=100 promoted by the
     # summer lab (docs/MODEL_LAB.md MLB Round 1 — heavy shrinkage wins in a
-    # league whose true team spread is small). The NFL scores path is only a
-    # no-plays fallback and keeps the default.
+    # league whose true team spread is small). WNBA: recency half-life 8
+    # week-buckets promoted (WNBA Round 1 — an interior optimum, 12/16/24
+    # all worse). The NFL scores path is only a no-plays fallback and keeps
+    # the default.
     ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0}.get(args.league, 25.0)
+    weights = None
+    if args.league == "wnba":
+        from velocity.features.scores import scores_recency_weights
+
+        weights = scores_recency_weights(games, 8.0)
     scores_model = ScoresGameModel(
-        fit_scores_ratings(games, ridge_lambda=ridge), ScoresModelConfig(sim=sim)
+        fit_scores_ratings(games, ridge_lambda=ridge, weights=weights),
+        ScoresModelConfig(sim=sim),
     )
     model: object = scores_model
-    kind = f"scores fit (λ={ridge:g})"
+    kind = f"scores fit (λ={ridge:g})" + (", recency-8" if weights is not None else "")
 
     ncaaf_plays = folder / "plays.parquet"
     if args.league == "ncaaf" and ncaaf_plays.exists():
