@@ -172,6 +172,24 @@ def _build_projection(
     model: object = scores_model
     kind = f"scores fit (λ={ridge:g})" + (", recency-8" if weights is not None else "")
 
+    box_file = folder / "team_box.parquet"
+    if args.league == "wnba" and box_file.exists():
+        # The promoted WNBA configuration (docs/MODEL_LAB.md WNBA Round 2):
+        # pace×efficiency with the recency-8 weighting on the efficiency fit
+        # — better on every forecasting metric than the raw points fit, and
+        # it prices a fast-pace matchup's total the points fit can't see.
+        # Best-effort: any failure keeps the recency-8 scores fit above.
+        try:
+            from velocity.backtest.lab import fit_pace_efficiency, wnba_pace_frame
+
+            pace = wnba_pace_frame(pd.read_parquet(box_file))
+            model = fit_pace_efficiency(
+                games, pace, sim, ridge_lambda=ridge, half_life=8.0
+            )
+            kind = f"pace×efficiency (λ={ridge:g}, recency-8), {len(pace)} games' possessions"
+        except Exception as exc:  # noqa: BLE001 - never blocks the slate
+            print(f"pace×efficiency skipped: {exc}")
+
     starters_file = folder / "starters.parquet"
     if args.league == "mlb" and starters_file.exists():
         # The promoted MLB configuration (docs/MODEL_LAB.md MLB Round 2): the

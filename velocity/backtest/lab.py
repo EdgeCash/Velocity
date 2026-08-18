@@ -730,6 +730,146 @@ class StarterAwareModel:
                               mu_home=mu_home, mu_away=mu_away, sim=sim)
 
 
+def wnba_pace_frame(box: pd.DataFrame) -> pd.DataFrame:
+    """wehoop team boxes → one possession estimate per game.
+
+    ``poss ≈ FGA − ORB + TOV + 0.44·FTA`` (the standard estimator), averaged
+    across the two team rows. Points come from the games frame itself, so
+    this only carries ``game_id, poss``. Games without exactly one home and
+    one away row (data quirks) contribute nothing rather than a guess.
+    """
+    b = box.assign(_poss=(
+        pd.to_numeric(box["field_goals_attempted"], errors="coerce")
+        - pd.to_numeric(box["offensive_rebounds"], errors="coerce")
+        + pd.to_numeric(box["total_turnovers"], errors="coerce")
+        + 0.44 * pd.to_numeric(box["free_throws_attempted"], errors="coerce")
+    ))
+    rows = []
+    for game_id, g in b.groupby("game_id"):
+        if sorted(g["team_home_away"].astype(str)) != ["away", "home"]:
+            continue
+        poss = float(g["_poss"].mean())
+        if not poss > 0:
+            continue
+        rows.append({"game_id": str(game_id), "poss": poss})
+    return pd.DataFrame(rows)
+
+
+class PaceEfficiencyModel:
+    """Total = pace × efficiency, fit separately and priced together.
+
+    ``eff_model`` is a scores fit on points-per-100-possessions (opponent
+    adjustment and HFA land in efficiency units); pace is the additive
+    ``league + dev[home] + dev[away]`` possessions estimate. The
+    reconstruction prices a fast-pace matchup's total above what either
+    team's raw points average shows — the decomposition's whole point.
+    """
+
+    def __init__(
+        self,
+        eff_model: ScoresGameModel,
+        pace_league: float,
+        pace_dev: Mapping[str, float],
+        sim: SimConfig,
+    ) -> None:
+        self.eff_model = eff_model
+        self.pace_league = pace_league
+        self.pace_dev = pace_dev
+        self.sim = sim
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: np.random.Generator | None = None,
+        kickoff: object = None,
+    ) -> object:
+        from velocity.models.game_nfl import GameProjection
+        from velocity.models.simulate import simulate_game
+        from velocity.util.seed import make_rng
+
+        eff_home, eff_away = self.eff_model.expected_points(
+            home_team, away_team, neutral_site=neutral_site
+        )
+        poss = (self.pace_league + self.pace_dev.get(home_team, 0.0)
+                + self.pace_dev.get(away_team, 0.0))
+        mu_home = poss * eff_home / 100.0
+        mu_away = poss * eff_away / 100.0
+        rng = rng if rng is not None else make_rng()
+        sim = simulate_game(mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away,
+                            rng=rng, config=self.sim)
+        return GameProjection(home_team=home_team, away_team=away_team,
+                              mu_home=mu_home, mu_away=mu_away, sim=sim)
+
+
+def fit_pace_efficiency(
+    train: pd.DataFrame,
+    pace: pd.DataFrame,
+    sim: SimConfig,
+    *,
+    ridge_lambda: float,
+    half_life: float | None,
+    shrink_games: float = 10.0,
+) -> PaceEfficiencyModel:
+    """Fit the pace×efficiency model (shared by the lab and the live slate).
+
+    Efficiency is the scores fit on points-per-100-possessions; pace
+    deviations are shrunk per-team means, half a game's deviation per side.
+    """
+    from velocity.features.scores import fit_scores_ratings, scores_recency_weights
+
+    merged = train.dropna(subset=["home_score", "away_score"]).merge(
+        pace, on="game_id", how="inner"
+    )
+    eff = merged.assign(
+        home_score=merged["home_score"] / merged["poss"] * 100.0,
+        away_score=merged["away_score"] / merged["poss"] * 100.0,
+    )
+    weights = (scores_recency_weights(eff, half_life)
+               if half_life is not None else None)
+    eff_model = ScoresGameModel(
+        fit_scores_ratings(eff, ridge_lambda=ridge_lambda, weights=weights),
+        ScoresModelConfig(sim=sim),
+    )
+    league = float(merged["poss"].mean())
+    long = pd.concat([
+        merged[["home_team", "poss"]].rename(columns={"home_team": "team"}),
+        merged[["away_team", "poss"]].rename(columns={"away_team": "team"}),
+    ], ignore_index=True)
+    dev: dict[str, float] = {}
+    for team, grp in long.groupby("team"):
+        n = len(grp)
+        dev[str(team)] = float(
+            (grp["poss"].mean() - league) / 2.0 * n / (n + shrink_games)
+        )
+    return PaceEfficiencyModel(eff_model, league, dev, sim)
+
+
+def wnba_pace_variants(
+    n_sims: int, box: pd.DataFrame
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The pace×efficiency slate — the research list's WNBA headline."""
+    cal = INSEASON_CALIBRATION["wnba"]
+    sim = SimConfig(sd_margin=cal["sd_margin"], sd_total=cal["sd_total"],
+                    n_sims=n_sims)
+    pace = wnba_pace_frame(box)
+
+    def variant(half_life: float | None) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> PaceEfficiencyModel:
+            return fit_pace_efficiency(
+                train, pace, sim, ridge_lambda=cal["ridge"], half_life=half_life
+            )
+
+        return factory
+
+    return {
+        "pace-eff-flat": ("games", variant(None)),
+        "pace-eff-r8": ("games", variant(8.0)),
+    }
+
+
 def mlb_fip_priors(
     starters: pd.DataFrame, shrink_innings: float
 ) -> dict[str, float]:

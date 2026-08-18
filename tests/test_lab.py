@@ -535,3 +535,65 @@ def test_starter_aware_model_unknown_starter_prices_neutral() -> None:
     exp_home = base + ratings.matchup_delta("A", "B", qb_id="zzz-unknown")
     assert neutral.mu_home == pytest.approx(exp_home + model.hfa_points / 2.0)
     assert neutral.mu_home != pytest.approx(priced.mu_home)
+
+
+def test_wnba_pace_frame_and_pace_efficiency_pricing() -> None:
+    from velocity.backtest.lab import (
+        wnba_pace_frame,
+        wnba_pace_variants,
+    )
+
+    rng = np.random.default_rng(7)
+    rows, box_rows = [], []
+    teams = ("FAST", "SLOW", "MID1", "MID2")
+    pace_by_team = {"FAST": 95.0, "SLOW": 70.0, "MID1": 82.0, "MID2": 82.0}
+    i = 0
+    for a in teams:
+        for b in teams:
+            if a == b:
+                continue
+            for _ in range(4):
+                poss = (pace_by_team[a] + pace_by_team[b]) / 2.0
+                # Identical per-possession scoring everywhere: totals differ
+                # only through pace.
+                hs = poss * 1.0 + rng.normal(0, 1)
+                as_ = poss * 1.0 + rng.normal(0, 1)
+                gid = f"w{i}"
+                rows.append({"game_id": gid, "season": 2026, "week": 1 + i % 8,
+                             "home_team": a, "away_team": b,
+                             "home_score": hs, "away_score": as_,
+                             "neutral_site": False,
+                             "kickoff": pd.Timestamp("2026-06-01")})
+                for side, fga in (("home", poss), ("away", poss)):
+                    box_rows.append({"game_id": gid, "team_home_away": side,
+                                     "field_goals_attempted": fga,
+                                     "offensive_rebounds": 0.0,
+                                     "total_turnovers": 0.0,
+                                     "free_throws_attempted": 0.0})
+                i += 1
+    games = pd.DataFrame(rows)
+    box = pd.DataFrame(box_rows)
+    # A malformed game (two home rows) contributes nothing.
+    box_bad = pd.concat([box, pd.DataFrame([
+        {"game_id": "bad", "team_home_away": "home", "field_goals_attempted": 80,
+         "offensive_rebounds": 0, "total_turnovers": 0, "free_throws_attempted": 0},
+        {"game_id": "bad", "team_home_away": "home", "field_goals_attempted": 80,
+         "offensive_rebounds": 0, "total_turnovers": 0, "free_throws_attempted": 0},
+    ])], ignore_index=True)
+    pace = wnba_pace_frame(box_bad)
+    assert "bad" not in set(pace["game_id"])
+    assert len(pace) == games["game_id"].nunique()
+
+    variants = wnba_pace_variants(64, box)
+    assert set(variants) == {"pace-eff-flat", "pace-eff-r8"}
+    model = variants["pace-eff-flat"][1](games)
+    fast = model.project("FAST", "MID1")
+    slow = model.project("SLOW", "MID2")
+    mid = model.project("MID1", "MID2")
+    # Same efficiency everywhere → totals order purely by matchup pace
+    # (note FAST vs SLOW would average back to league — pace is additive).
+    fast_total = fast.mu_home + fast.mu_away
+    slow_total = slow.mu_home + slow.mu_away
+    mid_total = mid.mu_home + mid.mu_away
+    assert fast_total > mid_total + 2.0
+    assert mid_total > slow_total + 2.0

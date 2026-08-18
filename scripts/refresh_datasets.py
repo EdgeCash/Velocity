@@ -255,6 +255,17 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
                 bank_starters(path, starters)
             except Exception as exc:  # noqa: BLE001 - additive surface
                 print(f"  mlb starters top-up skipped ({exc})")
+    if league == "wnba":
+        # Team boxes ride along (one release-parquet request for the current
+        # season). Best-effort like the starters top-up.
+        box = out / "team_box.parquet"
+        if box.exists():
+            try:
+                from build_wnba_box import bank_team_boxes
+
+                bank_team_boxes([season], box)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  wnba team-box top-up skipped ({exc})")
 
 
 def main() -> None:  # pragma: no cover - network orchestration
