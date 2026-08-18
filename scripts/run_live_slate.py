@@ -225,6 +225,13 @@ def main() -> None:
                         help="prop confidence shrink toward 0.5 (1.0 = raw model)")
     parser.add_argument("--exclude-props", default="",
                         help="comma-separated prop markets to skip; '' bets all")
+    # Pick'em board: the slip-EV engine over the same prop sim + prop lines
+    # (velocity/wagering/pickem_slate) — book-fair marginals, model
+    # correlation. Slips below the EV floor are simply not persisted.
+    parser.add_argument("--pickem-top", type=int, default=8,
+                        help="max ranked pick'em slips to persist (0 disables)")
+    parser.add_argument("--pickem-min-ev", type=float, default=1.0,
+                        help="min expected return multiple for a slip (1.0 = breakeven)")
     # Parlays: legs come only from bets that already cleared the single-bet gate, are
     # priced sim-exactly (correlated within a game, independent across), and must
     # clear their own higher EV bar. Same-game combos are flagged — books reprice
@@ -318,6 +325,12 @@ def main() -> None:
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )
+
+    # Pick'em board — the slip-EV engine over the same prop sim + prop lines.
+    # Book-fair marginals, model correlation (velocity/wagering/pickem_slate).
+    # Best-effort: never breaks the game or prop slates.
+    if props_by_game and prop_lines_used is not None:
+        _pickem_slate(args, props_by_game, prop_lines_used, now, generated_at)
 
     # Parlay slate — combine the qualifying single game bets into sim-exact
     # correlated parlays. Works offline too. Prop legs stay out deliberately:
@@ -522,6 +535,54 @@ def _prop_slate(
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"prop slate skipped: {exc}")
         return None, {}, {}, None
+
+
+def _pickem_slate(
+    args: argparse.Namespace,
+    props_by_game: dict,
+    prop_lines: pd.DataFrame,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Build and persist the pick'em legs board + ranked slips (best-effort).
+
+    Legs pair the devigged book probability (the staking marginal) with the
+    correlated prop sim; slips are ranked by calibrated-correlation EV. Two
+    parquets join the slate artifact: ``slate_<lg>_pickem_legs_*`` (the whole
+    qualifying board, phone-readable in the app) and ``slate_<lg>_pickem_*``
+    (the ranked slips over the EV floor — empty is a result, not a failure).
+    """
+    if args.pickem_top <= 0:
+        return
+    try:
+        from velocity.models.props_football import name_index_from_fp
+        from velocity.wagering.pickem_slate import build_pickem_board
+
+        fp = pd.read_parquet(args.fp_projections)
+        if "league" in fp.columns:
+            fp = fp[fp["league"].astype(str) == args.league]
+        legs, slips = build_pickem_board(
+            props_by_game, prop_lines, name_index_from_fp(fp),
+            min_ev=args.pickem_min_ev, top=args.pickem_top,
+        )
+        print(f"\n=== {args.league.upper()} pick'em — {len(legs)} qualifying legs, "
+              f"{len(slips)} slips over EV {args.pickem_min_ev:g} ===")
+        if not slips.empty:
+            with pd.option_context("display.width", 200, "display.max_columns", None):
+                print(slips.to_string(index=False))
+        if args.out:
+            out_dir = Path(args.out)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stamp = now.strftime("%Y%m%dT%H%M%SZ")
+            legs.assign(league=args.league, generated_at=generated_at).to_parquet(
+                out_dir / f"slate_{args.league}_pickem_legs_{stamp}.parquet", index=False
+            )
+            slips.assign(league=args.league, generated_at=generated_at).to_parquet(
+                out_dir / f"slate_{args.league}_pickem_{stamp}.parquet", index=False
+            )
+            print(f"wrote {len(legs)} pick'em legs + {len(slips)} slips")
+    except Exception as exc:  # noqa: BLE001 - pick'em never breaks the slates
+        print(f"pick'em board skipped: {exc}")
 
 
 def _prop_config(args: argparse.Namespace):  # type: ignore[no-untyped-def]

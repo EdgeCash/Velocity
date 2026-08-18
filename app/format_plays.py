@@ -270,4 +270,6 @@ def load_slate_frames(folder: Path, league: str = "nfl") -> dict[str, pd.DataFra
         "games_map": newest(folder, rf"games_{lg}_{_STAMP}\.parquet"),
         "projections": newest(folder, rf"projections_{lg}_{_STAMP}\.parquet"),
         "record": newest(folder, rf"record_{lg}_{_STAMP}\.parquet"),
+        "pickem": newest(folder, rf"slate_{lg}_pickem_{_STAMP}\.parquet"),
+        "pickem_legs": newest(folder, rf"slate_{lg}_pickem_legs_{_STAMP}\.parquet"),
     }
