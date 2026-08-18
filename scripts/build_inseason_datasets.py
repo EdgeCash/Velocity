@@ -36,8 +36,16 @@ _MLB_WINDOW = ((2, 20), (11, 10))
 _WNBA_WINDOW = ((5, 1), (10, 31))
 
 
+# ESPN's edge 403s non-browser agents (proven on backfill run 32181998406);
+# statsapi doesn't care. One browser UA serves both.
+_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
 def _get(url: str) -> dict:  # pragma: no cover - network
-    req = urllib.request.Request(url, headers={"User-Agent": "velocity-datasets"})
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     for attempt, delay in enumerate((0, 5, 15)):
         if delay:
             time.sleep(delay)
@@ -75,12 +83,19 @@ def fetch_wnba_season(season: int, today: date) -> pd.DataFrame:  # pragma: no c
     start = date(season, m1, d1)
     end = min(date(season, m2, d2), today)
     frames = []
+    failures = 0
     cursor = start
     while cursor <= end:
-        payload = _get(_WNBA_URL.format(ymd=cursor.strftime("%Y%m%d")))
-        frame = normalize_wnba_scoreboard(payload, season)
-        if not frame.empty:
-            frames.append(frame)
+        try:
+            payload = _get(_WNBA_URL.format(ymd=cursor.strftime("%Y%m%d")))
+            frame = normalize_wnba_scoreboard(payload, season)
+            if not frame.empty:
+                frames.append(frame)
+        except Exception as exc:  # noqa: BLE001 - one bad date never sinks a season
+            failures += 1
+            print(f"    wnba {cursor}: fetch failed ({exc})")
+            if failures > 20:  # systemic (blocked/endpoint moved) — stop honestly
+                raise
         cursor += timedelta(days=1)
         time.sleep(0.25)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
