@@ -293,3 +293,94 @@ fair totals honest on windy days; it does not beat the close there.
 *Wiring note:* the backtest prices historical actuals; the live slate needs
 the Open-Meteo *forecast* endpoint at slate time — queued as the next
 plumbing item, the model constants are settled.
+
+---
+
+# Summer lab — MLB + WNBA variant benchmarks
+
+**Data:** the committed games frames (2024–2026) carry no lines, so the
+market benchmarks come from The Odds API's historical archive — daily
+closing snapshots for 2025–2026 (MLB at 17:00/23:00 UTC, WNBA at 22:30),
+banked as **private** Actions artifacts and joined per game by
+`scripts/join_historical_closes.py` (last pre-kickoff snapshot, median
+across books, doubleheader-safe nearest-kickoff match). The joined frame
+lives on a private path; only the aggregated verdicts below are committed.
+Coverage: MLB 4,148 spreads / 4,167 totals on 6,829 games (91% of the
+collected 2025–26 window); WNBA 522/524 on 792 games (99% of 2025–26).
+
+## MLB Round 1 — shrinkage, recency, park factors (2024–2026, 6,792 games)
+
+The shipped hand-picked default (λ=5) against the ridge sweep (extended
+twice after monotone edges), recency, and self-calibrating park factors.
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | O/U vs close |
+|---|---|---|---|---|
+| scores (shipped, λ=5) | 0.2492 | 0.6927 | 0.0504 | 49.7% |
+| ridge-25 | 0.2472 | 0.6877 | 0.0413 | 49.4% |
+| ridge-50 | 0.2466 | 0.6864 | 0.0386 | 49.5% |
+| **ridge-100** | **0.2463** | **0.6856** | **0.0334** | 49.9% |
+| ridge-200 | 0.2464 | 0.6859 | 0.0334 | 49.5% |
+| ridge-400 | 0.2470 | 0.6870 | 0.0339 | 49.3% |
+| recency-2 / 4 / 8 | 0.2518 / 0.2502 / 0.2490 | — | all ≥ 0.052 | — |
+| park-fit | 0.2492 | 0.6927 | 0.0501 | 49.0% |
+
+**Readings, honestly:**
+
+1. **Heavy shrinkage wins decisively.** The curve bottoms at λ≈100–200 —
+   MLB's true team spread is small and a lightly-shrunk fit mostly learns
+   noise. λ=100: Brier −0.0029 vs the shipped default with calibration
+   error cut by a third. **PROMOTED** (lab calibration + live slate).
+2. **Recency is rejected** — every half-life is worse than the flat fit.
+   Same mechanism as college: game-level down-weighting starves the fit,
+   and in MLB the day-to-day form signal is mostly the starter, which a
+   team-level weight cannot see (that's the SP round's job).
+3. **Park factors (as a total bonus) add nothing** — the shrunk per-venue
+   residuals are real but tiny at λ=40-game shrinkage, and O/U vs close
+   actually slipped. Rejected pending a smarter (weather×park) treatment.
+4. **The honest market ceiling is the closing moneyline, not the run line.**
+   The archive's run lines are all ±1.5 with the information in the *price*,
+   so the blend sweep's spread-probit "market" (holdout 0.2631) is
+   structurally invalid for MLB, and the ~60% flat "ATS win rate" every
+   variant posts is a pricing artifact (+1.5 covers often; the juice prices
+   it) — not an edge, and not reported above. Devigging the closing
+   moneylines directly gives **Brier 0.2491** over the 1,876 priced 2026
+   games; the promoted model's 2026 holdout is **0.2485** — at the market's
+   accuracy on winners, from scores alone. The select-chosen 90/10
+   model/market-probit blend (0.2479) is noted but not shipped: its market
+   leg is the invalid probit.
+
+## WNBA Round 1 — shrinkage, recency, back-to-backs (2024–2026, 756 games)
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | O/U vs close |
+|---|---|---|---|---|---|
+| scores (shipped, λ=10) | 0.2243 | 0.6412 | 0.0322 | 53.8% (506) | 47.4% |
+| ridge-3 / 25 / 50 | 0.2244 / 0.2261 / 0.2288 | — | all worse | — | — |
+| recency-2 | 0.2212 | 0.6331 | 0.0310 | 54.2% | 45.7% |
+| recency-4 | 0.2181 | 0.6265 | **0.0204** | 54.0% | 46.5% |
+| **recency-8** | **0.2165** | **0.6236** | 0.0340 | **55.4%** (504) | 49.6% |
+| recency-12 / 16 / 24 | 0.2171 / 0.2181 / 0.2195 | — | — | ~55.2% | — |
+| b2b-2 / b2b-3.5 | 0.2243 / 0.2244 | — | — | 53.8% | — |
+
+**Readings, honestly:**
+
+1. **Recency is the WNBA story — the exact opposite of MLB.** The ladder
+   improves monotonically to half-life 8 buckets (~4 months) and rises
+   again at 12/16/24: a bracketed interior optimum, Brier −0.0078 vs the
+   flat fit (a big gap for this metric). A 13-team league where rosters
+   and rotations swing inside a season rewards forgetting; **PROMOTED
+   (recency-8 on the live λ=10 fit)**.
+2. **The ridge sweep confirms the shipped λ=10** — 3/25/50 all lose.
+3. **Back-to-back penalties are a no-op as tested** — identical Brier to
+   the bar, +0.1% ATS. The market already prices fatigue; rejected pending
+   a pace-aware treatment.
+4. **The market is still clearly ahead in WNBA** (closing spread-probit
+   holdout Brier 0.2055 vs the promoted model's 0.2241; every select-chosen
+   blend lands behind pure market). The model's value here is no-line
+   pricing and disagreement selectivity — and the 55.4% flat ATS over 504
+   bets (~2.4σ) is the first genuinely interesting flat record the lab has
+   produced; worth tracking live before anyone stakes on it.
+
+**Backlog (summer):** MLB starter decomposition (sp-q sweep over the banked
+statsapi starters — the market's dominant factor), FIP-quality starter
+priors, NegativeBinomial run distributions, weather-on-totals; WNBA
+pace×efficiency from box scores, minutes-aware availability.

@@ -323,16 +323,16 @@ MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
         ("Calibration error", "0.015 (2.5× better than the QB-blind fit)"),
     ],
     "mlb": [
-        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=5) · sim "
-                    "σ 3.2 margin / 4.6 total"),
-        ("Status", "Summer content surface — cards + leans; not yet "
-                   "walk-forward lab-gated (no committed closing lines)"),
+        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=100 — lab "
+                    "Round 1) · sim σ 3.2 margin / 4.6 total"),
+        ("Status", "Lab-gated vs 2025–26 closing lines (walk-forward, "
+                   "docs/MODEL_LAB.md MLB Round 1)"),
     ],
     "wnba": [
-        ("Ratings", "Opponent-adjusted points fit (scores ridge, λ=10) · sim "
-                    "σ 12.5 margin / 15 total"),
-        ("Status", "Summer content surface — cards + leans; not yet "
-                   "walk-forward lab-gated (no committed closing lines)"),
+        ("Ratings", "Opponent-adjusted points fit (scores ridge λ=10, recency "
+                    "half-life 8 — lab Round 1) · sim σ 12.5 margin / 15 total"),
+        ("Status", "Lab-gated vs 2025–26 closing lines (walk-forward, "
+                   "docs/MODEL_LAB.md WNBA Round 1)"),
     ],
     "ncaaf": [
         ("Ratings", "50/50 blend: play-level EPA (λ=50) × scores fit (λ=10)"),

@@ -504,7 +504,7 @@ class BonusAdjustedModel:
 
 
 INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
-    "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 5.0},
+    "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 100.0},
     "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
 }
 
@@ -547,17 +547,20 @@ def inseason_variants(
 
         return factory
 
-    sweep = {"mlb": (2.0, 10.0, 25.0), "wnba": (3.0, 25.0, 50.0)}[league]
+    sweep = {"mlb": (2.0, 10.0, 25.0, 50.0, 100.0, 200.0, 400.0),
+             "wnba": (3.0, 25.0, 50.0)}[league]
     variants: dict[str, tuple[str, VariantFactory]] = {
         "scores": ("games", ridge(live_ridge)),  # the live default — the bar
     }
     variants.update({
         f"ridge-{lam:g}": ("games", ridge(lam)) for lam in sweep
     })
+    # WNBA's ladder extends past 8: round 1 came back monotone through 8, so
+    # the sweep brackets the bottom (as half-life → ∞ this is the flat fit).
+    rec_sweep = {"mlb": (2.0, 4.0, 8.0),
+                 "wnba": (2.0, 4.0, 8.0, 12.0, 16.0, 24.0)}[league]
     variants.update({
-        "recency-2": ("games", recency(2.0, live_ridge)),
-        "recency-4": ("games", recency(4.0, live_ridge)),
-        "recency-8": ("games", recency(8.0, live_ridge)),
+        f"recency-{hl:g}": ("games", recency(hl, live_ridge)) for hl in rec_sweep
     })
 
     def park(shrink_games: float = 40.0) -> VariantFactory:
