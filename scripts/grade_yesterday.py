@@ -109,33 +109,28 @@ def _load_schedule(
             from velocity.ingest.ncaaf import load_games
 
             return load_games([season], api_key)
-        if league in ("mlb", "wnba") and slate_date is not None:
+        if league == "mlb" and slate_date is not None:
             from datetime import timedelta
 
-            from build_inseason_datasets import _MLB_URL, _WNBA_URL, _get
-            from velocity.ingest.inseason import (
-                normalize_mlb_schedule,
-                normalize_wnba_scoreboard,
-            )
+            from build_inseason_datasets import _MLB_URL, _get
+            from velocity.ingest.inseason import normalize_mlb_schedule
 
+            # One statsapi range call around the graded day — grading needs a
+            # day's finals, not a season crawl.
             day = slate_date.date()
-            if league == "mlb":
-                payload = _get(_MLB_URL.format(
-                    start=(day - timedelta(days=2)).isoformat(),
-                    end=(day + timedelta(days=1)).isoformat(),
-                ))
-                return normalize_mlb_schedule(payload, season)
-            frames = []
-            for offset in range(-2, 2):
-                ymd = (day + timedelta(days=offset)).strftime("%Y%m%d")
-                frame = normalize_wnba_scoreboard(_get(_WNBA_URL.format(ymd=ymd)), season)
-                if not frame.empty:
-                    frames.append(frame)
-            if not frames:
-                return None
-            return (pd.concat(frames, ignore_index=True)
-                    .drop_duplicates(subset="game_id", keep="last")
-                    .reset_index(drop=True))
+            payload = _get(_MLB_URL.format(
+                start=(day - timedelta(days=2)).isoformat(),
+                end=(day + timedelta(days=1)).isoformat(),
+            ))
+            return normalize_mlb_schedule(payload, season)
+        if league == "wnba":
+            from datetime import date as _date
+
+            from build_inseason_datasets import fetch_wnba_season
+
+            # The wehoop release parquet is one small season file — the
+            # CI-reachable transport (ESPN's API 403s datacenter IPs).
+            return fetch_wnba_season(season, _date.today())
     except Exception as exc:  # noqa: BLE001 - a feed down never blocks the slate email
         print(f"schedule fetch failed ({exc})")
     return None

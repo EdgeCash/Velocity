@@ -1,4 +1,4 @@
-"""In-season league ingest — MLB (statsapi) and WNBA (ESPN) → canonical games.
+"""In-season league ingest — MLB (statsapi) and WNBA (wehoop) → canonical games.
 
 The football dead-zone content feeds: both leagues run all summer, both have
 free keyless schedule/score APIs, and the scores-fit + sim + card pipeline is
@@ -89,48 +89,52 @@ def normalize_mlb_schedule(payload: Any, season: int) -> pd.DataFrame:
     return Games.validate(frame)
 
 
-def normalize_wnba_scoreboard(payload: Any, season: int) -> pd.DataFrame:
-    """One ESPN WNBA scoreboard payload (one date) → canonical completed games."""
+def normalize_wehoop_schedule(raw: pd.DataFrame, season: int) -> pd.DataFrame:
+    """A wehoop release schedule parquet → canonical completed WNBA games.
+
+    wehoop (sportsdataverse) publishes one schedule parquet per season on the
+    ``espn_wnba_schedules`` release of ``sportsdataverse/sportsdataverse-data``
+    — the transport that actually works from CI (ESPN's own edge 403s
+    datacenter IPs, proven on backfill runs 32181998406/32182552123; GitHub
+    release assets are the nflverse pattern and always reachable). Columns
+    used: ``game_id``, ``season_type`` (ESPN 1/2/3), ``game_date_time``
+    (tz-aware ET), ``home_/away_display_name``, scores,
+    ``status_type_completed``, ``neutral_site``.
+    """
+    if raw is None or raw.empty:
+        return pd.DataFrame()
     rows: list[dict[str, object]] = []
-    for event in (payload or {}).get("events", []):
-        comps = event.get("competitions") or []
-        if not comps:
+    for g in raw.to_dict("records"):
+        if not g.get("status_type_completed"):
             continue
-        comp = comps[0]
-        status = ((comp.get("status") or {}).get("type") or {})
-        if not status.get("completed"):
+        home, away = g.get("home_display_name"), g.get("away_display_name")
+        if g.get("game_id") is None or not home or not away:
             continue
-        sides: dict[str, dict[str, object]] = {}
-        for competitor in comp.get("competitors") or []:
-            name = ((competitor.get("team") or {}).get("displayName"))
-            score = competitor.get("score")
-            if name and score is not None:
-                sides[str(competitor.get("homeAway"))] = {
-                    "name": str(name), "score": float(score),
-                }
-        if "home" not in sides or "away" not in sides or event.get("id") is None:
-            continue
-        kickoff = pd.to_datetime(event.get("date"), errors="coerce", utc=True)
+        kickoff = pd.to_datetime(
+            g.get("game_date_time"), errors="coerce", utc=True  # type: ignore[call-overload]
+        )
         if pd.isna(kickoff):
             continue
+        try:
+            home_score = float(g.get("home_score"))  # type: ignore[arg-type]
+            away_score = float(g.get("away_score"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
         kickoff = kickoff.tz_localize(None)
-        season_type = _ESPN_SEASON_TYPES.get(
-            int(((event.get("season") or {}).get("type")) or 2), "REG"
-        )
         rows.append({
-            "game_id": str(event["id"]),
+            "game_id": str(g["game_id"]),
             "league": "wnba",
             "season": season,
             "week": _season_week(kickoff),
-            "season_type": season_type,
+            "season_type": _ESPN_SEASON_TYPES.get(int(g.get("season_type") or 2), "REG"),
             "kickoff": kickoff,
-            "home_team": sides["home"]["name"],
-            "away_team": sides["away"]["name"],
-            "neutral_site": bool(comp.get("neutralSite", False)),
+            "home_team": str(home),
+            "away_team": str(away),
+            "neutral_site": bool(g.get("neutral_site", False)),
             "roof": None,
             "surface": None,
-            "home_score": sides["home"]["score"],
-            "away_score": sides["away"]["score"],
+            "home_score": home_score,
+            "away_score": away_score,
         })
     frame = pd.DataFrame(rows)
     if frame.empty:

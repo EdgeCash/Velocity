@@ -5,8 +5,8 @@ ratings from; both summer leagues have free, keyless schedule/score APIs:
 
 * **MLB** — statsapi.mlb.com ``/api/v1/schedule`` (one call per season month;
   finals land minutes after games end).
-* **WNBA** — ESPN's public scoreboard, one call per date across the season
-  window (May–October), empty dates skipped.
+* **WNBA** — wehoop's per-season schedule parquet (sportsdataverse-data
+  GitHub releases; ESPN's own API 403s datacenter IPs).
 
 Both are free feeds, so the output commits to the public repo like every
 other ``datasets/`` file. Completed games only, full-name team keys (they
@@ -25,15 +25,19 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.inseason import normalize_mlb_schedule, normalize_wnba_scoreboard
+from velocity.ingest.inseason import (
+    normalize_mlb_schedule,
+    normalize_wehoop_schedule,
+)
 
 _MLB_URL = ("https://statsapi.mlb.com/api/v1/schedule"
             "?sportId=1&startDate={start}&endDate={end}")
-_WNBA_URL = ("https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/"
-             "scoreboard?dates={ymd}")
-# Season windows (month, day): generous bounds; empty dates cost one skip.
+# wehoop's per-season schedule parquet (sportsdataverse-data releases): the
+# CI-reachable WNBA feed — ESPN's own API 403s datacenter IPs.
+_WNBA_URL = ("https://github.com/sportsdataverse/sportsdataverse-data/releases/"
+             "download/espn_wnba_schedules/wnba_schedule_{season}.parquet")
+# MLB season window (month, day): generous bounds; empty dates cost one skip.
 _MLB_WINDOW = ((2, 20), (11, 10))
-_WNBA_WINDOW = ((5, 1), (10, 31))
 
 
 # ESPN's edge 403s non-browser agents (proven on backfill run 32181998406);
@@ -78,27 +82,30 @@ def fetch_mlb_season(season: int, today: date) -> pd.DataFrame:  # pragma: no co
 
 
 def fetch_wnba_season(season: int, today: date) -> pd.DataFrame:  # pragma: no cover
-    """One season of completed WNBA games, one scoreboard call per date."""
-    (m1, d1), (m2, d2) = _WNBA_WINDOW
-    start = date(season, m1, d1)
-    end = min(date(season, m2, d2), today)
-    frames = []
-    failures = 0
-    cursor = start
-    while cursor <= end:
+    """One season of completed WNBA games — the wehoop release parquet.
+
+    ESPN's own edge 403s datacenter IPs (proven live: runs 32181998406 and
+    32182552123, sandbox included), so the transport is the nflverse pattern:
+    wehoop publishes one schedule parquet per season as a GitHub release
+    asset, always reachable from CI. One request per season.
+    """
+    import io as _io
+    import urllib.request as _request
+
+    del today  # the release parquet always carries the season to date
+    url = _WNBA_URL.format(season=season)
+    req = _request.Request(url, headers={"User-Agent": _USER_AGENT})
+    for attempt, delay in enumerate((0, 5, 15)):
+        if delay:
+            time.sleep(delay)
         try:
-            payload = _get(_WNBA_URL.format(ymd=cursor.strftime("%Y%m%d")))
-            frame = normalize_wnba_scoreboard(payload, season)
-            if not frame.empty:
-                frames.append(frame)
-        except Exception as exc:  # noqa: BLE001 - one bad date never sinks a season
-            failures += 1
-            print(f"    wnba {cursor}: fetch failed ({exc})")
-            if failures > 20:  # systemic (blocked/endpoint moved) — stop honestly
+            with _request.urlopen(req, timeout=120) as resp:  # noqa: S310
+                raw = pd.read_parquet(_io.BytesIO(resp.read()))
+            break
+        except Exception:  # noqa: BLE001 - retried; the last attempt raises
+            if attempt == 2:
                 raise
-        cursor += timedelta(days=1)
-        time.sleep(0.25)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return normalize_wehoop_schedule(raw, season)
 
 
 def main() -> None:  # pragma: no cover - network orchestration
