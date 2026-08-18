@@ -386,14 +386,22 @@ def _matchup_footer_note(card: SocialCard) -> str:
 
 
 def render_card(card: SocialCard, path: Path | str,
-                asset_dir: Path | str | None = None) -> Path:
-    """Render one pregame MARKET vs MODEL card to ``path`` (1600×900 PNG)."""
+                asset_dir: Path | str | None = None,
+                slide: tuple[int, int] | None = None) -> Path:
+    """Render one pregame MARKET vs MODEL card to ``path`` (1600×900 PNG).
+
+    ``slide=(n, total)`` stamps a carousel badge ("3/9") beside the date so a
+    slate posts as one ordered multi-image thread.
+    """
     assets = None if asset_dir is None else Path(asset_dir)
     fig = _fig()
     when = ""
     if card.kickoff is not None:
         central = card.kickoff.tz_localize("UTC").tz_convert("America/Chicago")
         when = central.strftime("%A, %b %-d").upper()
+    if slide is not None:
+        n, total = slide
+        when = f"{when} · {n}/{total}" if when else f"{n}/{total}"
     _panel(fig, (0.04, 0.655, 0.92, 0.245))
     _panel(fig, (0.04, 0.245, 0.92, 0.375))
     _panel(fig, (0.04, 0.085, 0.92, 0.135))
@@ -422,15 +430,24 @@ def card_filename(card: SocialCard, stamp: str, league: str = "nfl") -> str:
 def render_cards(
     cards: list[SocialCard], out_dir: Path | str, stamp: str,
     asset_dir: Path | str | None = None, league: str = "nfl",
+    number_slides: bool = False,
 ) -> list[Path]:
-    """Render every card plus a ``social_<league>_<stamp>_captions.md`` copy file."""
+    """Render every card plus a ``social_<league>_<stamp>_captions.md`` copy file.
+
+    ``number_slides`` stamps each card with its "n/total" carousel badge —
+    the multi-image thread format that outperforms scattered single posts.
+    """
     from velocity.report.social import caption
 
     folder = Path(out_dir)
     folder.mkdir(parents=True, exist_ok=True)
+    total = len(cards)
     paths = [
-        render_card(card, folder / card_filename(card, stamp, league), asset_dir)
-        for card in cards
+        render_card(
+            card, folder / card_filename(card, stamp, league), asset_dir,
+            slide=(i + 1, total) if number_slides and total > 1 else None,
+        )
+        for i, card in enumerate(cards)
     ]
     if cards:
         copy = "\n\n---\n\n".join(caption(card) for card in cards)

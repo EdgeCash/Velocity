@@ -33,6 +33,10 @@ on:
         description: "Render demo cards from a historical week instead of the live board"
         required: false
         default: "false"
+      carousel:
+        description: "Stamp matchup cards with n/total slide badges (post as one thread)"
+        required: false
+        default: "false"
 
 concurrency:
   group: live-slate
@@ -141,6 +145,9 @@ jobs:
             EXTRA=""
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="--fp-projections $FP_FILE"
+            fi
+            if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
+              EXTRA="$EXTRA --carousel"
             fi
             python scripts/run_live_slate.py \
               --league "${league}" \

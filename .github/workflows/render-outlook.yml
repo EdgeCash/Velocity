@@ -1,0 +1,60 @@
+name: Render season outlook card
+
+# On-demand: one team's full-season projection card (the FPI-screenshot
+# format in our card language). Schedules come from free feeds (nflverse /
+# CFBD); win probabilities from the promoted projector over the committed
+# datasets. The PNG lands as an artifact — nothing is committed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      league:
+        description: "League (nfl or ncaaf)"
+        required: true
+        default: "nfl"
+      team:
+        description: "NFL club code (KC) or NCAAF school name (Georgia)"
+        required: true
+      season:
+        description: "Season year (default: current)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: render outlook card
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Render card
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          ARGS="--league ${{ github.event.inputs.league }} --team \"${{ github.event.inputs.team }}\""
+          if [ -n "${{ github.event.inputs.season }}" ]; then
+            ARGS="$ARGS --season ${{ github.event.inputs.season }}"
+          fi
+          eval python scripts/render_outlook_card.py $ARGS --out artifacts/outlook
+
+      - name: Upload card
+        uses: actions/upload-artifact@v4
+        with:
+          name: outlook-${{ github.run_id }}
+          path: artifacts/outlook/*.png
+          if-no-files-found: error
+          retention-days: 30
