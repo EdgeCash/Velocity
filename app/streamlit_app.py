@@ -166,7 +166,7 @@ def _render_plays(view: pd.DataFrame) -> None:
     st.markdown(
         "<table class='v-table'>"
         "<tr><th>Matchup</th><th>Play</th><th>Edge</th></tr>"
-        f"<tr><td colspan='3' class='v-league'>NFL · NCAAF</td></tr>{rows}</table>",
+        f"<tr><td colspan='3' class='v-league'>NFL · NCAAF · MLB · WNBA</td></tr>{rows}</table>",
         unsafe_allow_html=True,
     )
 
@@ -277,7 +277,7 @@ def _render_model(folder: Path) -> None:
     """
     from format_plays import load_slate_frames as _frames
 
-    for league in ("nfl", "ncaaf"):
+    for league in ("nfl", "ncaaf", "mlb", "wnba"):
         st.markdown(f"### {league.upper()}")
         summary = season_summary(_frames(folder, league).get("cumulative"))
         if summary is None:
@@ -348,7 +348,7 @@ def _render_record(record: pd.DataFrame | None) -> None:
 def _render_cards_tab(folder: Path) -> None:
     """The day's graphics: view, download, and copy the post copy — phone-first."""
     league = str(
-        st.radio("League", ["NFL", "NCAAF"], horizontal=True, key="cards-league")
+        st.radio("League", ["NFL", "NCAAF", "MLB", "WNBA"], horizontal=True, key="cards-league")
     ).lower()
     images = card_images(folder, league)
     model, checks = images["model"], images["simcheck"]

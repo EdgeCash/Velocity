@@ -81,7 +81,12 @@ def normalize_mlb_schedule(payload: Any, season: int) -> pd.DataFrame:
                 "away_score": float(away["score"]),
             })
     frame = pd.DataFrame(rows)
-    return Games.validate(frame) if not frame.empty else frame
+    if frame.empty:
+        return frame
+    # statsapi lists a suspended/resumed game under both its original and its
+    # completion date with the same gamePk — keep the last (completion) row.
+    frame = frame.drop_duplicates(subset="game_id", keep="last").reset_index(drop=True)
+    return Games.validate(frame)
 
 
 def normalize_wnba_scoreboard(payload: Any, season: int) -> pd.DataFrame:
@@ -128,4 +133,7 @@ def normalize_wnba_scoreboard(payload: Any, season: int) -> pd.DataFrame:
             "away_score": sides["away"]["score"],
         })
     frame = pd.DataFrame(rows)
-    return Games.validate(frame) if not frame.empty else frame
+    if frame.empty:
+        return frame
+    frame = frame.drop_duplicates(subset="game_id", keep="last").reset_index(drop=True)
+    return Games.validate(frame)

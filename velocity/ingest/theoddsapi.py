@@ -58,6 +58,8 @@ GAME_MARKET_BY_KEY = {
 SPORT_KEYS = {
     "nfl": "americanfootball_nfl",
     "ncaaf": "americanfootball_ncaaf",
+    "mlb": "baseball_mlb",
+    "wnba": "basketball_wnba",
 }
 
 # The Odds API player-prop market key → canonical prop stat (PropLines /

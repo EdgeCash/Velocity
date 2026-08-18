@@ -143,15 +143,20 @@ def _build_projection(
         return project_epa, list(ratings.teams)
 
     games = load_games(_find_games(folder), league=args.league)
-    sim = (
-        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims)
-        if args.league == "ncaaf"
-        else SimConfig(n_sims=args.n_sims)
-    )
-    # NCAAF: λ=10 promoted by the college lab (docs/MODEL_LAB.md — Brier
-    # 0.1983 vs 0.2076 at the old default 25 over 2019–2024). The NFL scores
-    # path is only a no-plays fallback and keeps the default.
-    ridge = 10.0 if args.league == "ncaaf" else 25.0
+    # Per-league outcome-noise calibration. Football's constants are the
+    # lab-validated ones; MLB (runs) and WNBA (points) use the leagues'
+    # historical margin/total sigmas — content-surface defaults, honest but
+    # not yet lab-tuned (their datasets carry no closing lines to tune on).
+    sims = {
+        "ncaaf": SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims),
+        "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
+        "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
+    }
+    sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
+    # NCAAF: λ=10 promoted by the college lab (docs/MODEL_LAB.md). The dense
+    # summer schedules (162 / 44 games per team) barely need shrinkage; the
+    # NFL scores path is only a no-plays fallback and keeps the default.
+    ridge = {"ncaaf": 10.0, "mlb": 5.0, "wnba": 10.0}.get(args.league, 25.0)
     scores_model = ScoresGameModel(
         fit_scores_ratings(games, ridge_lambda=ridge), ScoresModelConfig(sim=sim)
     )
@@ -189,7 +194,8 @@ def _build_projection(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
-    parser.add_argument("--league", choices=["nfl", "ncaaf"], required=True)
+    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba"],
+                        required=True)
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
@@ -629,6 +635,18 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
         code_to_team: dict[str, str] = {}
         if args.league == "ncaaf":
             aliases, team_colors, code_to_team = _ncaaf_identity(events, asset_dir)
+        elif args.league in ("mlb", "wnba"):
+            # Summer leagues: abbreviation + brand color blocks, no marks —
+            # the NCAAF licensing posture (velocity/report/league_identity).
+            from velocity.report.league_identity import league_identity
+
+            provider_names = sorted(
+                set(events["home_team"].astype(str))
+                | set(events["away_team"].astype(str))
+            )
+            aliases, team_colors, code_to_team = league_identity(
+                args.league, provider_names
+            )
         # max_watch=6: the hero card renders its top three; the deep dive
         # carries the full six.
         cards = build_social_cards(
