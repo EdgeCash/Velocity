@@ -504,7 +504,7 @@ class BonusAdjustedModel:
 
 
 INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
-    "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 5.0},
+    "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 100.0},
     "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
 }
 

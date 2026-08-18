@@ -323,8 +323,8 @@ MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
         ("Calibration error", "0.015 (2.5× better than the QB-blind fit)"),
     ],
     "mlb": [
-        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=5) · sim "
-                    "σ 3.2 margin / 4.6 total"),
+        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=100 — lab "
+                    "Round 1) · sim σ 3.2 margin / 4.6 total"),
         ("Status", "Summer content surface — cards + leans; not yet "
                    "walk-forward lab-gated (no committed closing lines)"),
     ],

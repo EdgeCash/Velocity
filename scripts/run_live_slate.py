@@ -153,10 +153,11 @@ def _build_projection(
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
     }
     sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
-    # NCAAF: λ=10 promoted by the college lab (docs/MODEL_LAB.md). The dense
-    # summer schedules (162 / 44 games per team) barely need shrinkage; the
-    # NFL scores path is only a no-plays fallback and keeps the default.
-    ridge = {"ncaaf": 10.0, "mlb": 5.0, "wnba": 10.0}.get(args.league, 25.0)
+    # NCAAF: λ=10 promoted by the college lab; MLB: λ=100 promoted by the
+    # summer lab (docs/MODEL_LAB.md MLB Round 1 — heavy shrinkage wins in a
+    # league whose true team spread is small). The NFL scores path is only a
+    # no-plays fallback and keeps the default.
+    ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0}.get(args.league, 25.0)
     scores_model = ScoresGameModel(
         fit_scores_ratings(games, ridge_lambda=ridge), ScoresModelConfig(sim=sim)
     )
