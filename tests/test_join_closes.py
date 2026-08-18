@@ -8,12 +8,12 @@ favored), and an MLB doubleheader's two games must each get their own number.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from velocity.backtest.lab import inseason_variants
-
-import importlib.util
-from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
     "join_historical_closes",
