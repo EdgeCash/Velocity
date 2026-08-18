@@ -502,7 +502,7 @@ def test_mlb_fip_priors_sign_scale_and_shrink() -> None:
     assert priors["ACE"] < 0 < priors["BUM"]  # negative = fewer runs allowed
     # Runs-per-start scale: a full season of elite/awful peripherals stays
     # within a couple of runs, never the raw FIP-numerator scale.
-    assert -2.5 < priors["ACE"] and priors["BUM"] < 2.5
+    assert priors["ACE"] > -2.5 and priors["BUM"] < 2.5
     # More shrinkage → smaller magnitudes; empty input → no priors.
     tighter = mlb_fip_priors(starters, shrink_innings=600.0)
     assert abs(tighter["ACE"]) < abs(priors["ACE"])
