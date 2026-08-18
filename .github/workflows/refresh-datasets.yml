@@ -2,8 +2,8 @@ name: Refresh datasets (current season)
 
 # The live slate fits its ratings from the committed datasets/ files; this job
 # tops them up with the current season's played games every week so the model
-# tracks the season as it happens. Tuesday 09:00 UTC sits after Monday Night
-# Football and after nflverse's overnight rebuilds. Free feeds only (nflverse;
+# tracks each season as it happens — daily, because the summer leagues (MLB,
+# WNBA; free keyless feeds) play every night. Free feeds only (nflverse;
 # CFBD needs the CFBD_API_KEY secret) — datasets/ carries no paid data, so
 # committing it to the public repo is fine (it's the whole point).
 #
@@ -13,16 +13,19 @@ name: Refresh datasets (current season)
 
 on:
   schedule:
-    - cron: "0 9 * * 2"
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       season:
         description: "Season year (default: inferred from today)"
         required: false
       league:
-        description: "League to refresh (nfl, ncaaf, both)"
+        description: "League to refresh (nfl, ncaaf, mlb, wnba, both = football, all)"
         required: false
-        default: "both"
+        default: "all"
+      inseason_seasons:
+        description: "One-off: backfill MLB + WNBA games for this inclusive season range (e.g. '2024 2026')"
+        required: false
       ncaaf_pbp_seasons:
         description: "One-off: backfill NCAAF play-by-play for this inclusive season range (e.g. '2015 2024') instead of the weekly refresh"
         required: false
@@ -54,15 +57,21 @@ jobs:
           pip install -e .
 
       - name: Refresh datasets
-        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' }}
+        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' }}
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
-          ARGS="--league ${{ github.event.inputs.league || 'both' }}"
+          ARGS="--league ${{ github.event.inputs.league || 'all' }}"
           if [ -n "${{ github.event.inputs.season }}" ]; then
             ARGS="$ARGS --season ${{ github.event.inputs.season }}"
           fi
           python scripts/refresh_datasets.py $ARGS
+
+      - name: Backfill MLB + WNBA games
+        if: ${{ github.event.inputs.inseason_seasons != '' }}
+        run: |
+          python scripts/build_inseason_datasets.py \
+            --seasons ${{ github.event.inputs.inseason_seasons }}
 
       - name: Backfill NCAAF play-by-play
         if: ${{ github.event.inputs.ncaaf_pbp_seasons != '' }}

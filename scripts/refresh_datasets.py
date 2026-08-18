@@ -224,9 +224,33 @@ def refresh_ncaaf(out: Path, season: int) -> None:  # pragma: no cover - network
         print(f"  ncaaf plays skipped ({exc}); games refreshed alone")
 
 
+def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no cover
+    """Top up an in-season league (mlb/wnba) from its free keyless feed.
+
+    Only refreshes a dataset the backfill has already created — the summer
+    leagues are content surfaces, not silently-appearing datasets.
+    """
+    from datetime import date as _date
+
+    from build_inseason_datasets import fetch_mlb_season, fetch_wnba_season
+
+    path = out / "games.parquet"
+    if not path.exists():
+        print(f"  {league}: no committed games file yet — run the backfill first")
+        return
+    fetcher = {"mlb": fetch_mlb_season, "wnba": fetch_wnba_season}[league]
+    fresh = fetcher(season, _date.today())
+    if fresh.empty:
+        print(f"  {league}: no completed {season} games yet — nothing to refresh")
+        return
+    _refresh_file(path, fresh, season, f"{league} games")
+
+
 def main() -> None:  # pragma: no cover - network orchestration
     parser = argparse.ArgumentParser(description="Refresh datasets with the current season")
-    parser.add_argument("--league", default="both", choices=["nfl", "ncaaf", "both"])
+    parser.add_argument("--league", default="both",
+                        choices=["nfl", "ncaaf", "mlb", "wnba", "both", "all"],
+                        help="'both' = the football pair; 'all' adds mlb + wnba")
     parser.add_argument("--season", type=int, default=None,
                         help="season year (default: inferred from today)")
     parser.add_argument("--out", default="datasets", help="datasets root folder")
@@ -235,10 +259,17 @@ def main() -> None:  # pragma: no cover - network orchestration
     season = args.season if args.season is not None else current_season()
     out = Path(args.out)
     print(f"refreshing season {season}")
-    if args.league in ("nfl", "both"):
+    if args.league in ("nfl", "both", "all"):
         refresh_nfl(out / "nfl", season)
-    if args.league in ("ncaaf", "both"):
+    if args.league in ("ncaaf", "both", "all"):
         refresh_ncaaf(out / "ncaaf", season)
+    # The summer leagues run on the calendar year, not the football year
+    # (a June slate belongs to *this* year's season).
+    calendar_season = args.season if args.season is not None else datetime.now(UTC).year
+    if args.league in ("mlb", "all"):
+        refresh_inseason(out / "mlb", calendar_season, "mlb")
+    if args.league in ("wnba", "all"):
+        refresh_inseason(out / "wnba", calendar_season, "wnba")
 
 
 if __name__ == "__main__":
