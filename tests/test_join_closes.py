@@ -32,16 +32,19 @@ def _lines() -> pd.DataFrame:
         for book, jitter in (("dk", 0.0), ("fd", 1.0)):
             spread, total = points
             rows += [
-                {"game_id": "g1", "book": book, "market": "spread", "side": "home",
+                # Real canonical shape: spread sides are TEAM NAMES, totals
+                # are capitalized Over/Under.
+                {"game_id": "g1", "book": book, "market": "spread",
+                 "side": "Baltimore Orioles",
                  "point": spread + (jitter if book == "fd" else 0.0),
                  "price": -110, "timestamp": pd.Timestamp(ts)},
-                {"game_id": "g1", "book": book, "market": "total", "side": "over",
+                {"game_id": "g1", "book": book, "market": "total", "side": "Over",
                  "point": total + (jitter if book == "fd" else 0.0),
                  "price": -110, "timestamp": pd.Timestamp(ts)},
             ]
     # A post-kickoff snapshot that must be ignored entirely.
-    rows.append({"game_id": "g1", "book": "dk", "market": "spread", "side": "home",
-                 "point": 9.9, "price": -110,
+    rows.append({"game_id": "g1", "book": "dk", "market": "spread",
+                 "side": "Baltimore Orioles", "point": 9.9, "price": -110,
                  "timestamp": pd.Timestamp("2026-08-19 01:00")})
     return pd.DataFrame(rows)
 

@@ -74,10 +74,16 @@ def closing_consensus(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame
     # The last snapshot per game, then medians within it.
     last = df.groupby("game_id")["timestamp"].transform("max")
     df = df[df["timestamp"] == last]
+    home_by_game = events.set_index("game_id")["home_team"].to_dict()
     rows = []
     for game_id, group in df.groupby("game_id"):
-        spread_home = group[(group["market"] == "spread") & (group["side"] == "home")]
-        total_over = group[(group["market"] == "total") & (group["side"] == "over")]
+        # The canonical Lines frame names sides by TEAM for spreads (and
+        # Over/Under capitalized for totals) — resolve via the event's teams.
+        home_name = str(home_by_game.get(game_id, ""))
+        spread_home = group[(group["market"] == "spread")
+                            & (group["side"].astype(str) == home_name)]
+        total_over = group[(group["market"] == "total")
+                           & (group["side"].astype(str).str.lower() == "over")]
         spread = -float(spread_home["point"].median()) if len(spread_home) else None
         total = float(total_over["point"].median()) if len(total_over) else None
         event = events[events["game_id"] == game_id].iloc[0]
