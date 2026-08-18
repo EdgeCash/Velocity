@@ -110,3 +110,33 @@ def test_scores_fit_runs_on_the_inseason_frame() -> None:
                                    at_home=True) == pytest.approx(
         5.0, abs=3.0  # two games of data — just prove the plumbing prices
     )
+
+
+def test_mlb_suspended_game_dedupes_to_the_completion_row() -> None:
+    # statsapi lists a suspended/resumed game under both dates, same gamePk;
+    # the normalizer keeps the last (completion-date) row instead of failing
+    # the schema's unique-id check. Proven live: gamePk 745180 (backfill run
+    # 32181420568).
+    payload = {"dates": [
+        {"date": "2026-06-01", "games": [
+            {"gamePk": 745180, "gameType": "R",
+             "gameDate": "2026-06-01T23:00:00Z",
+             "status": {"abstractGameState": "Final"},
+             "teams": {
+                 "away": {"score": 2, "team": {"id": 1, "name": "Chicago Cubs"}},
+                 "home": {"score": 4, "team": {"id": 2, "name": "St. Louis Cardinals"}},
+             }},
+        ]},
+        {"date": "2026-06-02", "games": [
+            {"gamePk": 745180, "gameType": "R",
+             "gameDate": "2026-06-02T23:00:00Z",
+             "status": {"abstractGameState": "Final"},
+             "teams": {
+                 "away": {"score": 3, "team": {"id": 1, "name": "Chicago Cubs"}},
+                 "home": {"score": 4, "team": {"id": 2, "name": "St. Louis Cardinals"}},
+             }},
+        ]},
+    ]}
+    games = normalize_mlb_schedule(payload, season=2026)
+    assert list(games["game_id"]) == ["745180"]
+    assert games.iloc[0]["away_score"] == 3.0  # the completion row won

@@ -107,7 +107,7 @@ def main() -> None:  # pragma: no cover - network orchestration
         if not frames:
             print(f"  {league}: nothing fetched — not writing")
             continue
-        out = pd.concat(frames, ignore_index=True).drop_duplicates(subset="game_id")
+        out = pd.concat(frames, ignore_index=True).drop_duplicates(subset="game_id", keep="last")
         dest = Path(args.out) / league / "games.parquet"
         dest.parent.mkdir(parents=True, exist_ok=True)
         out.to_parquet(dest, index=False)

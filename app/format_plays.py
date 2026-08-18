@@ -322,6 +322,18 @@ MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
         ("Walk-forward Brier", "0.2203 over 2014–2025 (closing line: 0.2109)"),
         ("Calibration error", "0.015 (2.5× better than the QB-blind fit)"),
     ],
+    "mlb": [
+        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=5) · sim "
+                    "σ 3.2 margin / 4.6 total"),
+        ("Status", "Summer content surface — cards + leans; not yet "
+                   "walk-forward lab-gated (no committed closing lines)"),
+    ],
+    "wnba": [
+        ("Ratings", "Opponent-adjusted points fit (scores ridge, λ=10) · sim "
+                    "σ 12.5 margin / 15 total"),
+        ("Status", "Summer content surface — cards + leans; not yet "
+                   "walk-forward lab-gated (no committed closing lines)"),
+    ],
     "ncaaf": [
         ("Ratings", "50/50 blend: play-level EPA (λ=50) × scores fit (λ=10)"),
         ("Walk-forward Brier", "0.1949 over 2015–2024 (closing line: 0.1652)"),
