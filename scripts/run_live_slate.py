@@ -228,6 +228,9 @@ def main() -> None:
     # Pick'em board: the slip-EV engine over the same prop sim + prop lines
     # (velocity/wagering/pickem_slate) — book-fair marginals, model
     # correlation. Slips below the EV floor are simply not persisted.
+    parser.add_argument("--carousel", action="store_true",
+                        help="stamp matchup cards with n/total slide badges "
+                             "(post the slate as one ordered thread)")
     parser.add_argument("--pickem-top", type=int, default=8,
                         help="max ranked pick'em slips to persist (0 disables)")
     parser.add_argument("--pickem-min-ev", type=float, default=1.0,
@@ -635,7 +638,8 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             aliases=aliases, team_colors=team_colors, max_watch=6,
         )
         paths = render_cards(cards, Path(args.out), stamp,
-                             asset_dir=asset_dir, league=args.league)
+                             asset_dir=asset_dir, league=args.league,
+                             number_slides=args.carousel)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
 
         # Deep Dive companions — the analytical page behind each matchup card
