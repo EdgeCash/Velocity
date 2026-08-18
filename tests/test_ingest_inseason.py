@@ -7,8 +7,12 @@ games only; anything missing an id, a team, or a final score is skipped.
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
-from velocity.ingest.inseason import normalize_mlb_schedule, normalize_wnba_scoreboard
+from velocity.ingest.inseason import (
+    normalize_mlb_schedule,
+    normalize_wehoop_schedule,
+)
 from velocity.store.schema import Games
 
 _MLB_PAYLOAD = {
@@ -41,35 +45,6 @@ _MLB_PAYLOAD = {
     ],
 }
 
-_WNBA_PAYLOAD = {
-    "events": [
-        {"id": "401736001", "date": "2026-08-14T23:00Z",
-         "season": {"year": 2026, "type": 2},
-         "competitions": [{
-             "neutralSite": False,
-             "status": {"type": {"completed": True}},
-             "competitors": [
-                 {"homeAway": "home", "score": "88",
-                  "team": {"displayName": "Las Vegas Aces"}},
-                 {"homeAway": "away", "score": "79",
-                  "team": {"displayName": "Seattle Storm"}},
-             ],
-         }]},
-        {"id": "401736002", "date": "2026-08-15T00:00Z",
-         "season": {"year": 2026, "type": 2},
-         "competitions": [{
-             "status": {"type": {"completed": False}},  # live → skipped
-             "competitors": [
-                 {"homeAway": "home", "score": "40",
-                  "team": {"displayName": "New York Liberty"}},
-                 {"homeAway": "away", "score": "39",
-                  "team": {"displayName": "Indiana Fever"}},
-             ],
-         }]},
-    ],
-}
-
-
 def test_mlb_normalizes_finals_only_with_season_types() -> None:
     games = normalize_mlb_schedule(_MLB_PAYLOAD, season=2026)
     Games.validate(games)
@@ -83,21 +58,47 @@ def test_mlb_normalizes_finals_only_with_season_types() -> None:
     assert (games["week"] <= 25).all()
 
 
-def test_wnba_normalizes_completed_events() -> None:
-    games = normalize_wnba_scoreboard(_WNBA_PAYLOAD, season=2026)
+def _wehoop_frame() -> pd.DataFrame:
+    # The wehoop release-parquet shape (sportsdataverse-data,
+    # espn_wnba_schedules): tz-aware ET datetimes, ESPN season_type ints,
+    # completed flags, full display names.
+    ts = pd.Timestamp("2026-08-14 19:00:00-04:00")
+    return pd.DataFrame([
+        {"game_id": 401736001, "season": 2026, "season_type": 2,
+         "game_date_time": ts, "status_type_completed": True,
+         "neutral_site": False,
+         "home_display_name": "Las Vegas Aces", "home_score": 88,
+         "away_display_name": "Seattle Storm", "away_score": 79},
+        {"game_id": 401736002, "season": 2026, "season_type": 2,
+         "game_date_time": ts, "status_type_completed": False,  # future game
+         "neutral_site": False,
+         "home_display_name": "New York Liberty", "home_score": 0,
+         "away_display_name": "Indiana Fever", "away_score": 0},
+        {"game_id": 401736003, "season": 2026, "season_type": 3,  # playoffs
+         "game_date_time": ts, "status_type_completed": True,
+         "neutral_site": True,
+         "home_display_name": "Minnesota Lynx", "home_score": 90,
+         "away_display_name": "Phoenix Mercury", "away_score": 81},
+    ])
+
+
+def test_wehoop_schedule_normalizes_completed_games() -> None:
+    games = normalize_wehoop_schedule(_wehoop_frame(), season=2026)
     Games.validate(games)
-    assert list(games["game_id"]) == ["401736001"]
+    assert list(games["game_id"]) == ["401736001", "401736003"]
     row = games.iloc[0]
     assert row["home_team"] == "Las Vegas Aces"
-    assert row["away_team"] == "Seattle Storm"
     assert (row["home_score"], row["away_score"]) == (88.0, 79.0)
     assert row["league"] == "wnba"
+    assert games.iloc[1]["season_type"] == "POST"
+    assert bool(games.iloc[1]["neutral_site"]) is True
+    assert normalize_wehoop_schedule(pd.DataFrame(), 2026).empty
+    assert normalize_wehoop_schedule(None, 2026).empty
 
 
 def test_empty_payloads() -> None:
     assert normalize_mlb_schedule({}, 2026).empty
     assert normalize_mlb_schedule(None, 2026).empty
-    assert normalize_wnba_scoreboard({"events": []}, 2026).empty
 
 
 def test_scores_fit_runs_on_the_inseason_frame() -> None:
