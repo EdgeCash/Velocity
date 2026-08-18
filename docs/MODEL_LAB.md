@@ -380,7 +380,49 @@ twice after monotone edges), recency, and self-calibrating park factors.
    bets (~2.4σ) is the first genuinely interesting flat record the lab has
    produced; worth tracking live before anyone stakes on it.
 
-**Backlog (summer):** MLB starter decomposition (sp-q sweep over the banked
-statsapi starters — the market's dominant factor), FIP-quality starter
-priors, NegativeBinomial run distributions, weather-on-totals; WNBA
-pace×efficiency from box scores, minutes-aware availability.
+## MLB Round 2 — starter decomposition (2024–2026, 6,792 games)
+
+The market's dominant MLB factor, built as the QB machinery on a games-long
+frame: `runs = intercept + offense[batting] + bullpen[fielding] +
+starter[SP]`, fit on the banked statsapi starters (13,658 rows, 100% of the
+frame) with the promoted λ=100 team ridge, priced with the evaluated game's
+actual starters (probables are public pregame knowledge — the rest-spot
+argument). `q` is the per-starter shrinkage, swept until bracketed.
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | 2026 holdout Brier ↓ |
+|---|---|---|---|---|
+| scores λ=100 (Round 1 bar) | 0.24630 | 0.68565 | 0.0334 | 0.2485 |
+| sp-q5 | 0.24892 | 0.69165 | 0.0447 | 0.2524 |
+| sp-q15 | 0.24647 | 0.68618 | 0.0284 | 0.2510 |
+| sp-q40 | 0.24522 | 0.68348 | 0.0180 | 0.2492 |
+| sp-q80 | **0.24492** | **0.68284** | 0.0147 | 0.2485 |
+| **sp-q160** | 0.24493 | 0.68284 | 0.0140 | **0.2483** |
+| sp-q320 | 0.24502 | 0.68304 | **0.0132** | 0.2481 |
+| sp-q640 | 0.24510 | 0.68320 | 0.0139 | 0.2481 |
+
+**Readings, honestly:**
+
+1. **The starter term is real but must be shrunk hard.** q5 (trust a
+   6-start sample nearly raw) *loses* to the team-only bar; the curve
+   bottoms at q80–160 and rises again at 320/640 — a bracketed interior
+   optimum. **PROMOTED (sp-q160)**: vs q80 the Brier is identical to the
+   4th decimal and calibration + holdout are better.
+2. **Calibration is the headline** — 0.0334 → 0.0140, the best number
+   recorded for any league in this lab. The app's win probabilities and
+   the pick'em EV engine consume these probabilities directly.
+3. **The holdout column is the honest caveat:** sp-q160's 2026 Brier
+   (0.2483) beats the bar (0.2485) and the devigged closing-moneyline
+   ceiling (0.2491), but only thinly, and q320/640 tie it — most of the
+   full-window gain is calibration and 2024–25 accuracy. The starter
+   term's live value runs through the probables feed: it prices *tonight's
+   pitching matchup*, which the team-only fit cannot see at all.
+4. Live wiring: `run_live_slate` fits the decomposition on the committed
+   starters bank and reads today's probables from the keyless statsapi
+   schedule; a game with no announced probable prices starter-neutral
+   (collapses to the team fit), and any fetch failure falls back to the
+   Round 1 scores fit.
+
+**Backlog (summer):** FIP-quality starter priors (the banked K/BB/HBP/HR
+lines are already in `starters.parquet`), NegativeBinomial run
+distributions, weather-on-totals; WNBA pace×efficiency from box scores,
+minutes-aware availability.

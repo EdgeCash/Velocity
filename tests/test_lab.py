@@ -480,7 +480,7 @@ def test_inseason_situational_variants_price() -> None:
     assert tired.mu_total == pytest.approx(fresh.mu_total - 7.0, abs=1e-6)
 
     sp = mlb_sp_variants(64, games, _mlb_starters(games))
-    assert set(sp) == {"sp-q5", "sp-q15", "sp-q40"}
+    assert {"sp-q5", "sp-q40", "sp-q160", "sp-q640"} <= set(sp)
     model = sp["sp-q15"][1](games)
     proj = model.project(games.iloc[0]["home_team"], games.iloc[0]["away_team"],
                          kickoff=games.iloc[0]["kickoff"])

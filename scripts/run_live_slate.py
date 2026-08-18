@@ -172,6 +172,36 @@ def _build_projection(
     model: object = scores_model
     kind = f"scores fit (λ={ridge:g})" + (", recency-8" if weights is not None else "")
 
+    starters_file = folder / "starters.parquet"
+    if args.league == "mlb" and starters_file.exists():
+        # The promoted MLB configuration (docs/MODEL_LAB.md MLB Round 2): the
+        # starter decomposition at q=160 on the λ=100 team fit — Brier 0.2449
+        # vs 0.2463 team-only, calibration error halved. Today's probables
+        # come from the keyless statsapi schedule (public pregame knowledge);
+        # a game with no announced probable prices starter-neutral, which
+        # collapses to the team fit. Best-effort: any failure keeps the
+        # scores fit above.
+        try:
+            from datetime import date, timedelta
+
+            from build_mlb_pitching import fetch_probables
+            from velocity.backtest.lab import StarterAwareModel, mlb_starter_frame
+            from velocity.features.team import fit_qb_ratings
+
+            played = games.dropna(subset=["home_score", "away_score"])
+            ratings = fit_qb_ratings(
+                mlb_starter_frame(played, pd.read_parquet(starters_file)),
+                ridge_lambda=ridge, qb_lambda=160.0, min_dropbacks=6,
+            )
+            today = date.today()
+            lookup = fetch_probables(str(today), str(today + timedelta(days=1)))
+            named = sum(1 for h, a in lookup.values() if h or a)
+            model = StarterAwareModel(ratings, lookup, sim)
+            kind = (f"starter decomposition (λ={ridge:g}, q=160), "
+                    f"{named} games with probables")
+        except Exception as exc:  # noqa: BLE001 - the SP layer never blocks the slate
+            print(f"starter decomposition skipped: {exc}")
+
     ncaaf_plays = folder / "plays.parquet"
     if args.league == "ncaaf" and ncaaf_plays.exists():
         # The promoted college configuration (docs/MODEL_LAB.md NCAAF Round
