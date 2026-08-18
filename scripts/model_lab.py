@@ -98,6 +98,19 @@ def main() -> None:
         from velocity.backtest.lab import inseason_variants
 
         chosen = inseason_variants(args.league, args.n_sims)
+        # Starter decomposition (the market's dominant MLB factor) joins when
+        # the banked starters exist. --data is the private close-joined folder,
+        # so fall back to the committed dataset for the starters file.
+        if args.league == "mlb":
+            for starters_file in (folder / "starters.parquet",
+                                  Path("datasets/mlb/starters.parquet")):
+                if starters_file.exists():
+                    from velocity.backtest.lab import mlb_sp_variants
+
+                    chosen.update(mlb_sp_variants(
+                        args.n_sims, games, pd.read_parquet(starters_file)
+                    ))
+                    break
     else:
         from velocity.backtest.lab import ncaaf_variants
 
