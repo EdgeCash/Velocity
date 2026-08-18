@@ -87,8 +87,15 @@ def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
     return pd.read_parquet(matches[-1]) if matches else None
 
 
-def _load_schedule(league: str, season: int) -> pd.DataFrame | None:  # pragma: no cover
-    """The league's ``Games``-shaped schedule (with finals), or ``None`` on failure."""
+def _load_schedule(
+    league: str, season: int, slate_date: datetime | None = None
+) -> pd.DataFrame | None:  # pragma: no cover
+    """The league's ``Games``-shaped schedule (with finals), or ``None`` on failure.
+
+    The summer leagues (mlb/wnba) fetch only a narrow window around the graded
+    date from their free keyless feeds — grading needs one day's finals, not a
+    season crawl.
+    """
     try:
         if league == "nfl":
             from velocity.ingest.nfl import load_schedules
@@ -102,6 +109,33 @@ def _load_schedule(league: str, season: int) -> pd.DataFrame | None:  # pragma: 
             from velocity.ingest.ncaaf import load_games
 
             return load_games([season], api_key)
+        if league in ("mlb", "wnba") and slate_date is not None:
+            from datetime import timedelta
+
+            from build_inseason_datasets import _MLB_URL, _WNBA_URL, _get
+            from velocity.ingest.inseason import (
+                normalize_mlb_schedule,
+                normalize_wnba_scoreboard,
+            )
+
+            day = slate_date.date()
+            if league == "mlb":
+                payload = _get(_MLB_URL.format(
+                    start=(day - timedelta(days=2)).isoformat(),
+                    end=(day + timedelta(days=1)).isoformat(),
+                ))
+                return normalize_mlb_schedule(payload, season)
+            frames = []
+            for offset in range(-2, 2):
+                ymd = (day + timedelta(days=offset)).strftime("%Y%m%d")
+                frame = normalize_wnba_scoreboard(_get(_WNBA_URL.format(ymd=ymd)), season)
+                if not frame.empty:
+                    frames.append(frame)
+            if not frames:
+                return None
+            return (pd.concat(frames, ignore_index=True)
+                    .drop_duplicates(subset="game_id", keep="last")
+                    .reset_index(drop=True))
     except Exception as exc:  # noqa: BLE001 - a feed down never blocks the slate email
         print(f"schedule fetch failed ({exc})")
     return None
@@ -160,7 +194,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser = argparse.ArgumentParser(description="Grade the previous day's slate")
     parser.add_argument("--prev-dir", required=True, help="downloaded previous artifacts")
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
-    parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
+    parser.add_argument("--league", default="nfl",
+                        choices=["nfl", "ncaaf", "mlb", "wnba"])
     args = parser.parse_args()
 
     from velocity.report.daily_record import (
@@ -194,7 +229,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         record = empty_record()
         record["slate_date"] = pd.Timestamp(slate_date)
     else:
-        schedule = _load_schedule(args.league, slate_date.year)
+        schedule = _load_schedule(args.league, slate_date.year, slate_date)
         if schedule is None:
             record = empty_record()
             record["slate_date"] = pd.Timestamp(slate_date)
