@@ -102,3 +102,27 @@ def test_extract_probables_keys_by_team_pair_first_game_wins() -> None:
     assert lookup[("Athletics", "Seattle Mariners", None)] == (None, None)
     assert len(lookup) == 2  # the doubleheader repeat did not overwrite
     assert bp.extract_probables({}) == {}
+
+
+def test_slim_team_box_keeps_possession_columns_only() -> None:
+    import importlib.util as _ilu
+
+    import pandas as pd
+
+    spec = _ilu.spec_from_file_location(
+        "build_wnba_box",
+        Path(__file__).resolve().parents[1] / "scripts" / "build_wnba_box.py",
+    )
+    wb = _ilu.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(wb)
+    raw = pd.DataFrame([{
+        "game_id": 401, "team_home_away": "home", "field_goals_attempted": "68",
+        "offensive_rebounds": 7, "total_turnovers": 12, "free_throws_attempted": 20,
+        "team_logo": "https://x/y.png", "largest_lead": 15,
+    }])
+    slim = wb.slim_team_box(raw, 2026)
+    assert list(slim.columns) == wb._KEEP + ["season"]
+    assert slim.loc[0, "game_id"] == "401"
+    assert slim.loc[0, "field_goals_attempted"] == 68.0
+    assert slim.loc[0, "season"] == 2026

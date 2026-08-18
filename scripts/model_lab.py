@@ -111,6 +111,18 @@ def main() -> None:
                         args.n_sims, games, pd.read_parquet(starters_file)
                     ))
                     break
+        # Pace×efficiency joins when wehoop team boxes are available (same
+        # private-folder-then-committed lookup as the MLB starters).
+        if args.league == "wnba":
+            for box_file in (folder / "team_box.parquet",
+                             Path("datasets/wnba/team_box.parquet")):
+                if box_file.exists():
+                    from velocity.backtest.lab import wnba_pace_variants
+
+                    chosen.update(wnba_pace_variants(
+                        args.n_sims, pd.read_parquet(box_file)
+                    ))
+                    break
     else:
         from velocity.backtest.lab import ncaaf_variants
 

@@ -456,6 +456,38 @@ Round 2's, confirming the fallback was dormant in backtest (banked
 starters cover ~100% of games) and only live no-probable games were
 exposed.
 
+## WNBA Round 2 — pace×efficiency (2024–2026, 756 games)
+
+The research list's WNBA headline: decompose scoring into possessions ×
+points-per-possession. Possessions come from the wehoop team boxes
+(`datasets/wnba/team_box.parquet`, the standard `FGA − ORB + TOV +
+0.44·FTA` estimator, 100% of the frame covered); efficiency is the scores
+machinery on points-per-100-possessions; pace is additive
+`league + dev[home] + dev[away]` with shrunk per-team deviations.
+
+| variant | Brier ↓ | log-loss ↓ | calib. err ↓ | ATS vs close | 2026 holdout ↓ |
+|---|---|---|---|---|---|
+| recency-8 (Round 1 promotion) | 0.21646 | 0.62359 | 0.0340 | 55.4% | 0.2241 |
+| pace-eff-flat | 0.22407 | 0.64079 | 0.0282 | 53.5% | 0.2389 |
+| **pace-eff-r8** | **0.21615** | **0.62289** | **0.0277** | 55.3% | **0.2235** |
+
+**Readings, honestly:**
+
+1. **PROMOTED (pace-eff-r8)** — better than the Round 1 promotion on every
+   forecasting metric: Brier, log-loss, calibration (0.0340 → 0.0277), and
+   the 2026 holdout. The margins are small on 756 games, but uniformly
+   positive and structurally motivated: the decomposition prices a
+   fast-pace matchup's total, which a raw points fit averages away.
+2. **The flat variant loses badly** — recency does the heavy lifting
+   (rosters and rotations swing inside a season); pace is a layer on top
+   of that finding, not a replacement for it.
+3. The market stays ahead (holdout 0.2055); the flat ATS (~55%) holds
+   under the new fit — still track-live, not stake-on-it.
+
+Live wiring: `run_live_slate` fits pace×efficiency whenever the committed
+team boxes exist (the box top-up rides the daily refresh); any failure
+falls back to the recency-8 scores fit.
+
 **Backlog (summer):** NegativeBinomial run distributions,
-weather-on-totals; WNBA pace×efficiency from box scores, minutes-aware
-availability; FIP priors gated to below-floor starters only.
+weather-on-totals; WNBA minutes-aware availability; FIP priors gated to
+below-floor starters only.

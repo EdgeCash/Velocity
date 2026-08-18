@@ -329,10 +329,11 @@ MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
                    "docs/MODEL_LAB.md MLB Rounds 1–2)"),
     ],
     "wnba": [
-        ("Ratings", "Opponent-adjusted points fit (scores ridge λ=10, recency "
-                    "half-life 8 — lab Round 1) · sim σ 12.5 margin / 15 total"),
+        ("Ratings", "Pace×efficiency fit (possessions × pts/100, ridge λ=10, "
+                    "recency half-life 8 — lab Round 2) · sim σ 12.5 margin "
+                    "/ 15 total"),
         ("Status", "Lab-gated vs 2025–26 closing lines (walk-forward, "
-                   "docs/MODEL_LAB.md WNBA Round 1)"),
+                   "docs/MODEL_LAB.md WNBA Rounds 1–2)"),
     ],
     "ncaaf": [
         ("Ratings", "50/50 blend: play-level EPA (λ=50) × scores fit (λ=10)"),
