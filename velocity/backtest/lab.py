@@ -50,6 +50,7 @@ __all__ = [
     "compress_plays",
     "disagreement_sweep",
     "fit_split_ratings",
+    "inseason_variants",
     "market_blend_sweep",
     "ncaaf_walk_order",
     "nfl_variants",
@@ -451,6 +452,68 @@ def ncaaf_variants(
             "blend-epa70": ("games", blend(0.70)),
         })
 
+    return variants
+
+
+# Summer-league calibration: (sd_margin, sd_total) for the sim, the margin
+# sigma for the market probit link, and the live ridge default (the promotion
+# bar each league's lab measures against).
+INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
+    "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 5.0},
+    "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
+}
+
+
+def inseason_variants(
+    league: str, n_sims: int
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The MLB/WNBA benchmark slates — scores-fit families, games-only.
+
+    The live summer defaults were picked by hand when the leagues shipped as
+    content surfaces; this is where they earn (or lose) their numbers. The
+    ``scores`` entry runs the live ridge and is the promotion bar. Recency
+    half-lives are in the frames' *week-bucket* steps (each bucket ≈ 15 days),
+    so ``recency-2`` halves in about a month — these leagues play daily, and
+    form questions live on that clock. Deeper decompositions (starting
+    pitcher, pace×efficiency) join as variants in their own rounds.
+    """
+    from velocity.features.scores import scores_recency_weights
+
+    cal = INSEASON_CALIBRATION[league]
+    sim = SimConfig(sd_margin=cal["sd_margin"], sd_total=cal["sd_total"],
+                    n_sims=n_sims)
+    live_ridge = cal["ridge"]
+
+    def _model(ratings: object) -> ScoresGameModel:
+        return ScoresGameModel(ratings, ScoresModelConfig(sim=sim))  # type: ignore[arg-type]
+
+    def ridge(lam: float) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(train, ridge_lambda=lam))
+
+        return factory
+
+    def recency(half_life: float, lam: float) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> ScoresGameModel:
+            return _model(fit_scores_ratings(
+                train, ridge_lambda=lam,
+                weights=scores_recency_weights(train, half_life),
+            ))
+
+        return factory
+
+    sweep = {"mlb": (2.0, 10.0, 25.0), "wnba": (3.0, 25.0, 50.0)}[league]
+    variants: dict[str, tuple[str, VariantFactory]] = {
+        "scores": ("games", ridge(live_ridge)),  # the live default — the bar
+    }
+    variants.update({
+        f"ridge-{lam:g}": ("games", ridge(lam)) for lam in sweep
+    })
+    variants.update({
+        "recency-2": ("games", recency(2.0, live_ridge)),
+        "recency-4": ("games", recency(4.0, live_ridge)),
+        "recency-8": ("games", recency(8.0, live_ridge)),
+    })
     return variants
 
 

@@ -43,7 +43,8 @@ def _empty_lines() -> pd.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser(description="NFL model-variant benchmark")
     parser.add_argument("--data", default="datasets/nfl", help="folder with games+plays")
-    parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
+    parser.add_argument("--league", default="nfl",
+                        choices=["nfl", "ncaaf", "mlb", "wnba"])
     parser.add_argument("--n-sims", type=int, default=4000)
     parser.add_argument("--min-train-games", type=int, default=20)
     parser.add_argument("--variants", default="",
@@ -60,7 +61,12 @@ def main() -> None:
     folder = Path(args.data)
     games = load_games(_find(folder, "games"), league=args.league)
     has_college_plays = False
-    if args.league == "nfl":
+    if args.league in ("mlb", "wnba"):
+        # Summer leagues: games-only scores families. Point --data at the
+        # PRIVATE close-joined folder from join_historical_closes.py — the
+        # committed frames carry no lines, and paid closes never enter git.
+        plays = games
+    elif args.league == "nfl":
         plays = load_plays(_find(folder, "plays"))
     else:
         from velocity.backtest.lab import ncaaf_walk_order
@@ -88,6 +94,10 @@ def main() -> None:
 
     if args.league == "nfl":
         chosen = nfl_variants(args.n_sims, schedule=games)
+    elif args.league in ("mlb", "wnba"):
+        from velocity.backtest.lab import inseason_variants
+
+        chosen = inseason_variants(args.league, args.n_sims)
     else:
         from velocity.backtest.lab import ncaaf_variants
 
@@ -143,9 +153,15 @@ def main() -> None:
     # Market blend (nfelo's market-regression insight): sweep
     # p_blend = w·model + (1−w)·market per ledger, weight chosen on the select
     # window and judged on the holdout — the accuracy ceiling for staking.
-    from velocity.backtest.lab import market_blend_sweep
+    # Summer leagues: runs/points scale their probit sigma, and their history
+    # starts in 2024 — select on 2024–2025, judge on 2026.
+    from velocity.backtest.lab import INSEASON_CALIBRATION, market_blend_sweep
 
-    blends = {name: market_blend_sweep(projections, games)
+    cal = INSEASON_CALIBRATION.get(args.league)
+    blend_kwargs = (
+        {"sigma": cal["sigma"], "select_through": 2025} if cal is not None else {}
+    )
+    blends = {name: market_blend_sweep(projections, games, **blend_kwargs)
               for name, projections in ledgers.items()}
 
     table = pd.DataFrame(rows)
@@ -160,7 +176,8 @@ def main() -> None:
         for name, blend in blends.items():
             if blend.empty:
                 continue
-            print(f"\n--- {name} · market blend sweep (select ≤2019 / holdout) ---")
+            select_label = blend_kwargs.get("select_through", 2019)
+            print(f"\n--- {name} · market blend sweep (select ≤{select_label} / holdout) ---")
             print(blend.to_string(index=False))
             if blend["brier_select"].isna().all():
                 # eval window starts after the select split — no honest way to
