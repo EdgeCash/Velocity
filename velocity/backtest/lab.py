@@ -547,7 +547,8 @@ def inseason_variants(
 
         return factory
 
-    sweep = {"mlb": (2.0, 10.0, 25.0, 50.0, 100.0), "wnba": (3.0, 25.0, 50.0)}[league]
+    sweep = {"mlb": (2.0, 10.0, 25.0, 50.0, 100.0, 200.0, 400.0),
+             "wnba": (3.0, 25.0, 50.0)}[league]
     variants: dict[str, tuple[str, VariantFactory]] = {
         "scores": ("games", ridge(live_ridge)),  # the live default — the bar
     }
