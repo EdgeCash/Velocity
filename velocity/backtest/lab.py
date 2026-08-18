@@ -710,11 +710,15 @@ class StarterAwareModel:
         key = (home_team, away_team, None if kickoff is None else pd.Timestamp(kickoff))  # type: ignore[arg-type]
         home_sp, away_sp = self.lookup.get(key, (None, None))
         base = float(getattr(self.ratings, "league_epa", 4.4))
+        # An unknown starter must price league-average. qb_id=None would fall
+        # back to QBTeamRatings.starters — the starter this team most recently
+        # FACED in training, a stale wrong guess — so pass the falsy sentinel
+        # "" instead, which matchup_delta prices as exactly neutral.
         mu_home = base + self.ratings.matchup_delta(  # type: ignore[attr-defined]
-            home_team, away_team, qb_id=away_sp
+            home_team, away_team, qb_id=away_sp or ""
         )
         mu_away = base + self.ratings.matchup_delta(  # type: ignore[attr-defined]
-            away_team, home_team, qb_id=home_sp
+            away_team, home_team, qb_id=home_sp or ""
         )
         if not neutral_site:
             mu_home += self.hfa_points / 2.0
@@ -724,6 +728,37 @@ class StarterAwareModel:
                             rng=rng, config=self.sim)
         return GameProjection(home_team=home_team, away_team=away_team,
                               mu_home=mu_home, mu_away=mu_away, sim=sim)
+
+
+def mlb_fip_priors(
+    starters: pd.DataFrame, shrink_innings: float
+) -> dict[str, float]:
+    """Per-starter runs-per-start delta vs league from defense-independent stats.
+
+    FIP's numerator (13·HR + 3·(BB+HBP) − 2·K per inning) isolates what the
+    pitcher controls; K/BB rates stabilize in weeks where runs allowed takes a
+    season. The per-9 delta vs the slice's league rate is scaled by the
+    starter's own innings share of a game (he only affects the frame while he
+    pitches) and shrunk toward zero by ``outs/(outs + 3·shrink_innings)``.
+    Units are runs per start — the same as the fitted starter dummy.
+    """
+    s = starters.dropna(subset=["outs"])
+    s = s[s["outs"] > 0]
+    if s.empty:
+        return {}
+    agg = s.groupby("starter_id").agg(
+        outs=("outs", "sum"), k=("k", "sum"), bb=("bb", "sum"),
+        hbp=("hbp", "sum"), hr=("hr", "sum"), starts=("game_id", "count"),
+    )
+    num = 13.0 * agg["hr"] + 3.0 * (agg["bb"] + agg["hbp"]) - 2.0 * agg["k"]
+    # num/IP is FIP minus its constant — already on the runs-per-9 (ERA)
+    # scale by construction, so the constant cancels in the league delta.
+    fip9 = num / (agg["outs"] / 3.0)
+    league = float(num.sum() / (agg["outs"].sum() / 3.0))
+    share = (agg["outs"] / agg["starts"]) / 27.0  # avg innings per start / 9
+    shrink = agg["outs"] / (agg["outs"] + 3.0 * shrink_innings)
+    delta = (fip9 - league) * share * shrink
+    return {str(idx): float(v) for idx, v in delta.items() if pd.notna(v)}
 
 
 def mlb_sp_variants(
@@ -767,6 +802,33 @@ def mlb_sp_variants(
 
         return factory
 
+    def sp_fip(shrink_innings: float, qb_lambda: float = 160.0) -> VariantFactory:
+        # Round 3: shrink the starter dummy toward a FIP-quality prior
+        # instead of zero. K/BB/HBP/HR stabilize far faster than runs
+        # allowed, so the prior carries skill signal the dummy can't see in
+        # a small sample: subtract each row's (train-slice) prior from the
+        # runs before the fit, so the dummy learns the *residual*, then add
+        # the prior back into the ratings — pricing = prior + deviation, and
+        # a below-floor starter prices at his prior instead of league-average.
+        def factory(train: pd.DataFrame) -> StarterAwareModel:
+            train_ids = set(train["game_id"].astype(str))
+            slice_ = starters[starters["game_id"].astype(str).isin(train_ids)]
+            priors = mlb_fip_priors(slice_, shrink_innings)
+            frame = mlb_starter_frame(train, starters)
+            frame = frame.assign(
+                epa=frame["epa"]
+                - frame["passer_player_id"].map(priors).fillna(0.0)
+            )
+            ratings = fit_qb_ratings(
+                frame, ridge_lambda=cal["ridge"], qb_lambda=qb_lambda,
+                min_dropbacks=6,
+            )
+            for sp_id, prior in priors.items():
+                ratings.qb[sp_id] = ratings.qb.get(sp_id, 0.0) + prior
+            return StarterAwareModel(ratings, lookup, sim)
+
+        return factory
+
     # q80/q160 extend the sweep after q5→q40 came back monotone (as
     # qb_lambda → ∞ this collapses to the frame's team-only fit).
     return {
@@ -777,6 +839,9 @@ def mlb_sp_variants(
         "sp-q160": ("games", sp(160.0)),
         "sp-q320": ("games", sp(320.0)),
         "sp-q640": ("games", sp(640.0)),
+        "sp-fip30": ("games", sp_fip(30.0)),
+        "sp-fip60": ("games", sp_fip(60.0)),
+        "sp-fip120": ("games", sp_fip(120.0)),
     }
 
 

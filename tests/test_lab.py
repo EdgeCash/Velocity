@@ -485,3 +485,53 @@ def test_inseason_situational_variants_price() -> None:
     proj = model.project(games.iloc[0]["home_team"], games.iloc[0]["away_team"],
                          kickoff=games.iloc[0]["kickoff"])
     assert 5 < proj.mu_total < 14
+
+
+def test_mlb_fip_priors_sign_scale_and_shrink() -> None:
+    from velocity.backtest.lab import mlb_fip_priors
+
+    rows = []
+    for i in range(20):  # ace: 6 IP, 8 K, 1 BB, 0 HR per start
+        rows.append({"game_id": f"a{i}", "starter_id": "ACE", "outs": 18.0,
+                     "k": 8, "bb": 1, "hbp": 0, "hr": 0})
+    for i in range(20):  # bum: 5 IP, 3 K, 4 BB, 1.5 HR per start
+        rows.append({"game_id": f"b{i}", "starter_id": "BUM", "outs": 15.0,
+                     "k": 3, "bb": 4, "hbp": 0, "hr": 1 + i % 2})
+    starters = pd.DataFrame(rows)
+    priors = mlb_fip_priors(starters, shrink_innings=60.0)
+    assert priors["ACE"] < 0 < priors["BUM"]  # negative = fewer runs allowed
+    # Runs-per-start scale: a full season of elite/awful peripherals stays
+    # within a couple of runs, never the raw FIP-numerator scale.
+    assert -2.5 < priors["ACE"] and priors["BUM"] < 2.5
+    # More shrinkage → smaller magnitudes; empty input → no priors.
+    tighter = mlb_fip_priors(starters, shrink_innings=600.0)
+    assert abs(tighter["ACE"]) < abs(priors["ACE"])
+    assert mlb_fip_priors(starters.iloc[:0], 60.0) == {}
+
+
+def test_starter_aware_model_unknown_starter_prices_neutral() -> None:
+    from velocity.backtest.lab import (
+        SimConfig,
+        StarterAwareModel,
+        mlb_starter_frame,
+    )
+    from velocity.features.team import fit_qb_ratings
+
+    games = _mlb_games()
+    frame = mlb_starter_frame(games, _mlb_starters(games))
+    ratings = fit_qb_ratings(frame, ridge_lambda=100.0, qb_lambda=5.0,
+                             min_dropbacks=1)
+    assert ratings.starters  # the stale fallback the model must NOT use
+    sim = SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=64)
+    model = StarterAwareModel(ratings, {("A", "B", None): (None, None)}, sim)
+    known = StarterAwareModel(
+        ratings, {("A", "B", None): ("SP-B", "SP9")}, sim
+    )
+    neutral = model.project("A", "B")
+    priced = known.project("A", "B")
+    # No probable → both mus are exactly base ± hfa/2 (league-average SPs),
+    # never the starter one team most recently faced.
+    base = ratings.league_epa
+    exp_home = base + ratings.matchup_delta("A", "B", qb_id="zzz-unknown")
+    assert neutral.mu_home == pytest.approx(exp_home + model.hfa_points / 2.0)
+    assert neutral.mu_home != pytest.approx(priced.mu_home)
