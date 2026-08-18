@@ -119,16 +119,24 @@ def plays_table(
     parlays: pd.DataFrame | None,
     games_map: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """The PLAYS view: one row per recommendation — matchup, play, stake.
+    """The PLAYS view: one row per recommendation — matchup, play, edge, stake.
 
-    Game plays first (slate order), then props, then parlays (whose matchup
-    cell names the legs' games).
+    Ranked by the model's edge over the devigged fair probability (the
+    nfelo-style confidence ordering — the best sites *rank* the board, they
+    don't just list it). Rows without an edge (parlays, older slates) sort
+    last in their original order.
     """
     names = matchup_names(games_map)
 
     def _matchup(game_id: object) -> str:
         away, home = names.get(str(game_id), (str(game_id), ""))
         return f"{away} @ {home}" if home else away
+
+    def _edge(row: Mapping[str, object]) -> float | None:
+        value = row.get("edge")
+        if value is None or pd.isna(value):  # type: ignore[call-overload]
+            return None
+        return float(value)  # type: ignore[arg-type]
 
     rows: list[dict[str, object]] = []
     if plays is not None:
@@ -137,6 +145,7 @@ def plays_table(
                 "matchup": _matchup(row["game_id"]),
                 "play": game_play_label(row, names),
                 "stake": row.get("stake"),
+                "edge": _edge(row),
             })
     if props is not None:
         for row in props.to_dict("records"):
@@ -144,6 +153,7 @@ def plays_table(
                 "matchup": _matchup(row["game_id"]),
                 "play": prop_play_label(row),
                 "stake": row.get("stake"),
+                "edge": _edge(row),
             })
     if parlays is not None:
         for row in parlays.to_dict("records"):
@@ -151,8 +161,15 @@ def plays_table(
                 "matchup": f"PARLAY ({row.get('n_legs', '?')} legs)",
                 "play": f"{row.get('legs', '')} → {_price(row['price'])}",
                 "stake": row.get("stake"),
+                "edge": _edge(row),
             })
-    return pd.DataFrame(rows, columns=["matchup", "play", "stake"])
+    out = pd.DataFrame(rows, columns=["matchup", "play", "stake", "edge"])
+    if out.empty:
+        return out
+    # Stable sort: ranked plays by edge desc, edge-less rows after in slate order.
+    out["_rank"] = out["edge"].fillna(-1.0)
+    out = out.sort_values("_rank", ascending=False, kind="stable").drop(columns="_rank")
+    return out.reset_index(drop=True)
 
 
 def matchup_cards(
@@ -272,4 +289,77 @@ def load_slate_frames(folder: Path, league: str = "nfl") -> dict[str, pd.DataFra
         "record": newest(folder, rf"record_{lg}_{_STAMP}\.parquet"),
         "pickem": newest(folder, rf"slate_{lg}_pickem_{_STAMP}\.parquet"),
         "pickem_legs": newest(folder, rf"slate_{lg}_pickem_legs_{_STAMP}\.parquet"),
+        "cumulative": newest(folder, rf"cumulative_record_{lg}_{_STAMP}\.parquet"),
+    }
+
+
+# Per-leg breakeven probabilities per slip shape — mirrors
+# velocity.wagering.pickem.breakeven_leg_prob over the official payout
+# tables. Hardcoded because the app deliberately never imports the model
+# package; a repo test keeps this dict in sync with the engine.
+PICKEM_BREAKEVENS = {
+    "power-2": 0.5774,
+    "power-3": 0.5503,
+    "power-4": 0.5623,
+    "power-5": 0.5493,
+    "power-6": 0.5466,
+    "flex-3": 0.5774,
+    "flex-4": 0.5503,
+    "flex-5": 0.5425,
+    "flex-6": 0.5421,
+}
+
+
+# What's live, per league — curated at promotion time from docs/MODEL_LAB.md
+# (the nfelo lesson: the model's record and configuration ARE the product;
+# show them as a first-class surface, not a footnote).
+MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
+    "nfl": [
+        ("Ratings", "QB-adjusted, recency-weighted EPA (λq=300, half-life 17 wks, "
+                    "trailing 4 seasons)"),
+        ("Situational", "Rest spots +1.0 bye / −1.0 short week · wind −0.30 pts/mph "
+                        "past 15 (live forecast)"),
+        ("Walk-forward Brier", "0.2203 over 2014–2025 (closing line: 0.2109)"),
+        ("Calibration error", "0.015 (2.5× better than the QB-blind fit)"),
+    ],
+    "ncaaf": [
+        ("Ratings", "50/50 blend: play-level EPA (λ=50) × scores fit (λ=10)"),
+        ("Walk-forward Brier", "0.1949 over 2015–2024 (closing line: 0.1652)"),
+        ("Calibration error", "0.012 — best recorded for college"),
+        ("Totals filter", "bet only ≥4 pts of disagreement (52.8% over 5,477 bets)"),
+    ],
+}
+
+
+def season_summary(cumulative: pd.DataFrame | None) -> dict[str, object] | None:
+    """Season-to-date W-L and units from the cumulative record chain.
+
+    Returns ``{"wins", "losses", "pushes", "units", "sections"}`` where
+    ``sections`` maps each section to its own ``(wins, losses, units)`` —
+    or ``None`` when no settled rows exist yet.
+    """
+    if cumulative is None or cumulative.empty or "result" not in cumulative.columns:
+        return None
+    settled = cumulative[cumulative["result"].isin(["win", "loss", "push"])]
+    if settled.empty:
+        return None
+
+    def _tally(rows: pd.DataFrame) -> tuple[int, int, float]:
+        return (
+            int((rows["result"] == "win").sum()),
+            int((rows["result"] == "loss").sum()),
+            float(pd.to_numeric(rows["profit"], errors="coerce").fillna(0.0).sum()),
+        )
+
+    wins, losses, units = _tally(settled)
+    sections = {
+        str(section): _tally(rows)
+        for section, rows in settled.groupby("section")
+    }
+    return {
+        "wins": wins,
+        "losses": losses,
+        "pushes": int((settled["result"] == "push").sum()),
+        "units": units,
+        "sections": sections,
     }

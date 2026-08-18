@@ -1,6 +1,6 @@
 """MatchUp Labs app — the day's slate as a dark, readable board.
 
-Five tabs over the live-slate workflow's persisted artifacts:
+Six tabs over the live-slate workflow's persisted artifacts:
 
 * **Cards** — the day's graphics: model cards, Sim Checks, and the record
   card, each viewable and downloadable, with the caption copy alongside. This
@@ -12,6 +12,9 @@ Five tabs over the live-slate workflow's persisted artifacts:
   projected score, fair total/line — and that game's plays.
 * **Pick'em** — the slip-EV board: ranked slips (book-fair marginals ×
   model correlation) and the qualifying legs behind them.
+* **Model** — the transparency surface: what's live per league (the
+  promoted fits, curated from docs/MODEL_LAB.md) and the season-to-date
+  record from the cumulative grading chain.
 * **Record** — yesterday's graded plays (the same record the email leads with).
 
 Data comes from the newest ``slate-*`` GitHub Actions artifact (the runner's
@@ -40,10 +43,13 @@ import streamlit as st
 # `streamlit run` puts the script dir on sys.path; test harnesses don't.
 sys.path.insert(0, str(Path(__file__).parent))
 from format_plays import (  # noqa: E402
+    MODEL_CONFIG,
+    PICKEM_BREAKEVENS,
     card_images,
     load_slate_frames,
     matchup_cards,
     plays_table,
+    season_summary,
 )
 
 st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="🏈", layout="centered")
@@ -145,14 +151,22 @@ def _render_plays(view: pd.DataFrame) -> None:
     if view.empty:
         st.info("No plays cleared the edge threshold in the latest slate.")
         return
+
+    def _edge_cell(value: object) -> str:
+        if value is None or pd.isna(value):
+            return "<span class='v-dim'>—</span>"
+        return f"+{float(value):.1%}"
+
     rows = "".join(
-        f"<tr><td>{r['matchup']}</td><td class='v-play'>{r['play']}</td></tr>"
+        f"<tr><td>{r['matchup']}</td><td class='v-play'>{r['play']}</td>"
+        f"<td>{_edge_cell(r.get('edge'))}</td></tr>"
         for r in view.to_dict("records")
     )
+    st.caption("Ranked by the model's edge over the devigged fair probability.")
     st.markdown(
         "<table class='v-table'>"
-        "<tr><th>Matchup</th><th>Play</th></tr>"
-        f"<tr><td colspan='2' class='v-league'>NFL · NCAAF</td></tr>{rows}</table>",
+        "<tr><th>Matchup</th><th>Play</th><th>Edge</th></tr>"
+        f"<tr><td colspan='3' class='v-league'>NFL · NCAAF</td></tr>{rows}</table>",
         unsafe_allow_html=True,
     )
 
@@ -211,16 +225,25 @@ def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> Non
     )
     if slips is not None and not slips.empty:
         st.markdown("#### Ranked slips")
+
+        def _needs(slip: str) -> str:
+            # The per-leg breakeven for this shape — the Unabated lesson:
+            # a probability means nothing without the threshold it must clear.
+            b = PICKEM_BREAKEVENS.get(str(slip))
+            return "—" if b is None else f"{b:.0%}/leg"
+
         rows = "".join(
             f"<tr><td class='v-play'>{r['slip']}</td>"
             f"<td>{float(r['ev']):.2f}x</td>"
             f"<td>{float(r['p_all']):.0%}</td>"
+            f"<td class='v-dim'>{_needs(r['slip'])}</td>"
             f"<td>{r['legs']}</td></tr>"
             for r in slips.to_dict("records")
         )
         st.markdown(
             "<table class='v-table'>"
-            "<tr><th>Slip</th><th>EV</th><th>All hit</th><th>Legs</th></tr>"
+            "<tr><th>Slip</th><th>EV</th><th>All hit</th><th>Needs</th>"
+            "<th>Legs</th></tr>"
             f"{rows}</table>",
             unsafe_allow_html=True,
         )
@@ -243,6 +266,55 @@ def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> Non
             f"{rows}</table>",
             unsafe_allow_html=True,
         )
+
+
+def _render_model(folder: Path) -> None:
+    """The transparency surface: what's live, and the season-to-date record.
+
+    The nfelo lesson — the model's configuration and record ARE the product.
+    Config blocks are curated at promotion time (docs/MODEL_LAB.md); the
+    record reads from the cumulative chain each graded run carries forward.
+    """
+    from format_plays import load_slate_frames as _frames
+
+    for league in ("nfl", "ncaaf"):
+        st.markdown(f"### {league.upper()}")
+        summary = season_summary(_frames(folder, league).get("cumulative"))
+        if summary is None:
+            st.caption("Season to date: no graded plays yet.")
+        else:
+            st.markdown(
+                f"#### Season to date: {summary['wins']}-{summary['losses']}"
+                + (f"-{summary['pushes']}" if summary["pushes"] else "")
+                + f" · {float(summary['units']):+.1f}u"  # type: ignore[arg-type]
+            )
+            sections = summary["sections"]
+            if isinstance(sections, dict) and sections:
+                parts = "".join(
+                    f"<tr><td>{name}</td><td>{w}-{losses}</td>"
+                    f"<td>{units:+.1f}u</td></tr>"
+                    for name, (w, losses, units) in sorted(sections.items())
+                )
+                st.markdown(
+                    "<table class='v-table'>"
+                    "<tr><th>Section</th><th>Record</th><th>Units</th></tr>"
+                    f"{parts}</table>",
+                    unsafe_allow_html=True,
+                )
+        rows = "".join(
+            f"<tr><td class='v-dim'>{label}</td><td>{value}</td></tr>"
+            for label, value in MODEL_CONFIG.get(league, [])
+        )
+        st.markdown(
+            "<table class='v-table'>"
+            "<tr><th>What's live</th><th></th></tr>"
+            f"{rows}</table>",
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "Every promotion wins a walk-forward benchmark first — nothing ships "
+        "on intuition. Full history: docs/MODEL_LAB.md in the repo."
+    )
 
 
 def _render_record(record: pd.DataFrame | None) -> None:
@@ -380,8 +452,8 @@ def main() -> None:
     if generated is not None:
         st.caption(f"Slate generated {pd.Timestamp(generated):%b %-d, %H:%M} UTC")
 
-    tab_cards, tab_plays, tab_matchups, tab_pickem, tab_record = st.tabs(
-        ["Cards", "Plays", "Matchups", "Pick'em", "Record"]
+    tab_cards, tab_plays, tab_matchups, tab_pickem, tab_model, tab_record = st.tabs(
+        ["Cards", "Plays", "Matchups", "Pick'em", "Model", "Record"]
     )
     with tab_cards:
         _render_cards_tab(folder)
@@ -395,6 +467,8 @@ def main() -> None:
             _render_card(card)
     with tab_pickem:
         _render_pickem(frames.get("pickem"), frames.get("pickem_legs"))
+    with tab_model:
+        _render_model(folder)
     with tab_record:
         _render_record(frames["record"])
 
