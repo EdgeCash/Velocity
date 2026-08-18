@@ -422,7 +422,40 @@ argument). `q` is the per-starter shrinkage, swept until bracketed.
    (collapses to the team fit), and any fetch failure falls back to the
    Round 1 scores fit.
 
-**Backlog (summer):** FIP-quality starter priors (the banked K/BB/HBP/HR
-lines are already in `starters.parquet`), NegativeBinomial run
-distributions, weather-on-totals; WNBA pace×efficiency from box scores,
-minutes-aware availability.
+## MLB Round 3 — FIP-quality starter priors (2024–2026, 6,792 games)
+
+The queued follow-up: shrink the starter dummy toward a defense-independent
+skill estimate instead of zero. `mlb_fip_priors` turns each starter's
+banked K/BB/HBP/HR into a runs-per-start delta vs league (the FIP numerator
+per IP is already on the per-9 scale; the constant cancels), scaled by his
+innings share and shrunk by workload; the dummy then fits the *residual*
+and pricing adds the prior back — a below-floor starter prices at his
+prior rather than league-average.
+
+| variant | Brier ↓ | calib. err ↓ | 2026 holdout ↓ |
+|---|---|---|---|
+| sp-q160 (Round 2 promotion) | 0.24493 | **0.0140** | **0.2483** |
+| sp-fip30 | 0.24547 | 0.0254 | 0.2495 |
+| sp-fip60 | 0.24506 | 0.0225 | 0.2491 |
+| sp-fip120 | 0.24480 | 0.0185 | 0.2487 |
+
+**Reading, honestly: REJECTED.** The sweep is monotone toward *more* prior
+shrinkage, and its limit is exactly the promoted sp-q160 — the curve is
+approaching the bar, not beating it. fip120's hairline full-window Brier
+edge (−0.0001) costs calibration and the holdout. Mechanism: at q160 the
+dummy already sees 2+ seasons of starts for most pitchers, so FIP's
+small-sample stabilization advantage only touches the thin rookie slice,
+and the innings-share scaling is a blunt bullpen model. The machinery
+stays for a smarter treatment (e.g. priors only below a starts floor).
+
+*Round side-effect (live-path bugfix):* `StarterAwareModel` priced a game
+with no known starter via `QBTeamRatings.starters` — the starter that team
+most recently *faced* in training, a stale wrong guess. Unknown starters
+now price exactly league-average; the re-run bar above is bit-identical to
+Round 2's, confirming the fallback was dormant in backtest (banked
+starters cover ~100% of games) and only live no-probable games were
+exposed.
+
+**Backlog (summer):** NegativeBinomial run distributions,
+weather-on-totals; WNBA pace×efficiency from box scores, minutes-aware
+availability; FIP priors gated to below-floor starters only.
