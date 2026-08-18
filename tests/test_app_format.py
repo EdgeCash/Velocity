@@ -12,6 +12,7 @@ import importlib.util
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).parent.parent
 
@@ -151,3 +152,53 @@ def test_card_images_empty_folder(tmp_path: Path) -> None:
     images = fp.card_images(tmp_path)
     assert images["model"] == [] and images["simcheck"] == []
     assert images["record"] is None and images["dfs"] is None
+
+
+def test_plays_table_ranks_by_edge_with_edgeless_last() -> None:
+    plays = pd.DataFrame([
+        {"game_id": "g1", "market": "moneyline", "side": "home", "point": None,
+         "price": -145, "stake": 1.0, "edge": 0.021},
+        {"game_id": "g2", "market": "total", "side": "over", "point": 47.5,
+         "price": -105, "stake": 1.0, "edge": 0.058},
+    ])
+    parlays = pd.DataFrame([
+        {"n_legs": 2, "legs": "A + B", "price": 264, "stake": 0.5},
+    ])
+    games = pd.DataFrame([
+        {"game_id": "g1", "away_team": "Buffalo Bills", "home_team": "Kansas City Chiefs"},
+        {"game_id": "g2", "away_team": "Dallas Cowboys", "home_team": "Philadelphia Eagles"},
+    ])
+    view = fp.plays_table(plays, None, parlays, games)
+    # Biggest edge first; the edge-less parlay sorts last.
+    assert view.iloc[0]["play"].startswith("O47.5")
+    assert view.iloc[0]["edge"] == pytest.approx(0.058)
+    assert view.iloc[-1]["matchup"].startswith("PARLAY")
+    assert pd.isna(view.iloc[-1]["edge"])
+
+
+def test_season_summary_tallies_the_cumulative_chain() -> None:
+    cumulative = pd.DataFrame([
+        {"section": "games", "result": "win", "profit": 0.91},
+        {"section": "games", "result": "loss", "profit": -1.0},
+        {"section": "games", "result": "push", "profit": 0.0},
+        {"section": "props", "result": "win", "profit": 0.87},
+        {"section": "props", "result": "pending", "profit": None},
+    ])
+    summary = fp.season_summary(cumulative)
+    assert summary is not None
+    assert (summary["wins"], summary["losses"], summary["pushes"]) == (2, 1, 1)
+    assert summary["units"] == pytest.approx(0.78)
+    assert summary["sections"]["games"] == (1, 1, pytest.approx(-0.09))
+    assert fp.season_summary(None) is None
+    assert fp.season_summary(pd.DataFrame()) is None
+
+
+def test_pickem_breakevens_stay_in_sync_with_the_engine() -> None:
+    # The app hardcodes the per-leg breakevens (it never imports the model
+    # package); this test is the sync tripwire against the real engine.
+    from velocity.wagering.pickem import PAYOUTS, breakeven_leg_prob
+
+    for name, expected in fp.PICKEM_BREAKEVENS.items():
+        assert expected == pytest.approx(
+            breakeven_leg_prob(PAYOUTS[name]), abs=5e-4
+        ), name
