@@ -767,10 +767,14 @@ def mlb_sp_variants(
 
         return factory
 
+    # q80/q160 extend the sweep after q5→q40 came back monotone (as
+    # qb_lambda → ∞ this collapses to the frame's team-only fit).
     return {
         "sp-q5": ("games", sp(5.0)),
         "sp-q15": ("games", sp(15.0)),
         "sp-q40": ("games", sp(40.0)),
+        "sp-q80": ("games", sp(80.0)),
+        "sp-q160": ("games", sp(160.0)),
     }
 
 
