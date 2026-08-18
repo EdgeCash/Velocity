@@ -775,6 +775,8 @@ def mlb_sp_variants(
         "sp-q40": ("games", sp(40.0)),
         "sp-q80": ("games", sp(80.0)),
         "sp-q160": ("games", sp(160.0)),
+        "sp-q320": ("games", sp(320.0)),
+        "sp-q640": ("games", sp(640.0)),
     }
 
 
