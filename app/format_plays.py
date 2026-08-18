@@ -323,10 +323,10 @@ MODEL_CONFIG: dict[str, list[tuple[str, str]]] = {
         ("Calibration error", "0.015 (2.5× better than the QB-blind fit)"),
     ],
     "mlb": [
-        ("Ratings", "Opponent-adjusted runs fit (scores ridge, λ=100 — lab "
-                    "Round 1) · sim σ 3.2 margin / 4.6 total"),
+        ("Ratings", "Starter decomposition (offense + bullpen + probable SP, "
+                    "λ=100/q=160 — lab Round 2) · sim σ 3.2 margin / 4.6 total"),
         ("Status", "Lab-gated vs 2025–26 closing lines (walk-forward, "
-                   "docs/MODEL_LAB.md MLB Round 1)"),
+                   "docs/MODEL_LAB.md MLB Rounds 1–2)"),
     ],
     "wnba": [
         ("Ratings", "Opponent-adjusted points fit (scores ridge λ=10, recency "

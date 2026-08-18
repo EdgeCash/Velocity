@@ -99,4 +99,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add datasets/
           git commit -m "Data: refresh current-season dataset rows"
+          # Rebase before pushing: a merge landing mid-run otherwise rejects
+          # the push and throws away the whole fetch (it happened).
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git push

@@ -73,3 +73,32 @@ def test_outs_parser() -> None:
     assert bp._outs("6.2") == 20.0
     assert bp._outs("0.1") == 1.0
     assert bp._outs(None) is None
+
+
+def _schedule_payload() -> dict:
+    return {"dates": [{"games": [
+        {"teams": {
+            "home": {"team": {"name": "Baltimore Orioles"},
+                     "probablePitcher": {"id": 2, "fullName": "Ace Starter"}},
+            "away": {"team": {"name": "New York Yankees"},
+                     "probablePitcher": {"id": 9, "fullName": "Road Starter"}},
+        }},
+        {"teams": {  # no probables announced yet
+            "home": {"team": {"name": "Athletics"}},
+            "away": {"team": {"name": "Seattle Mariners"}},
+        }},
+        {"teams": {  # doubleheader game 2 — same pair, different probable
+            "home": {"team": {"name": "Baltimore Orioles"},
+                     "probablePitcher": {"id": 55, "fullName": "Game Two Guy"}},
+            "away": {"team": {"name": "New York Yankees"},
+                     "probablePitcher": {"id": 56, "fullName": "Other Guy"}},
+        }},
+    ]}]}
+
+
+def test_extract_probables_keys_by_team_pair_first_game_wins() -> None:
+    lookup = bp.extract_probables(_schedule_payload())
+    assert lookup[("Baltimore Orioles", "New York Yankees", None)] == ("2", "9")
+    assert lookup[("Athletics", "Seattle Mariners", None)] == (None, None)
+    assert len(lookup) == 2  # the doubleheader repeat did not overwrite
+    assert bp.extract_probables({}) == {}

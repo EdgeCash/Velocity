@@ -26,6 +26,8 @@ from pathlib import Path
 import pandas as pd
 
 _BOX_URL = "https://statsapi.mlb.com/api/v1/game/{pk}/boxscore"
+_SCHED_URL = ("https://statsapi.mlb.com/api/v1/schedule?sportId=1"
+              "&startDate={start}&endDate={end}&hydrate=probablePitcher")
 _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) velocity-datasets"
 
 
@@ -88,6 +90,42 @@ def extract_starters(payload: dict, game_id: str) -> list[dict[str, object]]:
             })
             break  # one starter per side
     return rows
+
+
+def extract_probables(
+    payload: dict,
+) -> dict[tuple[str, str, None], tuple[str | None, str | None]]:
+    """Schedule payload → ``StarterAwareModel`` lookup keyed ``(home, away, None)``.
+
+    Probable pitchers are public pregame knowledge (the rest-spot argument).
+    The live slate prices by team pair without a kickoff, so a doubleheader's
+    two games share a key — the first listed game wins; the slate carries one
+    row per matchup either way. A side with no announced probable maps to
+    ``None`` and prices league-average.
+    """
+    lookup: dict[tuple[str, str, None], tuple[str | None, str | None]] = {}
+    for date in payload.get("dates") or []:
+        for game in date.get("games") or []:
+            teams = game.get("teams") or {}
+            home = ((teams.get("home") or {}).get("team") or {}).get("name")
+            away = ((teams.get("away") or {}).get("team") or {}).get("name")
+            if not home or not away:
+                continue
+            key = (str(home), str(away), None)
+            if key in lookup:
+                continue
+            hsp = ((teams.get("home") or {}).get("probablePitcher") or {}).get("id")
+            asp = ((teams.get("away") or {}).get("probablePitcher") or {}).get("id")
+            lookup[key] = (None if hsp is None else str(hsp),
+                           None if asp is None else str(asp))
+    return lookup
+
+
+def fetch_probables(
+    start: str, end: str
+) -> dict[tuple[str, str, None], tuple[str | None, str | None]]:  # pragma: no cover - network
+    """Probables for the [start, end] date window (YYYY-MM-DD, free statsapi)."""
+    return extract_probables(_get(_SCHED_URL.format(start=start, end=end)))
 
 
 def bank_starters(
