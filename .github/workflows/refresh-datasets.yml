@@ -23,6 +23,10 @@ on:
         description: "League to refresh (nfl, ncaaf, mlb, wnba, both = football, all)"
         required: false
         default: "all"
+      mlb_pitching:
+        description: "One-off: backfill the MLB starters dataset from statsapi box scores"
+        required: false
+        default: "false"
       inseason_seasons:
         description: "One-off: backfill MLB + WNBA games for this inclusive season range (e.g. '2024 2026')"
         required: false
@@ -57,7 +61,7 @@ jobs:
           pip install -e .
 
       - name: Refresh datasets
-        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' }}
+        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' && github.event.inputs.mlb_pitching != 'true' }}
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
@@ -66,6 +70,10 @@ jobs:
             ARGS="$ARGS --season ${{ github.event.inputs.season }}"
           fi
           python scripts/refresh_datasets.py $ARGS
+
+      - name: Backfill MLB starters
+        if: ${{ github.event.inputs.mlb_pitching == 'true' }}
+        run: python scripts/build_mlb_pitching.py
 
       - name: Backfill MLB + WNBA games
         if: ${{ github.event.inputs.inseason_seasons != '' }}

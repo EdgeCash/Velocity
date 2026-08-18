@@ -244,6 +244,17 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
         print(f"  {league}: no completed {season} games yet — nothing to refresh")
         return
     _refresh_file(path, fresh, season, f"{league} games")
+    if league == "mlb":
+        # Starters ride along (incremental — only unseen game ids are
+        # fetched). Best-effort: a statsapi hiccup never sinks the refresh.
+        starters = out / "starters.parquet"
+        if starters.exists():
+            try:
+                from build_mlb_pitching import bank_starters
+
+                bank_starters(path, starters)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  mlb starters top-up skipped ({exc})")
 
 
 def main() -> None:  # pragma: no cover - network orchestration

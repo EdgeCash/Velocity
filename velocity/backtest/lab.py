@@ -27,7 +27,7 @@ rate as a function of model-vs-close disagreement, per variant.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import numpy as np
@@ -458,6 +458,51 @@ def ncaaf_variants(
 # Summer-league calibration: (sd_margin, sd_total) for the sim, the margin
 # sigma for the market probit link, and the live ridge default (the promotion
 # bar each league's lab measures against).
+class BonusAdjustedModel:
+    """Situational point bonuses over any expected-points model, resimulated.
+
+    The generic sibling of the NFL rest/weather wrappers for models whose
+    ``project`` takes no bonus kwargs (the scores model): ask the inner model
+    for its expected points, apply ``bonus_fn(home, away, kickoff) →
+    (home_bonus, away_bonus)``, and simulate once with the shared config.
+    """
+
+    def __init__(
+        self,
+        inner: object,  # duck-typed: expected_points(home, away, neutral_site=...)
+        bonus_fn: Callable[[str, str, object], tuple[float, float]],
+        sim: SimConfig,
+    ) -> None:
+        self.inner = inner
+        self.bonus_fn = bonus_fn
+        self.sim = sim
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: np.random.Generator | None = None,
+        kickoff: object = None,
+    ) -> object:
+        from velocity.models.game_nfl import GameProjection
+        from velocity.models.simulate import simulate_game
+        from velocity.util.seed import make_rng
+
+        mu_home, mu_away = self.inner.expected_points(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site
+        )
+        home_bonus, away_bonus = self.bonus_fn(home_team, away_team, kickoff)
+        mu_home += home_bonus
+        mu_away += away_bonus
+        rng = rng if rng is not None else make_rng()
+        sim = simulate_game(mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away,
+                            rng=rng, config=self.sim)
+        return GameProjection(home_team=home_team, away_team=away_team,
+                              mu_home=mu_home, mu_away=mu_away, sim=sim)
+
+
 INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
     "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 5.0},
     "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
@@ -514,7 +559,216 @@ def inseason_variants(
         "recency-4": ("games", recency(4.0, live_ridge)),
         "recency-8": ("games", recency(8.0, live_ridge)),
     })
+
+    def park(shrink_games: float = 40.0) -> VariantFactory:
+        # Park factors, self-calibrated from the training slice only: each
+        # home venue's mean total residual vs the league, shrunk toward zero,
+        # split half per side. No hand-curated table to be wrong about.
+        def factory(train: pd.DataFrame) -> BonusAdjustedModel:
+            inner = _model(fit_scores_ratings(train, ridge_lambda=live_ridge))
+            played = train.dropna(subset=["home_score", "away_score"])
+            totals = played["home_score"] + played["away_score"]
+            league = float(totals.mean())
+            bonus: dict[str, float] = {}
+            for team, group in totals.groupby(played["home_team"]):
+                n = len(group)
+                bonus[str(team)] = (
+                    (float(group.mean()) - league) * n / (n + shrink_games) / 2.0
+                )
+
+            def park_bonus(home: str, away: str, kickoff: object) -> tuple[float, float]:
+                half = bonus.get(home, 0.0)
+                return half, half  # symmetric: parks move totals, not margins
+
+            return BonusAdjustedModel(inner, park_bonus, sim)
+
+        return factory
+
+    def b2b(penalty: float) -> VariantFactory:
+        # WNBA schedule congestion: a team playing the second night of a
+        # back-to-back scores fewer points. Kickoffs are public schedule
+        # knowledge (the rest-spot argument), read from the training slice
+        # plus the predicted game's own kickoff via the engine's pass-through.
+        def factory(train: pd.DataFrame) -> BonusAdjustedModel:
+            inner = _model(fit_scores_ratings(train, ridge_lambda=live_ridge))
+            sched = train.dropna(subset=["kickoff"])
+            long = pd.concat([
+                sched[["home_team", "kickoff"]].rename(columns={"home_team": "team"}),
+                sched[["away_team", "kickoff"]].rename(columns={"away_team": "team"}),
+            ], ignore_index=True)
+            by_team = {
+                str(team): pd.to_datetime(group["kickoff"]).sort_values().to_numpy()
+                for team, group in long.groupby("team")
+            }
+
+            def tired(team: str, when: object) -> bool:
+                played = by_team.get(team)
+                if played is None or when is None or pd.isna(when):  # type: ignore[call-overload]
+                    return False
+                ts = pd.Timestamp(when).to_datetime64()  # type: ignore[arg-type]
+                prior = played[played < ts]
+                if len(prior) == 0:
+                    return False
+                rest_days = (ts - prior[-1]) / np.timedelta64(1, "D")
+                return bool(rest_days <= 1.3)  # second night of a back-to-back
+
+            def rest_bonus(home: str, away: str, kickoff: object) -> tuple[float, float]:
+                return (
+                    -penalty if tired(home, kickoff) else 0.0,
+                    -penalty if tired(away, kickoff) else 0.0,
+                )
+
+            return BonusAdjustedModel(inner, rest_bonus, sim)
+
+        return factory
+
+    if league == "mlb":
+        variants["park-fit"] = ("games", park())
+    else:
+        variants.update({
+            "b2b-2": ("games", b2b(2.0)),
+            "b2b-3.5": ("games", b2b(3.5)),
+        })
     return variants
+
+
+def mlb_starter_frame(games: pd.DataFrame, starters: pd.DataFrame) -> pd.DataFrame:
+    """Games + banked starters → the frame the QB machinery fits as an SP model.
+
+    Two rows per game — (batting team, pitching team, runs scored) — with
+    ``passer_player_id`` set to the **opposing starter**, so
+    :func:`~velocity.features.team.fit_qb_ratings` decomposes::
+
+        runs = intercept + offense[bat] + bullpen_defense[field] + starter[SP]
+
+    The starter dummy's coefficient is his runs-allowed impact (negative =
+    good). Games missing a banked starter still contribute their team terms;
+    the SP dummy simply doesn't fire.
+    """
+    st = starters.drop_duplicates(subset=["game_id", "side"]).pivot(
+        index="game_id", columns="side", values="starter_id"
+    )
+    merged = games.merge(
+        st.rename(columns={"home": "_home_sp", "away": "_away_sp"}),
+        left_on="game_id", right_index=True, how="left",
+    )
+    rows = []
+    for g in merged.to_dict("records"):
+        for bat, field, runs, sp in (
+            (g["home_team"], g["away_team"], g["home_score"], g.get("_away_sp")),
+            (g["away_team"], g["home_team"], g["away_score"], g.get("_home_sp")),
+        ):
+            rows.append({
+                "game_id": g["game_id"], "season": g["season"], "week": g["week"],
+                "posteam": bat, "defteam": field, "epa": runs,
+                # Every row "is a pass": pass_rate = 1.0, so the starter
+                # effect applies at full weight in matchup_delta.
+                "play_type": "pass",
+                "passer_player_id": None if pd.isna(sp) else str(sp),
+            })
+    return pd.DataFrame(rows)
+
+
+class StarterAwareModel:
+    """Price MLB matchups with the game's actual starters (probables) plugged in.
+
+    ``lookup`` maps ``(home, away, kickoff)`` to the game's (home starter,
+    away starter) ids — probables are public pregame knowledge, so reading the
+    evaluated game's starters is the rest-spot argument, not leakage. A game
+    outside the lookup prices starter-neutral (league-average SP).
+    """
+
+    def __init__(
+        self,
+        ratings: object,  # QBTeamRatings duck-typed via matchup_delta(off, def, qb_id)
+        lookup: Mapping[tuple[str, str, object], tuple[str | None, str | None]],
+        sim: SimConfig,
+        *,
+        hfa_points: float = 0.15,
+    ) -> None:
+        self.ratings = ratings
+        self.lookup = lookup
+        self.sim = sim
+        self.hfa_points = hfa_points
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: np.random.Generator | None = None,
+        kickoff: object = None,
+    ) -> object:
+        from velocity.models.game_nfl import GameProjection
+        from velocity.models.simulate import simulate_game
+        from velocity.util.seed import make_rng
+
+        key = (home_team, away_team, None if kickoff is None else pd.Timestamp(kickoff))  # type: ignore[arg-type]
+        home_sp, away_sp = self.lookup.get(key, (None, None))
+        base = float(getattr(self.ratings, "league_epa", 4.4))
+        mu_home = base + self.ratings.matchup_delta(  # type: ignore[attr-defined]
+            home_team, away_team, qb_id=away_sp
+        )
+        mu_away = base + self.ratings.matchup_delta(  # type: ignore[attr-defined]
+            away_team, home_team, qb_id=home_sp
+        )
+        if not neutral_site:
+            mu_home += self.hfa_points / 2.0
+            mu_away -= self.hfa_points / 2.0
+        rng = rng if rng is not None else make_rng()
+        sim = simulate_game(mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away,
+                            rng=rng, config=self.sim)
+        return GameProjection(home_team=home_team, away_team=away_team,
+                              mu_home=mu_home, mu_away=mu_away, sim=sim)
+
+
+def mlb_sp_variants(
+    n_sims: int, games: pd.DataFrame, starters: pd.DataFrame
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The starter-decomposition slate — the market's dominant MLB factor.
+
+    Each variant fits :func:`~velocity.features.team.fit_qb_ratings` on the
+    games-long frame (:func:`mlb_starter_frame` of the training slice) and
+    prices through :class:`StarterAwareModel` with the evaluated game's
+    starters. ``min_dropbacks`` is starts here: a 6-start sample prices as
+    his shrunk self, fewer prices league-average.
+    """
+    from velocity.features.team import fit_qb_ratings
+
+    cal = INSEASON_CALIBRATION["mlb"]
+    sim = SimConfig(sd_margin=cal["sd_margin"], sd_total=cal["sd_total"],
+                    n_sims=n_sims)
+    kick = pd.to_datetime(games["kickoff"])
+    lookup_frame = games.merge(
+        starters.drop_duplicates(subset=["game_id", "side"]).pivot(
+            index="game_id", columns="side", values="starter_id"
+        ).rename(columns={"home": "_hsp", "away": "_asp"}),
+        left_on="game_id", right_index=True, how="left",
+    )
+    lookup: dict[tuple[str, str, object], tuple[str | None, str | None]] = {
+        (str(g["home_team"]), str(g["away_team"]), pd.Timestamp(k)):
+            (None if pd.isna(g.get("_hsp")) else str(g["_hsp"]),
+             None if pd.isna(g.get("_asp")) else str(g["_asp"]))
+        for g, k in zip(lookup_frame.to_dict("records"), kick, strict=True)
+    }
+
+    def sp(qb_lambda: float) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> StarterAwareModel:
+            frame = mlb_starter_frame(train, starters)
+            ratings = fit_qb_ratings(
+                frame, ridge_lambda=cal["ridge"], qb_lambda=qb_lambda,
+                min_dropbacks=6,
+            )
+            return StarterAwareModel(ratings, lookup, sim)
+
+        return factory
+
+    return {
+        "sp-q5": ("games", sp(5.0)),
+        "sp-q15": ("games", sp(15.0)),
+        "sp-q40": ("games", sp(40.0)),
+    }
 
 
 class RestAdjustedModel:

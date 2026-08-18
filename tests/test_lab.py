@@ -378,3 +378,110 @@ def test_blended_model_is_the_linear_blend_of_its_parts() -> None:
     assert proj.mu_margin == pytest.approx(mu[0] - mu[1])
     with pytest.raises(ValueError):
         BlendedGameModel(a, b, 1.5, sim)
+
+
+def _mlb_games(n: int = 30) -> pd.DataFrame:
+    rng = np.random.default_rng(4)
+    rows = []
+    for i in range(n):
+        # B hosts A half the time; ace (SP9) starts A's even games.
+        home, away = ("A", "B") if i % 2 else ("B", "A")
+        rows.append({
+            "game_id": f"m{i}", "season": 2026, "week": 1 + i // 4,
+            "home_team": home, "away_team": away,
+            "home_score": float(rng.poisson(4.5)), "away_score": float(rng.poisson(4.2)),
+            "neutral_site": False,
+            "kickoff": pd.Timestamp("2026-06-01") + pd.Timedelta(days=i),
+        })
+    return pd.DataFrame(rows)
+
+
+def _mlb_starters(games: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for i, g in enumerate(games.to_dict("records")):
+        for side, team in (("home", g["home_team"]), ("away", g["away_team"])):
+            sp = "SP9" if (team == "A" and i % 2 == 0) else f"SP-{team}"
+            rows.append({"game_id": g["game_id"], "team": team, "side": side,
+                         "starter_id": sp, "starter_name": sp})
+    return pd.DataFrame(rows)
+
+
+def test_mlb_starter_frame_attaches_opposing_starter() -> None:
+    from velocity.backtest.lab import mlb_starter_frame
+
+    games = _mlb_games(2)
+    frame = mlb_starter_frame(games, _mlb_starters(games))
+    assert len(frame) == 4
+    g0 = games.iloc[0]
+    home_row = frame[(frame["game_id"] == g0["game_id"])
+                     & (frame["posteam"] == g0["home_team"])].iloc[0]
+    away_starters = _mlb_starters(games)
+    expected = away_starters[(away_starters["game_id"] == g0["game_id"])
+                             & (away_starters["side"] == "away")]["starter_id"].iloc[0]
+    assert home_row["passer_player_id"] == expected  # batting vs the AWAY starter
+    assert home_row["epa"] == g0["home_score"]
+
+
+def test_starter_aware_model_prices_the_probable() -> None:
+    from velocity.backtest.lab import StarterAwareModel
+    from velocity.models.simulate import SimConfig
+
+    class Ratings:
+        league_epa = 4.4
+
+        def matchup_delta(self, off, deft, qb_id=None):
+            return (-0.8 if qb_id == "ACE" else 0.0)
+
+    kick = pd.Timestamp("2026-08-18 23:00")
+    lookup = {("H", "A", kick): ("ACE", None)}
+    model = StarterAwareModel(Ratings(), lookup, SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=64))
+    with_ace = model.project("H", "A", kickoff=kick)
+    # The away offense faces the ACE → its mu drops by 0.8.
+    assert with_ace.mu_away == pytest.approx(4.4 - 0.8 - 0.075)
+    unknown = model.project("H", "A", kickoff=None)  # outside the lookup
+    assert unknown.mu_away == pytest.approx(4.4 - 0.075)
+
+
+def test_bonus_adjusted_model_applies_bonuses() -> None:
+    from velocity.backtest.lab import BonusAdjustedModel
+    from velocity.models.simulate import SimConfig
+
+    class Inner:
+        def expected_points(self, home, away, *, neutral_site=False):
+            return 80.0, 78.0
+
+    model = BonusAdjustedModel(
+        Inner(), lambda h, a, k: (0.0, -3.5),
+        SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=64),
+    )
+    proj = model.project("H", "A", kickoff=pd.Timestamp("2026-08-18"))
+    assert (proj.mu_home, proj.mu_away) == (80.0, 74.5)
+
+
+def test_inseason_situational_variants_price() -> None:
+    from velocity.backtest.lab import inseason_variants, mlb_sp_variants
+
+    mlb = inseason_variants("mlb", 64)
+    assert "park-fit" in mlb and "b2b-2" not in mlb
+    games = _mlb_games()
+    park_model = mlb["park-fit"][1](games)
+    assert park_model.project("A", "B").mu_total > 0
+
+    wnba = inseason_variants("wnba", 64)
+    assert "b2b-3.5" in wnba and "park-fit" not in wnba
+    # Back-to-back: same team played the previous night → penalized mu.
+    w_games = _mlb_games().assign(
+        home_score=lambda d: d.home_score + 75, away_score=lambda d: d.away_score + 75
+    )
+    b2b_model = wnba["b2b-3.5"][1](w_games)
+    last_kick = w_games["kickoff"].max()
+    fresh = b2b_model.project("A", "B", kickoff=last_kick + pd.Timedelta(days=10))
+    tired = b2b_model.project("A", "B", kickoff=last_kick + pd.Timedelta(days=1))
+    assert tired.mu_total == pytest.approx(fresh.mu_total - 7.0, abs=1e-6)
+
+    sp = mlb_sp_variants(64, games, _mlb_starters(games))
+    assert set(sp) == {"sp-q5", "sp-q15", "sp-q40"}
+    model = sp["sp-q15"][1](games)
+    proj = model.project(games.iloc[0]["home_team"], games.iloc[0]["away_team"],
+                         kickoff=games.iloc[0]["kickoff"])
+    assert 5 < proj.mu_total < 14
