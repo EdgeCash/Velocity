@@ -141,3 +141,40 @@ def test_mlb_suspended_game_dedupes_to_the_completion_row() -> None:
     games = normalize_mlb_schedule(payload, season=2026)
     assert list(games["game_id"]) == ["745180"]
     assert games.iloc[0]["away_score"] == 3.0  # the completion row won
+
+
+def test_mlb_franchise_filter_and_athletics_rename() -> None:
+    # Live backfill lesson: statsapi's schedule carries WBC friendlies,
+    # All-Star sides, spring split-squads vs minor-league clubs — and 2024's
+    # "Oakland Athletics" naming. Only the 30 clubs enter, renamed for
+    # franchise continuity, and spring (PRE) results never inform ratings.
+    def _game(pk, gtype, home, away):
+        return {"gamePk": pk, "gameType": gtype,
+                "gameDate": "2024-06-01T23:00:00Z",
+                "status": {"abstractGameState": "Final"},
+                "teams": {"away": {"score": 1, "team": {"id": 1, "name": away}},
+                          "home": {"score": 2, "team": {"id": 2, "name": home}}}}
+
+    payload = {"dates": [{"date": "2024-06-01", "games": [
+        _game(1, "R", "Oakland Athletics", "Seattle Mariners"),
+        _game(2, "R", "American League All-Stars", "National League All-Stars"),
+        _game(3, "E", "Dominican Republic", "Boston Red Sox"),
+        _game(4, "S", "Boston Red Sox", "Tampa Bay Rays"),  # spring → excluded
+        _game(5, "R", "Sacramento River Cats", "Athletics"),  # minor-league opp
+    ]}]}
+    games = normalize_mlb_schedule(payload, season=2024)
+    assert list(games["game_id"]) == ["1"]
+    assert games.iloc[0]["home_team"] == "Athletics"  # renamed for continuity
+
+
+def test_wehoop_franchise_filter_drops_allstar_sides() -> None:
+    frame = _wehoop_frame()
+    extra = frame.iloc[[0]].copy()
+    extra["game_id"] = 999
+    extra["home_display_name"] = "TEAM CLARK"
+    extra["away_display_name"] = "TEAM COLLIER"
+    games = normalize_wehoop_schedule(
+        pd.concat([frame, extra], ignore_index=True), season=2026
+    )
+    assert "999" not in set(games["game_id"])
+    assert set(games["game_id"]) == {"401736001", "401736003"}

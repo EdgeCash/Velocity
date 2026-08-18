@@ -31,6 +31,9 @@ _MLB_SEASON_TYPES = {
     "S": "PRE", "E": "PRE", "A": "PRE",
     "F": "POST", "D": "POST", "L": "POST", "W": "POST", "P": "POST",
 }
+# The franchise moved city-less in 2025; statsapi's 2024 rows still say
+# "Oakland Athletics" — one club, one rating.
+_MLB_RENAMES = {"Oakland Athletics": "Athletics"}
 # ESPN season.type → canonical.
 _ESPN_SEASON_TYPES = {1: "PRE", 2: "REG", 3: "POST"}
 
@@ -45,7 +48,15 @@ def normalize_mlb_schedule(payload: Any, season: int) -> pd.DataFrame:
 
     Tolerant: rows missing a game id, either team, or final scores are
     skipped, never guessed; unfamiliar game types are treated as REG.
+
+    Two honesty filters (both bit us on the first live backfill): spring
+    training (PRE) is excluded — split squads, WBC national teams and
+    minor-league exhibitions are projection noise — and only the 30 clubs in
+    the identity table join the frame, so an All-Star game or a Dominican
+    Republic friendly can never leak a phantom team into the ratings.
     """
+    from velocity.report.league_identity import MLB_IDENTITY
+
     rows: list[dict[str, object]] = []
     for date in (payload or {}).get("dates", []):
         for game in date.get("games", []):
@@ -61,6 +72,15 @@ def normalize_mlb_schedule(payload: Any, season: int) -> pd.DataFrame:
                 or home.get("score") is None or away.get("score") is None
             ):
                 continue
+            season_type = _MLB_SEASON_TYPES.get(str(game.get("gameType")), "REG")
+            home_name = _MLB_RENAMES.get(str(home_name), str(home_name))
+            away_name = _MLB_RENAMES.get(str(away_name), str(away_name))
+            if (
+                season_type == "PRE"
+                or home_name not in MLB_IDENTITY
+                or away_name not in MLB_IDENTITY
+            ):
+                continue
             kickoff = pd.to_datetime(game.get("gameDate"), errors="coerce", utc=True)
             if pd.isna(kickoff):
                 continue
@@ -70,10 +90,10 @@ def normalize_mlb_schedule(payload: Any, season: int) -> pd.DataFrame:
                 "league": "mlb",
                 "season": season,
                 "week": _season_week(kickoff),
-                "season_type": _MLB_SEASON_TYPES.get(str(game.get("gameType")), "REG"),
+                "season_type": season_type,
                 "kickoff": kickoff,
-                "home_team": str(home_name),
-                "away_team": str(away_name),
+                "home_team": home_name,
+                "away_team": away_name,
                 "neutral_site": False,
                 "roof": None,
                 "surface": None,
@@ -103,12 +123,18 @@ def normalize_wehoop_schedule(raw: pd.DataFrame, season: int) -> pd.DataFrame:
     """
     if raw is None or raw.empty:
         return pd.DataFrame()
+    from velocity.report.league_identity import WNBA_IDENTITY
+
     rows: list[dict[str, object]] = []
     for g in raw.to_dict("records"):
         if not g.get("status_type_completed"):
             continue
         home, away = g.get("home_display_name"), g.get("away_display_name")
         if g.get("game_id") is None or not home or not away:
+            continue
+        # Franchises only: All-Star sides ("TEAM CLARK") and Team USA
+        # exhibitions ride the same schedule file — never the ratings.
+        if str(home) not in WNBA_IDENTITY or str(away) not in WNBA_IDENTITY:
             continue
         kickoff = pd.to_datetime(
             g.get("game_date_time"), errors="coerce", utc=True  # type: ignore[call-overload]
