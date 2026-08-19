@@ -5,9 +5,10 @@ whichever league's slate is freshest — August opens on MLB, October on NFL,
 no hand-kept calendar. A metrics strip orients first (games today, plays,
 yesterday, season units); four tabs carry the detail:
 
-* **Board** — the plays table ranked by edge, then one matchup card per game
-  (teams, kickoff, win probabilities, projected score, fair total/line, and
-  that game's plays).
+* **Board** — the day's picks across EVERY league, grouped under section
+  headers (the reference-site board), then the selected league's matchup
+  panels: win-probability split bar, kickoff strip, projected score, fair
+  total/line, and that game's plays.
 * **Pick'em** — the slip-EV board: ranked slips (book-fair marginals ×
   model correlation) and the qualifying legs behind them.
 * **Cards** — the day's graphics grouped in collapsible sections, each
@@ -103,6 +104,28 @@ h1, h2, h3, h4 { color: #f2f5f7 !important; letter-spacing: 0.04em; }
           margin: 3px 6px 3px 0; font-size: 14px; font-weight: 600; }
 .v-win-row { color: #22c55e; } .v-loss-row { color: #ef4444; }
 .v-push-row, .v-pending-row { color: #7d8894; }
+.bs-good { color: #22c55e !important; } .bs-mid { color: #fbbf24 !important; }
+.bs-bad { color: #ef4444 !important; }
+.bs-strip { background: #14808c; color: #eafcfb; border-radius: 6px;
+            padding: 6px 12px; font-size: 11.5px; letter-spacing: 0.08em;
+            text-transform: uppercase; display: flex; gap: 18px;
+            flex-wrap: wrap; margin: 10px 0 6px; }
+.bs-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+          margin: 10px 0 0; }
+.bs-bar-away { background: #2a6f68; } .bs-bar-home { background: #3ddad0; }
+.bs-grid { display: grid; gap: 14px;
+           grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.bs-card { background: #10151c; border: 1px solid #1d2430;
+           border-radius: 12px; padding: 14px 16px; }
+.bs-badge { display: inline-flex; align-items: center; justify-content: center;
+            background: #0d2f2c; color: #4ade80; border: 1.5px solid #16a34a;
+            border-radius: 10px; font-size: 22px; font-weight: 800;
+            padding: 5px 12px; min-width: 54px; }
+.bs-badge-dim { border-color: #1d2430; color: #e8edf2; background: #141b24; }
+.bs-label { color: #7d8894; font-size: 10px; letter-spacing: 0.14em;
+            text-transform: uppercase; }
+.bs-val { color: #e8edf2; font-size: 15px; font-weight: 700; }
+.bs-cardrow { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 10px; }
 </style>
 """
 
@@ -229,26 +252,53 @@ def _metrics_row(
     d.metric("Season", season, delta=season_rec, delta_color="off")
 
 
-def _render_plays(view: pd.DataFrame, league: str) -> None:
-    if view.empty:
-        st.info("No plays cleared the edge threshold in the latest slate.")
-        return
+def _edge_cell(value: object) -> str:
+    """Edge as a color-coded cell — green when it clears 10%, amber past 5%."""
+    if value is None or pd.isna(value):
+        return "<span class='v-dim'>—</span>"
+    v = float(value)
+    klass = "bs-good" if v >= 0.10 else ("bs-mid" if v >= 0.05 else "")
+    return f"<span class='{klass}'>+{v:.1%}</span>"
 
-    def _edge_cell(value: object) -> str:
-        if value is None or pd.isna(value):
-            return "<span class='v-dim'>—</span>"
-        return f"+{float(value):.1%}"
 
-    rows = "".join(
-        f"<tr><td>{r['matchup']}</td><td class='v-play'>{r['play']}</td>"
-        f"<td>{_edge_cell(r.get('edge'))}</td></tr>"
-        for r in view.to_dict("records")
+def _render_plays_board(folder: Path) -> None:
+    """The day's picks across EVERY league, grouped under teal section
+    headers — the reference-site board: one place answers "what's the play
+    today", whatever is in season. Leagues with a slate but nothing clearing
+    say so; leagues with no slate at all say that instead.
+    """
+    freshness = league_freshness(folder)
+    chunks: list[str] = []
+    total = 0
+    for league in LEAGUES:
+        chunks.append(
+            f"<tr><td colspan='3' class='v-league'>{_LEAGUE_LABELS[league]}</td></tr>"
+        )
+        if not freshness.get(league):
+            chunks.append("<tr><td colspan='3' class='v-dim'>No slate</td></tr>")
+            continue
+        frames = load_slate_frames(folder, league)
+        view = plays_table(
+            frames["plays"], frames["props"], frames["parlays"],
+            frames["games_map"], league,
+        )
+        if view.empty:
+            chunks.append("<tr><td colspan='3' class='v-dim'>No plays</td></tr>")
+            continue
+        total += len(view)
+        chunks.append("".join(
+            f"<tr><td>{r['matchup']}</td><td class='v-play'>{r['play']}</td>"
+            f"<td>{_edge_cell(r.get('edge'))}</td></tr>"
+            for r in view.to_dict("records")
+        ))
+    st.caption(
+        "All leagues, ranked inside each by the model's edge over the "
+        "devigged fair probability."
     )
-    st.caption("Ranked by the model's edge over the devigged fair probability.")
     st.markdown(
         "<table class='v-table'>"
         "<tr><th>Matchup</th><th>Play</th><th>Edge</th></tr>"
-        f"<tr><td colspan='3' class='v-league'>{_LEAGUE_LABELS[league]}</td></tr>{rows}</table>",
+        f"{''.join(chunks)}</table>",
         unsafe_allow_html=True,
     )
 
@@ -278,6 +328,19 @@ def _render_card(card: dict) -> None:
         f"<div><div class='v-num-label'>{label}</div><div class='v-num'>{value}</div></div>"
         for label, value in nums
     )
+    bar = ""
+    if p_home is not None:
+        away_w = max(3.0, min(97.0, (1.0 - float(p_home)) * 100.0))
+        bar = (
+            f"<div class='bs-bar'><div class='bs-bar-away' "
+            f"style='width:{away_w:.0f}%'></div><div class='bs-bar-home' "
+            f"style='width:{100 - away_w:.0f}%'></div></div>"
+        )
+    strip_bits = [b for b in (when,) if b]
+    strip = (
+        f"<div class='bs-strip'>{''.join(f'<span>{b}</span>' for b in strip_bits)}</div>"
+        if strip_bits else ""
+    )
     st.markdown(
         f"""<div class='v-card'>
 <div class='v-card-head'>
@@ -287,7 +350,8 @@ def _render_card(card: dict) -> None:
   <span class='v-team'><span class='v-win'>{_fmt_pct(p_home)}</span>
     {card['home']}</span>
 </div>
-<div class='v-strip'>{when}</div>
+{bar}
+{strip}
 <div class='v-nums'>{nums_html}</div>
 <div>{plays}</div>
 </div>""",
@@ -296,14 +360,18 @@ def _render_card(card: dict) -> None:
 
 
 def _render_board(
-    view: pd.DataFrame, frames: dict[str, pd.DataFrame | None], league: str
+    view: pd.DataFrame,
+    frames: dict[str, pd.DataFrame | None],
+    league: str,
+    folder: Path,
 ) -> None:
-    """The consumer surface, in reading order: what to bet, then each game."""
-    _render_plays(view, league)
+    """The consumer surface, in reading order: every league's picks first,
+    then the selected league's game-by-game panels."""
+    _render_plays_board(folder)
     cards = matchup_cards(frames["projections"], frames["games_map"], view, league)
     if not cards:
         return
-    st.markdown("#### Matchups")
+    st.markdown(f"#### {_LEAGUE_LABELS[league]} matchups")
     for card in cards:
         _render_card(card)
 
@@ -349,21 +417,34 @@ def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> Non
         st.info("No slip cleared the EV floor today — that is a result, not a bug.")
     if legs is not None and not legs.empty:
         st.markdown("#### Qualifying legs")
-        rows = "".join(
-            f"<tr><td>{r['player']}</td>"
-            f"<td class='v-play'>{r['side']} {float(r['line']):g}</td>"
-            f"<td>{r['market']}</td>"
-            f"<td>{float(r['p_book']):.0%}</td>"
-            f"<td class='v-dim'>{float(r['p_model']):.0%}</td></tr>"
-            for r in legs.to_dict("records")
-        )
-        st.markdown(
-            "<table class='v-table'>"
-            "<tr><th>Player</th><th>Pick</th><th>Market</th>"
-            "<th>Fair %</th><th>Model %</th></tr>"
-            f"{rows}</table>",
-            unsafe_allow_html=True,
-        )
+        power2 = PICKEM_BREAKEVENS["power-2"]
+
+        def _leg_card(r: dict) -> str:
+            p_book, p_model = float(r["p_book"]), float(r["p_model"])
+            # The badge is the book-fair hit probability — green once it
+            # clears the strictest (power-2) breakeven, dim otherwise.
+            badge_class = "bs-badge" if p_book >= power2 else "bs-badge bs-badge-dim"
+            model_class = "bs-good" if p_model >= p_book else "v-dim"
+            return (
+                "<div class='bs-card'>"
+                "<div style='display:flex;gap:12px;align-items:center'>"
+                f"<span class='{badge_class}'>{p_book:.0%}</span>"
+                f"<div><div class='bs-val'>{r['player']}</div>"
+                f"<div class='v-play'>{r['side']} {float(r['line']):g} · "
+                f"{r['market']}</div></div></div>"
+                "<div class='bs-cardrow'>"
+                f"<div><div class='bs-label'>Fair</div>"
+                f"<div class='bs-val'>{p_book:.0%}</div></div>"
+                f"<div><div class='bs-label'>Model</div>"
+                f"<div class='bs-val {model_class}'>{p_model:.0%}</div></div>"
+                f"<div><div class='bs-label'>Needs</div>"
+                f"<div class='bs-val v-dim'>{power2:.0%}</div></div>"
+                "</div></div>"
+            )
+
+        cards_html = "".join(_leg_card(r) for r in legs.to_dict("records"))
+        st.markdown(f"<div class='bs-grid'>{cards_html}</div>",
+                    unsafe_allow_html=True)
 
 
 def _render_model(league: str, frames: dict[str, pd.DataFrame | None]) -> None:
@@ -557,7 +638,7 @@ def main() -> None:
         ["Board", "Pick'em", "Cards", "Performance"]
     )
     with tab_board:
-        _render_board(view, frames, league)
+        _render_board(view, frames, league, folder)
     with tab_pickem:
         _render_pickem(frames.get("pickem"), frames.get("pickem_legs"))
     with tab_cards:
