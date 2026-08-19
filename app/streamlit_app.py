@@ -1,21 +1,21 @@
 """MatchUp Labs app — the day's slate as a dark, readable board.
 
-Six tabs over the live-slate workflow's persisted artifacts:
+One global **league switcher** (sidebar) drives every view, defaulting to
+whichever league's slate is freshest — August opens on MLB, October on NFL,
+no hand-kept calendar. A metrics strip orients first (games today, plays,
+yesterday, season units); four tabs carry the detail:
 
-* **Cards** — the day's graphics: model cards, Sim Checks, and the record
-  card, each viewable and downloadable, with the caption copy alongside. This
-  is the posting workflow on a phone.
-* **Plays** — the reference-style two-column board: matchup on the left, the
-  play in accent teal on the right ("Kansas City ML -145", "Allen O249.5
-  PASS YDS +105"), games → props → parlays.
-* **Matchups** — one card per game: teams, kickoff, win probabilities,
-  projected score, fair total/line — and that game's plays.
+* **Board** — the plays table ranked by edge, then one matchup card per game
+  (teams, kickoff, win probabilities, projected score, fair total/line, and
+  that game's plays).
 * **Pick'em** — the slip-EV board: ranked slips (book-fair marginals ×
   model correlation) and the qualifying legs behind them.
-* **Model** — the transparency surface: what's live per league (the
-  promoted fits, curated from docs/MODEL_LAB.md) and the season-to-date
-  record from the cumulative grading chain.
-* **Record** — yesterday's graded plays (the same record the email leads with).
+* **Cards** — the day's graphics grouped in collapsible sections, each
+  viewable and downloadable with the caption copy alongside. This is the
+  posting workflow on a phone.
+* **Performance** — yesterday's graded plays, the season-to-date record by
+  section, and the transparency block: exactly what model is live for the
+  league (curated from docs/MODEL_LAB.md at promotion time).
 
 Data comes from the newest ``slate-*`` GitHub Actions artifact (the runner's
 parquets), fetched with a token from Streamlit secrets — the paid-odds data
@@ -43,23 +43,38 @@ import streamlit as st
 # `streamlit run` puts the script dir on sys.path; test harnesses don't.
 sys.path.insert(0, str(Path(__file__).parent))
 from format_plays import (  # noqa: E402
+    LEAGUES,
     MODEL_CONFIG,
     PICKEM_BREAKEVENS,
     card_images,
+    default_league,
+    league_freshness,
     load_slate_frames,
     matchup_cards,
     plays_table,
     season_summary,
+    stamp_time,
 )
 
-st.set_page_config(page_title="MatchUp Labs — Plays", page_icon="🏈", layout="centered")
+st.set_page_config(
+    page_title="MatchUp Labs",
+    page_icon="🏈",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
 
 _API = "https://api.github.com"
 _ACCENT = "#3ddad0"
+_LEAGUE_LABELS = {"nfl": "NFL", "ncaaf": "NCAAF", "mlb": "MLB", "wnba": "WNBA"}
 _CSS = """
 <style>
 .stApp { background: #0a0e13; }
-h1, h2, h3 { color: #f2f5f7 !important; letter-spacing: 0.04em; }
+[data-testid="stSidebar"] { background: #0d1218; border-right: 1px solid #1d2430; }
+h1, h2, h3, h4 { color: #f2f5f7 !important; letter-spacing: 0.04em; }
+[data-testid="stMetric"] { background: #10151c; border: 1px solid #1d2430;
+                           border-radius: 10px; padding: 10px 12px; }
+[data-testid="stMetricLabel"] { color: #7d8894 !important; }
+[data-testid="stMetricValue"] { color: #f2f5f7 !important; font-size: 22px !important; }
 .v-table { width: 100%; border-collapse: collapse; background: #10151c;
            border-radius: 10px; overflow: hidden; }
 .v-table th { color: #7d8894; font-size: 12px; letter-spacing: 0.12em;
@@ -67,6 +82,7 @@ h1, h2, h3 { color: #f2f5f7 !important; letter-spacing: 0.04em; }
               border-bottom: 1px solid #1d2430; }
 .v-table td { padding: 13px 14px; border-bottom: 1px solid #1d2430;
               font-size: 16px; color: #e8edf2; }
+.v-table tr:hover td { background: #141b24; }
 .v-league { text-align: center !important; color: #3ddad0 !important;
             font-size: 12px; letter-spacing: 0.25em; font-weight: 700; }
 .v-play { color: #3ddad0; font-weight: 600; }
@@ -75,9 +91,8 @@ h1, h2, h3 { color: #f2f5f7 !important; letter-spacing: 0.04em; }
           padding: 14px 16px; margin-bottom: 14px; }
 .v-card-head { display: flex; justify-content: space-between; align-items: baseline; }
 .v-team { color: #f2f5f7; font-size: 19px; font-weight: 700; }
-.v-strip { background: #14808c; color: #eafcfb; border-radius: 6px;
-           padding: 5px 10px; font-size: 12px; letter-spacing: 0.06em;
-           margin: 10px 0; display: flex; gap: 18px; flex-wrap: wrap; }
+.v-strip { color: #7d8894; font-size: 12px; letter-spacing: 0.08em;
+           text-transform: uppercase; margin: 8px 0 2px; }
 .v-nums { display: flex; gap: 22px; flex-wrap: wrap; margin: 8px 0; }
 .v-num-label { color: #7d8894; font-size: 11px; letter-spacing: 0.12em;
                text-transform: uppercase; }
@@ -144,10 +159,77 @@ def _fmt_pct(value: object) -> str:
 
 
 def _fmt_num(value: object) -> str:
-    return "—" if value is None or pd.isna(value) else f"{float(value):g}"
+    if value is None or pd.isna(value):
+        return "—"
+    v = float(value)
+    return f"{0.0 if v == 0 else v:g}"  # never the "-0" artifact
 
 
-def _render_plays(view: pd.DataFrame) -> None:
+def _sidebar(folder: Path) -> str:
+    """Brand, the global league switcher, freshness, and a manual refresh."""
+    freshness = league_freshness(folder)
+    with st.sidebar:
+        st.markdown(
+            f"<div style='color:{_ACCENT};font-weight:700;letter-spacing:0.18em;"
+            "font-size:15px;margin-bottom:2px'>MATCHUP LABS</div>"
+            "<div class='v-dim'>model-priced slates, graded in public</div>",
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
+        def _option_label(league: str) -> str:
+            when = stamp_time(freshness.get(league))
+            note = f" · {when:%b %-d}" if when is not None else " · no slate"
+            return f"{_LEAGUE_LABELS[league]}{note}"
+
+        league = st.radio(
+            "League",
+            list(LEAGUES),
+            index=list(LEAGUES).index(default_league(freshness)),
+            format_func=_option_label,
+            key="league",
+        )
+        st.divider()
+        if st.button("↻ Refresh slate", width="stretch"):
+            fetch_artifact_dir.clear()
+            st.rerun()
+        st.caption(
+            "Slates re-run through the day; refresh pulls the newest artifact."
+        )
+    return str(league)
+
+
+def _metrics_row(
+    view: pd.DataFrame,
+    frames: dict[str, pd.DataFrame | None],
+) -> None:
+    """The at-a-glance strip: today's volume and how the model has been doing."""
+    projections = frames.get("projections")
+    games_today = 0 if projections is None else len(projections)
+    record = frames.get("record")
+    yesterday = "—"
+    delta = None
+    if record is not None and not record.empty:
+        settled = record[record["result"] != "pending"]
+        if not settled.empty:
+            wins = int((settled["result"] == "win").sum())
+            losses = int((settled["result"] == "loss").sum())
+            profit = float(settled["profit"].dropna().sum())
+            yesterday = f"{wins}-{losses}"
+            delta = f"{profit:+.1f}u"
+    summary = season_summary(frames.get("cumulative"))
+    season = "—" if summary is None else f"{float(summary['units']):+.1f}u"  # type: ignore[arg-type]
+    season_rec = (
+        None if summary is None else f"{summary['wins']}-{summary['losses']}"
+    )
+    a, b, c, d = st.columns(4)
+    a.metric("Games today", games_today)
+    b.metric("Plays", len(view))
+    c.metric("Yesterday", yesterday, delta=delta)
+    d.metric("Season", season, delta=season_rec, delta_color="off")
+
+
+def _render_plays(view: pd.DataFrame, league: str) -> None:
     if view.empty:
         st.info("No plays cleared the edge threshold in the latest slate.")
         return
@@ -166,7 +248,7 @@ def _render_plays(view: pd.DataFrame) -> None:
     st.markdown(
         "<table class='v-table'>"
         "<tr><th>Matchup</th><th>Play</th><th>Edge</th></tr>"
-        f"<tr><td colspan='3' class='v-league'>NFL · NCAAF · MLB · WNBA</td></tr>{rows}</table>",
+        f"<tr><td colspan='3' class='v-league'>{_LEAGUE_LABELS[league]}</td></tr>{rows}</table>",
         unsafe_allow_html=True,
     )
 
@@ -184,8 +266,11 @@ def _render_card(card: dict) -> None:
     plays = "".join(f"<span class='v-chip'>{p}</span>" for p in card["plays"]) or (
         "<span class='v-dim'>no plays in this game</span>"
     )
+    def _score(value: object) -> str:
+        return "—" if value is None or pd.isna(value) else f"{float(value):.1f}"
+
     nums = [
-        ("proj score", f"{_fmt_num(card.get('mu_away'))}–{_fmt_num(card.get('mu_home'))}"),
+        ("proj score", f"{_score(card.get('mu_away'))}–{_score(card.get('mu_home'))}"),
         ("fair total", _fmt_num(card.get("fair_total"))),
         ("fair line", _fmt_num(card.get("fair_spread"))),
     ]
@@ -202,12 +287,25 @@ def _render_card(card: dict) -> None:
   <span class='v-team'><span class='v-win'>{_fmt_pct(p_home)}</span>
     {card['home']}</span>
 </div>
-<div class='v-strip'><span>{when}</span></div>
+<div class='v-strip'>{when}</div>
 <div class='v-nums'>{nums_html}</div>
 <div>{plays}</div>
 </div>""",
         unsafe_allow_html=True,
     )
+
+
+def _render_board(
+    view: pd.DataFrame, frames: dict[str, pd.DataFrame | None], league: str
+) -> None:
+    """The consumer surface, in reading order: what to bet, then each game."""
+    _render_plays(view, league)
+    cards = matchup_cards(frames["projections"], frames["games_map"], view, league)
+    if not cards:
+        return
+    st.markdown("#### Matchups")
+    for card in cards:
+        _render_card(card)
 
 
 def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> None:
@@ -268,49 +366,45 @@ def _render_pickem(slips: pd.DataFrame | None, legs: pd.DataFrame | None) -> Non
         )
 
 
-def _render_model(folder: Path) -> None:
-    """The transparency surface: what's live, and the season-to-date record.
+def _render_model(league: str, frames: dict[str, pd.DataFrame | None]) -> None:
+    """The transparency block: season-to-date and exactly what model is live.
 
     The nfelo lesson — the model's configuration and record ARE the product.
     Config blocks are curated at promotion time (docs/MODEL_LAB.md); the
     record reads from the cumulative chain each graded run carries forward.
     """
-    from format_plays import load_slate_frames as _frames
-
-    for league in ("nfl", "ncaaf", "mlb", "wnba"):
-        st.markdown(f"### {league.upper()}")
-        summary = season_summary(_frames(folder, league).get("cumulative"))
-        if summary is None:
-            st.caption("Season to date: no graded plays yet.")
-        else:
-            st.markdown(
-                f"#### Season to date: {summary['wins']}-{summary['losses']}"
-                + (f"-{summary['pushes']}" if summary["pushes"] else "")
-                + f" · {float(summary['units']):+.1f}u"  # type: ignore[arg-type]
-            )
-            sections = summary["sections"]
-            if isinstance(sections, dict) and sections:
-                parts = "".join(
-                    f"<tr><td>{name}</td><td>{w}-{losses}</td>"
-                    f"<td>{units:+.1f}u</td></tr>"
-                    for name, (w, losses, units) in sorted(sections.items())
-                )
-                st.markdown(
-                    "<table class='v-table'>"
-                    "<tr><th>Section</th><th>Record</th><th>Units</th></tr>"
-                    f"{parts}</table>",
-                    unsafe_allow_html=True,
-                )
-        rows = "".join(
-            f"<tr><td class='v-dim'>{label}</td><td>{value}</td></tr>"
-            for label, value in MODEL_CONFIG.get(league, [])
-        )
+    summary = season_summary(frames.get("cumulative"))
+    if summary is None:
+        st.caption("Season to date: no graded plays yet.")
+    else:
         st.markdown(
-            "<table class='v-table'>"
-            "<tr><th>What's live</th><th></th></tr>"
-            f"{rows}</table>",
-            unsafe_allow_html=True,
+            f"#### Season to date: {summary['wins']}-{summary['losses']}"
+            + (f"-{summary['pushes']}" if summary["pushes"] else "")
+            + f" · {float(summary['units']):+.1f}u"  # type: ignore[arg-type]
         )
+        sections = summary["sections"]
+        if isinstance(sections, dict) and sections:
+            parts = "".join(
+                f"<tr><td>{name}</td><td>{w}-{losses}</td>"
+                f"<td>{units:+.1f}u</td></tr>"
+                for name, (w, losses, units) in sorted(sections.items())
+            )
+            st.markdown(
+                "<table class='v-table'>"
+                "<tr><th>Section</th><th>Record</th><th>Units</th></tr>"
+                f"{parts}</table>",
+                unsafe_allow_html=True,
+            )
+    rows = "".join(
+        f"<tr><td class='v-dim'>{label}</td><td>{value}</td></tr>"
+        for label, value in MODEL_CONFIG.get(league, [])
+    )
+    st.markdown(
+        f"<table class='v-table'>"
+        f"<tr><th>What's live — {_LEAGUE_LABELS[league]}</th><th></th></tr>"
+        f"{rows}</table>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Every promotion wins a walk-forward benchmark first — nothing ships "
         "on intuition. Full history: docs/MODEL_LAB.md in the repo."
@@ -325,7 +419,7 @@ def _render_record(record: pd.DataFrame | None) -> None:
     wins = int((settled["result"] == "win").sum())
     losses = int((settled["result"] == "loss").sum())
     profit = float(settled["profit"].dropna().sum())
-    st.markdown(f"### Yesterday: {wins}-{losses} · {profit:+.1f}u")
+    st.markdown(f"#### Yesterday: {wins}-{losses} · {profit:+.1f}u")
 
     def _row(r: dict) -> str:
         gain = r.get("profit")
@@ -345,88 +439,80 @@ def _render_record(record: pd.DataFrame | None) -> None:
     )
 
 
-def _render_cards_tab(folder: Path) -> None:
-    """The day's graphics: view, download, and copy the post copy — phone-first."""
-    league = str(
-        st.radio("League", ["NFL", "NCAAF", "MLB", "WNBA"], horizontal=True, key="cards-league")
-    ).lower()
+def _gallery(
+    items: list[tuple[str, Path]] | None,
+    captions: str | None,
+    league: str,
+    kind: str,
+) -> None:
+    """One card section: images + download buttons + the caption copy."""
+    for label, path in items or []:
+        st.image(str(path), caption=label, width="stretch")
+        st.download_button(
+            f"Download {label}", Path(path).read_bytes(),
+            file_name=Path(path).name, mime="image/png",
+            key=f"dl-{kind}-{league}-{label}",
+        )
+    if captions:
+        with st.expander("Post captions"):
+            st.code(captions, language=None)
+
+
+def _render_cards_tab(folder: Path, league: str) -> None:
+    """The posting workflow, phone-first: each card family in its own section."""
     images = card_images(folder, league)
-    model, checks = images["model"], images["simcheck"]
-    record, dfs = images["record"], images["dfs"]
-    if (not model and not checks and not images["deepdive"]
-            and record is None and dfs is None):
+    empty = (
+        not images["model"] and not images["simcheck"] and not images["deepdive"]
+        and images["record"] is None and images["dfs"] is None
+    )
+    if empty:
         st.info("No cards in the latest slate yet — they render with each run.")
         return
 
-    if record is not None:
+    if images["record"] is not None:
         st.markdown("#### Model record")
+        record = Path(str(images["record"]))
         st.image(str(record), width="stretch")
         st.download_button(
-            "Download record card", Path(str(record)).read_bytes(),
-            file_name=Path(str(record)).name, mime="image/png",
-            key=f"dl-record-{league}",
+            "Download record card", record.read_bytes(),
+            file_name=record.name, mime="image/png", key=f"dl-record-{league}",
         )
 
-    if checks:
-        st.markdown("#### Sim Checks — yesterday's results vs the pregame model")
-        for label, path in checks:  # type: ignore[misc]
-            st.image(str(path), caption=label, width="stretch")
-            st.download_button(
-                f"Download {label}", Path(path).read_bytes(),
-                file_name=Path(path).name, mime="image/png",
-                key=f"dl-check-{league}-{label}",
-            )
-        if images["simcheck_captions"]:
-            with st.expander("Sim Check captions"):
-                st.code(images["simcheck_captions"], language=None)
+    if images["model"]:
+        with st.expander(
+            f"Matchup cards — market vs model ({len(images['model'])})",  # type: ignore[arg-type]
+            expanded=True,
+        ):
+            _gallery(images["model"], images["model_captions"], league, "model")  # type: ignore[arg-type]
 
-    if model:
-        st.markdown("#### Today's matchup cards — market vs model")
-        for label, path in model:  # type: ignore[misc]
-            st.image(str(path), caption=label, width="stretch")
-            st.download_button(
-                f"Download {label}", Path(path).read_bytes(),
-                file_name=Path(path).name, mime="image/png",
-                key=f"dl-model-{league}-{label}",
-            )
-        if images["model_captions"]:
-            with st.expander("Matchup card captions"):
-                st.code(images["model_captions"], language=None)
+    if images["simcheck"]:
+        with st.expander(
+            f"Sim Checks — yesterday's results vs the pregame model "
+            f"({len(images['simcheck'])})"  # type: ignore[arg-type]
+        ):
+            _gallery(images["simcheck"], images["simcheck_captions"], league, "check")  # type: ignore[arg-type]
 
     if images["deepdive"]:
-        st.markdown("#### Deep dives — the analytical companion")
-        for label, path in images["deepdive"]:  # type: ignore[misc]
-            st.image(str(path), caption=label, width="stretch")
-            st.download_button(
-                f"Download deep dive {label}", Path(path).read_bytes(),
-                file_name=Path(path).name, mime="image/png",
-                key=f"dl-dive-{league}-{label}",
-            )
-        if images["deepdive_captions"]:
-            with st.expander("Deep dive captions"):
-                st.code(images["deepdive_captions"], language=None)
+        with st.expander(
+            f"Deep dives — the analytical companion ({len(images['deepdive'])})"  # type: ignore[arg-type]
+        ):
+            _gallery(images["deepdive"], images["deepdive_captions"], league, "dive")  # type: ignore[arg-type]
 
-    if dfs is not None:
-        st.markdown("#### DFS lineup")
-        st.image(str(dfs), width="stretch")
-        st.download_button(
-            "Download DFS lineup card", Path(str(dfs)).read_bytes(),
-            file_name=Path(str(dfs)).name, mime="image/png",
-            key=f"dl-dfs-{league}",
-        )
-        if images["dfs_captions"]:
-            with st.expander("DFS lineup caption"):
-                st.code(images["dfs_captions"], language=None)
+    if images["dfs"] is not None:
+        with st.expander("DFS lineup"):
+            dfs = Path(str(images["dfs"]))
+            st.image(str(dfs), width="stretch")
+            st.download_button(
+                "Download DFS lineup card", dfs.read_bytes(),
+                file_name=dfs.name, mime="image/png", key=f"dl-dfs-{league}",
+            )
+            if images["dfs_captions"]:
+                with st.expander("Post caption"):
+                    st.code(images["dfs_captions"], language=None)
 
 
 def main() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='color:{_ACCENT};font-weight:700;letter-spacing:0.18em;"
-        "font-size:14px'>MATCHUP LABS</div>",
-        unsafe_allow_html=True,
-    )
-    st.title("PLAYS")
 
     folder = _slate_dir()
     if folder is None:
@@ -435,14 +521,28 @@ def main() -> None:
             "app secrets, or set `VELOCITY_SLATE_DIR` to a local slate folder."
         )
         return
-    frames = load_slate_frames(folder)
+
+    league = _sidebar(folder)
+    frames = load_slate_frames(folder, league)
     if all(f is None for f in frames.values()):
-        st.info("No slate files found yet — run the live-slate workflow first.")
+        fresh = league_freshness(folder)
+        live = [_LEAGUE_LABELS[lg] for lg in LEAGUES if fresh.get(lg)]
+        st.title(_LEAGUE_LABELS[league])
+        if live:
+            st.info(
+                f"No {_LEAGUE_LABELS[league]} slate in the latest artifact — "
+                f"likely out of season. Leagues with fresh slates: {', '.join(live)} "
+                "(switch in the sidebar)."
+            )
+        else:
+            st.info("No slate files found yet — run the live-slate workflow first.")
         return
 
     view = plays_table(
-        frames["plays"], frames["props"], frames["parlays"], frames["games_map"]
+        frames["plays"], frames["props"], frames["parlays"], frames["games_map"],
+        league,
     )
+    st.title(f"{_LEAGUE_LABELS[league]} board")
     generated = None
     for key in ("plays", "props"):
         frame = frames[key]
@@ -451,26 +551,21 @@ def main() -> None:
             break
     if generated is not None:
         st.caption(f"Slate generated {pd.Timestamp(generated):%b %-d, %H:%M} UTC")
+    _metrics_row(view, frames)
 
-    tab_cards, tab_plays, tab_matchups, tab_pickem, tab_model, tab_record = st.tabs(
-        ["Cards", "Plays", "Matchups", "Pick'em", "Model", "Record"]
+    tab_board, tab_pickem, tab_cards, tab_perf = st.tabs(
+        ["Board", "Pick'em", "Cards", "Performance"]
     )
-    with tab_cards:
-        _render_cards_tab(folder)
-    with tab_plays:
-        _render_plays(view)
-    with tab_matchups:
-        cards = matchup_cards(frames["projections"], frames["games_map"], view)
-        if not cards:
-            st.info("No projections persisted in the latest slate.")
-        for card in cards:
-            _render_card(card)
+    with tab_board:
+        _render_board(view, frames, league)
     with tab_pickem:
         _render_pickem(frames.get("pickem"), frames.get("pickem_legs"))
-    with tab_model:
-        _render_model(folder)
-    with tab_record:
+    with tab_cards:
+        _render_cards_tab(folder, league)
+    with tab_perf:
         _render_record(frames["record"])
+        st.divider()
+        _render_model(league, frames)
 
 
 main()

@@ -216,14 +216,17 @@ def _label_size(label: str, base: float) -> float:
     return base * 0.55
 
 
-def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None) -> None:
+def _team_blocks(fig: plt.Figure, card: SocialCard, asset_dir: Path | None,
+                 league: str = "nfl") -> None:
     """Away block left, home block right — logo + code — time + projection center.
 
-    Logos render only for clubs in the NFL table (``logo_path`` returns None
-    otherwise) — NCAAF identity is deliberately the school label + colors.
+    Logos render only on NFL cards: every other league (NCAAF schools, but
+    also MLB/WNBA, whose abbreviations COLLIDE with NFL codes — an MLB "ARI"
+    must never draw the Cardinals) is deliberately label + colors.
     """
-    away_logo = _image(fig, logo_path(card.away_code, asset_dir), 0.065, 0.83, 0.115)
-    home_logo = _image(fig, logo_path(card.home_code, asset_dir), 0.873, 0.83, 0.115)
+    logo_dir = asset_dir if league == "nfl" else None
+    away_logo = _image(fig, logo_path(card.away_code, logo_dir), 0.065, 0.83, 0.115)
+    home_logo = _image(fig, logo_path(card.home_code, logo_dir), 0.873, 0.83, 0.115)
     away_x = 0.145 if away_logo else 0.07
     _display(fig, away_x, 0.815, card.away_code, color=INK,
              fontsize=_label_size(card.away_code, 46))
@@ -387,7 +390,8 @@ def _matchup_footer_note(card: SocialCard) -> str:
 
 def render_card(card: SocialCard, path: Path | str,
                 asset_dir: Path | str | None = None,
-                slide: tuple[int, int] | None = None) -> Path:
+                slide: tuple[int, int] | None = None,
+                league: str = "nfl") -> Path:
     """Render one pregame MARKET vs MODEL card to ``path`` (1600×900 PNG).
 
     ``slide=(n, total)`` stamps a carousel badge ("3/9") beside the date so a
@@ -406,7 +410,7 @@ def render_card(card: SocialCard, path: Path | str,
     _panel(fig, (0.04, 0.245, 0.92, 0.375))
     _panel(fig, (0.04, 0.085, 0.92, 0.135))
     _brand_header(fig, "MARKET vs MODEL", when)
-    _team_blocks(fig, card, assets)
+    _team_blocks(fig, card, assets, league)
     _win_bar(fig, card)
     _matrix(fig, card)
     _props_strip(fig, card)
@@ -446,6 +450,7 @@ def render_cards(
         render_card(
             card, folder / card_filename(card, stamp, league), asset_dir,
             slide=(i + 1, total) if number_slides and total > 1 else None,
+            league=league,
         )
         for i, card in enumerate(cards)
     ]
@@ -459,7 +464,8 @@ def render_cards(
 
 
 def render_sim_check(card: SimCheckCard, path: Path | str,
-                     asset_dir: Path | str | None = None) -> Path:
+                     asset_dir: Path | str | None = None,
+                     league: str = "nfl") -> Path:
     """Render one Sim Check to ``path``: the actual result on the pregame pmf.
 
     The hero number is the percentile — the one-glance verdict on how normal
@@ -474,6 +480,8 @@ def render_sim_check(card: SimCheckCard, path: Path | str,
     _panel(fig, (0.44, 0.09, 0.52, 0.575))
     _brand_header(fig, "SIM CHECK", when)
 
+    if league != "nfl":
+        assets = None  # non-NFL codes collide with the NFL logo table
     away_logo = _image(fig, logo_path(card.away_code, assets), 0.062, 0.805, 0.10)
     x = 0.132 if away_logo else 0.065
     _display(fig, x, 0.79, f"{card.away_code} {card.away_score}", color=INK,
@@ -534,7 +542,8 @@ def render_sim_checks(
     folder = Path(out_dir)
     folder.mkdir(parents=True, exist_ok=True)
     paths = [
-        render_sim_check(card, folder / sim_check_filename(card, stamp, league), asset_dir)
+        render_sim_check(card, folder / sim_check_filename(card, stamp, league),
+                         asset_dir, league=league)
         for card in cards
     ]
     if cards:

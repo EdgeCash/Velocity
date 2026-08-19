@@ -202,3 +202,37 @@ def test_pickem_breakevens_stay_in_sync_with_the_engine() -> None:
         assert expected == pytest.approx(
             breakeven_leg_prob(PAYOUTS[name]), abs=5e-4
         ), name
+
+
+def test_league_freshness_and_default_league(tmp_path: Path) -> None:
+    # MLB ran tonight, NFL last ran months ago, the others never.
+    (tmp_path / "slate_mlb_20260818T230000Z.parquet").write_bytes(b"x")
+    (tmp_path / "projections_mlb_20260818T230000Z.parquet").write_bytes(b"x")
+    (tmp_path / "slate_nfl_20260212T120000Z.parquet").write_bytes(b"x")
+    fresh = fp.league_freshness(tmp_path)
+    assert fresh["mlb"] == "20260818T230000Z"
+    assert fresh["nfl"] == "20260212T120000Z"
+    assert fresh["wnba"] is None and fresh["ncaaf"] is None
+    # The app opens on the freshest league — August opens on MLB.
+    assert fp.default_league(fresh) == "mlb"
+    # Nothing at all → the football default, never a KeyError.
+    assert fp.default_league(dict.fromkeys(fp.LEAGUES)) == "nfl"
+
+
+def test_stamp_time_parses_run_stamps() -> None:
+    ts = fp.stamp_time("20260818T230512Z")
+    assert ts == pd.Timestamp("2026-08-18 23:05:12")
+    assert fp.stamp_time(None) is None
+    assert fp.stamp_time("garbage") is None
+
+
+def test_team_label_is_league_aware() -> None:
+    # NFL reads by city; MLB/WNBA by nickname; NCAAF untouched.
+    assert fp.team_label("Kansas City Chiefs", "nfl") == "Kansas City"
+    assert fp.team_label("Boston Red Sox", "mlb") == "Red Sox"
+    assert fp.team_label("Chicago White Sox", "mlb") == "White Sox"
+    assert fp.team_label("Los Angeles Dodgers", "mlb") == "Dodgers"
+    assert fp.team_label("Athletics", "mlb") == "Athletics"  # no city to strip
+    assert fp.team_label("Indiana Fever", "wnba") == "Fever"
+    assert fp.team_label("Golden State Valkyries", "wnba") == "Valkyries"
+    assert fp.team_label("Boston College", "ncaaf") == "Boston College"

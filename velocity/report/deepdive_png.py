@@ -178,9 +178,12 @@ def _props_panel(fig: plt.Figure, dive: DeepDive) -> None:
 
 
 def render_deep_dive(dive: DeepDive, path: Path | str,
-                     asset_dir: Path | str | None = None) -> Path:
+                     asset_dir: Path | str | None = None,
+                     league: str = "nfl") -> Path:
     """Render one deep-dive card to ``path`` (1600×900 PNG)."""
     assets = None if asset_dir is None else Path(asset_dir)
+    if league != "nfl":
+        assets = None  # non-NFL codes collide with the NFL logo table
     card = dive.card
     fig = _fig()
     when = ""
@@ -247,7 +250,8 @@ def render_deep_dives(
     folder = Path(out_dir)
     folder.mkdir(parents=True, exist_ok=True)
     paths = [
-        render_deep_dive(d, folder / deep_dive_filename(d, stamp, league), asset_dir)
+        render_deep_dive(d, folder / deep_dive_filename(d, stamp, league),
+                         asset_dir, league=league)
         for d in dives
     ]
     if dives:
