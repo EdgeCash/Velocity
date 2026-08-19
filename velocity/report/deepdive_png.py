@@ -58,6 +58,44 @@ def _rank_color(rank: int, n_teams: int) -> str:
     return _BAD
 
 
+_STRIP_TEAL = "#14808c"
+
+
+def _form_pills(fig: plt.Figure, results: tuple[str, ...], x: float, y: float,
+                ha: str = "left") -> None:
+    """Last-5 result pills (oldest → newest), the reference's form strip."""
+    if not results:
+        return
+    w, h, gap = 0.0165, 0.026, 0.0045
+    if ha == "right":
+        x = x - len(results) * w - (len(results) - 1) * gap
+    for i, mark in enumerate(results):
+        color = _GOOD if mark == "W" else (_BAD if mark == "L" else INK_DIM)
+        px = x + i * (w + gap)
+        fig.add_artist(plt.Rectangle(
+            (px, y), w, h, transform=fig.transFigure,
+            facecolor=color, alpha=0.92, edgecolor="none",
+        ))
+        _text(fig, px + w / 2, y + 0.0065, mark, color=BG, fontsize=9.5,
+              ha="center", fontweight="bold")
+
+
+def _context_strip(fig: plt.Figure, dive: DeepDive) -> None:
+    """The teal facts bar at the header's base — fair numbers + days rest."""
+    card = dive.card
+    fig.add_artist(plt.Rectangle(
+        (0.055, 0.664), 0.89, 0.032, transform=fig.transFigure,
+        facecolor=_STRIP_TEAL, edgecolor="none",
+    ))
+    bits = [f"FAIR LINE {card.spread_label()}",
+            f"FAIR TOTAL {card.fair_total:.1f}"]
+    if dive.away_rest is not None and dive.home_rest is not None:
+        bits.append(f"DAYS REST  {card.away_code} {dive.away_rest} · "
+                    f"{card.home_code} {dive.home_rest}")
+    _text(fig, 0.5, 0.6725, "      ".join(bits), color="#eafcfb",
+          fontsize=12.5, ha="center", fontweight="semibold")
+
+
 def _team_hex(dive: DeepDive, side: str) -> str:
     card = dive.card
     code = card.away_code if side == "away" else card.home_code
@@ -200,27 +238,33 @@ def render_deep_dive(dive: DeepDive, path: Path | str,
     ax_x = 0.135 if away_logo else 0.07
     _display(fig, ax_x, 0.795, card.away_code, color=INK,
              fontsize=_label_size(card.away_code, 40))
-    _text(fig, ax_x, 0.755, f"{dive.away_record} · {dive.stat_season}",
-          color=INK_DIM, fontsize=13)
+    away_meta = " · ".join(b for b in (dive.away_record, dive.away_streak,
+                                       str(dive.stat_season)) if b)
+    _text(fig, ax_x, 0.755, away_meta, color=INK_DIM, fontsize=13)
+    _form_pills(fig, dive.away_last5, ax_x, 0.716)
     home_logo = _image(fig, logo_path(card.home_code, assets), 0.878, 0.80, 0.10)
     hx = 0.862 if home_logo else 0.93
     _display(fig, hx, 0.795, card.home_code, color=INK,
              fontsize=_label_size(card.home_code, 40), ha="right")
-    _text(fig, hx, 0.755, f"{dive.stat_season} · {dive.home_record}",
-          color=INK_DIM, fontsize=13, ha="right")
+    home_meta = " · ".join(b for b in (str(dive.stat_season), dive.home_streak,
+                                       dive.home_record) if b)
+    _text(fig, hx, 0.755, home_meta, color=INK_DIM, fontsize=13, ha="right")
+    _form_pills(fig, dive.home_last5, hx, 0.716, ha="right")
     _display(fig, 0.5, 0.80, "@", color=INK_DIM, fontsize=22, ha="center",
              fontweight="semibold")
     if card.market:
         _text(fig, 0.5, 0.757, card.market, color=INK_DIM, fontsize=13.5,
               ha="center")
-    _text(fig, 0.5, 0.712,
+    _text(fig, 0.5, 0.727,
           f"model: {card.away_code} {1 - card.p_home_win:.0%} · "
           f"projected {card.mu_away:.1f}–{card.mu_home:.1f} · "
           f"{card.home_code} {card.p_home_win:.0%}",
           color=INK, fontsize=15, ha="center")
-    _text(fig, 0.5, 0.678,
-          f"fair line {card.spread_label()} · fair total {card.fair_total:.1f}",
-          color=INK_DIM, fontsize=13, ha="center")
+    if dive.away_sp or dive.home_sp:
+        # The reference's pitcher row: each probable's banked line.
+        sp = f"SP  {dive.away_sp or 'TBD'}  vs  {dive.home_sp or 'TBD'}"
+        _text(fig, 0.5, 0.705, sp, color=INK_DIM, fontsize=12, ha="center")
+    _context_strip(fig, dive)
 
     _stat_table(fig, dive)
     _margin_axes(fig, dive)

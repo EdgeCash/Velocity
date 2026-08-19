@@ -728,8 +728,27 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             games = load_games(_find_games(Path(args.data)), league=args.league)
             plays_path = _find_plays(Path(args.data)) if args.league == "nfl" else None
             plays = load_plays(plays_path) if plays_path is not None else None
+            starters = probables = None
+            if args.league == "mlb":
+                # The reference-genre pitcher row: each probable's banked
+                # line. Best-effort — a fetch failure just omits the row.
+                try:
+                    from datetime import date, timedelta
+
+                    from build_mlb_pitching import fetch_probables
+
+                    sp_file = Path(args.data) / "starters.parquet"
+                    if sp_file.exists():
+                        starters = pd.read_parquet(sp_file)
+                        today = date.today()
+                        probables = fetch_probables(
+                            str(today), str(today + timedelta(days=1))
+                        )
+                except Exception as exc:  # noqa: BLE001 - cosmetic row only
+                    print(f"probable-pitcher row skipped: {exc}")
             dives = build_deep_dives(cards, projections, games, plays,
-                                     team_names=code_to_team)
+                                     team_names=code_to_team,
+                                     starters=starters, probables=probables)
             dive_paths = render_deep_dives(dives, Path(args.out), stamp,
                                            asset_dir=asset_dir, league=args.league)
             print(f"wrote {len(dive_paths)} deep dive card(s) to {args.out}")
