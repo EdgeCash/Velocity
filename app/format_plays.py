@@ -26,6 +26,11 @@ _CITY_PREFIXES = sorted(
         "Los Angeles", "Miami", "Minnesota", "New England", "New Orleans",
         "New York", "Philadelphia", "Pittsburgh", "San Francisco", "Seattle",
         "Tampa Bay", "Tennessee", "Washington",
+        # MLB / WNBA cities beyond the NFL set — the summer leagues display
+        # by NICKNAME (city stripped), so these must all be known.
+        "Boston", "Colorado", "Connecticut", "Golden State", "Indiana",
+        "Milwaukee", "Phoenix", "Portland", "San Diego", "St. Louis",
+        "Toronto",
     ],
     key=len,
     reverse=True,
@@ -52,6 +57,26 @@ def city(team_name: str) -> str:
     return name
 
 
+def team_label(team_name: str, league: str = "nfl") -> str:
+    """The league-appropriate compact display name.
+
+    NFL reads by city ("Kansas City"); MLB/WNBA read by nickname
+    ("Red Sox", "Fever") — two Chicago and two Los Angeles clubs make the
+    city ambiguous there. A name with no known city prefix (NCAAF schools,
+    the Athletics) displays unchanged.
+    """
+    name = str(team_name)
+    if league not in ("nfl", "mlb", "wnba"):
+        return name  # NCAAF: the school name IS the display name
+    for prefix in _CITY_PREFIXES:
+        if name.startswith(prefix):
+            if league in ("mlb", "wnba"):
+                rest = name[len(prefix):].strip()
+                return rest or name
+            return prefix
+    return name
+
+
 def _price(value: object) -> str:
     return f"{int(float(value)):+d}"  # type: ignore[arg-type]
 
@@ -60,12 +85,17 @@ def _point(value: object) -> str:
     return f"{float(value):g}"  # type: ignore[arg-type]
 
 
-def matchup_names(games_map: pd.DataFrame | None) -> dict[str, tuple[str, str]]:
-    """``game_id → (away_city, home_city)`` from the persisted games map."""
+def matchup_names(
+    games_map: pd.DataFrame | None, league: str = "nfl"
+) -> dict[str, tuple[str, str]]:
+    """``game_id → (away_label, home_label)`` from the persisted games map."""
     if games_map is None or games_map.empty:
         return {}
     return {
-        str(r["game_id"]): (city(str(r["away_team"])), city(str(r["home_team"])))
+        str(r["game_id"]): (
+            team_label(str(r["away_team"]), league),
+            team_label(str(r["home_team"]), league),
+        )
         for r in games_map.to_dict("records")
     }
 
@@ -118,6 +148,7 @@ def plays_table(
     props: pd.DataFrame | None,
     parlays: pd.DataFrame | None,
     games_map: pd.DataFrame | None,
+    league: str = "nfl",
 ) -> pd.DataFrame:
     """The PLAYS view: one row per recommendation — matchup, play, edge, stake.
 
@@ -126,7 +157,7 @@ def plays_table(
     don't just list it). Rows without an edge (parlays, older slates) sort
     last in their original order.
     """
-    names = matchup_names(games_map)
+    names = matchup_names(games_map, league)
 
     def _matchup(game_id: object) -> str:
         away, home = names.get(str(game_id), (str(game_id), ""))
@@ -176,11 +207,12 @@ def matchup_cards(
     projections: pd.DataFrame | None,
     games_map: pd.DataFrame | None,
     plays_view: pd.DataFrame,
+    league: str = "nfl",
 ) -> list[dict[str, object]]:
     """Per-game card dicts: teams, kickoff, model numbers, and that game's plays."""
     if projections is None or projections.empty:
         return []
-    names = matchup_names(games_map)
+    names = matchup_names(games_map, league)
     kickoffs: dict[str, object] = (
         {}
         if games_map is None or games_map.empty
@@ -291,6 +323,56 @@ def load_slate_frames(folder: Path, league: str = "nfl") -> dict[str, pd.DataFra
         "pickem_legs": newest(folder, rf"slate_{lg}_pickem_legs_{_STAMP}\.parquet"),
         "cumulative": newest(folder, rf"cumulative_record_{lg}_{_STAMP}\.parquet"),
     }
+
+
+LEAGUES = ("mlb", "wnba", "nfl", "ncaaf")
+
+
+def league_freshness(folder: Path) -> dict[str, str | None]:
+    """Per league, the newest slate/projection run stamp in the folder.
+
+    The stamp (UTC ``%Y%m%dT%H%M%SZ``) orders lexicographically, so the
+    freshest league is simply ``max``. Leagues with no files map to ``None``
+    — the app uses this to default to whatever is actually in season and to
+    label the switcher instead of dead-ending on an empty slate.
+    """
+    pattern = re.compile(rf"(?:slate|projections|games)_([a-z]+)_({_STAMP})")
+    stamps: dict[str, str | None] = dict.fromkeys(LEAGUES)
+    for path in folder.rglob("*.parquet"):
+        m = pattern.match(path.name)
+        if m is None or m.group(1) not in stamps:
+            continue
+        league, stamp = m.group(1), m.group(2)
+        if stamps[league] is None or stamp > stamps[league]:  # type: ignore[operator]
+            stamps[league] = stamp
+    return stamps
+
+
+def default_league(freshness: Mapping[str, str | None]) -> str:
+    """The league whose newest run is freshest — what the app opens on.
+
+    August opens on MLB, October on NFL, with no hand-kept season calendar
+    to go stale. Compared by DAY, tie-broken by ``LEAGUES`` order — one
+    nightly run stamps its leagues minutes apart, and that must not decide.
+    """
+    best = max(
+        LEAGUES,
+        key=lambda lg: ((freshness.get(lg) or "")[:8], -LEAGUES.index(lg)),
+    )
+    return best if freshness.get(best) else "nfl"
+
+
+def stamp_time(stamp: str | None) -> pd.Timestamp | None:
+    """A run stamp (``%Y%m%dT%H%M%SZ``) as a UTC timestamp, None-safe."""
+    if not stamp:
+        return None
+    try:
+        return pd.Timestamp(
+            f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]} "
+            f"{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}"
+        )
+    except (ValueError, IndexError):
+        return None
 
 
 # Per-leg breakeven probabilities per slip shape — mirrors
