@@ -140,3 +140,72 @@ def test_render_deep_dive_writes_a_png(tmp_path: Path) -> None:
     assert paths[0].stat().st_size > 20_000
     captions = tmp_path / "deepdive_nfl_20260910T120000Z_captions.md"
     assert "BUF @ KC" in captions.read_text()
+
+
+def test_team_form_last5_streak_and_rest() -> None:
+    from velocity.report.deepdive import team_form
+
+    games = _games().copy()
+    games["kickoff"] = pd.to_datetime("2025-09-01") + pd.to_timedelta(
+        games["week"] * 7, unit="D"
+    )
+    form = team_form(games, "KC", 2025, kickoff=pd.Timestamp("2025-09-24"))
+    # KC 2025: W (vs BUF), L (vs NYJ), T (at BUF) — newest last.
+    assert form["last5"] == ("W", "L", "T")
+    assert form["streak"] == "T1"
+    # Last game week 3 → Sep 22; kickoff Sep 24 → 2 days rest.
+    assert form["rest"] == 2
+    buf = team_form(games, "BUF", 2025)
+    assert buf["last5"] == ("L", "W", "T") and buf["rest"] is None
+    empty = team_form(games, "NOPE", 2025)
+    assert empty["last5"] == () and empty["streak"] == ""
+
+
+def test_probable_line_formats_the_banked_stats() -> None:
+    from velocity.report.deepdive import probable_line
+
+    starters = pd.DataFrame([
+        {"game_id": "a", "starter_id": "99", "starter_name": "Paul Skenes",
+         "outs": 18.0, "k": 8},
+        {"game_id": "b", "starter_id": "99", "starter_name": "Paul Skenes",
+         "outs": 20.0, "k": 9},
+        {"game_id": "c", "starter_id": "77", "starter_name": "No Outs Guy",
+         "outs": 0.0, "k": 0},
+    ])
+    line = probable_line(starters, "99")
+    # 38 outs = 12.2 IP; 17 K over 38 outs = 12.08 K/9.
+    assert line == "SKENES · 12.2 IP · 12.1 K/9"
+    assert probable_line(starters, "77") is None  # no banked innings
+    assert probable_line(starters, None) is None
+    assert probable_line(None, "99") is None
+
+
+def test_build_deep_dives_carries_form_and_probables(tmp_path: Path) -> None:
+    games = _games().copy()
+    games["kickoff"] = pd.to_datetime("2025-09-01") + pd.to_timedelta(
+        games["week"] * 7, unit="D"
+    )
+    games["game_id"] = [f"g{i}" for i in range(len(games))]
+    starters = pd.DataFrame([
+        # g0 is a 2025 game; g4 is the 2024 game — the old season's start
+        # must NOT count toward the probable's current-season line.
+        {"game_id": "g0", "starter_id": "5", "starter_name": "Home Ace",
+         "outs": 27.0, "k": 12},
+        {"game_id": "g4", "starter_id": "5", "starter_name": "Home Ace",
+         "outs": 27.0, "k": 3},
+    ])
+    probables = {("KC", "BUF", None): ("5", None)}  # (home SP, away SP)
+    dives = build_deep_dives(
+        [_card(kickoff=pd.Timestamp("2025-09-24"))], {"g1": _projection()},
+        games, None, starters=starters, probables=probables,
+    )
+    dive = dives[0]
+    assert dive.away_last5 and dive.home_last5
+    assert dive.home_sp == "ACE · 9.0 IP · 12.0 K/9"
+    assert dive.away_sp is None  # unannounced probable stays honest
+    assert dive.away_rest is not None and dive.home_rest is not None
+    # And the renderer accepts the new fields end-to-end.
+    from velocity.report.deepdive_png import render_deep_dives
+
+    paths = render_deep_dives(dives, tmp_path, "20250924T120000Z", league="mlb")
+    assert paths[0].stat().st_size > 20_000

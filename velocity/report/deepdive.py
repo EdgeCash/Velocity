@@ -64,6 +64,15 @@ class DeepDive:
     p_home_cover: float | None  # vs the market home spread (None: no line)
     p_over: float | None  # vs the market total
     watch: Sequence[WatchEntry] = field(default_factory=tuple)  # extended props
+    # Reference-genre header extras (all public schedule/results facts):
+    away_last5: tuple[str, ...] = ()  # newest last: ("W","L","W","W","L")
+    home_last5: tuple[str, ...] = ()
+    away_streak: str = ""  # "W3" / "L1" / ""
+    home_streak: str = ""
+    away_rest: int | None = None  # full days since the last game
+    home_rest: int | None = None
+    away_sp: str | None = None  # MLB probable line ("JOBE 8.2 IP · 4.4 K/9")
+    home_sp: str | None = None
 
 
 def _rank(series: pd.Series, value: float, *, higher_is_better: bool) -> int:
@@ -161,6 +170,65 @@ def epa_form(plays: pd.DataFrame, season: int) -> pd.DataFrame:
     return out.dropna(how="all")
 
 
+def team_form(
+    games: pd.DataFrame, team: str, season: int, kickoff: object = None, n: int = 5
+) -> dict[str, object]:
+    """Last-``n`` results, streak, and rest days for ``team`` in ``season``.
+
+    Results are newest-LAST (the reference reads left→right toward today);
+    rest is full days between the team's most recent completed game and this
+    game's kickoff (None when either side is unknown).
+    """
+    played = games[
+        (games["season"] == season)
+        & games["home_score"].notna() & games["away_score"].notna()
+        & ((games["home_team"] == team) | (games["away_team"] == team))
+    ]
+    order = "kickoff" if "kickoff" in played.columns else ["season", "week"]
+    played = played.sort_values(order)
+    results: list[str] = []
+    for g in played.to_dict("records"):
+        us = g["home_score"] if g["home_team"] == team else g["away_score"]
+        them = g["away_score"] if g["home_team"] == team else g["home_score"]
+        results.append("W" if us > them else ("L" if us < them else "T"))
+    streak = ""
+    if results:
+        mark = results[-1]
+        run = len(results) - len("".join(results).rstrip(mark))
+        streak = f"{mark}{run}"
+    rest = None
+    if (kickoff is not None and not pd.isna(kickoff)  # type: ignore[call-overload]
+            and not played.empty and "kickoff" in played.columns):
+        last = pd.Timestamp(played["kickoff"].iloc[-1])
+        if not pd.isna(last):
+            rest = max(0, int((pd.Timestamp(kickoff) - last).days))  # type: ignore[arg-type]
+    return {"last5": tuple(results[-n:]), "streak": streak, "rest": rest}
+
+
+def _ip_text(outs: float) -> str:
+    """Total outs → the baseball innings convention ("134.2" = 134⅔)."""
+    return f"{int(outs) // 3}.{int(outs) % 3}"
+
+
+def probable_line(starters: pd.DataFrame | None, sp_id: str | None) -> str | None:
+    """A probable's compact banked line: "SKENES · 134.2 IP · 9.6 K/9".
+
+    Aggregated from the committed starters bank (defense-independent stats
+    only — no ERA is banked, and K rate is the stabler skill signal anyway).
+    None when the pitcher is unknown or has no banked innings.
+    """
+    if starters is None or sp_id is None:
+        return None
+    mine = starters[starters["starter_id"].astype(str) == str(sp_id)]
+    mine = mine[pd.to_numeric(mine["outs"], errors="coerce") > 0]
+    if mine.empty:
+        return None
+    outs = float(pd.to_numeric(mine["outs"], errors="coerce").sum())
+    k9 = float(pd.to_numeric(mine["k"], errors="coerce").sum()) / (outs / 27.0)
+    name = str(mine["starter_name"].iloc[-1]).split()[-1].upper()
+    return f"{name} · {_ip_text(outs)} IP · {k9:.1f} K/9"
+
+
 def _record(form: pd.DataFrame, team: str) -> str:
     if team not in form.index:
         return ""
@@ -210,6 +278,8 @@ def build_deep_dives(
     plays: pd.DataFrame | None = None,
     *,
     team_names: Mapping[str, str] | None = None,
+    starters: pd.DataFrame | None = None,
+    probables: Mapping[tuple[str, str, None], tuple[str | None, str | None]] | None = None,
 ) -> list[DeepDive]:
     """One :class:`DeepDive` per social card, from the committed data.
 
@@ -217,11 +287,21 @@ def build_deep_dives(
     cover/over probabilities); ``games``/``plays`` the form rows.
     ``team_names`` maps a card's display code back to the datasets' team key
     when they differ (NFL codes match; NCAAF cards may carry abbreviations
-    while the datasets key by school name).
+    while the datasets key by school name). MLB passes ``starters`` (the
+    committed bank) plus the day's ``probables`` lookup (keyed by the
+    datasets' full team names) to put each probable's banked line on the
+    card header.
     """
     stat_season, scoring = scoring_form(games)
     epa = epa_form(plays, stat_season) if plays is not None else None
     names = dict(team_names or {})
+    if starters is not None and "game_id" in games.columns:
+        # The probable's line is his CURRENT season (the reference
+        # convention), not the whole multi-season bank.
+        season_ids = set(
+            games.loc[games["season"] == stat_season, "game_id"].astype(str)
+        )
+        starters = starters[starters["game_id"].astype(str).isin(season_ids)]
 
     dives: list[DeepDive] = []
     for card in cards:
@@ -242,6 +322,11 @@ def build_deep_dives(
         p_over = None
         if view.total is not None:
             p_over = float(np.mean(total > view.total))
+        away_form = team_form(games, away, stat_season, card.kickoff)
+        home_form = team_form(games, home, stat_season, card.kickoff)
+        away_sp_id, home_sp_id = (None, None)
+        if probables is not None:
+            home_sp_id, away_sp_id = probables.get((home, away, None), (None, None))
         dives.append(DeepDive(
             card=card,
             stat_season=stat_season,
@@ -252,6 +337,14 @@ def build_deep_dives(
             p_home_cover=p_cover,
             p_over=p_over,
             watch=card.watch,
+            away_last5=away_form["last5"],  # type: ignore[arg-type]
+            home_last5=home_form["last5"],  # type: ignore[arg-type]
+            away_streak=str(away_form["streak"]),
+            home_streak=str(home_form["streak"]),
+            away_rest=away_form["rest"],  # type: ignore[arg-type]
+            home_rest=home_form["rest"],  # type: ignore[arg-type]
+            away_sp=probable_line(starters, away_sp_id),
+            home_sp=probable_line(starters, home_sp_id),
         ))
     return dives
 
