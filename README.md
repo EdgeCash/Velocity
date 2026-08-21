@@ -11,6 +11,12 @@ The guiding metric is **closing-line value (CLV)**: the market's closing price i
 the sharpest widely available forecast, so consistently beating it is the real
 signal of edge.
 
+On top of the EV gate sits an **intelligence layer** (`velocity/intel`,
+[`docs/INTEL.md`](docs/INTEL.md)): every qualifying bet is judged against the
+game's evidence — unit matchups, recent form, rest, and the injury report —
+and tiered into argued pick sets. It confirms, demotes, or vetoes; it never
+promotes a bet the model didn't like and never touches stakes.
+
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full system design,
 [`docs/BUILD.md`](docs/BUILD.md) for the phased, test-gated build plan, and
 [`docs/WAGERING.md`](docs/WAGERING.md) for the wagering system's current state
@@ -24,6 +30,7 @@ velocity/
   features/   opponent-adjusted efficiency, usage, context
   models/     game models (NFL/NCAAF), props, shared Monte Carlo sim
   wagering/   de-vig, edge/EV, Kelly staking, portfolio
+  intel/      intelligence layer — matchup/form/rest/injury signals → tiered picks
   backtest/   walk-forward engine + metrics
   eval/       calibration + reports
 ```
