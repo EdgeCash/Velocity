@@ -49,12 +49,14 @@ def main() -> None:  # pragma: no cover - network orchestration
         available = client.leagues()
     except Exception as exc:  # noqa: BLE001 - classify: known block vs real breakage
         message = str(exc)
-        if "403" in message or "bot protection" in message:
+        if "403" in message or "429" in message or "bot protection" in message:
             # DataDome challenges datacenter IPs (verified: GitHub runners are
-            # blocked). A known block is a skip, not a failure — the schedule
-            # keeps running so boards bank opportunistically if the door ever
-            # opens, and a relay transport can be slotted in without red runs
-            # in between.
+            # blocked). The block answers as 403 or, since Aug 2026, sometimes
+            # 429 — the first and only request of the run cannot be a real
+            # rate limit, so both are the same known block. A known block is
+            # a skip, not a failure — the schedule keeps running so boards
+            # bank opportunistically if the door ever opens, and a relay
+            # transport can be slotted in without red runs in between.
             print(f"PrizePicks board unreachable from this network ({message})")
             print("skipping snapshot (bot-protection block — expected from "
                   "datacenter IPs; see docs/DATA_PROVIDERS.md for the relay plan)")
