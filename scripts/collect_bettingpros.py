@@ -31,6 +31,28 @@ import pandas as pd
 from velocity.ingest.bettingpros import BettingProsClient, normalize_props
 
 SPORTS = ("NFL", "NCAAF")
+
+
+def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
+    """Call ``fn``, retrying HTTP 5xx twice with backoff (0/15/45s).
+
+    BettingPros' gateway has been throwing intermittent 504s (Aug 2026);
+    without a retry one blip kills the whole 3-hourly snapshot. Call-budget
+    math: the cap is 5k/day and a full run spends ~8 calls, so even every
+    call 5xx-ing into both retries all day stays under ~200 calls/day (~4%
+    of cap). 4xx (auth/quota/throttle) is NOT retried here — burning more
+    calls into a quota error is exactly what the budget must never do.
+    """
+    for attempt, delay in enumerate((0, 15, 45)):
+        if delay:
+            print(f"  {label}: gateway error; retrying in {delay}s")
+            time.sleep(delay)
+        try:
+            return fn()
+        except urllib.error.HTTPError as exc:
+            if exc.code < 500 or attempt == 2:
+                raise
+    raise RuntimeError("unreachable")
 # The /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport
 # enum has no NCAAF) — college props stay model-generated.
 PROP_SPORTS = ("NFL",)
@@ -49,7 +71,7 @@ def collect(
     frames: list[pd.DataFrame] = []
     event_rows: list[dict[str, object]] = []
     for sport in sports:
-        events = client.events(sport)
+        events = _retry_5xx(lambda s=sport: client.events(s), f"{sport} events")
         for e in events:
             participants = e.get("participants") or []
             names = [p.get("name") for p in participants if isinstance(p, dict)]
@@ -60,7 +82,12 @@ def collect(
                 "kickoff": e.get("scheduled"),
                 "league": sport.lower(),
             })
-        lines = client.game_lines(sport, event_ids=[e["id"] for e in events])
+        lines = _retry_5xx(
+            lambda s=sport, ev=events: client.game_lines(
+                s, event_ids=[e["id"] for e in ev]
+            ),
+            f"{sport} lines",
+        )
         lines = lines.assign(league=sport.lower(), collected_at=collected_at)
         frames.append(lines)
         print(
