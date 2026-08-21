@@ -59,3 +59,31 @@ def test_retry_5xx_never_retries_4xx(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(urllib.error.HTTPError):
         bp._retry_5xx(throttled, "test")
     assert calls["n"] == 1  # a quota/throttle error must not burn more calls
+
+
+def test_collect_isolates_a_dead_sport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One sport 504ing through all retries must not void the other's lines."""
+    import pandas as pd
+
+    monkeypatch.setattr(bp.time, "sleep", lambda _s: None)
+
+    class FakeClient:
+        def events(self, sport: str) -> list[dict]:
+            if sport == "NCAAF":
+                raise _http_error(504)
+            return [{"id": 1, "home": "Kansas City Chiefs",
+                     "visitor": "Buffalo Bills", "scheduled": "2026-09-10",
+                     "participants": []}]
+
+        def game_lines(self, sport: str, event_ids: list) -> pd.DataFrame:
+            return pd.DataFrame([{"game_id": "1", "book": "dk",
+                                  "market": "spread", "side": "home",
+                                  "price": -110, "point": -2.5}])
+
+    monkeypatch.setattr(
+        bp.BettingProsClient, "from_env", staticmethod(lambda: FakeClient())
+    )
+    lines, events, failed = bp.collect(("NFL", "NCAAF"), pd.Timestamp("2026-09-10"))
+    assert failed == ["NCAAF"]
+    assert len(lines) == 1 and lines["league"].iloc[0] == "nfl"  # NFL banked
+    assert len(events) == 1  # the dead sport contributed nothing, not garbage

@@ -60,7 +60,7 @@ PROP_SPORTS = ("NFL",)
 
 def collect(
     sports: tuple[str, ...], collected_at: pd.Timestamp
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """One canonical ``Lines`` frame + the events map for ``sports``.
 
     The events frame (``game_id``/``home_team``/``away_team``/``kickoff``)
@@ -70,8 +70,18 @@ def collect(
     client = BettingProsClient.from_env()
     frames: list[pd.DataFrame] = []
     event_rows: list[dict[str, object]] = []
+    failed: list[str] = []
     for sport in sports:
-        events = _retry_5xx(lambda s=sport: client.events(s), f"{sport} events")
+        try:
+            events = _retry_5xx(lambda s=sport: client.events(s), f"{sport} events")
+        except urllib.error.HTTPError as exc:
+            # A sustained outage on ONE sport's route (seen live: NCAAF 504s
+            # outlasting the 60s of backoff while NFL served fine) must not
+            # void the other sport's already-fetched lines. Bank what
+            # succeeded; the 3-hourly schedule retries the rest.
+            print(f"  {sport}: skipped after retries ({exc})")
+            failed.append(sport)
+            continue
         for e in events:
             participants = e.get("participants") or []
             names = [p.get("name") for p in participants if isinstance(p, dict)]
@@ -82,12 +92,17 @@ def collect(
                 "kickoff": e.get("scheduled"),
                 "league": sport.lower(),
             })
-        lines = _retry_5xx(
-            lambda s=sport, ev=events: client.game_lines(
-                s, event_ids=[e["id"] for e in ev]
-            ),
-            f"{sport} lines",
-        )
+        try:
+            lines = _retry_5xx(
+                lambda s=sport, ev=events: client.game_lines(
+                    s, event_ids=[e["id"] for e in ev]
+                ),
+                f"{sport} lines",
+            )
+        except urllib.error.HTTPError as exc:
+            print(f"  {sport}: skipped after retries ({exc})")
+            failed.append(sport)
+            continue
         lines = lines.assign(league=sport.lower(), collected_at=collected_at)
         frames.append(lines)
         print(
@@ -98,7 +113,7 @@ def collect(
     events_out = pd.DataFrame(
         event_rows, columns=["game_id", "home_team", "away_team", "kickoff", "league"]
     ).assign(collected_at=collected_at)
-    return lines_out, events_out
+    return lines_out, events_out, failed
 
 
 def probe_props() -> None:
@@ -143,7 +158,13 @@ def main() -> None:
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
     print(f"BettingPros snapshot @ {now.isoformat()}")
-    df, events = collect(tuple(args.sports), stamp)
+    df, events, failed = collect(tuple(args.sports), stamp)
+    if failed and len(failed) == len(args.sports):
+        # Every sport failed after retries — a real outage worth a red run.
+        raise SystemExit(f"all sports failed after retries: {failed}")
+    if failed:
+        print(f"note: partial snapshot — {failed} skipped after retries; "
+              "the next scheduled run picks them back up")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
