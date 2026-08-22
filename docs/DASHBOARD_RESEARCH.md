@@ -131,3 +131,41 @@ running untouched throughout.
 
 Research recorded; **no build started** — awaiting the owner's pick
 between #1 (Evidence) and #2 (custom Astro).
+
+## 8. Addendum: DFS pricing sources and the DFS page (2026-08)
+
+**DraftKings is the free source, and it covers everything.** The
+collector already uses DK's own unauthenticated endpoints (lobby
+`getcontests?sport=X` → draft groups → `draftgroups/v1/.../draftables`);
+live-verified today the same endpoints serve **NFL, CFB, MLB, WNBA, NBA,
+CBB** (CBB empty only in the offseason), and the draftables payload is
+byte-identical across sports — extending coverage is a `SPORT_CODES`
+addition, not new plumbing. Roster rules come from DK's own
+`lineups/v1/gametypes/{id}/rules` API (also unauthenticated): all Classic
+formats cap at $50k (NFL 9 slots QB/2RB/3WR/TE/FLEX/DST; CFB 8, no
+TE/DST; MLB 10 with 2P and ≤5 hitters/team; NBA 8; WNBA 6 = 2G/3F/UTIL;
+CBB 8 = 3G/3F/2UTIL); all Showdowns are CPT(1.5× pts and salary)+5 at
+$50k, both teams required.
+
+**FanDuel has no free feed in 2026.** `api.fanduel.com` requires a
+logged-in session token (the old public client key is dead; programmatic
+login is 2FA-gated and ToS-gray). The practical FD salary source is
+**DailyFantasyFuel** (server-rendered pages + an unauthenticated slates
+JSON, live-verified; NFL/MLB/NBA/WNBA — no college). FD roster constants,
+if added: $60k NFL/CFB/NBA, **$35k MLB** (1P, C/1B combined), $40k WNBA
+(3G/4F); FD single-game changed in Aug 2025 to MVP(1.5×/1.5×)+5 FLEX.
+
+**FP/BP APIs carry no salaries** (verified against both OpenAPI specs).
+Two incidental wins: FantasyPros `/players?external_ids=draftkings:fanduel`
+solves cross-site player-ID mapping, and BettingPros `/events` carries
+confirmed MLB batting orders (late-swap signal).
+
+**The DFS page** (mocked on the canvas, patterns from
+DFF/SaberSim/FantasyLabs/LineupHQ): cash-optimal as a slot-row card
+(slot chip · player · game · salary · proj · value) with a salary-cap
+usage bar; the ranked GPP set as compact stack-badged rows (top lineup
+expanded, stacked teams tinted, bring-back in amber); a read-only
+exposure summary with bars; and a filterable player-pool table whose
+"in lineups" column ties pool to output. Deliberately omitted: exposure
+sliders, build settings, ownership columns (no ownership model), and
+150-lineup grids.
