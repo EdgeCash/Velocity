@@ -1,0 +1,66 @@
+name: Collect injuries snapshot
+
+# The injuries feed moves on a daily rhythm the weekly projections refresh
+# can't see: official reports finalize Friday, and Sunday-morning scratches
+# are exactly the information the intel layer's veto signals exist for
+# (docs/INTEL.md §6). This banks one NFL injuries snapshot per run into a
+# PRIVATE Actions artifact — the live slate downloads the freshest one at
+# build time; nothing is committed. The committed nflverse history
+# (datasets/nfl/injuries.parquet) is the backtest twin of these snapshots.
+
+on:
+  schedule:
+    # Daily 15:00 UTC (late morning ET): after practice-report updates post.
+    - cron: "0 15 * * *"
+    # Sunday 16:30 UTC: the pre-kick window, when scratches surface.
+    - cron: "30 16 * * 0"
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season"
+        required: true
+        default: "2026"
+
+concurrency:
+  group: collect-injuries
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot injuries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot injuries
+        env:
+          FP_API_KEY: ${{ secrets.FP_API_KEY }}
+        run: |
+          python scripts/collect_fantasypros.py \
+            --season ${{ github.event.inputs.season || '2026' }} \
+            --week auto \
+            --out artifacts/fp \
+            --injuries-only
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fp-injuries-${{ github.run_id }}
+          path: artifacts/fp/*.parquet
+          if-no-files-found: warn
+          retention-days: 30

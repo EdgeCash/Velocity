@@ -161,6 +161,17 @@ def refresh_nfl(out: Path, season: int) -> None:  # pragma: no cover - network
         print(f"  nfl: no played {season} games yet — nothing to refresh")
         return
     _refresh_file(out / "games.parquet", games, season, "nfl games")
+    # Weekly injury designations — the intel layer's point-in-time veto input
+    # (scripts/build_injury_history.py built the backfill; this keeps the
+    # current season rolling). Best-effort: the feed can lag early in a week.
+    try:
+        from velocity.ingest.nfl import load_injury_reports
+
+        injuries = load_injury_reports([season])
+        if not injuries.empty:
+            _refresh_file(out / "injuries.parquet", injuries, season, "nfl injuries")
+    except Exception as exc:  # noqa: BLE001 - additive dataset, never blocks the refresh
+        print(f"  nfl injuries skipped ({exc})")
     try:
         plays = nfl_plays_for_season(season)
     except Exception as exc:  # noqa: BLE001 - pbp release can lag the schedule

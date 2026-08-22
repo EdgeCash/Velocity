@@ -111,3 +111,36 @@ matchups, where the closes are sharpest.
 python scripts/backtest_intel_tiers.py --league nfl   --data datasets/nfl   --out artifacts/tiers
 python scripts/backtest_intel_tiers.py --league ncaaf --data datasets/ncaaf --out artifacts/tiers
 ```
+
+## 6. Addendum (2026-08): the veto channel, measured at last
+
+The banked nflverse injury history (`datasets/nfl/injuries.parquet`,
+2011–2025) let the replay re-run with the injury and QB-veto signals firing
+**point-in-time** — each week's context sees exactly that week's official
+designations. The channel §3.2 called "untested and most promising" now has
+its first measurement (NFL, same 6,755-pick replay):
+
+| Pool | Bets (decided) | Win % | Flat ROI |
+|---|---:|---:|---:|
+| **Vetoed (tier X — QB Out/Doubtful on the picked side)** | 349 | **47.9%** | **−0.084** |
+| Everything un-vetoed | 6,294 | 51.7% | −0.017 |
+
+The picks the veto blocked would have lost: 47.9% vs the pool's 51.7%, a
+3.8pp gap (≈1.4σ), below break-even in **11 of 15 seasons** (every veto
+landed on a spread — moneylines rarely clear the gate). Contrast with §2's
+stat signals, which measured *null*: this is the intelligence layer's first
+**evidence-positive** channel, and it is exactly the thesis — the ratings
+fit prices the most recently observed starter, so a QB ruled out this week
+is information the model literally has not seen.
+
+Honest sizing: 349 bets at 1.4σ is a strong direction, not a proof; the
+per-season swings are wild (20% in 2024, 64% in 2022). The veto stays what
+it is — a conservative block, not a fade-the-other-side strategy (that
+would need the gap to survive more data and an FDR pass). The burden
+*score* (non-veto positional outs) moved the context buckets barely at all
+— consistent with the market pricing visible non-QB outs quickly.
+
+What this changes: the veto is no longer presumed useful — it measurably
+avoids bets that hit ~48%. Forward snapshots (daily
+`collect-injuries.yml`) now feed the same signals live, and every new
+season fattens this table via `refresh_datasets.py`.

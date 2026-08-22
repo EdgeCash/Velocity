@@ -121,10 +121,20 @@ def main() -> None:
             else _ncaaf_factory(args.n_sims)
         )
 
+    # The banked weekly injury history, when the dataset carries it: the
+    # injury/QB-veto signals fire point-in-time instead of abstaining.
+    injuries = None
+    injuries_path = folder / "injuries.parquet"
+    if injuries_path.exists():
+        injuries = pd.read_parquet(injuries_path)
+        print(f"injury history: {len(injuries)} designations "
+              f"({int(injuries['is_out'].sum())} out/doubtful) — veto channel live")
+
     config = TierBacktestConfig(
         min_edge=args.min_edge, min_train_games=args.min_train_games
     )
-    result = tier_backtest(games, train_frame, factory, config, context_plays=plays)
+    result = tier_backtest(games, train_frame, factory, config,
+                           context_plays=plays, injuries=injuries)
 
     picks = result.picks
     print(f"=== Intel tier backtest: {args.league.upper()} from {args.data} — "

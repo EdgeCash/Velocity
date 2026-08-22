@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from velocity.backtest.engine import ModelFactory
-from velocity.intel.context import ContextLibrary
+from velocity.intel.context import ContextLibrary, injuries_for_week
 from velocity.intel.score import IntelConfig, assess
 from velocity.intel.signals import default_game_signals
 from velocity.util.seed import DEFAULT_SEED, make_rng
@@ -106,6 +106,7 @@ def tier_backtest(
     config: TierBacktestConfig | None = None,
     *,
     context_plays: pd.DataFrame | None = None,
+    injuries: pd.DataFrame | None = None,
 ) -> TierBacktestResult:
     """Walk forward, pick vs the close, judge each pick, grade it.
 
@@ -114,7 +115,11 @@ def tier_backtest(
     prediction week, exactly as :func:`velocity.backtest.engine.walk_forward`
     slices it. ``context_plays`` feeds the context library's EPA units (pass
     the plays frame when one exists; the library falls back to scoring form
-    without it).
+    without it). ``injuries`` is the banked weekly history
+    (``datasets/nfl/injuries.parquet``): each week's context gets exactly
+    that week's official designations, so the injury and QB-veto signals
+    fire point-in-time — vetoed picks land in tier ``X`` and the summaries
+    measure the channel this replay previously could not.
     """
     config = config or TierBacktestConfig()
     played = games.dropna(subset=["home_score", "away_score"])
@@ -138,7 +143,9 @@ def tier_backtest(
         kickoffs = pd.to_datetime(week_games.get("kickoff"), errors="coerce")
         as_of = kickoffs.min() if kickoffs.notna().any() else None
         library = ContextLibrary.build(
-            games, context_plays, as_of=as_of, form_games=config.form_games
+            games, context_plays,
+            injuries_for_week(injuries, int(season), int(week)),
+            as_of=as_of, form_games=config.form_games,
         )
 
         for g in week_games.itertuples(index=False):

@@ -147,3 +147,31 @@ def test_context_buckets_cut_on_the_thresholds() -> None:
     assert list(buckets) == [
         "confirming", "neutral", "contradicting", "neutral", "neutral",
     ]
+
+
+def test_injury_history_makes_the_veto_fire_point_in_time() -> None:
+    games = _games()
+
+    def factory(train: pd.DataFrame) -> _FixedModel:
+        return _FixedModel()
+
+    injuries = pd.DataFrame([
+        # AAA's QB is out in week 2 only: week-2 home-side picks on AAA are
+        # vetoed (tier X); week 3 is untouched.
+        {"season": 2024, "week": 2, "player_name": "Al Starter", "team": "AAA",
+         "position": "QB", "status": "Out", "is_out": True},
+    ])
+    result = tier_backtest(
+        games, games, factory, TierBacktestConfig(min_train_games=1),
+        injuries=injuries,
+    )
+    picks = result.picks
+    aaa_w2 = picks[(picks["week"] == 2) & (picks["market"] == "spread")
+                   & (picks["game_id"] == "s24w2g0")]
+    assert (aaa_w2["tier"] == "X").all() and len(aaa_w2) == 1
+    assert aaa_w2["rationale"].str.contains("Al Starter").all()
+    aaa_w3 = picks[(picks["week"] == 3) & (picks["market"] == "spread")
+                   & (picks["game_id"] == "s24w3g0")]
+    assert (aaa_w3["tier"] != "X").all()
+    # The X rows flow into the tier summary like any other tier.
+    assert "X" in set(result.by_tier["tier"])

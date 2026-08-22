@@ -53,6 +53,11 @@ evaluation.
 
 - `nfl/plays.parquet` + `nfl/games.parquet` — 2021–2025 nflfastR play-by-play
   (EPA) and games with closing lines. See `docs/BACKTEST_NFL.md`.
+- `nfl/injuries.parquet` — 2011–2025 weekly official injury designations
+  (nflverse: Out/Doubtful/Questionable per player-week, `is_out` =
+  Out/Doubtful). The intelligence layer's point-in-time veto input —
+  rebuilt by `scripts/build_injury_history.py`, kept current by
+  `scripts/refresh_datasets.py`. See `docs/INTEL.md`.
 - `ncaaf/games.parquet` — 2015–2024 CFBD games **with closing betting lines**
   (`scripts/pull_cfbd_lines.py`), the primary NCAAF backtest input.
 - `ncaaf/boxscores_2002_2025.parquet` — 2002–2025 box scores (no lines), longer
