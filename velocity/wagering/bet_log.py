@@ -107,6 +107,13 @@ class Bet:
             if self.point is None:
                 raise ValueError("total bet requires a point")
             edge = (total - self.point) if self.side == "over" else (self.point - total)
+        elif market in ("team_total_home", "team_total_away"):
+            if self.side not in _TOTAL_SIDES:
+                raise ValueError(f"invalid team total side {self.side!r}")
+            if self.point is None:
+                raise ValueError("team total bet requires a point")
+            team = home_score if market == "team_total_home" else away_score
+            edge = (team - self.point) if self.side == "over" else (self.point - team)
         else:
             raise ValueError(f"unknown market {self.market!r}")
 

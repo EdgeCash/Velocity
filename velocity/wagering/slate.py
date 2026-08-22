@@ -38,7 +38,14 @@ _MARKET_SIDES = {
     "spread": ("home", "away"),
     "total": ("over", "under"),
     "moneyline": ("home", "away"),
+    # Team totals: the censored-score derivative (docs/EDGE_RESEARCH.md §2.2).
+    # Books derive these linearly from the game total and spread, which ignores
+    # that scores are floored at zero; the sim's scores carry the floor, so its
+    # prices include exactly the mass the linear derivation misplaces.
+    "team_total_home": ("over", "under"),
+    "team_total_away": ("over", "under"),
 }
+_TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
 _OPPOSITE = {"home": "away", "away": "home", "over": "under", "under": "over"}
 
 
@@ -93,6 +100,14 @@ class SlateConfig:
     # was calibrated. ``0.0`` (default) disables it — every other league is
     # unaffected.
     min_total_disagreement: float = 0.0
+    # The same selectivity for team totals (``team_total_home``/``_away``):
+    # bet one only when the sim's fair team total (median simulated score,
+    # zero-floor included) differs from the number by at least this much in
+    # the side's direction. Team totals are the censored-score derivative the
+    # market derives linearly (docs/EDGE_RESEARCH.md §2.2 — Arscott 2023
+    # measured the bias at >55% over two decades); the threshold keeps only
+    # the disagreements big enough to clear vig. ``0.0`` (default) disables.
+    min_team_total_disagreement: float = 0.0
 
     def shrink_for(self, market: str) -> float:
         """The confidence shrink to apply to ``market`` — its override, else the global."""
@@ -107,6 +122,20 @@ def total_disagreement(proj: GameProjection, side: str, point: float) -> float:
     backtest's ``pick_over = fair_total > total_line`` comparison exactly.
     """
     fair = float(proj.fair_total())
+    return (fair - point) if side == "over" else (point - fair)
+
+
+def team_total_disagreement(
+    proj: GameProjection, market: str, side: str, point: float
+) -> float:
+    """Signed points by which the sim's fair team total favors ``side`` at ``point``.
+
+    The fair number is the median simulated score of the market's team — the
+    50/50 over point, floor-at-zero included. Same sign convention as
+    :func:`total_disagreement`.
+    """
+    scores = proj.sim.home_score if market == "team_total_home" else proj.sim.away_score
+    fair = float(np.median(scores))
     return (fair - point) if side == "over" else (point - fair)
 
 
@@ -126,6 +155,10 @@ def model_probability(
         return float(np.mean(covered))
     if market == "total":
         hit = total > point if side == "over" else total < point
+        return float(np.mean(hit))
+    if market in _TEAM_TOTAL_MARKETS:
+        scores = proj.sim.home_score if market == "team_total_home" else proj.sim.away_score
+        hit = scores > point if side == "over" else scores < point
         return float(np.mean(hit))
     raise ValueError(f"unknown market {market!r}")
 
@@ -252,6 +285,14 @@ def _best_opportunity(
             and config.min_total_disagreement > 0.0
             and point is not None
             and total_disagreement(proj, side, point) < config.min_total_disagreement
+        ):
+            continue
+        if (
+            market in _TEAM_TOTAL_MARKETS
+            and config.min_team_total_disagreement > 0.0
+            and point is not None
+            and team_total_disagreement(proj, market, side, point)
+            < config.min_team_total_disagreement
         ):
             continue
         p_model = model_probability(proj, market, side, point)

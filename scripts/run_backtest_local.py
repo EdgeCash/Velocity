@@ -228,7 +228,25 @@ def main() -> None:
         "--totals-sweep", action="store_true",
         help="print the points-of-disagreement totals sweep (the NCAAF strategy)",
     )
+    parser.add_argument(
+        "--team-totals-study", action="store_true",
+        help="print the team-total censoring-bias study (implied vs realized)",
+    )
     args = parser.parse_args()
+
+    if args.team_totals_study:
+        # Lines-only measurement — no model fit needed.
+        from velocity.backtest.lab import team_total_censoring_study
+
+        games_path = _find(Path(args.data), "games")
+        if games_path is None:
+            raise SystemExit(f"need a games file in {args.data}/")
+        study = team_total_censoring_study(load_games(games_path, league=args.league))
+        print(f"=== Team-total censoring study: {args.league.upper()} ===")
+        print("(bias = mean realized score − linearly implied team total; "
+              "over_rate vs 52.4% break-even)")
+        print(study.round(3).to_string(index=False))
+        return
 
     metrics, projections, games = run(
         args.league, args.data, args.n_sims, args.min_train_games, args.rating

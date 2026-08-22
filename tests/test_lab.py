@@ -597,3 +597,45 @@ def test_wnba_pace_frame_and_pace_efficiency_pricing() -> None:
     mid_total = mid.mu_home + mid.mu_away
     assert fast_total > mid_total + 2.0
     assert mid_total > slow_total + 2.0
+
+
+def test_team_total_censoring_study_measures_bias_exactly() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import team_total_censoring_study
+
+    games = pd.DataFrame([
+        # implied home (t+s)/2, away (t-s)/2. Game 1: 44/6 → home 25, away 19.
+        {"home_score": 28.0, "away_score": 20.0, "spread_line": 6.0, "total_line": 44.0},
+        # Game 2: 40/-4 → home 18, away 22.
+        {"home_score": 14.0, "away_score": 24.0, "spread_line": -4.0, "total_line": 40.0},
+    ])
+    out = team_total_censoring_study(games, edges=(0.0, 20.0, 100.0))
+    low = out[out["bucket"].str.contains("20.0]")].iloc[0]
+    # Low bucket holds implied 19 (realized 20, +1) and 18 (realized 14, −4).
+    assert low["n"] == 2
+    assert low["mean_implied"] == 18.5
+    assert low["bias"] == (1.0 - 4.0) / 2
+    assert low["over_rate"] == 0.5
+    high = out[out["bucket"].str.contains("100.0]")].iloc[0]
+    # High bucket: implied 25 (realized 28, over) and 22 (realized 24, over).
+    assert high["over_rate"] == 1.0
+
+
+def test_team_total_censoring_study_handles_missing_columns() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import team_total_censoring_study
+
+    assert team_total_censoring_study(pd.DataFrame({"home_score": []})).empty
+
+
+def test_low_bye_rest_variants_are_registered(games) -> None:
+    # The small-bye grid (the post-2011 literature's ≈+0.3 true effect) rides
+    # the same QB-recency base as the promoted rest variants; registration is
+    # what's checked here — the fixture plays carry no passer identity.
+    from velocity.backtest.lab import nfl_variants
+
+    variants = nfl_variants(200, schedule=games)
+    for name in ("rest-0.3-1.0", "rest-0.3-0.5", "rest-0.0-0.5"):
+        assert name in variants
+        kind, _factory = variants[name]
+        assert kind == "plays"

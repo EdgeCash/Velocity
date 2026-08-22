@@ -119,3 +119,39 @@ clearly better rate for ~30% fewer bets.
 3. Measure **CLV** against line movement, the real proof of skill.
 4. Formalize the **totals strategy**: edge threshold → fractional-Kelly stake
    through the existing wagering stack.
+
+## Addendum (2026-08): team totals — the censored-score derivative
+
+Arscott 2023 (J. Sports Economics) showed NCAAF **team-total** lines carry a
+censoring bias — books derive them linearly from the game total and spread
+(`home ≈ (total + spread) / 2`), ignoring that scores are floored at zero —
+and a lines-only strategy won >55% over two decades. We reproduced the
+measurement on the committed closes (`backtest/lab.py
+team_total_censoring_study`, runnable via `run_backtest_local.py
+--team-totals-study`):
+
+| implied team total | n (sides) | bias (realized − implied) | over rate |
+|---|---:|---:|---:|
+| ≤ 14 | 1,298 | **+0.97** | 52.0% |
+| 14–17 | 1,101 | +0.64 | 45.6% |
+| 17–21 | 2,415 | +0.33 | 49.4% |
+| 21–28 | 6,120 | +0.10 | 48.2% |
+| > 28 | 8,901 | +0.25 | 50.1% |
+
+The honest read: the **mean** bias is exactly where censoring predicts
+(≈ +1 point at low implied totals; NFL shows the same +0.73 at ≤14), but the
+**over rate at the derived number stays ~50–52%** — censoring moves the mean,
+not the median, so the paper's >55% must live in how *posted* team-total
+lines deviate from the derivation, which our archive doesn't carry yet.
+
+What shipped on this evidence:
+
+- Team totals are now a **first-class market** end-to-end: The Odds API
+  ingest (`team_totals` per-event key → `team_total_home`/`_away`), sim
+  pricing (the sim's floor-at-zero carries the censoring correction the
+  linear derivation misses), the EV gate, staking, grading, CLV, and parlay
+  legs.
+- A `min_team_total_disagreement` gate mirrors the totals filter but
+  **defaults to off** — no >52.4% cut exists on derived numbers, so the
+  threshold waits for banked *posted* team-total closes to calibrate against,
+  exactly how the full-game totals filter was promoted.

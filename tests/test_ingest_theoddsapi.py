@@ -133,7 +133,7 @@ def test_empty_events_yield_empty_valid_lines() -> None:
 
 
 def test_market_and_sport_maps() -> None:
-    assert set(GAME_MARKET_BY_KEY.values()) == {"moneyline", "spread", "total"}
+    assert set(GAME_MARKET_BY_KEY.values()) == {"moneyline", "spread", "total", "team_total"}
     assert SPORT_KEYS["nfl"] == "americanfootball_nfl"
     assert SPORT_KEYS["ncaaf"] == "americanfootball_ncaaf"
 
@@ -160,3 +160,71 @@ def test_from_env_builds_client(monkeypatch) -> None:
     client = TheOddsAPIClient.from_env()
     assert client.api_key == "secret-key"
     assert client.odds_format == "american"
+
+
+# A per-event ``team_totals`` board (the additional-markets endpoint shape):
+# both teams' Over/Under plus one outcome describing neither team, which must
+# be skipped, never guessed.
+TEAM_TOTAL_EVENTS = [
+    {
+        "id": "evt-tt",
+        "sport_key": "americanfootball_nfl",
+        "commence_time": "2026-09-10T00:20:00Z",
+        "home_team": "Kansas City Chiefs",
+        "away_team": "Buffalo Bills",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "last_update": "2026-09-09T23:55:00Z",
+                "markets": [
+                    {
+                        "key": "team_totals",
+                        "outcomes": [
+                            {"name": "Over", "description": "Kansas City Chiefs",
+                             "price": -115, "point": 24.5},
+                            {"name": "Under", "description": "Kansas City Chiefs",
+                             "price": -105, "point": 24.5},
+                            {"name": "Over", "description": "Buffalo Bills",
+                             "price": -110, "point": 21.5},
+                            {"name": "Under", "description": "Buffalo Bills",
+                             "price": -110, "point": 21.5},
+                            {"name": "Over", "description": "Someone Else",
+                             "price": -110, "point": 10.5},
+                        ],
+                    },
+                ],
+            }
+        ],
+    }
+]
+
+
+def test_team_totals_resolve_to_home_and_away_markets() -> None:
+    lines = normalize_odds_events(TEAM_TOTAL_EVENTS)
+    Lines.validate(lines)
+    assert set(lines["market"]) == {"team_total_home", "team_total_away"}
+    home = lines[lines["market"] == "team_total_home"]
+    assert set(home["side"]) == {"Over", "Under"}
+    assert (home["point"] == 24.5).all()
+    away = lines[lines["market"] == "team_total_away"]
+    assert (away["point"] == 21.5).all()
+    # The unresolvable description was dropped: 4 rows, not 5.
+    assert len(lines) == 4
+
+
+def test_team_totals_ride_alongside_game_markets() -> None:
+    combined = [dict(EVENTS[0])]
+    combined[0]["bookmakers"] = [
+        {
+            "key": "draftkings",
+            "last_update": "2026-09-09T23:55:00Z",
+            "markets": (
+                EVENTS[0]["bookmakers"][0]["markets"]
+                + TEAM_TOTAL_EVENTS[0]["bookmakers"][0]["markets"]
+            ),
+        }
+    ]
+    lines = normalize_odds_events(combined)
+    assert {"moneyline", "spread", "total", "team_total_home", "team_total_away"} <= set(
+        lines["market"]
+    )

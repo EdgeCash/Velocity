@@ -66,7 +66,7 @@ class SimResult(Protocol):
 _WIN, _PUSH, _LOSS = 1, 0, -1
 
 # Game markets the sim's score arrays can grade.
-_GAME_MARKETS = ("moneyline", "spread", "total")
+_GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_away")
 
 
 @dataclass(frozen=True)
@@ -125,6 +125,11 @@ def leg_outcomes(leg: ParlayLeg, result: SimResult) -> np.ndarray:
         if leg.point is None:
             raise ValueError("spread leg requires a point")
         edge = (margin + leg.point) if leg.side == "home" else (-margin + leg.point)
+    elif leg.market in ("team_total_home", "team_total_away"):
+        if leg.point is None:
+            raise ValueError("team total leg requires a point")
+        team = result.home_score if leg.market == "team_total_home" else result.away_score
+        edge = (team - leg.point) if leg.side == "over" else (leg.point - team)
     else:  # total
         if leg.point is None:
             raise ValueError("total leg requires a point")

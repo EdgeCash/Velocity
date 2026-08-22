@@ -212,6 +212,13 @@ def nfl_variants(
             "rest-1.0-1.0": ("plays", rest(1.0, 1.0)),
             "rest-0.5-1.5": ("plays", rest(0.5, 1.5)),
             "rest-2.0-1.0": ("plays", rest(2.0, 1.0)),
+            # The post-2011-CBA literature (docs/EDGE_RESEARCH.md §2.1): the
+            # true bye effect is ≈ +0.3 points while the market prices ≈ +1;
+            # the promoted +1.0 constant matches the market's overpricing, not
+            # the measured effect. These variants test the small-bye end.
+            "rest-0.3-1.0": ("plays", rest(0.3, 1.0)),
+            "rest-0.3-0.5": ("plays", rest(0.3, 0.5)),
+            "rest-0.0-0.5": ("plays", rest(0.0, 0.5)),
         })
 
         # Wind on totals: needs the fetched weather archive joined onto the
@@ -1225,3 +1232,57 @@ def ats_ou_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str,
             out[f"{key}_win_rate"] = float(sweep["win_rate"].iloc[0])
             out[f"{key}_bets"] = float(sweep["bets"].iloc[0])
     return out
+
+
+def team_total_censoring_study(
+    games: pd.DataFrame,
+    *,
+    edges: tuple[float, ...] = (0.0, 14.0, 17.0, 21.0, 24.0, 28.0, 100.0),
+) -> pd.DataFrame:
+    """Measure the censored-score bias in linearly derived team totals.
+
+    Books derive team-total lines from the game total and spread —
+    ``home ≈ (total + spread) / 2`` — a linear split that ignores the zero
+    floor on scores (Arscott 2023, J. Sports Economics: a lines-only strategy
+    exploiting this won >55% over two decades). This study reproduces the
+    measurement on the committed closes: for every completed game with both
+    lines, compute each side's linearly implied team total, then per implied-
+    total bucket report the realized bias (mean realized score − implied) and
+    the over rate at the implied number (pushes excluded).
+
+    An over rate above 52.4% (−110 break-even) in a bucket is the actionable
+    signal: the linear derivation understates that bucket's scoring. The
+    caveat is honest and structural — these are *derived* numbers, not banked
+    team-total closes; what is measured is the bias of the derivation books
+    are documented to use, on our own data.
+    """
+    cols = ("home_score", "away_score", "spread_line", "total_line")
+    if games.empty or any(c not in games.columns for c in cols):
+        return pd.DataFrame(
+            columns=["bucket", "n", "mean_implied", "mean_realized", "bias", "over_rate"]
+        )
+    span = games.dropna(subset=list(cols))
+    home = pd.DataFrame({
+        "implied": (span["total_line"] + span["spread_line"]) / 2.0,
+        "realized": span["home_score"].astype(float),
+    })
+    away = pd.DataFrame({
+        "implied": (span["total_line"] - span["spread_line"]) / 2.0,
+        "realized": span["away_score"].astype(float),
+    })
+    long = pd.concat([home, away], ignore_index=True)
+    long["bucket"] = pd.cut(long["implied"], list(edges), include_lowest=True)
+
+    rows = []
+    for bucket, part in long.groupby("bucket", observed=True):
+        decided = part[part["realized"] != part["implied"]]
+        over = (decided["realized"] > decided["implied"]).sum()
+        rows.append({
+            "bucket": str(bucket),
+            "n": len(part),
+            "mean_implied": float(part["implied"].mean()),
+            "mean_realized": float(part["realized"].mean()),
+            "bias": float((part["realized"] - part["implied"]).mean()),
+            "over_rate": float(over / len(decided)) if len(decided) else float("nan"),
+        })
+    return pd.DataFrame(rows)

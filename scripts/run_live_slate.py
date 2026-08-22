@@ -271,6 +271,20 @@ def main() -> None:
     # showed no edge at any threshold, so nothing is bet there on this cut.
     parser.add_argument("--ncaaf-total-edge", type=float, default=4.0,
                         help="NCAAF: min points of total disagreement to bet (0 = off)")
+    # Team totals — the censored-score derivative (docs/EDGE_RESEARCH.md §2.2).
+    # Books derive them linearly from total+spread, ignoring the zero floor on
+    # scores; the sim's floored scores price that mass correctly. Offline, rows
+    # already in the snapshot are priced automatically; live, football boards
+    # need a per-event fetch (The Odds API serves team_totals per event only).
+    # The censoring study on our own closes (backtest/lab.py
+    # team_total_censoring_study) found the mean bias (+0.7–1.0 pts at low
+    # implied totals) but no >52.4% over-rate on *derived* numbers, so the
+    # disagreement gate defaults to off — the EV gate still applies, and the
+    # threshold gets calibrated once banked team-total closes accumulate.
+    parser.add_argument("--team-totals", action=argparse.BooleanOptionalAction, default=True,
+                        help="fetch + price team totals on live football boards")
+    parser.add_argument("--team-total-edge", type=float, default=0.0,
+                        help="min points of team-total disagreement to bet (0 = EV gate only)")
     # Player props: priced only when a FantasyPros projections snapshot is
     # supplied (the collect-fantasypros artifact) — the prop model simulates
     # correlated player outcomes from those consensus means. The board comes
@@ -332,6 +346,19 @@ def main() -> None:
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
+    # Live football boards: team totals ride the per-event endpoint. Best-effort
+    # — a failed fetch just leaves the three main markets on the board.
+    if (args.team_totals and not args.snapshot_file
+            and args.league in ("nfl", "ncaaf")):
+        try:
+            from velocity.ingest.theoddsapi import TheOddsAPIClient
+
+            team_lines = TheOddsAPIClient.from_env().team_totals(args.league)
+            if not team_lines.empty:
+                lines = pd.concat([lines, team_lines], ignore_index=True)
+                print(f"team totals: {len(team_lines)} lines joined the board")
+        except Exception as exc:  # noqa: BLE001 - an optional derivative fetch
+            print(f"team totals skipped: {exc}")
     n_board = len(events)
     if args.max_days > 0 and not events.empty:
         kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
@@ -355,6 +382,7 @@ def main() -> None:
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
             min_total_disagreement=total_edge,
+            min_team_total_disagreement=args.team_total_edge,
         )
         if total_edge > 0.0:
             print(f"NCAAF totals filter: model must differ from the number by "
