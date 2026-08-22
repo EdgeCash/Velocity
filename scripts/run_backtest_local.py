@@ -86,7 +86,7 @@ def run(
     n_sims: int,
     min_train_games: int,
     rating: str = "epa",
-) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
+) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     folder = Path(data_dir)
     games_path = _find(folder, "games")
     if games_path is None:
@@ -117,7 +117,7 @@ def run(
     )
     metrics = dict(result.metrics)
     metrics.update(_ats_vs_close(result.projections, games))
-    return metrics, result.projections, games
+    return metrics, result.projections, games, result.ledger
 
 
 def totals_disagreement_sweep(
@@ -248,7 +248,7 @@ def main() -> None:
         print(study.round(3).to_string(index=False))
         return
 
-    metrics, projections, games = run(
+    metrics, projections, games, ledger = run(
         args.league, args.data, args.n_sims, args.min_train_games, args.rating
     )
     print(f"=== Local backtest: {args.league.upper()} from {args.data} ===")
@@ -270,6 +270,17 @@ def main() -> None:
             f"  vs closing total:  {metrics['ou_total']:.1%} O/U on "
             f"{int(metrics['ou_total_n'])} games (break-even 52.4%)"
         )
+
+    if not ledger.empty:
+        # Per-market CLV with the trust flag — CLV is the yardstick only where
+        # the close is efficient (docs/EDGE_RESEARCH.md §1.1); untrusted
+        # markets are judged on longer-window P/L instead.
+        from velocity.eval.metrics import clv_by_market
+
+        table = clv_by_market(ledger)
+        if not table.empty:
+            print("\n  CLV by market (trusted = the close is a valid yardstick):")
+            print("  " + table.round(4).to_string(index=False).replace("\n", "\n  "))
 
     if args.totals_sweep:
         sweep = totals_disagreement_sweep(projections, games, (0.0, 3.0, 4.0, 6.0, 8.0))

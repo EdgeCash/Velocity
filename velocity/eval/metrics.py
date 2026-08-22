@@ -111,3 +111,76 @@ def clv_stats(clv: object) -> dict[str, float]:
         "mean_clv": float(arr.mean()),
         "pct_positive": float(np.mean(arr > 0)),
     }
+
+
+# Markets whose closing lines are efficient enough for CLV to be the skill
+# yardstick. Props, team totals, and thin derivatives close on numbers few
+# sharp participants ever price, so beating them means little — those
+# strategies are judged on longer-window P/L and process instead
+# (docs/EDGE_RESEARCH.md §1.1).
+CLV_TRUSTED_MARKETS = frozenset({"spread", "total", "moneyline"})
+
+
+def clv_by_market(ledger: pd.DataFrame) -> pd.DataFrame:
+    """Per-market CLV table with a trust flag — the monitor's one-glance read.
+
+    ``ledger`` is any frame with ``market``, ``price_clv``, and ``line_clv``
+    columns (the backtest engine's ledger, a settled :class:`BetLog`). For
+    each market: bet count, mean price/line CLV, the share of bets beating
+    the close (price CLV where present, line CLV as fallback), and
+    ``clv_trusted`` — whether that CLV means anything. An untrusted market's
+    row is still reported; the flag tells the reader to weigh P/L instead.
+    """
+    columns = ["market", "n_bets", "mean_price_clv", "mean_line_clv",
+               "pct_beat_close", "clv_trusted"]
+    if ledger is None or ledger.empty or "market" not in ledger.columns:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for market, part in ledger.groupby("market", sort=True):
+        empty = pd.Series(dtype=float, index=part.index)
+        price = pd.to_numeric(
+            part["price_clv"] if "price_clv" in part.columns else empty, errors="coerce"
+        )
+        line = pd.to_numeric(
+            part["line_clv"] if "line_clv" in part.columns else empty, errors="coerce"
+        )
+        beat = price.where(price.notna(), line)
+        known = beat.dropna()
+        rows.append({
+            "market": str(market),
+            "n_bets": len(part),
+            "mean_price_clv": float(price.mean()) if price.notna().any() else float("nan"),
+            "mean_line_clv": float(line.mean()) if line.notna().any() else float("nan"),
+            "pct_beat_close": float((known > 0).mean()) if len(known) else float("nan"),
+            "clv_trusted": str(market) in CLV_TRUSTED_MARKETS,
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def benjamini_hochberg(p_values: object, alpha: float = 0.05) -> np.ndarray:
+    """Which hypotheses survive FDR control — the sweep-family discipline.
+
+    Every re-tune sweep tests many variants at once, and with ~5 years of
+    data more than a few dozen variants virtually guarantees a false
+    discovery (docs/EDGE_RESEARCH.md §1.3, Bailey/López de Prado). The
+    Benjamini–Hochberg step-up procedure bounds the *false discovery rate*
+    at ``alpha``: sort the p-values, find the largest k with
+    ``p_(k) ≤ k·alpha/n``, and reject exactly the k smallest. Returns a
+    boolean array aligned with the input — True = the finding survives.
+    """
+    p = np.asarray(p_values, dtype=float)
+    if p.size == 0:
+        return np.zeros(0, dtype=bool)
+    if np.any((p < 0) | (p > 1) | ~np.isfinite(p)):
+        raise ValueError("p-values must be finite and inside [0, 1]")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be inside (0, 1)")
+    n = p.size
+    order = np.argsort(p, kind="stable")
+    ranked = p[order]
+    thresholds = alpha * (np.arange(1, n + 1) / n)
+    passing = np.nonzero(ranked <= thresholds)[0]
+    survive = np.zeros(n, dtype=bool)
+    if passing.size:
+        survive[order[: passing[-1] + 1]] = True
+    return survive
