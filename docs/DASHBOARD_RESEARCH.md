@@ -129,8 +129,11 @@ running untouched throughout.
 
 ## 7. Status
 
-Research recorded; **no build started** — awaiting the owner's pick
-between #1 (Evidence) and #2 (custom Astro).
+The owner picked **Evidence** — the site lives in `site/` and its
+operating guide is docs/SITE.md. Build note discovered en route: Evidence's
+two DuckDB-WASM binaries exceed Cloudflare's 25 MiB per-asset cap, so the
+deploy parks them in an R2 bucket and a tiny Worker serves them back
+(`site/worker.js` + `site/deploy.sh`) — still $0.
 
 ## 8. Addendum: DFS pricing sources and the DFS page (2026-08)
 

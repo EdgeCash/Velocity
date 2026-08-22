@@ -1,0 +1,24 @@
+# Cloudflare Workers deploy for the Velocity site (docs/SITE.md).
+#
+# The site deploys to ONE Worker intended to sit behind Cloudflare Access —
+# every page carries paid-odds-derived numbers, so nothing ships publicly
+# until the public/model-facts split lands as its own phase.
+#
+# Deploy is `./deploy.sh` (not bare `wrangler deploy`): Evidence's two
+# DuckDB-WASM binaries exceed Cloudflare's 25 MiB per-asset cap, so the
+# script parks them in the R2 bucket below and strips them from the asset
+# upload; worker.js serves them back from R2.
+
+name = "velocity-edge"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "./build"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/_app/immutable/assets/*.wasm"]
+
+[[r2_buckets]]
+binding = "WASM"
+bucket_name = "velocity-wasm"

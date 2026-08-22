@@ -1,0 +1,60 @@
+# Velocity site theme — the mockup's trading-desk tokens
+# (velocity/report/social_png.py: #0b0f14 ground, #3ddad0 brand teal,
+# #0d9488 model teal, #d97706 amber, green/red semantics).
+appearance:
+  default: dark
+  switcher: true
+
+theme:
+  colorPalettes:
+    default:
+      light:
+        - "#0d9488"
+        - "#d97706"
+        - "#8b96a3"
+        - "#2563eb"
+        - "#8f3d56"
+        - "#46a485"
+      dark:
+        - "#3ddad0"
+        - "#d97706"
+        - "#8b96a3"
+        - "#71b9f4"
+        - "#8f3d56"
+        - "#46a485"
+  colorScales:
+    default:
+      light:
+        - "#a5f0ea"
+        - "#0d9488"
+      dark:
+        - "#123a37"
+        - "#3ddad0"
+  colors:
+    primary:
+      light: "#0d9488"
+      dark: "#3ddad0"
+    accent:
+      light: "#b45309"
+      dark: "#d97706"
+    base:
+      light: "#f4f6f8"
+      dark: "#0b0f14"
+    info:
+      light: "#0284c7"
+      dark: "#71b9f4"
+    positive:
+      light: "#16a34a"
+      dark: "#22c55e"
+    warning:
+      light: "#b45309"
+      dark: "#d97706"
+    negative:
+      light: "#dc2626"
+      dark: "#ef4444"
+
+plugins:
+  components:
+    "@evidence-dev/core-components": {}
+  datasources:
+    "@evidence-dev/duckdb": {}

@@ -1,0 +1,7 @@
+.evidence/
+build/
+node_modules/
+.svelte-kit/
+# The data dir is assembled by scripts/build_site_data.py from the run's
+# artifacts — slate frames are paid-odds-derived and never enter git.
+sources/velocity/data/
