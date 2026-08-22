@@ -19,11 +19,15 @@ from pandera.typing import Series
 
 LEAGUES = ["nfl", "ncaaf", "mlb", "wnba"]
 SEASON_TYPES = ["PRE", "REG", "POST"]
-# Game-level markets, shared by both leagues.
+# Game-level markets, shared by both leagues. Team totals are the censored-
+# score derivative (over/under on one side's score); the ``_home``/``_away``
+# suffix keys the market to a team without a schema change.
 MARKETS = [
     "spread",
     "total",
     "moneyline",
+    "team_total_home",
+    "team_total_away",
 ]
 # Player-prop markets (canonical stat keys, matching the stats
 # :mod:`velocity.models.props` simulates).

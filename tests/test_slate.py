@@ -94,3 +94,54 @@ def test_no_lines_no_bets(projection, games) -> None:
     empty["timestamp"] = pd.to_datetime(empty["timestamp"])
     log = build_slate({GAME_ID: projection}, empty, games, SlateConfig())
     assert len(log) == 0
+
+
+def _team_total_lines(point_home: float) -> pd.DataFrame:
+    ts = pd.Timestamp("2023-09-05 12:00")  # pre-kickoff (fixture kicks 09-07 20:20)
+    rows = []
+    for side, price in (("over", -110), ("under", -110)):
+        rows.append({
+            "line_id": f"{GAME_ID}|team_total_home|{side}|bookA|{point_home:g}",
+            "game_id": GAME_ID, "book": "bookA", "market": "team_total_home",
+            "side": side, "price": price, "point": point_home,
+            "timestamp": ts, "is_closing": False,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_model_probability_prices_team_totals(projection) -> None:
+    import numpy as np
+
+    point = float(np.floor(np.median(projection.sim.home_score))) - 5.5  # half point: no pushes
+    p_over = model_probability(projection, "team_total_home", "over", point)
+    p_under = model_probability(projection, "team_total_home", "under", point)
+    assert p_over + p_under == pytest.approx(1.0, abs=1e-9)
+    assert p_over > 0.6  # ~six points below the fair number: the over is likely
+
+
+def test_slate_bets_the_soft_team_total(projection, games) -> None:
+    import numpy as np
+
+    fair = float(np.median(projection.sim.home_score))
+    lines = _team_total_lines(fair - 6.0)
+    log = build_slate(
+        {GAME_ID: projection}, lines, games, SlateConfig(exclude_closing=False)
+    )
+    bets = [b for b in log.bets if b.market == "team_total_home"]
+    assert len(bets) == 1
+    assert bets[0].side == "over"
+    assert bets[0].point == pytest.approx(fair - 6.0)
+
+
+def test_team_total_disagreement_gate_blocks_thin_edges(projection, games) -> None:
+    import numpy as np
+
+    fair = float(np.median(projection.sim.home_score))
+    lines = _team_total_lines(fair - 6.0)
+    cfg = SlateConfig(exclude_closing=False, min_team_total_disagreement=10.0)
+    log = build_slate({GAME_ID: projection}, lines, games, cfg)
+    assert not [b for b in log.bets if b.market.startswith("team_total")]
+    # The full-game totals gate does not leak onto team totals and vice versa.
+    cfg_totals_only = SlateConfig(exclude_closing=False, min_total_disagreement=99.0)
+    log = build_slate({GAME_ID: projection}, lines, games, cfg_totals_only)
+    assert [b for b in log.bets if b.market == "team_total_home"]

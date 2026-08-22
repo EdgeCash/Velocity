@@ -271,6 +271,20 @@ def main() -> None:
     # showed no edge at any threshold, so nothing is bet there on this cut.
     parser.add_argument("--ncaaf-total-edge", type=float, default=4.0,
                         help="NCAAF: min points of total disagreement to bet (0 = off)")
+    # Team totals — the censored-score derivative (docs/EDGE_RESEARCH.md §2.2).
+    # Books derive them linearly from total+spread, ignoring the zero floor on
+    # scores; the sim's floored scores price that mass correctly. Offline, rows
+    # already in the snapshot are priced automatically; live, football boards
+    # need a per-event fetch (The Odds API serves team_totals per event only).
+    # The censoring study on our own closes (backtest/lab.py
+    # team_total_censoring_study) found the mean bias (+0.7–1.0 pts at low
+    # implied totals) but no >52.4% over-rate on *derived* numbers, so the
+    # disagreement gate defaults to off — the EV gate still applies, and the
+    # threshold gets calibrated once banked team-total closes accumulate.
+    parser.add_argument("--team-totals", action=argparse.BooleanOptionalAction, default=True,
+                        help="fetch + price team totals on live football boards")
+    parser.add_argument("--team-total-edge", type=float, default=0.0,
+                        help="min points of team-total disagreement to bet (0 = EV gate only)")
     # Player props: priced only when a FantasyPros projections snapshot is
     # supplied (the collect-fantasypros artifact) — the prop model simulates
     # correlated player outcomes from those consensus means. The board comes
@@ -308,6 +322,17 @@ def main() -> None:
                         help="max ranked pick'em slips to persist (0 disables)")
     parser.add_argument("--pickem-min-ev", type=float, default=1.0,
                         help="min expected return multiple for a slip (1.0 = breakeven)")
+    # Leg probabilities near the payout breakevens (54-58%) are exactly where
+    # the devig methods disagree; the worst-case default publishes a leg only
+    # when multiplicative, Shin, and power all clear it (docs/EDGE_RESEARCH.md
+    # §4). Operators also tax same-game correlation now (reduced payouts /
+    # blocked combos), so slips are capped at two legs per game by default and
+    # flagged when any two legs share one.
+    parser.add_argument("--pickem-devig", default="worst_case",
+                        choices=["multiplicative", "additive", "shin", "power", "worst_case"],
+                        help="leg-probability devig (worst_case = every method must agree)")
+    parser.add_argument("--pickem-max-per-game", type=int, default=2,
+                        help="max legs of one slip sharing a game (0 = no cap)")
     # Parlays: legs come only from bets that already cleared the single-bet gate, are
     # priced sim-exactly (correlated within a game, independent across), and must
     # clear their own higher EV bar. Same-game combos are flagged — books reprice
@@ -318,6 +343,18 @@ def main() -> None:
                         help="min combined EV per unit for a parlay to be recommended")
     parser.add_argument("--max-parlays", type=int, default=5,
                         help="max parlays to recommend per slate")
+    # Portfolio sizing (docs/WAGERING.md W2, docs/EDGE_RESEARCH.md §1.2): the
+    # game slate and the prop slate are sized in two independent passes that
+    # never see each other, so a game's correlated exposure can stack past any
+    # sane aggregate. This stage routes the whole card through
+    # portfolio.size_portfolio — correlation de-scaling within each game, the
+    # per-game cap, and an aggregate slate cap — and persists the combined,
+    # sized card as portfolio_{league}_{stamp}.parquet. The kill-switch stays
+    # unreachable until the W1 ledger supplies bankroll state.
+    parser.add_argument("--portfolio", action=argparse.BooleanOptionalAction, default=True,
+                        help="size the combined card through the portfolio rules")
+    parser.add_argument("--max-slate-fraction", type=float, default=0.25,
+                        help="aggregate cap: max fraction of bankroll staked per slate")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     args = parser.parse_args()
 
@@ -332,6 +369,19 @@ def main() -> None:
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
+    # Live football boards: team totals ride the per-event endpoint. Best-effort
+    # — a failed fetch just leaves the three main markets on the board.
+    if (args.team_totals and not args.snapshot_file
+            and args.league in ("nfl", "ncaaf")):
+        try:
+            from velocity.ingest.theoddsapi import TheOddsAPIClient
+
+            team_lines = TheOddsAPIClient.from_env().team_totals(args.league)
+            if not team_lines.empty:
+                lines = pd.concat([lines, team_lines], ignore_index=True)
+                print(f"team totals: {len(team_lines)} lines joined the board")
+        except Exception as exc:  # noqa: BLE001 - an optional derivative fetch
+            print(f"team totals skipped: {exc}")
     n_board = len(events)
     if args.max_days > 0 and not events.empty:
         kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
@@ -355,6 +405,7 @@ def main() -> None:
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
             min_total_disagreement=total_edge,
+            min_team_total_disagreement=args.team_total_edge,
         )
         if total_edge > 0.0:
             print(f"NCAAF totals filter: model must differ from the number by "
@@ -417,6 +468,13 @@ def main() -> None:
     if projections and args.parlay_max_legs >= 2:
         _parlay_slate(args, projections, game_log, now, generated_at)
 
+    # Portfolio sizing — the combined card through correlation de-scaling and
+    # the aggregate slate cap. Best-effort; the per-slate parquets keep their
+    # solo-Kelly stakes for backtest comparability.
+    if args.portfolio and (not frame.empty or (props_frame is not None
+                                               and not props_frame.empty)):
+        _portfolio_card(args, frame, props_frame, now, generated_at)
+
     # Intelligence layer — judge every qualifying bet against the game's
     # evidence and emit tiered, argued pick sets. Best-effort like every
     # surface after the game slate: a failure never breaks the slate.
@@ -464,6 +522,65 @@ def main() -> None:
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
             )
+
+
+def _portfolio_card(
+    args: argparse.Namespace,
+    frame: pd.DataFrame,
+    props_frame: pd.DataFrame | None,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Size the combined game + prop card through the portfolio rules.
+
+    One correlation group per game (a spread, its total, its team totals, and
+    its props share a group), the per-game cap, and the aggregate slate cap.
+    Prints the exposure summary and persists the sized combined card; the
+    per-slate parquets keep their solo-Kelly stakes.
+    """
+    try:
+        from velocity.wagering.portfolio import BetCandidate, PortfolioConfig, size_portfolio
+
+        parts = []
+        if not frame.empty:
+            parts.append(frame.assign(kind="game"))
+        if props_frame is not None and not props_frame.empty:
+            parts.append(props_frame.assign(kind="prop"))
+        card = pd.concat(parts, ignore_index=True, sort=False)
+        candidates = [
+            BetCandidate(
+                key=str(i),
+                stake_fraction=float(row["stake"]) / args.bankroll,
+                group=str(row["game_id"]),
+            )
+            for i, row in enumerate(card.to_dict("records"))
+        ]
+        config = PortfolioConfig(max_portfolio_fraction=args.max_slate_fraction)
+        sized = size_portfolio(candidates, args.bankroll, config)
+        card["stake_solo"] = card["stake"]
+        card["stake"] = [round(sized[str(i)], 4) for i in range(len(card))]
+
+        solo_total = float(card["stake_solo"].sum())
+        total = float(card["stake"].sum())
+        per_game = card.groupby("game_id")["stake"].sum().sort_values(ascending=False)
+        print(f"\n=== Portfolio-sized card — {len(card)} bets across "
+              f"{card['game_id'].nunique()} games ===")
+        print(f"solo-Kelly total {solo_total:.2f} → sized total {total:.2f} "
+              f"({total / args.bankroll:.1%} of bankroll, cap "
+              f"{args.max_slate_fraction:.0%}; correlated same-game exposure "
+              f"de-scaled at ρ={config.group_correlation:g})")
+        top = ", ".join(f"{gid}: {amt:.2f}" for gid, amt in per_game.head(3).items())
+        print(f"largest game exposures — {top}")
+
+        if args.out:
+            stamp = now.strftime("%Y%m%dT%H%M%SZ")
+            dest = Path(args.out) / f"portfolio_{args.league}_{stamp}.parquet"
+            card.assign(league=args.league, generated_at=generated_at).to_parquet(
+                dest, index=False
+            )
+            print(f"wrote the sized card to {dest}")
+    except Exception as exc:  # noqa: BLE001 - sizing never breaks the slates
+        print(f"portfolio sizing skipped: {exc}")
 
 
 def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's parts
@@ -761,6 +878,8 @@ def _pickem_slate(
         legs, slips = build_pickem_board(
             props_by_game, prop_lines, name_index_from_fp(fp),
             min_ev=args.pickem_min_ev, top=args.pickem_top,
+            devig_method=args.pickem_devig,
+            max_per_game=args.pickem_max_per_game or None,
         )
         print(f"\n=== {args.league.upper()} pick'em — {len(legs)} qualifying legs, "
               f"{len(slips)} slips over EV {args.pickem_min_ev:g} ===")

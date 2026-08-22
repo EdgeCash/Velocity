@@ -35,6 +35,7 @@ one-size-smaller structure per the published rules — :func:`reverted_table`.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import combinations
@@ -51,6 +52,7 @@ __all__ = [
     "PayoutTable",
     "best_slips",
     "breakeven_leg_prob",
+    "conservative_leg",
     "fair_leg_prob",
     "hit_distribution",
     "hit_matrix",
@@ -186,9 +188,38 @@ def fair_leg_prob(
     The standard leg-probability source: the book's over/under prices at the
     *same* line as the board carry vig; devigging them yields the fair
     probability the payout-table breakevens are compared against.
+
+    ``method="worst_case"`` returns the **smallest** P(over) any standard
+    method (multiplicative/Shin/power) assigns — the conservative bound when
+    the leg being priced is the over. A leg on the *under* wants the
+    complement of the largest P(over); use :func:`conservative_leg` for the
+    side-aware version the board builder runs.
     """
+    if method == "worst_case":
+        from velocity.wagering.devig import devig_worst_case
+
+        return float(devig_worst_case([over_price, under_price])[0])
     fair = devig([over_price, under_price], method=method)
     return float(fair[0])
+
+
+def conservative_leg(over_price: float, under_price: float) -> tuple[str, float]:
+    """Side-aware worst-case leg: ``(side, p)`` with ``p`` every method endorses.
+
+    Direction comes from the multiplicative baseline (which side is the
+    favorite); magnitude is the minimum probability any standard devig method
+    assigns *that side* — so a leg only clears a payout-table breakeven when
+    multiplicative, Shin, and power all agree it does. This is the published
+    pick'em discipline for suppressing false positives near the 54–58%
+    thresholds (docs/EDGE_RESEARCH.md §4).
+    """
+    from velocity.wagering.devig import devig_worst_case
+
+    baseline = devig([over_price, under_price], method="multiplicative")
+    side = "over" if baseline[0] >= 0.5 else "under"
+    conservative = devig_worst_case([over_price, under_price])
+    p = conservative[0] if side == "over" else conservative[1]
+    return side, float(p)
 
 
 @dataclass(frozen=True)
@@ -206,6 +237,11 @@ class Leg:
     line: float
     side: str  # "over" | "under"
     p: float
+    # Which game the leg belongs to (None: unknown). Fixed payout tables
+    # assume independence, and the operators know it: same-game combinations
+    # now carry reduced payouts or outright blocks, so the slip builder needs
+    # the identity to cap and flag them.
+    game_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.side not in ("over", "under"):
@@ -246,6 +282,7 @@ def best_slips(
     max_legs: int = 12,
     min_ev: float = 0.0,
     top: int = 10,
+    max_per_game: int | None = None,
 ) -> pd.DataFrame:
     """Enumerate and rank candidate slips across shapes by expected return.
 
@@ -256,6 +293,12 @@ def best_slips(
     reward hit rate, not price). Returns the ``top`` rows over ``min_ev``,
     sorted by EV: one row per (shape, combination) with the leg labels,
     the all-hit probability and the EV multiple.
+
+    ``max_per_game`` caps how many legs of one slip may share a game (legs
+    with a ``game_id``). Operators now tax the correlation the fixed tables
+    ignore — reduced same-game payouts, blocked combos — so the published EV
+    of a heavy same-game stack is an upper bound; every emitted row carries a
+    ``same_game`` flag so downstream surfaces can say so.
     """
     ranked = sorted(legs, key=lambda leg: leg.p, reverse=True)[:max_legs]
     joint = hit_matrix(ranked, samples_fn) if samples_fn is not None else None
@@ -267,6 +310,11 @@ def best_slips(
             continue
         for combo in combinations(range(len(ranked)), table.n_picks):
             chosen = [ranked[i] for i in combo]
+            games = [leg.game_id for leg in chosen if leg.game_id is not None]
+            per_game = Counter(games)
+            if max_per_game is not None and per_game and max(per_game.values()) > max_per_game:
+                continue
+            same_game = bool(per_game) and max(per_game.values()) > 1
             if joint is not None:
                 sub = joint[:, combo]
                 ev = slip_ev_from_hits(sub, table)
@@ -283,9 +331,11 @@ def best_slips(
                 "max_multiplier": max(table.multipliers.values()),
                 "legs": " + ".join(leg.label for leg in chosen),
                 "n_picks": table.n_picks,
+                "same_game": same_game,
             })
     out = pd.DataFrame(
-        rows, columns=["slip", "ev", "p_all", "max_multiplier", "legs", "n_picks"]
+        rows,
+        columns=["slip", "ev", "p_all", "max_multiplier", "legs", "n_picks", "same_game"],
     )
     if out.empty:
         return out

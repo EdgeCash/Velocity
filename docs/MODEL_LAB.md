@@ -491,3 +491,29 @@ falls back to the recency-8 scores fit.
 **Backlog (summer):** NegativeBinomial run distributions,
 weather-on-totals; WNBA minutes-aware availability; FIP priors gated to
 below-floor starters only.
+
+---
+
+## Round 8 (2026-08) — the small-bye re-sweep: a clean negative
+
+The post-2011 rest literature (docs/EDGE_RESEARCH.md §2.1: true bye effect
+≈ +0.3 points while the market prices ≈ +0.97) flagged our promoted +1.0 bye
+constant as suspiciously market-shaped. New variants `rest-0.3-1.0`,
+`rest-0.3-0.5`, `rest-0.0-0.5` ran through the standard walk-forward gate,
+2011–2025, 4,064 games:
+
+| variant | Brier | ATS | O/U |
+|---|---:|---:|---:|
+| **rest-1.0-1.0 (promoted)** | **0.21945** | **49.5%** | 50.0% |
+| rest-0.3-1.0 | 0.21956 | 49.2% | 50.3% |
+| rest-0.3-0.5 | 0.21956 | 49.3% | 50.3% |
+| rest-0.0-0.5 | 0.21963 | 49.3% | 50.3% |
+| qb-recency-17 (no rest) | 0.21962 | 49.3% | 50.2% |
+
+The differences are hair-thin (~0.0002 Brier), but the promoted +1.0 stays
+best on both Brier and ATS: **the literature's +0.3 does not improve our
+walk-forward accuracy, and the fade-the-rested hypothesis gets no support
+from this replay.** No default change; the variants remain in the lab for
+re-runs as seasons accumulate. The market-blend sweep re-confirmed Round 3's
+lesson unchanged on every variant (pure market Brier 0.2109 on holdout beats
+every pure model at 0.223; select-chosen w=0.2 lands at 0.2119).

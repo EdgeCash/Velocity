@@ -86,7 +86,7 @@ def run(
     n_sims: int,
     min_train_games: int,
     rating: str = "epa",
-) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
+) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     folder = Path(data_dir)
     games_path = _find(folder, "games")
     if games_path is None:
@@ -117,7 +117,7 @@ def run(
     )
     metrics = dict(result.metrics)
     metrics.update(_ats_vs_close(result.projections, games))
-    return metrics, result.projections, games
+    return metrics, result.projections, games, result.ledger
 
 
 def totals_disagreement_sweep(
@@ -228,9 +228,27 @@ def main() -> None:
         "--totals-sweep", action="store_true",
         help="print the points-of-disagreement totals sweep (the NCAAF strategy)",
     )
+    parser.add_argument(
+        "--team-totals-study", action="store_true",
+        help="print the team-total censoring-bias study (implied vs realized)",
+    )
     args = parser.parse_args()
 
-    metrics, projections, games = run(
+    if args.team_totals_study:
+        # Lines-only measurement — no model fit needed.
+        from velocity.backtest.lab import team_total_censoring_study
+
+        games_path = _find(Path(args.data), "games")
+        if games_path is None:
+            raise SystemExit(f"need a games file in {args.data}/")
+        study = team_total_censoring_study(load_games(games_path, league=args.league))
+        print(f"=== Team-total censoring study: {args.league.upper()} ===")
+        print("(bias = mean realized score − linearly implied team total; "
+              "over_rate vs 52.4% break-even)")
+        print(study.round(3).to_string(index=False))
+        return
+
+    metrics, projections, games, ledger = run(
         args.league, args.data, args.n_sims, args.min_train_games, args.rating
     )
     print(f"=== Local backtest: {args.league.upper()} from {args.data} ===")
@@ -252,6 +270,17 @@ def main() -> None:
             f"  vs closing total:  {metrics['ou_total']:.1%} O/U on "
             f"{int(metrics['ou_total_n'])} games (break-even 52.4%)"
         )
+
+    if not ledger.empty:
+        # Per-market CLV with the trust flag — CLV is the yardstick only where
+        # the close is efficient (docs/EDGE_RESEARCH.md §1.1); untrusted
+        # markets are judged on longer-window P/L instead.
+        from velocity.eval.metrics import clv_by_market
+
+        table = clv_by_market(ledger)
+        if not table.empty:
+            print("\n  CLV by market (trusted = the close is a valid yardstick):")
+            print("  " + table.round(4).to_string(index=False).replace("\n", "\n  "))
 
     if args.totals_sweep:
         sweep = totals_disagreement_sweep(projections, games, (0.0, 3.0, 4.0, 6.0, 8.0))

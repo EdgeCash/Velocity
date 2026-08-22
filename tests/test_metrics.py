@@ -76,3 +76,52 @@ def test_clv_stats() -> None:
 def test_metrics_reject_mismatched_shapes() -> None:
     with pytest.raises(ValueError):
         brier_score([0.5, 0.5], [1])
+
+
+def test_clv_by_market_summarizes_and_flags_trust() -> None:
+    import numpy as np
+    import pandas as pd
+    from velocity.eval.metrics import clv_by_market
+
+    ledger = pd.DataFrame([
+        {"market": "spread", "price_clv": 0.02, "line_clv": 1.0},
+        {"market": "spread", "price_clv": -0.01, "line_clv": -0.5},
+        {"market": "team_total_home", "price_clv": 0.05, "line_clv": np.nan},
+        {"market": "total", "price_clv": np.nan, "line_clv": 2.0},  # line CLV fallback
+    ])
+    table = clv_by_market(ledger).set_index("market")
+    assert table.loc["spread", "n_bets"] == 2
+    assert table.loc["spread", "mean_price_clv"] == pytest.approx(0.005)
+    assert table.loc["spread", "pct_beat_close"] == pytest.approx(0.5)
+    assert bool(table.loc["spread", "clv_trusted"])
+    assert bool(table.loc["total", "clv_trusted"])
+    assert table.loc["total", "pct_beat_close"] == pytest.approx(1.0)
+    # Team totals close on numbers few sharps price: CLV is not the yardstick.
+    assert not bool(table.loc["team_total_home", "clv_trusted"])
+
+
+def test_clv_by_market_empty_and_missing_columns() -> None:
+    import pandas as pd
+    from velocity.eval.metrics import clv_by_market
+
+    assert clv_by_market(pd.DataFrame()).empty
+    bare = clv_by_market(pd.DataFrame({"market": ["spread"]}))
+    assert bare.loc[0, "n_bets"] == 1
+    assert pd.isna(bare.loc[0, "pct_beat_close"])
+
+
+def test_benjamini_hochberg_textbook_case() -> None:
+    import numpy as np
+    from velocity.eval.metrics import benjamini_hochberg
+
+    # Classic worked example: n=6, alpha=0.25 — thresholds k/6·0.25.
+    p = np.array([0.009, 0.013, 0.014, 0.19, 0.35, 0.5])
+    survive = benjamini_hochberg(p, alpha=0.25)
+    assert survive.tolist() == [True, True, True, False, False, False]
+    # Order-independence: shuffling the inputs shuffles the mask identically.
+    perm = np.array([3, 0, 5, 1, 4, 2])
+    assert benjamini_hochberg(p[perm], alpha=0.25).tolist() == survive[perm].tolist()
+    # Nothing significant → nothing survives.
+    assert not benjamini_hochberg([0.5, 0.9], alpha=0.05).any()
+    with pytest.raises(ValueError, match="p-values"):
+        benjamini_hochberg([1.5])

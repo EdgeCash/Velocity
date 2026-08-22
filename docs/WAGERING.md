@@ -286,3 +286,27 @@ and promos. The board feed itself is phase-gated on a transport decision
 (docs/DATA_PROVIDERS.md); until then leg probabilities come from our own
 Odds API props snapshots, which is also exactly how the engine gets
 lab-validated before anything is published.
+
+## 6. Addendum (2026-08): research-driven upgrades landed early
+
+Three pieces of the W2/W3 plan shipped ahead of the ledger, driven by the
+edge research (docs/EDGE_RESEARCH.md):
+
+- **Portfolio sizing (W2's sizing half).** The live runner now routes the
+  combined game + prop card through `portfolio.size_portfolio` — one
+  correlation group per game, correlation de-scaling at ρ=0.5, the per-game
+  cap, and the 25% aggregate slate cap — printing an exposure summary and
+  persisting the sized card as `portfolio_{league}_{stamp}.parquet`. The
+  per-slate parquets keep solo-Kelly stakes for backtest comparability; the
+  portfolio card is the number to bet. The kill-switch remains unreachable
+  until W1 supplies bankroll state, exactly as §1.2 said.
+- **Per-market CLV trust (a W3 monitor building block).**
+  `eval.metrics.clv_by_market` reports per-market CLV with a `clv_trusted`
+  flag: CLV is the yardstick only where the close is efficient
+  (spread/total/moneyline); props and team totals close on numbers few
+  sharps price, so those rows say "judge on P/L instead". Printed by
+  `run_backtest_local.py` whenever a ledger exists.
+- **Sweep-family FDR (the §3 multiple-comparisons rule, made executable).**
+  `eval.metrics.benjamini_hochberg` bounds the false-discovery rate across a
+  sweep family; the standing budget is ~45 variants per 5 years of data
+  before overfit is near-certain (Bailey/López de Prado).

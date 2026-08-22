@@ -35,6 +35,15 @@ def main() -> None:
     parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
     parser.add_argument("--draft-group", default=None,
                         help="pin a draft group id (default: auto-pick main slate)")
+    # GPP portfolio (docs/EDGE_RESEARCH.md §5): tournaments pay the tail of a
+    # huge field — the documented play is many diversified, stacked lineups
+    # under overlap/exposure caps, not the single cash-optimal build.
+    parser.add_argument("--gpp", type=int, default=0,
+                        help="also build a GPP portfolio of this many lineups (0 = off)")
+    parser.add_argument("--gpp-overlap", type=int, default=5,
+                        help="max players any two GPP lineups may share")
+    parser.add_argument("--gpp-exposure", type=float, default=0.6,
+                        help="max fraction of GPP lineups any player appears in")
     args = parser.parse_args()
 
     from velocity.dfs.optimizer import CFB_CLASSIC, NFL_CLASSIC
@@ -72,6 +81,32 @@ def main() -> None:
     frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
     lineup_frame(run).to_parquet(frame_dest, index=False)
     print(f"wrote lineup frame to {frame_dest}")
+
+    if args.gpp > 0:
+        # Best-effort like every surface past the cash lineup.
+        try:
+            from velocity.dfs.gpp import GppConfig, build_gpp_portfolio, portfolio_frame
+            from velocity.dfs.optimizer import lineup_pool
+            from velocity.dfs.scoring import dk_expected_points
+            from velocity.util.seed import make_rng
+
+            board = salaries[
+                salaries["draft_group_id"].astype(str) == str(run.draft_group_id)
+            ]
+            pool = lineup_pool(board, dk_expected_points(fp))
+            portfolio = build_gpp_portfolio(
+                pool, spec=spec, rng=make_rng(),
+                config=GppConfig(n_lineups=args.gpp, max_overlap=args.gpp_overlap,
+                                 max_exposure=args.gpp_exposure),
+            )
+            print(f"GPP portfolio: {len(portfolio.lineups)}/{args.gpp} lineups "
+                  f"({portfolio.n_stacked} stacked of {portfolio.n_candidates} candidates)")
+            if portfolio.lineups:
+                gpp_dest = out / f"dfs_gpp_{args.league}_{stamp}.parquet"
+                portfolio_frame(portfolio).to_parquet(gpp_dest, index=False)
+                print(f"wrote GPP portfolio to {gpp_dest}")
+        except Exception as exc:  # noqa: BLE001 - the portfolio never breaks the lineup
+            print(f"GPP portfolio skipped: {exc}")
 
     kind = "DK CLASSIC" if args.league == "nfl" else "DK CFB CLASSIC"
     slate_label = f"{kind} · {run.n_games} GAMES"

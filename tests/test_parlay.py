@@ -301,3 +301,20 @@ def test_config_validation() -> None:
         ParlayConfig(kelly_fraction=0.0)
     with pytest.raises(ValueError, match="max_stake_fraction"):
         ParlayConfig(max_stake_fraction=1.5)
+
+
+def test_team_total_legs_price_off_the_sim() -> None:
+    import numpy as np
+    from velocity.wagering.parlay import ParlayLeg, leg_outcomes
+
+    class _Result:
+        home_score = np.array([28.0, 17.0, 24.0])
+        away_score = np.array([20.0, 21.0, 24.0])
+
+    leg = ParlayLeg(game_id="g", market="team_total_home", side="over",
+                    price=-110, point=23.5)
+    assert leg_outcomes(leg, _Result()).tolist() == [1, -1, 1]
+    away_under = ParlayLeg(game_id="g", market="team_total_away", side="under",
+                           price=-110, point=21.0)
+    # away scores 20 / 21 / 24 vs under 21.0 → win / push / loss.
+    assert leg_outcomes(away_under, _Result()).tolist() == [1, 0, -1]

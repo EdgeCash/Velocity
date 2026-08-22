@@ -124,3 +124,20 @@ def test_clv_summary_aggregates() -> None:
     assert summary["pct_positive_clv"] == pytest.approx(0.5)
 
 
+
+
+def test_team_total_bets_grade_against_one_side_of_the_score() -> None:
+    from velocity.wagering.bet_log import Bet
+
+    over_home = Bet(game_id="g", market="team_total_home", side="over", book="b",
+                    price=-110, stake=11.0, p_model=0.6, point=23.5)
+    result, profit = over_home.grade(27.0, 20.0)  # home 27 > 23.5
+    assert result == "win"
+    assert profit == pytest.approx(10.0)
+    under_away = Bet(game_id="g", market="team_total_away", side="under", book="b",
+                     price=-110, stake=11.0, p_model=0.6, point=23.5)
+    result, profit = under_away.grade(27.0, 20.0)  # away 20 < 23.5
+    assert result == "win"
+    push = Bet(game_id="g", market="team_total_home", side="over", book="b",
+               price=-110, stake=11.0, p_model=0.6, point=27.0)
+    assert push.grade(27.0, 20.0) == ("push", 0.0)

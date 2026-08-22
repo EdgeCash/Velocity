@@ -48,10 +48,14 @@ _BASE = "https://api.the-odds-api.com/v4"
 _FETCH_TIMEOUT = 60
 
 # The Odds API market key → canonical Lines market. Anything else is ignored.
+# ``team_totals`` is resolved per-outcome into ``team_total_home`` /
+# ``team_total_away`` using the event's own team names (the outcome's
+# ``description`` names the team; ``name`` stays Over/Under).
 GAME_MARKET_BY_KEY = {
     "h2h": "moneyline",
     "spreads": "spread",
     "totals": "total",
+    "team_totals": "team_total",
 }
 
 # Friendly league → The Odds API sport key.
@@ -139,15 +143,27 @@ def normalize_odds_events(
                         continue
                     side = str(outcome.get("name", ""))
                     point = outcome.get("point")
+                    market_name = canonical
+                    if canonical == "team_total":
+                        # Which team's total this is lives in the outcome's
+                        # description; resolve against the event's own names.
+                        # An unresolvable team is skipped, never guessed.
+                        described = str(outcome.get("description", ""))
+                        if described == str(event.get("home_team")):
+                            market_name = "team_total_home"
+                        elif described == str(event.get("away_team")):
+                            market_name = "team_total_away"
+                        else:
+                            continue
                     rows.append(
                         {
                             "game_id": str(event_id),
                             "book": None if book_key is None else str(book_key),
-                            "market": canonical,
+                            "market": market_name,
                             "side": side,
                             "price": price,
                             # Moneyline outcomes carry no number.
-                            "point": None if canonical.startswith("moneyline") else point,
+                            "point": None if market_name.startswith("moneyline") else point,
                             "timestamp": market_update,
                             "is_closing": is_closing,
                         }
@@ -465,6 +481,24 @@ class TheOddsAPIClient:
         if not frames:
             return _empty_prop_lines()
         return PropLines.validate(pd.concat(frames, ignore_index=True))
+
+    def team_totals(self, league: str) -> pd.DataFrame:  # pragma: no cover - network
+        """Live team totals for ``league`` → a canonical ``Lines`` frame.
+
+        Team totals are one of the "additional markets" The Odds API serves only
+        per event, so this pulls each event's board and concatenates. Each row's
+        market is ``team_total_home``/``team_total_away`` (resolved from the
+        outcome's team description); sides are Over/Under. Empty (none posted)
+        is a valid snapshot, not an error.
+        """
+        frames = [
+            normalize_odds_events(events_of(raw), is_closing=False)
+            for _, raw in self.event_odds_payloads(league, "team_totals")
+        ]
+        frames = [f for f in frames if not f.empty]
+        if not frames:
+            return _empty_lines()
+        return Lines.validate(pd.concat(frames, ignore_index=True))
 
     def historical_events_payload(  # pragma: no cover - network
         self, league: str, date: str
