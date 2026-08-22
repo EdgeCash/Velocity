@@ -17,7 +17,7 @@ projections — pure and offline-testable; rendering lives in
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -52,6 +52,48 @@ class StatRow:
 
 
 @dataclass(frozen=True)
+class PlayCall:
+    """One suggested wager for the card's verdict band.
+
+    A staked slate bet reduced to what a reader acts on: the position, the
+    number, the price/book it was shopped to, the stake, and (when the
+    intelligence layer ran) its conviction tier. ``edge`` is the model-vs-
+    devigged-market probability gap that qualified it.
+    """
+
+    market: str
+    side: str
+    point: float | None
+    price: float
+    book: str
+    stake: float
+    edge: float | None = None
+    tier: str | None = None
+
+    def label(self, away_code: str, home_code: str) -> str:
+        """"DET -3.5 · -110 (bookA) · 2.1u" — the position as a bettor writes it."""
+        if self.market == "moneyline":
+            who = home_code if self.side == "home" else away_code
+            pos = f"{who} ML"
+        elif self.market == "spread":
+            who = home_code if self.side == "home" else away_code
+            pos = f"{who} {self.point:+g}" if self.point is not None else f"{who} spread"
+        elif self.market == "total":
+            pos = f"{self.side.upper()} {self.point:g}" if self.point is not None \
+                else self.side.upper()
+        elif self.market in ("team_total_home", "team_total_away"):
+            who = home_code if self.market.endswith("home") else away_code
+            pos = f"{who} TT {self.side.upper()} {self.point:g}" if self.point is not None \
+                else f"{who} team total {self.side}"
+        else:
+            pos = f"{self.market} {self.side}"
+        bits = [pos, f"{self.price:+.0f} ({self.book})", f"{self.stake:.1f}u"]
+        if self.tier:
+            bits.append(f"tier {self.tier}")
+        return " · ".join(bits)
+
+
+@dataclass(frozen=True)
 class DeepDive:
     """Everything the deep-dive renderer needs for one game."""
 
@@ -73,6 +115,11 @@ class DeepDive:
     home_rest: int | None = None
     away_sp: str | None = None  # MLB probable line ("JOBE 8.2 IP · 4.4 K/9")
     home_sp: str | None = None
+    # The verdict band: the slate's staked plays for this game (empty = the
+    # model sees no edge at today's numbers — a PASS is a verdict too), and
+    # the model's own rationale as a readable snippet.
+    plays: tuple[PlayCall, ...] = ()
+    why: str = ""
 
 
 def _rank(series: pd.Series, value: float, *, higher_is_better: bool) -> int:
@@ -271,6 +318,101 @@ def build_rows(
     return tuple(row for row in candidates if row is not None)
 
 
+def model_why(
+    card: SocialCard,
+    rows: Sequence[StatRow],
+    p_home_cover: float | None,
+    p_over: float | None,
+    *,
+    signals: Sequence[str] = (),
+    n_sims: int = 0,
+) -> str:
+    """The model's rationale as plain statements — the card's WHY snippet.
+
+    Composed from what the reader can verify: the projection vs the market's
+    numbers, the sim's cover/over rates against those numbers, the clearest
+    unit advantages from the stat table, and (when the intelligence layer
+    ran) its evidence lines. Statements, never hype — the same register as
+    :func:`deep_dive_caption`.
+    """
+    away, home = card.away_code, card.home_code
+    parts: list[str] = []
+    fav = home if card.p_home_win >= 0.5 else away
+    fav_p = card.p_home_win if fav == home else 1.0 - card.p_home_win
+    core = (f"Model projects {away} {card.mu_away:.1f}–{home} {card.mu_home:.1f} "
+            f"({fav} {fav_p:.0%}), fair line {home} {card.fair_spread:+.1f}, "
+            f"fair total {card.fair_total:.1f}")
+    view = card.market_view
+    if view is not None and (view.spread_home is not None or view.total is not None):
+        market_bits = []
+        if view.spread_home is not None:
+            market_bits.append(f"{home} {view.spread_home:+g}")
+        if view.total is not None:
+            market_bits.append(f"O/U {view.total:g}")
+        core += f" vs the market's {' / '.join(market_bits)}"
+    parts.append(core + ".")
+    if view is not None:
+        sims = f" of {n_sims:,} sims" if n_sims else " of sims"
+        checks = []
+        if view.spread_home is not None and p_home_cover is not None:
+            checks.append(f"{home} {view.spread_home:+g} covers in "
+                          f"{p_home_cover:.0%}{sims}")
+        if view.total is not None and p_over is not None:
+            checks.append(f"the over {view.total:g} hits in {p_over:.0%}")
+        if checks:
+            parts.append("; ".join(checks) + ".")
+    marked = [r for r in rows if r.advantage]
+    if marked:
+        edges = []
+        for row in marked[:2]:
+            who = away if row.advantage == "away" else home
+            theirs = row.away_rank if row.advantage == "away" else row.home_rank
+            others = row.home_rank if row.advantage == "away" else row.away_rank
+            edges.append(f"{row.label.lower()} ({who} #{theirs} vs #{others})")
+        parts.append(f"Clearest unit edges: {'; '.join(edges)}.")
+    for line in signals[:2]:
+        # The intel layer speaks in σ; the card's face lacks the glyph and
+        # "sd" reads fine in prose.
+        text = str(line).strip().replace("σ", " sd")
+        if text:
+            parts.append(text[0].upper() + text[1:] + ("" if text.endswith(".") else "."))
+    return " ".join(parts)
+
+
+def plays_from_bets(
+    bets: Iterable[object],
+    *,
+    tiers: Mapping[tuple[str, str, str], str] | None = None,
+) -> dict[str, tuple[PlayCall, ...]]:
+    """Game-market slate bets → per-game :class:`PlayCall` tuples.
+
+    ``bets`` is any iterable of :class:`~velocity.wagering.bet_log.Bet`-shaped
+    records; prop bets (a ``player``) stay out — the card's props strip and
+    the prop slate own those. ``tiers`` optionally maps
+    ``(game_id, market, side)`` to the intelligence layer's tier letter.
+    """
+    tier_map = dict(tiers or {})
+    out: dict[str, list[PlayCall]] = {}
+    for bet in bets:
+        if getattr(bet, "player", None) is not None:
+            continue
+        gid = str(bet.game_id)  # type: ignore[attr-defined]
+        edge = None
+        if getattr(bet, "p_fair", None) is not None:
+            edge = float(bet.p_model - bet.p_fair)  # type: ignore[attr-defined]
+        out.setdefault(gid, []).append(PlayCall(
+            market=str(bet.market),  # type: ignore[attr-defined]
+            side=str(bet.side),  # type: ignore[attr-defined]
+            point=getattr(bet, "point", None),
+            price=float(bet.price),  # type: ignore[attr-defined]
+            book=str(getattr(bet, "book", "")),
+            stake=float(getattr(bet, "stake", 0.0)),
+            edge=edge,
+            tier=tier_map.get((gid, str(bet.market), str(bet.side))),  # type: ignore[attr-defined]
+        ))
+    return {gid: tuple(calls) for gid, calls in out.items()}
+
+
 def build_deep_dives(
     cards: Sequence[SocialCard],
     projections: Mapping[str, object],
@@ -280,6 +422,8 @@ def build_deep_dives(
     team_names: Mapping[str, str] | None = None,
     starters: pd.DataFrame | None = None,
     probables: Mapping[tuple[str, str, None], tuple[str | None, str | None]] | None = None,
+    plays_by_game: Mapping[str, Sequence[PlayCall]] | None = None,
+    why_signals: Mapping[str, Sequence[str]] | None = None,
 ) -> list[DeepDive]:
     """One :class:`DeepDive` per social card, from the committed data.
 
@@ -327,12 +471,19 @@ def build_deep_dives(
         away_sp_id, home_sp_id = (None, None)
         if probables is not None:
             home_sp_id, away_sp_id = probables.get((home, away, None), (None, None))
+        rows = build_rows(away, home, scoring, epa)
+        game_plays = tuple((plays_by_game or {}).get(card.game_id, ()))
+        why = model_why(
+            card, rows, p_cover, p_over,
+            signals=tuple((why_signals or {}).get(card.game_id, ())),
+            n_sims=card.n_sims,
+        )
         dives.append(DeepDive(
             card=card,
             stat_season=stat_season,
             away_record=_record(scoring, away),
             home_record=_record(scoring, home),
-            rows=build_rows(away, home, scoring, epa),
+            rows=rows,
             margin_pmf=margin_pmf,
             p_home_cover=p_cover,
             p_over=p_over,
@@ -345,6 +496,8 @@ def build_deep_dives(
             home_rest=home_form["rest"],  # type: ignore[arg-type]
             away_sp=probable_line(starters, away_sp_id),
             home_sp=probable_line(starters, home_sp_id),
+            plays=game_plays,
+            why=why,
         ))
     return dives
 
@@ -372,4 +525,11 @@ def deep_dive_caption(dive: DeepDive) -> str:
             f"Over {view.total:g} hits in {dive.p_over:.0%} of sims "
             f"(model fair total {card.fair_total:.1f})."
         )
+    if dive.plays:
+        calls = "; ".join(p.label(card.away_code, card.home_code) for p in dive.plays)
+        lines.append(f"The play: {calls}.")
+    elif dive.why:
+        lines.append("No edge at today's numbers — pass.")
+    if dive.why:
+        lines.append(f"Why: {dive.why}")
     return "\n".join(lines)

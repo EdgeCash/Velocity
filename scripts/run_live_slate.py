@@ -477,9 +477,13 @@ def main() -> None:
 
     # Intelligence layer — judge every qualifying bet against the game's
     # evidence and emit tiered, argued pick sets. Best-effort like every
-    # surface after the game slate: a failure never breaks the slate.
+    # surface after the game slate: a failure never breaks the slate. The
+    # convictions feed the deep-dive verdict band's tier chips and rationale.
+    convictions = None
     if args.intel and projections and args.data:
-        _intel_layer(args, events, projections, game_log, props_frame, now, generated_at)
+        convictions = _intel_layer(
+            args, events, projections, game_log, props_frame, now, generated_at
+        )
 
     if args.out:
         out_dir = Path(args.out)
@@ -521,6 +525,7 @@ def main() -> None:
             _write_social_cards(
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
+                game_log=game_log, convictions=convictions,
             )
 
 
@@ -591,7 +596,7 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
     props_frame: pd.DataFrame | None,
     now: datetime,
     generated_at: pd.Timestamp,
-) -> None:
+) -> list | None:
     """Judge every qualifying bet against its game's context (velocity/intel).
 
     Builds the context library point-in-time (``as_of`` = this run) from the
@@ -662,7 +667,7 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
                     p_fair=None if fair is None or pd.isna(fair) else float(fair),
                 ))
         if not game_bets and not prop_bets:
-            return
+            return None
 
         # The prop-matchup signal orients by the player's team; the FantasyPros
         # snapshot already carries model team codes for every priced player.
@@ -694,8 +699,10 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
                 league=args.league, generated_at=generated_at
             ).to_parquet(dest, index=False)
             print(f"wrote {len(convictions)} intel rows to {dest}")
+        return convictions
     except Exception as exc:  # noqa: BLE001 - the intel layer never breaks the slate
         print(f"intel layer skipped: {exc}")
+        return None
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
@@ -916,6 +923,9 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     key_to_name: dict[str, str],
     prop_lines: pd.DataFrame | None,
     stamp: str,
+    *,
+    game_log: object = None,
+    convictions: list | None = None,
 ) -> None:
     """Render the per-game social model cards + captions into the out folder.
 
@@ -996,7 +1006,31 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                         )
                 except Exception as exc:  # noqa: BLE001 - cosmetic row only
                     print(f"probable-pitcher row skipped: {exc}")
+            # The verdict band: the slate's staked plays (tier-chipped when
+            # the intel layer ran) and the intel evidence lines for the WHY
+            # snippet — one per game, its highest-conviction unvetoed bet.
+            from velocity.report.deepdive import plays_from_bets
+
+            tiers: dict[tuple[str, str, str], str] = {}
+            why_signals: dict[str, list[str]] = {}
+            if convictions:
+                best: dict[str, float] = {}
+                for c in convictions:
+                    bet = c.bet
+                    if bet.player is not None:
+                        continue
+                    gid = str(bet.game_id)
+                    tiers[(gid, bet.market, bet.side)] = c.tier
+                    if not c.vetoed and c.score > best.get(gid, -1.0):
+                        best[gid] = c.score
+                        why_signals[gid] = [s.rationale for s in c.signals[:2]]
+            plays_by_game = (
+                plays_from_bets(game_log.bets, tiers=tiers)  # type: ignore[attr-defined]
+                if game_log is not None else {}
+            )
             dives = build_deep_dives(cards, projections, games, plays,
+                                     plays_by_game=plays_by_game,
+                                     why_signals=why_signals,
                                      team_names=code_to_team,
                                      starters=starters, probables=probables)
             dive_paths = render_deep_dives(dives, Path(args.out), stamp,
