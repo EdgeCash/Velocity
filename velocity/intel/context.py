@@ -134,6 +134,25 @@ def recent_scoring(span: pd.DataFrame, n: int) -> pd.DataFrame:
     return tail.groupby("team").agg(recent_ppg=("pf", "mean"), recent_papg=("pa", "mean"))
 
 
+def injuries_for_week(
+    injuries: pd.DataFrame | None, season: int, week: int
+) -> pd.DataFrame | None:
+    """The injuries snapshot for one (season, week) from a history frame.
+
+    The live path hands :class:`ContextLibrary` a current-report snapshot; a
+    backtest hands it the banked history (``datasets/nfl/injuries.parquet``)
+    sliced to the week being priced — this is that slice. A frame without
+    ``season``/``week`` columns is already a snapshot and passes through
+    unchanged; ``None`` stays ``None`` (signals abstain).
+    """
+    if injuries is None or injuries.empty:
+        return injuries
+    if "season" not in injuries.columns or "week" not in injuries.columns:
+        return injuries
+    mask = (injuries["season"] == season) & (injuries["week"] == week)
+    return injuries[mask].reset_index(drop=True)
+
+
 def _stat_spread(
     frame: pd.DataFrame, cols: tuple[str, ...]
 ) -> tuple[dict[str, float], dict[str, float]]:

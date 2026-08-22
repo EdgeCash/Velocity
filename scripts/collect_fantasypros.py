@@ -102,6 +102,36 @@ def fetch_league_frame(
     return merged.reset_index(drop=True), notes
 
 
+
+
+def _snapshot_injuries(client, args, now, stamp) -> None:  # type: ignore[no-untyped-def]
+    """Bank one NFL injuries snapshot into the artifact folder (best-effort).
+
+    Live snapshots complement the committed nflverse history
+    (datasets/nfl/injuries.parquet — official designations, weekly): these
+    carry the *current* report between official postings, which is what the
+    live slate's veto signals need at bet time.
+    """
+    try:
+        from velocity.ingest.fantasypros import normalize_injuries
+
+        raw_inj = client.raw_injuries("nfl", args.season,
+                                      week=args.week if args.week else None)
+        injuries = normalize_injuries(raw_inj).assign(
+            league="nfl", season=args.season, week=args.week, collected_at=stamp
+        )
+        dest_dir = Path(args.out)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        inj_dest = dest_dir / f"fp_injuries_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
+        injuries.to_parquet(inj_dest, index=False)
+        n_out = int(injuries["is_out"].sum()) if not injuries.empty else 0
+        print(f"wrote {len(injuries)} injury rows ({n_out} out) to {inj_dest}")
+    except Exception as exc:  # noqa: BLE001 - additive surface
+        print(f"injuries snapshot skipped ({exc})")
+
+
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot FantasyPros projections")
     parser.add_argument("--season", type=int, required=True, help="projection season, e.g. 2026")
@@ -115,6 +145,12 @@ def main() -> None:
     parser.add_argument("--out", default="artifacts/fp", help="output folder (private, not git)")
     parser.add_argument(
         "--inspect", action="store_true", help="print the raw shape of the first player (dry-run)"
+    )
+    parser.add_argument(
+        "--injuries-only", action="store_true",
+        help="bank only the injuries snapshot (the daily cadence — reports "
+             "finalize Friday and inactives land Sunday, far faster than the "
+             "weekly projections refresh)",
     )
     args = parser.parse_args()
 
@@ -134,6 +170,10 @@ def main() -> None:
         week = int(args.week)
     args.week = week
     print(f"FantasyPros snapshot @ {now.isoformat()} (season {args.season}, week {args.week})")
+
+    if args.injuries_only:
+        _snapshot_injuries(client, args, now, stamp)
+        return
 
     frames: list[pd.DataFrame] = []
     failed: list[str] = []
@@ -170,24 +210,10 @@ def main() -> None:
     out.to_parquet(dest, index=False)
     print(f"wrote {len(out)} rows to {dest}")
 
-    # Injury report snapshot — banked alongside the projections. There is no
-    # historical injuries feed, so an availability adjustment can only be
-    # lab-validated against history we collect ourselves; every snapshot
-    # builds that dataset. Best-effort: injuries never sink the projections.
-    try:
-        from velocity.ingest.fantasypros import normalize_injuries
-
-        raw_inj = client.raw_injuries("nfl", args.season,
-                                      week=args.week if args.week else None)
-        injuries = normalize_injuries(raw_inj).assign(
-            league="nfl", season=args.season, week=args.week, collected_at=stamp
-        )
-        inj_dest = dest_dir / f"fp_injuries_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
-        injuries.to_parquet(inj_dest, index=False)
-        n_out = int(injuries["is_out"].sum()) if not injuries.empty else 0
-        print(f"wrote {len(injuries)} injury rows ({n_out} out) to {inj_dest}")
-    except Exception as exc:  # noqa: BLE001 - additive surface
-        print(f"injuries snapshot skipped ({exc})")
+    # Injury report snapshot — banked alongside the projections (the daily
+    # --injuries-only runs are the primary cadence; this weekly ride-along is
+    # a free extra sample). Best-effort: injuries never sink the projections.
+    _snapshot_injuries(client, args, now, stamp)
     if out.empty:
         print("note: no projections returned (off-season, wrong season/week, "
               "or a limited public API tier)")

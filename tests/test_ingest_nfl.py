@@ -135,3 +135,48 @@ def test_ingest_feeds_ratings(raw_pbp: pd.DataFrame) -> None:
     ratings = fit_ratings(plays, ridge_lambda=10.0)
     assert "KC" in ratings.offense
     assert "DET" in ratings.defense
+
+
+def test_normalize_injury_reports_maps_statuses_and_drops_practice_only() -> None:
+    from velocity.ingest.nfl import normalize_injury_reports
+
+    raw = pd.DataFrame([
+        {"season": 2024, "week": 1, "team": "ARI", "position": "WR",
+         "full_name": "Xavier Weaver", "gsis_id": "00-001",
+         "report_status": "Out",
+         "practice_status": "Did Not Participate In Practice",
+         "date_modified": "2024-09-06 19:05:30+00:00"},
+        {"season": 2024, "week": 1, "team": "ARI", "position": "S",
+         "full_name": "Joey Blount", "gsis_id": "00-002",
+         "report_status": "Questionable",
+         "practice_status": "Limited Participation in Practice",
+         "date_modified": "2024-09-06 19:05:21+00:00"},
+        {"season": 2024, "week": 1, "team": "ATL", "position": "TE",
+         "full_name": "Kyle Pitts", "gsis_id": "00-003",
+         "report_status": None,  # practice note only: says nothing, dropped
+         "practice_status": "Full Participation in Practice",
+         "date_modified": "2024-09-06 18:32:46+00:00"},
+        {"season": 2024, "week": 2, "team": "BUF", "position": "QB",
+         "full_name": "Josh Allen", "gsis_id": "00-004",
+         "report_status": "Doubtful", "practice_status": None,
+         "date_modified": "2024-09-13 19:00:00+00:00"},
+    ])
+    out = normalize_injury_reports(raw)
+    assert list(out["player_name"]) == ["Xavier Weaver", "Joey Blount", "Josh Allen"]
+    # Out and Doubtful are genuine outs; Questionable deliberately is not.
+    assert list(out["is_out"]) == [True, False, True]
+    assert out.loc[0, "date_modified"] == pd.Timestamp("2024-09-06 19:05:30")
+    assert out.loc[2, "week"] == 2
+
+
+def test_normalize_injury_reports_tolerates_missing_date_column() -> None:
+    from velocity.ingest.nfl import normalize_injury_reports
+
+    raw = pd.DataFrame([
+        {"season": 2025, "week": 1, "team": "KC", "position": "QB",
+         "full_name": "P. Mahomes", "report_status": "Out"},
+    ])
+    out = normalize_injury_reports(raw)
+    assert len(out) == 1
+    assert pd.isna(out.loc[0, "date_modified"])
+    assert bool(out.loc[0, "is_out"])

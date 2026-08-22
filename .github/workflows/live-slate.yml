@@ -115,6 +115,13 @@ jobs:
           if [ -n "$id" ]; then
             gh run download "$id" --dir artifacts/fp || true
           fi
+          # The freshest injuries snapshot (daily cadence) — the intel layer's
+          # veto signals read it at bet time.
+          inj_id=$(gh run list --workflow collect-injuries.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$inj_id" ]; then
+            gh run download "$inj_id" --dir artifacts/fp || true
+          fi
 
       # Demo mode: cards for a real historical week (genuine closing lines from
       # the committed schedules) through the same artifact the app reads — a
@@ -141,11 +148,15 @@ jobs:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
+          INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba' }}; do
             echo "::group::${league} slate"
             EXTRA=""
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="--fp-projections $FP_FILE"
+            fi
+            if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
+              EXTRA="$EXTRA --injuries-file $INJ_FILE"
             fi
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"

@@ -39,6 +39,10 @@ NFLVERSE_ROSTER_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "weekly_rosters/roster_weekly_{year}.parquet"
 )
+NFLVERSE_INJURIES_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "injuries/injuries_{year}.parquet"
+)
 _FETCH_TIMEOUT = 180
 
 # nflverse game_type → canonical season_type.
@@ -147,6 +151,64 @@ def normalize_rosters(raw: pd.DataFrame) -> pd.DataFrame:
     return Players.validate(out)
 
 
+# Official game-status designations that mean genuinely unavailable — the
+# availability-adjustment trigger. "Questionable" deliberately excluded (most
+# questionables play), matching the FantasyPros snapshot's OUT_STATUSES
+# semantics so both feeds drive the same intel signals.
+INJURY_OUT_STATUSES = frozenset({"out", "doubtful"})
+
+
+def normalize_injury_reports(raw: pd.DataFrame) -> pd.DataFrame:
+    """Map an nflverse injuries frame onto the intel layer's snapshot shape.
+
+    One row per (season, week, player) game-status designation:
+    ``season/week/player_id/player_name/team/position/status/practice_status/
+    is_out/date_modified``. Rows with no ``report_status`` (practice notes
+    only) are dropped — a report that assigns no game status adjusts nothing.
+    ``date_modified`` is kept for point-in-time honesty: the designation's
+    own timestamp, not ours.
+
+    This is the historical backfill twin of the FantasyPros live snapshot
+    (:func:`velocity.ingest.fantasypros.normalize_injuries`): nflverse banks
+    every week's official reports back a decade, which is what makes the
+    injury/veto channel *backtestable* instead of presumed
+    (docs/EDGE_RESEARCH.md §7 item 6).
+    """
+    if "full_name" in raw.columns:
+        names = raw["full_name"]
+    elif "player_name" in raw.columns:
+        names = raw["player_name"]
+    else:
+        raise ValueError("injuries frame needs full_name or player_name")
+    status = raw["report_status"].astype("string")
+    keep = status.notna() & (status.str.strip() != "")
+    out = pd.DataFrame(
+        {
+            "season": pd.to_numeric(raw["season"], errors="coerce"),
+            "week": pd.to_numeric(raw["week"], errors="coerce"),
+            "player_id": raw.get("gsis_id", pd.Series(dtype=object)).astype("string"),
+            "player_name": names.astype(str),
+            "team": raw["team"].astype(str),
+            "position": raw.get("position", pd.Series(dtype=object)).astype("string"),
+            "status": status,
+            "practice_status": raw.get(
+                "practice_status", pd.Series(dtype=object)
+            ).astype("string"),
+            "is_out": status.str.strip().str.lower().isin(INJURY_OUT_STATUSES),
+            "date_modified": (
+                pd.to_datetime(
+                    raw["date_modified"], errors="coerce", utc=True
+                ).dt.tz_localize(None)
+                if "date_modified" in raw.columns
+                else pd.Series(pd.NaT, index=raw.index)
+            ),
+        }
+    )
+    out = out[keep].reset_index(drop=True)
+    out["is_out"] = out["is_out"].fillna(False).astype(bool)
+    return out
+
+
 def _read_url_bytes(url: str) -> bytes:  # pragma: no cover - network
     with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
         return resp.read()
@@ -178,6 +240,13 @@ def load_rosters(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - ne
     frames = [_read_parquet_url(NFLVERSE_ROSTER_URL.format(year=year)) for year in years]
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return normalize_rosters(combined)
+
+
+def load_injury_reports(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch and normalize nflverse weekly injury reports for ``years`` (network)."""
+    frames = [_read_parquet_url(NFLVERSE_INJURIES_URL.format(year=year)) for year in years]
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return normalize_injury_reports(combined)
 
 
 # nflverse weekly player stats (the prop-grading actuals): one row per

@@ -174,13 +174,17 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
    results in [`docs/BACKTEST_INTEL.md`](BACKTEST_INTEL.md). Verdict: stat
    signals add no measurable edge over the EV gate (so no tier-conditioned
    staking); the untested injury channel is now the priority.
-2. **Injuries history — now the headline item.** The collector banks
-   snapshots but no history exists yet (`collect_fantasypros.py`'s own
-   comment). A season of snapshots makes the veto channel *measurable* (the
-   one signal family the tier backtest could not test), lets the
-   availability adjustment move *inside* the prop model
-   (`redistribute_shares` finally gets a production caller), and lets the
-   veto soften into a priced adjustment.
+2. ~~**Injuries history.**~~ **Done** — two feeds, both wired:
+   *Backfill:* `datasets/nfl/injuries.parquet` (nflverse official weekly
+   designations, 2011–2025, 51.7k rows; `scripts/build_injury_history.py`,
+   kept current by `refresh_datasets.py`) — the tier backtest now slices it
+   per week (`injuries_for_week`), so the injury and QB-veto signals fire
+   point-in-time and the channel is *measured*, not presumed
+   (BACKTEST_INTEL.md addendum). *Forward:* daily FantasyPros snapshots
+   (`collect-injuries.yml`, plus a Sunday pre-kick run); the live slate
+   downloads the freshest one and passes `--injuries-file` automatically.
+   Still open from this item: moving availability *inside* the prop model
+   (`redistribute_shares`'s production caller) once player-week stats bank.
 3. **Player-level form.** `normalize_weekly_stats` (nflverse) is ingest-ready
    but unbanked; committing a player-week table unlocks prop form signals
    (usage trend, not just the opposing unit).

@@ -147,3 +147,21 @@ def test_missing_data_yields_none_not_zero() -> None:
     assert ctx.outs == ()
     unknown = lib.team_context("ZZZ")
     assert unknown.ppg is None and unknown.recent_ppg is None
+
+
+def test_injuries_for_week_slices_history_and_passes_snapshots_through() -> None:
+    from velocity.intel.context import injuries_for_week
+
+    history = pd.DataFrame([
+        {"season": 2024, "week": 1, "player_name": "A", "team": "KC",
+         "position": "WR", "status": "Out", "is_out": True},
+        {"season": 2024, "week": 2, "player_name": "B", "team": "KC",
+         "position": "QB", "status": "Doubtful", "is_out": True},
+    ])
+    week2 = injuries_for_week(history, 2024, 2)
+    assert list(week2["player_name"]) == ["B"]
+    assert injuries_for_week(history, 2024, 9).empty
+    # A snapshot without season/week is already current: passes through.
+    snapshot = history.drop(columns=["season", "week"])
+    assert injuries_for_week(snapshot, 2024, 2) is snapshot
+    assert injuries_for_week(None, 2024, 1) is None
