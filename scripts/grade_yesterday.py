@@ -131,24 +131,44 @@ def _load_schedule(
             # The wehoop release parquet is one small season file — the
             # CI-reachable transport (ESPN's API 403s datacenter IPs).
             return fetch_wnba_season(season, _date.today())
+        if league == "ncaab" and slate_date is not None:
+            from velocity.ingest.ncaab import load_hoopr_schedule
+
+            # hoopR mirrors the wehoop transport (raw-CDN parquet, CI-safe).
+            # A November slate belongs to the season labeled by the NEXT
+            # calendar year (season 2026 = 2025-26).
+            ncaab_season = season + 1 if slate_date.month >= 8 else season
+            return load_hoopr_schedule(ncaab_season)
     except Exception as exc:  # noqa: BLE001 - a feed down never blocks the slate email
         print(f"schedule fetch failed ({exc})")
     return None
 
 
-def _aliases_for(league: str, schedule: pd.DataFrame) -> dict[str, str]:
+def _aliases_for(
+    league: str,
+    schedule: pd.DataFrame,
+    provider_names: set[str] | None = None,
+) -> dict[str, str]:
     """Provider-name → schedule-team aliases for the finals bridge.
 
-    NFL uses the fixed alias table (full names → nflverse codes). NCAAF schedule
-    teams are school names already; an identity table over them lets exact and
-    normalized matches through and leaves the rest pending (never guessed).
+    NFL uses the fixed alias table (full names → nflverse codes). Elsewhere
+    the schedule teams key themselves (exact/normalized matches pass), and
+    the slate's provider names — which carry nicknames in the college
+    leagues ("Duke Blue Devils" vs the schedule's "Duke") — bridge by the
+    same prefix rule the live slate resolves with. Anything unmatched stays
+    pending, never guessed.
     """
     if league == "nfl":
         from velocity.wagering.live import NFL_TEAM_ALIASES
 
         return dict(NFL_TEAM_ALIASES)
     teams = set(schedule["home_team"].astype(str)) | set(schedule["away_team"].astype(str))
-    return {name: name for name in teams}
+    aliases = {name: name for name in teams}
+    if provider_names:
+        from velocity.wagering.live import nickname_aliases
+
+        aliases.update(nickname_aliases(provider_names, teams))
+    return aliases
 
 
 def _grade_props(  # pragma: no cover - network
@@ -190,7 +210,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser.add_argument("--prev-dir", required=True, help="downloaded previous artifacts")
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
     parser.add_argument("--league", default="nfl",
-                        choices=["nfl", "ncaaf", "mlb", "wnba"])
+                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"])
     args = parser.parse_args()
 
     from velocity.report.daily_record import (
@@ -229,7 +249,11 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             record = empty_record()
             record["slate_date"] = pd.Timestamp(slate_date)
         else:
-            aliases = _aliases_for(args.league, schedule)
+            aliases = _aliases_for(
+                args.league, schedule,
+                provider_names=set(games_map["home_team"].astype(str))
+                | set(games_map["away_team"].astype(str)),
+            )
             finals = finals_for_slate(games_map, schedule, aliases=aliases)
             games_graded = None if slate is None or slate.empty else grade_slate(slate, finals)
             props_graded = _grade_props(args.league, props, schedule, slate_date)

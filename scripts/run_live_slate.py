@@ -151,42 +151,66 @@ def _build_projection(
         "ncaaf": SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims),
         "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
+        # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
+        "ncaab": SimConfig(sd_margin=13.0, sd_total=18.5, n_sims=args.n_sims),
     }
     sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
     # NCAAF: λ=10 promoted by the college lab; MLB: λ=100 promoted by the
     # summer lab (docs/MODEL_LAB.md MLB Round 1 — heavy shrinkage wins in a
     # league whose true team spread is small). WNBA: recency half-life 8
     # week-buckets promoted (WNBA Round 1 — an interior optimum, 12/16/24
-    # all worse). The NFL scores path is only a no-plays fallback and keeps
+    # all worse). NCAAB: λ=0.5 — 360 conference-clustered teams leave the
+    # fit compressed at heavier penalties (BUILD_NCAAB.md N2's compression
+    # finding). The NFL scores path is only a no-plays fallback and keeps
     # the default.
-    ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0}.get(args.league, 25.0)
+    ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0, "ncaab": 0.5}.get(
+        args.league, 25.0)
+    recency_hl = {"wnba": 8.0, "ncaab": 6.0}.get(args.league)
     weights = None
-    if args.league == "wnba":
+    if recency_hl is not None:
         from velocity.features.scores import scores_recency_weights
 
-        weights = scores_recency_weights(games, 8.0)
+        weights = scores_recency_weights(games, recency_hl)
     scores_model = ScoresGameModel(
         fit_scores_ratings(games, ridge_lambda=ridge, weights=weights),
         ScoresModelConfig(sim=sim),
     )
     model: object = scores_model
-    kind = f"scores fit (λ={ridge:g})" + (", recency-8" if weights is not None else "")
+    kind = f"scores fit (λ={ridge:g})" + (
+        f", recency-{recency_hl:g}" if recency_hl is not None else "")
 
     box_file = folder / "team_box.parquet"
-    if args.league == "wnba" and box_file.exists():
-        # The promoted WNBA configuration (docs/MODEL_LAB.md WNBA Round 2):
-        # pace×efficiency with the recency-8 weighting on the efficiency fit
-        # — better on every forecasting metric than the raw points fit, and
-        # it prices a fast-pace matchup's total the points fit can't see.
-        # Best-effort: any failure keeps the recency-8 scores fit above.
+    if args.league in ("wnba", "ncaab") and box_file.exists():
+        # The promoted basketball configurations: WNBA pace×efficiency with
+        # recency-8 (docs/MODEL_LAB.md WNBA Round 2); NCAAB pace×efficiency
+        # with recency-6 plus the Torvik pseudo-games prior at K=6
+        # (docs/BUILD_NCAAB.md N2 — prior-k6, the Brier winner that
+        # replicated at 80k games in N3). Best-effort: any failure keeps the
+        # recency scores fit above.
         try:
             from velocity.backtest.lab import fit_pace_efficiency, wnba_pace_frame
 
             pace = wnba_pace_frame(pd.read_parquet(box_file))
+            fit_games = games
+            prior_note = ""
+            torvik_file = folder / "torvik.parquet"
+            if args.league == "ncaab" and torvik_file.exists():
+                from velocity.ingest.ncaab import torvik_pseudo_games
+
+                teams = set(games["home_team"]) | set(games["away_team"])
+                pseudo_games, pseudo_pace = torvik_pseudo_games(
+                    pd.read_parquet(torvik_file), teams,
+                    cutoff=pd.to_datetime(games["kickoff"]).max(), k=6,
+                )
+                if not pseudo_games.empty:
+                    fit_games = pd.concat([games, pseudo_games], ignore_index=True)
+                    pace = pd.concat([pace, pseudo_pace], ignore_index=True)
+                    prior_note = f" + Torvik prior ({len(pseudo_games)} pseudo-games)"
             model = fit_pace_efficiency(
-                games, pace, sim, ridge_lambda=ridge, half_life=8.0
+                fit_games, pace, sim, ridge_lambda=ridge, half_life=recency_hl
             )
-            kind = f"pace×efficiency (λ={ridge:g}, recency-8), {len(pace)} games' possessions"
+            kind = (f"pace×efficiency (λ={ridge:g}, recency-{recency_hl:g})"
+                    f"{prior_note}, {len(pace)} games' possessions")
         except Exception as exc:  # noqa: BLE001 - never blocks the slate
             print(f"pace×efficiency skipped: {exc}")
 
@@ -251,7 +275,7 @@ def _build_projection(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
-    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba"],
+    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"],
                         required=True)
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
@@ -411,10 +435,11 @@ def main() -> None:
             print(f"NCAAF totals filter: model must differ from the number by "
                   f"≥ {total_edge:g} points")
         # Project once, then price off those projections (reused for the workbook).
-        # NCAAF: the provider names carry nicknames ("Georgia Bulldogs") while the
-        # CFBD-fit model keys by school ("Georgia") — bridge by prefix match.
+        # College: the provider names carry nicknames ("Georgia Bulldogs",
+        # "Duke Blue Devils") while the fitted model keys by school ("Georgia",
+        # "Duke") — bridge by prefix match.
         aliases = None
-        if args.league == "ncaaf":
+        if args.league in ("ncaaf", "ncaab"):
             from velocity.wagering.live import nickname_aliases
 
             provider_names = set(events["home_team"]) | set(events["away_team"])
@@ -952,9 +977,11 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
         code_to_team: dict[str, str] = {}
         if args.league == "ncaaf":
             aliases, team_colors, code_to_team = _ncaaf_identity(events, asset_dir)
-        elif args.league in ("mlb", "wnba"):
-            # Summer leagues: abbreviation + brand color blocks, no marks —
+        elif args.league in ("mlb", "wnba", "ncaab"):
+            # Non-NFL identity: abbreviation + brand color blocks, no marks —
             # the NCAAF licensing posture (velocity/report/league_identity).
+            # NCAAB has no curated table yet, so teams fall back to neutral
+            # trigram codes — cards render, just uncolored.
             from velocity.report.league_identity import league_identity
 
             provider_names = sorted(

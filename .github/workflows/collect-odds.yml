@@ -56,7 +56,7 @@ jobs:
         run: |
           python scripts/collect_theoddsapi.py \
             --out artifacts/odds \
-            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf ncaab' }}
 
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
 # Velocity — NCAAB Vertical: Phased Build Plan
 
-**Status:** Phases N1 (data adapter), N2 (model), N3 (closes backtest —
-**null after FDR**) landed; N4 planned with the launch posture N3 dictates
+**Status:** Complete — N1 (data adapter), N2 (model), N3 (closes backtest —
+**null after FDR**), N4 (live, in the posture N3 dictates) all landed
 **Why this sport:** the edge research ([`EDGE_RESEARCH.md`](EDGE_RESEARCH.md)
 §3.1) — inefficiency concentrates where pregame information is scarce, and
 NCAAB is 360 teams × 5,000+ games with documented historical anomalies
@@ -183,10 +183,33 @@ prior-weight direction is monotone in the sweeps (k12 > k6 > none on
 selectivity), so a heavier/timemachine-refreshed prior belongs in the
 next family — as a pre-registered variant, not a cherry-pick.
 
-## Phase N4 — Live
+## Phase N4 — Live (landed)
 
-The `run_live_slate.py` path with a `ncaab` league key (The Odds API serves
-`basketball_ncaab`), the injuries/roster layer wired through the intel
-signals, and November/low-major selectivity as the launch filter. Softest
-documented windows: early season (lines anchored to priors) and the
-day-of injury/lineup news cycle.
+The `run_live_slate.py` path with the `ncaab` league key (The Odds API's
+`basketball_ncaab`), deployed in the posture N3's null dictates — a
+content + CLV surface on real posted prices, not a staking surface with a
+claimed edge:
+
+- **Model**: the promoted N2 configuration — pace×efficiency, λ=0.5,
+  recency-6, Torvik pseudo-games prior at K=6 — fit live from the
+  committed `datasets/ncaab` frames, falling back to the recency scores
+  fit if the box/Torvik inputs are missing. Sim constants from the N2
+  walk-forward residuals (sd_margin 13.0, sd_total 18.5).
+- **Names**: provider nicknames ("Duke Blue Devils") bridge onto the
+  hoopR-keyed model ("Duke") by the same prefix rule NCAAF uses
+  (`nickname_aliases`); unresolved games are skipped and reported, never
+  guessed.
+- **Pricing**: the standard devig + EV gate on posted prices — real
+  numbers with real vig, not the synthetic −110 the backtest graded. No
+  NCAAB-specific selectivity filter ships: N3 licensed none.
+- **Grading + CLV**: `grade_yesterday.py` fetches finals from the hoopR
+  raw-CDN schedule (the CI-safe transport), with the nickname bridge now
+  applied to the finals join for both college leagues;
+  `collect-odds.yml` snapshots `basketball_ncaab` game lines on the
+  hourly schedule into the private CLV archive — the live closes that
+  will re-test the 2023+ market regime the free sbro archive doesn't
+  cover.
+- **Cards**: matchup/deep-dive cards render with neutral trigram identity
+  (no curated color/abbreviation table yet). The injuries/roster intel
+  channel stays dormant until an NCAAB injury source is banked — none of
+  the current collectors covers college basketball.
