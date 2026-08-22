@@ -288,6 +288,16 @@ def main() -> None:
                         help="prop confidence shrink toward 0.5 (1.0 = raw model)")
     parser.add_argument("--exclude-props", default="",
                         help="comma-separated prop markets to skip; '' bets all")
+    # The intelligence layer (velocity/intel, docs/INTEL.md): every bet that
+    # cleared the EV gate is judged against the game's context — unit matchups,
+    # recent form, rest, and the injury report — and tiered into argued pick
+    # sets. It confirms, demotes, or vetoes; it never promotes a bet the model
+    # didn't like and never touches stakes.
+    parser.add_argument("--intel", action=argparse.BooleanOptionalAction, default=True,
+                        help="judge qualifying bets against stats/form/rest/injuries")
+    parser.add_argument("--injuries-file",
+                        help="normalized injuries parquet (the collect_fantasypros "
+                             "artifact) — enables availability vetoes")
     # Pick'em board: the slip-EV engine over the same prop sim + prop lines
     # (velocity/wagering/pickem_slate) — book-fair marginals, model
     # correlation. Slips below the EV floor are simply not persisted.
@@ -407,6 +417,12 @@ def main() -> None:
     if projections and args.parlay_max_legs >= 2:
         _parlay_slate(args, projections, game_log, now, generated_at)
 
+    # Intelligence layer — judge every qualifying bet against the game's
+    # evidence and emit tiered, argued pick sets. Best-effort like every
+    # surface after the game slate: a failure never breaks the slate.
+    if args.intel and projections and args.data:
+        _intel_layer(args, events, projections, game_log, props_frame, now, generated_at)
+
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -448,6 +464,121 @@ def main() -> None:
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
             )
+
+
+def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's parts
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    game_log: object,
+    props_frame: pd.DataFrame | None,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> None:
+    """Judge every qualifying bet against its game's context (velocity/intel).
+
+    Builds the context library point-in-time (``as_of`` = this run) from the
+    same committed datasets the model fit on, plus the optional injuries
+    snapshot, then assesses the game slate and the prop slate and prints the
+    tiered pick sets. Persists ``intel_{league}_{stamp}.parquet`` beside the
+    slate. A missing dataset or snapshot only narrows the evidence (signals
+    abstain); any failure leaves the slate untouched.
+    """
+    try:
+        from velocity.intel import (
+            ContextLibrary,
+            assess_bets,
+            build_pick_sets,
+            default_game_signals,
+            default_prop_signals,
+            intel_frame,
+            render_pick_sets,
+        )
+        from velocity.wagering.bet_log import Bet
+
+        folder = Path(args.data)
+        games = load_games(_find_games(folder), league=args.league)
+        plays_path = _find_plays(folder)
+        plays = None
+        if plays_path is not None:
+            from velocity.ingest.local import load_plays
+
+            plays = load_plays(plays_path)
+        injuries = None
+        if args.injuries_file:
+            injuries = pd.read_parquet(args.injuries_file)
+            n_out = int(injuries["is_out"].sum()) if "is_out" in injuries.columns else 0
+            print(f"\nintel: injuries snapshot loaded ({n_out} genuine outs)")
+        else:
+            print("\nintel: no injuries snapshot (--injuries-file) — availability "
+                  "signals abstain")
+        lib = ContextLibrary.build(games, plays, injuries, as_of=generated_at)
+
+        kickoffs = {
+            str(gid): kick
+            for gid, kick in zip(
+                events["game_id"].astype(str),
+                pd.to_datetime(events["kickoff"], errors="coerce"),
+                strict=True,
+            )
+        }
+        contexts = {
+            str(gid): lib.context_for(
+                str(gid), proj.away_team, proj.home_team, kickoffs.get(str(gid))
+            )
+            for gid, proj in projections.items()
+        }
+
+        game_bets = list(game_log) if game_log is not None else []  # type: ignore[call-overload]
+        prop_bets: list[Bet] = []
+        if props_frame is not None and not props_frame.empty:
+            for row in props_frame.to_dict("records"):
+                point = row.get("point")
+                fair = row.get("p_fair")
+                prop_bets.append(Bet(
+                    game_id=str(row["game_id"]), market=str(row["market"]),
+                    side=str(row["side"]), book=str(row["book"]),
+                    price=float(row["price"]), stake=float(row["stake"]),
+                    p_model=float(row["p_model"]),
+                    point=None if point is None or pd.isna(point) else float(point),
+                    player=str(row["player"]),
+                    p_fair=None if fair is None or pd.isna(fair) else float(fair),
+                ))
+        if not game_bets and not prop_bets:
+            return
+
+        # The prop-matchup signal orients by the player's team; the FantasyPros
+        # snapshot already carries model team codes for every priced player.
+        player_teams: dict[str, str] = {}
+        if prop_bets and args.fp_projections:
+            fp = pd.read_parquet(args.fp_projections)
+            if {"player_name", "team"} <= set(fp.columns):
+                named = fp.dropna(subset=["player_name", "team"])
+                named = named.drop_duplicates(subset=["player_name"])
+                player_teams = {
+                    str(r["player_name"]): str(r["team"])
+                    for r in named.to_dict("records")
+                }
+
+        convictions = assess_bets(game_bets, contexts, default_game_signals())
+        convictions += assess_bets(prop_bets, contexts, default_prop_signals(player_teams))
+        sets = build_pick_sets(convictions)
+        print("\n" + render_pick_sets(
+            sets, heading=f"{args.league.upper()} intelligence card"
+        ))
+        skipped = len(game_bets) + len(prop_bets) - len(convictions)
+        if skipped:
+            print(f"{skipped} bet(s) had no game context — not assessed, never guessed")
+
+        if args.out and convictions:
+            stamp = now.strftime("%Y%m%dT%H%M%SZ")
+            dest = Path(args.out) / f"intel_{args.league}_{stamp}.parquet"
+            intel_frame(convictions).assign(
+                league=args.league, generated_at=generated_at
+            ).to_parquet(dest, index=False)
+            print(f"wrote {len(convictions)} intel rows to {dest}")
+    except Exception as exc:  # noqa: BLE001 - the intel layer never breaks the slate
+        print(f"intel layer skipped: {exc}")
 
 
 def _write_workbook(  # noqa: PLR0913 - a report writer with several inputs
