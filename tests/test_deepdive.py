@@ -209,3 +209,97 @@ def test_build_deep_dives_carries_form_and_probables(tmp_path: Path) -> None:
 
     paths = render_deep_dives(dives, tmp_path, "20250924T120000Z", league="mlb")
     assert paths[0].stat().st_size > 20_000
+
+
+# ---------------------------------------------------------------------------
+# The verdict band: plays, tiers, and the model's why snippet.
+# ---------------------------------------------------------------------------
+
+
+def test_playcall_labels_read_like_a_bettor_writes_them() -> None:
+    from velocity.report.deepdive import PlayCall
+
+    spread = PlayCall("spread", "home", -3.5, -110, "bookA", 2.1, tier="A")
+    assert spread.label("BUF", "KC") == "KC -3.5 · -110 (bookA) · 2.1u · tier A"
+    ml = PlayCall("moneyline", "away", None, 140, "dk", 1.0)
+    assert ml.label("BUF", "KC") == "BUF ML · +140 (dk) · 1.0u"
+    total = PlayCall("total", "over", 47.5, -108, "fd", 3.0)
+    assert total.label("BUF", "KC").startswith("OVER 47.5 · -108")
+    tt = PlayCall("team_total_away", "under", 21.5, -105, "dk", 1.5)
+    assert tt.label("BUF", "KC").startswith("BUF TT UNDER 21.5")
+
+
+def test_plays_from_bets_skips_props_and_maps_tiers() -> None:
+    from velocity.report.deepdive import plays_from_bets
+    from velocity.wagering.bet_log import Bet
+
+    bets = [
+        Bet(game_id="g1", market="spread", side="home", book="bookA", price=-110,
+            stake=2.1, p_model=0.57, p_fair=0.50, point=-3.5),
+        Bet(game_id="g1", market="pass_yards", side="over", book="dk", price=-110,
+            stake=1.0, p_model=0.6, point=249.5, player="Josh Allen"),
+        Bet(game_id="g2", market="total", side="under", book="fd", price=-105,
+            stake=1.0, p_model=0.55, point=44.5),
+    ]
+    plays = plays_from_bets(bets, tiers={("g1", "spread", "home"): "A"})
+    assert set(plays) == {"g1", "g2"}
+    assert len(plays["g1"]) == 1  # the prop stayed out
+    call = plays["g1"][0]
+    assert call.tier == "A"
+    assert call.edge == pytest.approx(0.07)
+    assert plays["g2"][0].tier is None
+
+
+def test_model_why_states_projection_market_and_evidence() -> None:
+    from velocity.report.deepdive import model_why
+
+    proj = _projection()
+    dives = build_deep_dives([_card()], {"g1": proj}, _games(), _plays())
+    dive = dives[0]
+    why = model_why(
+        dive.card, dive.rows, dive.p_home_cover, dive.p_over,
+        signals=("unit EPA edge +0.5σ toward BUF",), n_sims=4000,
+    )
+    assert "Model projects BUF 21.0–KC 24.0" in why
+    assert "fair line KC -3.0" in why
+    assert "vs the market's KC -6.5 / O/U 47.5" in why
+    assert "covers in" in why and "4,000 sims" in why
+    assert "Unit EPA edge +0.5 sd toward BUF." in why  # capitalized, σ → sd for the card face
+
+
+def test_build_deep_dives_attaches_plays_and_why() -> None:
+    from velocity.report.deepdive import PlayCall
+
+    call = PlayCall("spread", "home", -6.5, -110, "bookA", 2.0, tier="B")
+    dives = build_deep_dives(
+        [_card()], {"g1": _projection()}, _games(), _plays(),
+        plays_by_game={"g1": (call,)},
+        why_signals={"g1": ("rest edge: KC 10d vs BUF 6d",)},
+    )
+    dive = dives[0]
+    assert dive.plays == (call,)
+    assert "Rest edge: KC 10d vs BUF 6d." in dive.why
+    caption = deep_dive_caption(dive)
+    assert "The play: KC -6.5 · -110 (bookA) · 2.0u · tier B." in caption
+    assert "Why: Model projects" in caption
+
+
+def test_caption_renders_a_pass_verdict_when_no_plays() -> None:
+    dives = build_deep_dives([_card()], {"g1": _projection()}, _games(), _plays())
+    caption = deep_dive_caption(dives[0])
+    assert "No edge at today's numbers — pass." in caption
+
+
+def test_render_verdict_band_writes_a_png(tmp_path: Path) -> None:
+    from velocity.report.deepdive import PlayCall
+    from velocity.report.deepdive_png import render_deep_dives
+
+    call = PlayCall("total", "over", 47.5, -108, "bookA", 2.5, tier="A")
+    dives = build_deep_dives(
+        [_card()], {"g1": _projection()}, _games(), _plays(),
+        plays_by_game={"g1": (call,)},
+    )
+    paths = render_deep_dives(dives, tmp_path, "20260910T120000Z", league="nfl")
+    assert paths and paths[0].exists() and paths[0].stat().st_size > 10_000
+    captions = tmp_path / "deepdive_nfl_20260910T120000Z_captions.md"
+    assert "The play: OVER 47.5" in captions.read_text()

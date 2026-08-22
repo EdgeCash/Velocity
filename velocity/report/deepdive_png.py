@@ -215,6 +215,38 @@ def _props_panel(fig: plt.Figure, dive: DeepDive) -> None:
               color=INK_DIM, fontsize=11)
 
 
+def _verdict_band(fig: plt.Figure, dive: DeepDive) -> None:
+    """THE PLAY (left) + WHY (right): the wager and the model's argument.
+
+    The bettorsheets-genre bottom strip, made honest: a PASS is rendered as a
+    verdict, never hidden, and the why text is the model's own rationale —
+    the reader gets the position, the stats behind it, and the snippet in one
+    band. Replaces the props strip when a verdict exists (the hero card and
+    the caption still carry the watch list).
+    """
+    import textwrap
+
+    card = dive.card
+    _text(fig, 0.065, 0.152, "THE PLAY", color=INK_DIM, fontsize=13.5)
+    if dive.plays:
+        for i, play in enumerate(list(dive.plays)[:3]):
+            _display(fig, 0.065, 0.118 - i * 0.036,
+                     play.label(card.away_code, card.home_code),
+                     color=INK, fontsize=14, fontweight="semibold")
+    else:
+        _display(fig, 0.065, 0.112, "PASS", color=INK, fontsize=17,
+                 fontweight="semibold")
+        _text(fig, 0.065, 0.078, "no edge at today's numbers", color=INK_DIM,
+              fontsize=11.5)
+    _text(fig, 0.40, 0.152, "WHY THE MODEL SEES IT", color=INK_DIM, fontsize=13.5)
+    wrapped = textwrap.wrap(dive.why, width=104)
+    if len(wrapped) > 3:  # the band holds three lines; the caption keeps it all
+        wrapped = wrapped[:3]
+        wrapped[-1] = wrapped[-1].rstrip(" .,;") + " …"
+    for i, line in enumerate(wrapped):
+        _text(fig, 0.40, 0.126 - i * 0.026, line, color=INK, fontsize=11)
+
+
 def render_deep_dive(dive: DeepDive, path: Path | str,
                      asset_dir: Path | str | None = None,
                      league: str = "nfl") -> Path:
@@ -268,7 +300,13 @@ def render_deep_dive(dive: DeepDive, path: Path | str,
 
     _stat_table(fig, dive)
     _margin_axes(fig, dive)
-    _props_panel(fig, dive)
+    # The bottom band: the verdict (play or pass) plus the model's rationale
+    # when the slate ran; the props watch strip when it didn't (backtests,
+    # bare rebuilds).
+    if dive.plays or dive.why:
+        _verdict_band(fig, dive)
+    else:
+        _props_panel(fig, dive)
     if card.record_line:
         _text(fig, 0.95, 0.898, f"{card.record_line} · GRADED DAILY",
               color=INK, fontsize=13, ha="right")

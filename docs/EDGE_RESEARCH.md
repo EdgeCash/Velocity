@@ -384,6 +384,12 @@ Worth building:
 10. **DFS contest-EV optimizer** — field model (Dirichlet on ownership)
     + sim-scored lineups + overlap/stack/ownership/salary constraints
     from §5; contest-selection policy in the runner.
+10b. **Matchup verdict card** *(shipped 2026-08)* — every projected game
+    gets the deep-dive graphic with a verdict band: THE PLAY (the slate's
+    staked positions, intel-tier chips) and WHY THE MODEL SEES IT (the
+    projection vs the market, sim cover/over rates, clearest unit edges,
+    and the intel layer's evidence lines) — the wager, the stats to
+    research, and the readable snippet on one card.
 
 **P2 — new verticals (each a BUILD_*.md-style phased plan):**
 11. **NCAAB** — ridge possession-efficiency model; Torvik timemachine +
