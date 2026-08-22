@@ -346,6 +346,16 @@ Worth building:
 
 ## 7. Prioritized roadmap (evidence × fit × cost)
 
+> **Implementation status (2026-08):** P0 #1 (team totals end-to-end +
+> censoring study — gate defaults off pending banked posted closes), #2
+> (rest re-sweep — clean negative, +1.0 stays; MODEL_LAB Round 8), #4
+> (worst-case devig + same-game caps) shipped. #3 re-confirmed Round 3's
+> blend result via the lab. #5 (ABS): no umpire/framing factors exist in
+> the model yet — nothing to re-estimate; noted for the MLB factor build.
+> P1: #7's sizing half (portfolio-sized combined card), #8's trust flags +
+> FDR helper shipped; #6 (injuries banking) and #9–10 remain. P2: #11
+> phase N1 (Torvik ingest + timemachine client, BUILD_NCAAB.md) shipped.
+
 **P0 — sweep-grade experiments on data we already have (each a lab PR):**
 1. NCAAF **team-totals censoring strategy** (Arscott) — implement in the
    sim path; backtest lines-only variant vs sim-priced variant.
