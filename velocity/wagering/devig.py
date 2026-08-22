@@ -65,6 +65,28 @@ def devig(prices: Sequence[float], method: Method = "multiplicative") -> list[fl
     return _power(q)
 
 
+def devig_worst_case(
+    prices: Sequence[float],
+    methods: Sequence[Method] = ("multiplicative", "shin", "power"),
+) -> list[float]:
+    """Per-outcome **conservative** fair probabilities: the minimum across methods.
+
+    The devig methods genuinely disagree on lopsided markets (each attributes
+    the margin differently), and when a bet must clear a hard probability
+    threshold — a pick'em leg against a 54–58% breakeven, an EV gate — using
+    one method's estimate risks a false positive that another method would
+    reject. The worst case takes, for each outcome, the smallest fair
+    probability any method assigns, so an edge only survives if *every*
+    margin model agrees it exists.
+
+    The result deliberately does **not** sum to 1 — it is a per-outcome lower
+    bound, not a probability vector. Use it for gating the side being bet,
+    never as a distribution.
+    """
+    per_method = [devig(prices, method) for method in methods]
+    return [min(fair[i] for fair in per_method) for i in range(len(per_method[0]))]
+
+
 def _multiplicative(q: list[float]) -> list[float]:
     total = sum(q)
     return [qi / total for qi in q]

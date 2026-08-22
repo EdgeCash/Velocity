@@ -322,6 +322,17 @@ def main() -> None:
                         help="max ranked pick'em slips to persist (0 disables)")
     parser.add_argument("--pickem-min-ev", type=float, default=1.0,
                         help="min expected return multiple for a slip (1.0 = breakeven)")
+    # Leg probabilities near the payout breakevens (54-58%) are exactly where
+    # the devig methods disagree; the worst-case default publishes a leg only
+    # when multiplicative, Shin, and power all clear it (docs/EDGE_RESEARCH.md
+    # §4). Operators also tax same-game correlation now (reduced payouts /
+    # blocked combos), so slips are capped at two legs per game by default and
+    # flagged when any two legs share one.
+    parser.add_argument("--pickem-devig", default="worst_case",
+                        choices=["multiplicative", "additive", "shin", "power", "worst_case"],
+                        help="leg-probability devig (worst_case = every method must agree)")
+    parser.add_argument("--pickem-max-per-game", type=int, default=2,
+                        help="max legs of one slip sharing a game (0 = no cap)")
     # Parlays: legs come only from bets that already cleared the single-bet gate, are
     # priced sim-exactly (correlated within a game, independent across), and must
     # clear their own higher EV bar. Same-game combos are flagged — books reprice
@@ -789,6 +800,8 @@ def _pickem_slate(
         legs, slips = build_pickem_board(
             props_by_game, prop_lines, name_index_from_fp(fp),
             min_ev=args.pickem_min_ev, top=args.pickem_top,
+            devig_method=args.pickem_devig,
+            max_per_game=args.pickem_max_per_game or None,
         )
         print(f"\n=== {args.league.upper()} pick'em — {len(legs)} qualifying legs, "
               f"{len(slips)} slips over EV {args.pickem_min_ev:g} ===")

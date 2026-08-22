@@ -86,6 +86,7 @@ def build_pickem_board(
     max_legs: int = 12,
     min_ev: float = 0.0,
     top: int = 10,
+    max_per_game: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The pick'em legs board and the ranked slips built from it.
 
@@ -113,10 +114,21 @@ def build_pickem_board(
         if pid is None or not sim.has(pid, market):
             continue
         point = float(row["point"])
-        fair = devig([float(row["over"]), float(row["under"])], method=devig_method)
-        p_over = float(fair[0])
-        side = "over" if p_over >= 0.5 else "under"
-        p_book = p_over if side == "over" else 1.0 - p_over
+        over_price, under_price = float(row["over"]), float(row["under"])
+        if devig_method == "worst_case":
+            # Side from the multiplicative baseline; magnitude only as large
+            # as every devig method endorses (velocity.wagering.pickem
+            # ``conservative_leg``) — a leg near a payout breakeven survives
+            # only when multiplicative, Shin, and power all clear it.
+            from velocity.wagering.pickem import conservative_leg
+
+            side, p_book = conservative_leg(over_price, under_price)
+            p_over = p_book if side == "over" else 1.0 - p_book
+        else:
+            fair = devig([over_price, under_price], method=devig_method)
+            p_over = float(fair[0])
+            side = "over" if p_over >= 0.5 else "under"
+            p_book = p_over if side == "over" else 1.0 - p_over
         if not 0.0 < p_book < 1.0 or p_book < min_leg_p:
             continue
         display = str(row["player"])
@@ -131,7 +143,8 @@ def build_pickem_board(
         threshold = float(np.quantile(samples, 1.0 - p_over))
         shifted[key] = samples - threshold + point
         p_model = float(sim.prob_over(pid, market, point))
-        legs.append(Leg(player=display, stat=market, line=point, side=side, p=p_book))
+        legs.append(Leg(player=display, stat=market, line=point, side=side, p=p_book,
+                        game_id=str(row["game_id"])))
         rows.append({
             "game_id": str(row["game_id"]),
             "player": display,
@@ -159,5 +172,6 @@ def build_pickem_board(
         max_legs=max_legs,
         min_ev=min_ev,
         top=top,
+        max_per_game=max_per_game,
     )
     return legs_frame, slips

@@ -173,3 +173,49 @@ def test_payout_table_validation() -> None:
         slip_ev([0.5], PAYOUTS["power-2"])  # wrong leg count
     with pytest.raises(ValueError):
         slip_ev_from_hits(np.ones((10, 3), dtype=bool), PAYOUTS["power-2"])
+
+
+def test_fair_leg_prob_worst_case_never_exceeds_any_method() -> None:
+    from velocity.wagering.pickem import fair_leg_prob
+
+    for prices in ((-140, 110), (-250, 190), (-115, -105)):
+        wc = fair_leg_prob(*prices, method="worst_case")
+        for method in ("multiplicative", "shin", "power"):
+            assert wc <= fair_leg_prob(*prices, method=method) + 1e-12
+
+
+def test_conservative_leg_is_side_aware() -> None:
+    from velocity.wagering.devig import devig
+    from velocity.wagering.pickem import conservative_leg
+
+    side, p = conservative_leg(-140, 110)  # over is the favorite
+    assert side == "over"
+    assert p <= devig([-140, 110], "multiplicative")[0] + 1e-12
+    side, p = conservative_leg(110, -140)  # under is the favorite
+    assert side == "under"
+    # The under's conservative bound is the smallest P(under) any method gives.
+    per = [devig([110, -140], m)[1] for m in ("multiplicative", "shin", "power")]
+    assert p == pytest.approx(min(per))
+
+
+def test_best_slips_caps_and_flags_same_game_stacks() -> None:
+    from velocity.wagering.pickem import Leg, best_slips
+
+    legs = [
+        Leg("A", "rec", 4.5, "over", 0.60, game_id="g1"),
+        Leg("B", "rec", 5.5, "over", 0.60, game_id="g1"),
+        Leg("C", "rec", 3.5, "over", 0.60, game_id="g1"),
+        Leg("D", "rec", 6.5, "over", 0.60, game_id="g2"),
+    ]
+    capped = best_slips(legs, tables=("power-3",), min_ev=0.0, max_per_game=2)
+    # Every emitted 3-pick has at most two g1 legs; the all-g1 combo is gone.
+    assert not capped.empty
+    assert not capped["legs"].str.contains(r"A.*B.*C").any()
+    assert capped["same_game"].any()  # two-g1 slips exist and are flagged
+    cross = best_slips(
+        [legs[0], legs[3]], tables=("power-2",), min_ev=0.0, max_per_game=1
+    )
+    assert not cross.empty
+    assert not cross["same_game"].any()
+    uncapped = best_slips(legs, tables=("power-3",), min_ev=0.0)
+    assert uncapped["legs"].str.contains("A").any()  # no cap: all combos priced

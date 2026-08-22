@@ -82,3 +82,22 @@ def test_three_way_market_normalizes() -> None:
     fair = devig([150, 220, 180], method="multiplicative")
     assert sum(fair) == pytest.approx(1.0)
     assert all(0.0 < f < 1.0 for f in fair)
+
+
+def test_worst_case_is_the_per_outcome_minimum_across_methods() -> None:
+    from velocity.wagering.devig import devig, devig_worst_case
+
+    prices = [-250, 190]  # lopsided: methods genuinely disagree here
+    per_method = [devig(prices, m) for m in ("multiplicative", "shin", "power")]
+    wc = devig_worst_case(prices)
+    for i in (0, 1):
+        assert wc[i] == pytest.approx(min(fair[i] for fair in per_method))
+    # A conservative bound, not a distribution: it undershoots summing to 1.
+    assert sum(wc) <= 1.0 + 1e-12
+
+
+def test_worst_case_matches_multiplicative_when_methods_agree() -> None:
+    from velocity.wagering.devig import devig, devig_worst_case
+
+    prices = [-110, -110]  # symmetric: every method says 50/50
+    assert devig_worst_case(prices) == pytest.approx(devig(prices, "multiplicative"))
