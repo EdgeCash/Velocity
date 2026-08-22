@@ -86,3 +86,59 @@ def test_from_file_empty_board_succeeds(tmp_path: Path) -> None:
     props_files = list(out.glob("props_ncaaf_*.parquet"))
     assert props_files
     assert pd.read_parquet(props_files[0]).empty
+
+
+def _payloads_with_team_totals() -> dict:
+    """A per-event payload carrying a prop AND the team-totals derivative."""
+    base = _per_event_payloads()
+    base["evt-001"]["bookmakers"][0]["markets"].append({
+        "key": "team_totals",
+        "last_update": _UPDATE,
+        "outcomes": [
+            {"name": "Over", "description": "Kansas City Chiefs",
+             "price": -110, "point": 24.5},
+            {"name": "Under", "description": "Kansas City Chiefs",
+             "price": -110, "point": 24.5},
+            {"name": "Over", "description": "Buffalo Bills",
+             "price": -105, "point": 21.5},
+            {"name": "Under", "description": "Buffalo Bills",
+             "price": -115, "point": 21.5},
+        ],
+    })
+    return base
+
+
+def test_from_file_banks_team_totals_beside_the_props(tmp_path: Path) -> None:
+    payloads = tmp_path / "payloads.json"
+    payloads.write_text(json.dumps(_payloads_with_team_totals()))
+    out = tmp_path / "props"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--from-file", str(payloads),
+         "--league", "nfl", "--out", str(out)],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    # The props parquet is untouched by the rider…
+    props = pd.read_parquet(next(iter(out.glob("props_nfl_*.parquet"))))
+    assert (props["market"] == "pass_yards").all()
+    # …and the team-total lines land beside it, resolved to home/away markets.
+    tt_files = list(out.glob("team_totals_nfl_*.parquet"))
+    assert tt_files, result.stdout
+    tt = pd.read_parquet(tt_files[0])
+    assert set(tt["market"]) == {"team_total_home", "team_total_away"}
+    assert len(tt) == 4
+    home = tt[tt["market"] == "team_total_home"]
+    assert (home["point"] == 24.5).all()
+
+
+def test_pre_cutover_payloads_write_no_team_totals_file(tmp_path: Path) -> None:
+    payloads = tmp_path / "payloads.json"
+    payloads.write_text(json.dumps(_per_event_payloads()))  # props only
+    out = tmp_path / "props"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--from-file", str(payloads),
+         "--league", "nfl", "--out", str(out)],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not list(out.glob("team_totals_nfl_*.parquet"))

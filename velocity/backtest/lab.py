@@ -1234,6 +1234,95 @@ def ats_ou_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str,
     return out
 
 
+def posted_team_total_study(
+    lines: pd.DataFrame,
+    games: pd.DataFrame,
+    *,
+    edges: tuple[float, ...] = (0.0, 14.0, 17.0, 21.0, 24.0, 28.0, 100.0),
+) -> pd.DataFrame:
+    """Posted team-total closes vs realized scores and the linear derivation.
+
+    The derived-numbers study (:func:`team_total_censoring_study`) found the
+    censoring bias in the *mean* but no >52.4% over-rate — the open question
+    it left was whether books' **posted** lines deviate from the linear
+    ``(total ± spread) / 2`` split, and whether that deviation carries a
+    playable bias. This is that measurement, runnable once the collector's
+    banked team-total lines accumulate.
+
+    ``lines`` is the banked archive (canonical ``Lines`` rows with markets
+    ``team_total_home``/``team_total_away``, any number of snapshots);
+    ``games`` needs ``game_id`` (the lines' id space), ``kickoff``, finals,
+    and — for the derivation-gap column — ``spread_line``/``total_line``
+    closes. The close per (game, market, book) is the honest last pre-kickoff
+    observation (:func:`velocity.store.pit.closing_line`); books are then
+    collapsed to the median posted number so each team-game counts once.
+
+    Per posted-number bucket: n, mean posted, realized bias, the over rate at
+    the posted number (pushes excluded), and the mean posted-minus-derived
+    gap (NaN until derivation inputs exist). An over rate clearing 52.4% on
+    accumulated closes is what would finally set the
+    ``min_team_total_disagreement`` default the live gate ships disabled.
+    """
+    from velocity.store.pit import closing_line
+
+    columns = ["bucket", "n", "mean_posted", "mean_realized", "bias",
+               "over_rate", "posted_minus_derived"]
+    needed = ("game_id", "kickoff", "home_score", "away_score")
+    if (
+        lines is None or lines.empty or games.empty
+        or any(c not in games.columns for c in needed)
+    ):
+        return pd.DataFrame(columns=columns)
+    team_totals = lines[lines["market"].isin(("team_total_home", "team_total_away"))]
+    if team_totals.empty:
+        return pd.DataFrame(columns=columns)
+
+    closes = closing_line(team_totals, games)
+    if closes.empty:
+        return pd.DataFrame(columns=columns)
+    posted = (
+        closes.groupby(["game_id", "market"], as_index=False)["point"].median()
+    )
+    keep = ["game_id", "home_score", "away_score"]
+    for optional in ("spread_line", "total_line"):
+        if optional in games.columns:
+            keep.append(optional)
+    merged = posted.merge(games[keep], on="game_id", how="inner")
+    merged = merged.dropna(subset=["point", "home_score", "away_score"])
+    if merged.empty:
+        return pd.DataFrame(columns=columns)
+
+    is_home = merged["market"] == "team_total_home"
+    merged["realized"] = merged["away_score"].astype(float).where(
+        ~is_home, merged["home_score"].astype(float)
+    )
+    if {"spread_line", "total_line"} <= set(merged.columns):
+        derived_home = (merged["total_line"] + merged["spread_line"]) / 2.0
+        derived_away = (merged["total_line"] - merged["spread_line"]) / 2.0
+        merged["derived"] = derived_away.where(~is_home, derived_home)
+    else:
+        merged["derived"] = float("nan")
+    merged["bucket"] = pd.cut(merged["point"], list(edges), include_lowest=True)
+
+    rows = []
+    for bucket, part in merged.groupby("bucket", observed=True):
+        decided = part[part["realized"] != part["point"]]
+        over = (decided["realized"] > decided["point"]).sum()
+        gap = part["point"] - part["derived"]
+        rows.append({
+            "bucket": str(bucket),
+            "n": len(part),
+            "mean_posted": float(part["point"].mean()),
+            "mean_realized": float(part["realized"].mean()),
+            "bias": float((part["realized"] - part["point"]).mean()),
+            "over_rate": float(over / len(decided)) if len(decided) else float("nan"),
+            "posted_minus_derived": (
+                float(gap.mean()) if gap.notna().any() else float("nan")
+            ),
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
 def team_total_censoring_study(
     games: pd.DataFrame,
     *,

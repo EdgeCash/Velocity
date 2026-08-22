@@ -4,9 +4,12 @@ The Odds API serves player props only from the per-event ``/events/{id}/odds``
 endpoint. This pulls each event's prop board once per league, then:
 
 * banks the **raw** per-event JSON verbatim (so every market, including ones
-  with no canonical normalizer yet, is preserved for the prop backtest), and
+  with no canonical normalizer yet, is preserved for the prop backtest),
 * writes the normalized :class:`~velocity.store.schema.PropLines` parquet for
-  the prop markets we model (see ``PROP_MARKET_BY_KEY``).
+  the prop markets we model (see ``PROP_MARKET_BY_KEY``), and
+* writes the **team-total** lines (``team_totals`` rides the same per-event
+  call for one extra market's credits) — their accumulated closes calibrate
+  the ``min_team_total_disagreement`` gate.
 
 Runs as a GitHub Action (where ``THE_ODDS_API`` lives) and uploads a PRIVATE
 artifact — never commits, since the repo is public and paid odds must not land
@@ -28,10 +31,13 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.ingest.theoddsapi import (
-    DEFAULT_PROP_MARKETS,
+    DEFAULT_EVENT_MARKETS,
     events_of,
+    normalize_odds_events,
     normalize_player_props,
 )
+
+_TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
 
 
 def _payloads_from_file(path: str) -> list[tuple[str, object]]:
@@ -69,6 +75,24 @@ def snapshot_league(
         f"  {league}: {len(payloads)} events banked (raw); {len(props)} prop lines "
         f"normalized ({n_games} games, {n_players} players) → {dest}"
     )
+
+    # Team totals ride the same per-event payloads (DEFAULT_EVENT_MARKETS).
+    # Banked as canonical Lines beside the props: their accumulated closes are
+    # the calibration input the min_team_total_disagreement gate is waiting on
+    # (docs/BACKTEST_NCAAF.md addendum). Empty is normal for boards that
+    # haven't posted them or pre-cutover payloads.
+    game_frames = [normalize_odds_events(events_of(raw), is_closing=False)
+                   for _, raw in payloads]
+    game_lines = pd.concat(game_frames, ignore_index=True) if game_frames else pd.DataFrame()
+    if not game_lines.empty:
+        team_totals = game_lines[game_lines["market"].isin(_TEAM_TOTAL_MARKETS)]
+        if not team_totals.empty:
+            tt_dest = out / f"team_totals_{league}_{tag}.parquet"
+            team_totals.assign(league=league, collected_at=collected_at).to_parquet(
+                tt_dest, index=False
+            )
+            print(f"  {league}: {len(team_totals)} team-total lines "
+                  f"({team_totals['game_id'].nunique()} games) → {tt_dest}")
     return props
 
 
@@ -77,7 +101,8 @@ def main() -> None:
     parser.add_argument("--out", default="artifacts/props", help="output folder (private)")
     parser.add_argument("--leagues", default="nfl ncaaf",
                         help="space-separated leagues to snapshot")
-    parser.add_argument("--markets", default=DEFAULT_PROP_MARKETS, help="prop market keys")
+    parser.add_argument("--markets", default=DEFAULT_EVENT_MARKETS,
+                        help="per-event market keys (props + team_totals)")
     parser.add_argument("--from-file",
                         help="saved per-event payloads JSON (offline; single league)")
     parser.add_argument("--league", default="nfl",
