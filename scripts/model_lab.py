@@ -44,7 +44,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="NFL model-variant benchmark")
     parser.add_argument("--data", default="datasets/nfl", help="folder with games+plays")
     parser.add_argument("--league", default="nfl",
-                        choices=["nfl", "ncaaf", "mlb", "wnba"])
+                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"])
     parser.add_argument("--n-sims", type=int, default=4000)
     parser.add_argument("--min-train-games", type=int, default=20)
     parser.add_argument("--variants", default="",
@@ -61,8 +61,8 @@ def main() -> None:
     folder = Path(args.data)
     games = load_games(_find(folder, "games"), league=args.league)
     has_college_plays = False
-    if args.league in ("mlb", "wnba"):
-        # Summer leagues: games-only scores families. Point --data at the
+    if args.league in ("mlb", "wnba", "ncaab"):
+        # Daily leagues: games-only scores families. Point --data at the
         # PRIVATE close-joined folder from join_historical_closes.py — the
         # committed frames carry no lines, and paid closes never enter git.
         plays = games
@@ -123,6 +123,20 @@ def main() -> None:
                         args.n_sims, pd.read_parquet(box_file)
                     ))
                     break
+    elif args.league == "ncaab":
+        from velocity.backtest.lab import ncaab_variants
+
+        # Committed-dataset fallbacks, same pattern as the MLB starters: the
+        # box frame is required (the pace×efficiency decomposition IS the
+        # model); the Torvik frame is optional and adds the prior variants.
+        box_file = next(f for f in (folder / "team_box.parquet",
+                                    Path("datasets/ncaab/team_box.parquet"))
+                        if f.exists())
+        torvik = next((pd.read_parquet(f)
+                       for f in (folder / "torvik.parquet",
+                                 Path("datasets/ncaab/torvik.parquet"))
+                       if f.exists()), None)
+        chosen = ncaab_variants(args.n_sims, pd.read_parquet(box_file), torvik)
     else:
         from velocity.backtest.lab import ncaaf_variants
 

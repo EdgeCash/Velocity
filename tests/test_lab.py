@@ -706,3 +706,45 @@ def test_posted_team_total_study_guards_empty_inputs() -> None:
                       "home_score": [1.0], "away_score": [0.0]}),
     )
     assert no_tt.empty
+
+
+def test_ncaab_variants_register_and_prior_orders_teams() -> None:
+    from velocity.backtest.lab import ncaab_variants
+
+    # A box frame so the pace side has something to chew on (league 68 poss).
+    box_rows = []
+    for gid in ("n1", "n2"):
+        for side in ("home", "away"):
+            box_rows.append({"game_id": gid, "team_home_away": side,
+                             "field_goals_attempted": 60.0, "offensive_rebounds": 10.0,
+                             "total_turnovers": 12.0, "free_throws_attempted": 20.0 / 0.44})
+    box = pd.DataFrame(box_rows)
+
+    without_prior = ncaab_variants(64, box)
+    assert "pace-eff" in without_prior
+    assert not any(name.startswith("prior") for name in without_prior)
+
+    torvik = pd.DataFrame([
+        {"team": "Duke", "adj_o": 120.0, "adj_d": 90.0, "adj_t": 68.0, "season": 2025},
+        {"team": "Quinnipiac", "adj_o": 100.0, "adj_d": 105.0, "adj_t": 68.0,
+         "season": 2025},
+    ])
+    variants = ncaab_variants(64, box, torvik)
+    assert {"prior-k6", "prior-k12", "prior-k24"} <= set(variants)
+
+    # Week-0 2026 training data that says nothing about relative strength
+    # (two even games between the teams) — the prior alone must order Duke
+    # over Quinnipiac at the anchor date.
+    train = pd.DataFrame([
+        {"game_id": "n1", "season": 2026, "week": 0,
+         "kickoff": pd.Timestamp("2025-11-04"), "home_team": "Duke",
+         "away_team": "Quinnipiac", "home_score": 70.0, "away_score": 70.0,
+         "neutral_site": False},
+        {"game_id": "n2", "season": 2026, "week": 0,
+         "kickoff": pd.Timestamp("2025-11-06"), "home_team": "Quinnipiac",
+         "away_team": "Duke", "home_score": 70.0, "away_score": 70.0,
+         "neutral_site": False},
+    ])
+    model = variants["prior-k24"][1](train)
+    proj = model.project("Duke", "Quinnipiac", neutral_site=True)
+    assert proj.mu_home - proj.mu_away > 3.0
