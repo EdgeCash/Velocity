@@ -232,19 +232,43 @@ def main() -> None:
         "--team-totals-study", action="store_true",
         help="print the team-total censoring-bias study (implied vs realized)",
     )
+    parser.add_argument(
+        "--team-total-lines",
+        help="banked team-total Lines parquet (the collector's archive): the "
+             "study runs on POSTED closes instead of derived numbers",
+    )
+    parser.add_argument(
+        "--study-games",
+        help="games parquet in the lines' game-id space (kickoff + finals, "
+             "ideally spread_line/total_line closes) for --team-total-lines; "
+             "defaults to the --data games file, whose ids only match "
+             "archives keyed the same way",
+    )
     args = parser.parse_args()
 
     if args.team_totals_study:
         # Lines-only measurement — no model fit needed.
-        from velocity.backtest.lab import team_total_censoring_study
+        from velocity.backtest.lab import posted_team_total_study, team_total_censoring_study
 
         games_path = _find(Path(args.data), "games")
         if games_path is None:
             raise SystemExit(f"need a games file in {args.data}/")
-        study = team_total_censoring_study(load_games(games_path, league=args.league))
-        print(f"=== Team-total censoring study: {args.league.upper()} ===")
-        print("(bias = mean realized score − linearly implied team total; "
-              "over_rate vs 52.4% break-even)")
+        if args.team_total_lines:
+            lines = pd.read_parquet(args.team_total_lines)
+            study_games = (
+                pd.read_parquet(args.study_games) if args.study_games
+                else load_games(games_path, league=args.league)
+            )
+            study = posted_team_total_study(lines, study_games)
+            print(f"=== POSTED team-total study: {args.league.upper()} "
+                  f"({len(lines)} banked lines) ===")
+            print("(bias = realized − posted close; posted_minus_derived = how far "
+                  "books deviate from (total±spread)/2; over_rate vs 52.4%)")
+        else:
+            study = team_total_censoring_study(load_games(games_path, league=args.league))
+            print(f"=== Team-total censoring study: {args.league.upper()} ===")
+            print("(bias = mean realized score − linearly implied team total; "
+                  "over_rate vs 52.4% break-even)")
         print(study.round(3).to_string(index=False))
         return
 

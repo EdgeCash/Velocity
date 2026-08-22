@@ -1,14 +1,16 @@
 name: Collect football player props
 
 # Snapshots NFL + NCAAF player props (pass/rush/receiving yards, receptions,
-# pass TDs, anytime TD) into a PRIVATE Actions artifact — the soft-market CLV
-# archive the prop backtest replays. Props are per-event "additional" markets
-# served from one /events/{id}/odds call each: cost ≈ events × markets ×
-# regions. An NFL week (~16 events × 6 markets) is ~100 credits; a full NCAAF
-# Saturday board is the big one (~60 events → ~360), so twice daily lands
-# well under the 100k/month budget. Raw payloads are banked verbatim alongside
-# the normalized parquet; empty boards succeed. Never commits — the repo is
-# public and paid odds must not land in it.
+# pass TDs, anytime TD) PLUS the team-total derivative into a PRIVATE Actions
+# artifact — the soft-market CLV archive the prop backtest replays, and the
+# posted team-total closes the min_team_total_disagreement gate calibrates
+# against (docs/BACKTEST_NCAAF.md addendum). All are per-event "additional"
+# markets served from one /events/{id}/odds call each: cost ≈ events ×
+# markets × regions. An NFL week (~16 events × 7 markets) is ~110 credits; a
+# full NCAAF Saturday board is the big one (~60 events → ~420), so twice
+# daily lands well under the 100k/month budget. Raw payloads are banked
+# verbatim alongside the normalized parquets; empty boards succeed. Never
+# commits — the repo is public and paid odds must not land in it.
 #
 # Manual dispatch doubles as the THE_ODDS_API prop-endpoint verification.
 

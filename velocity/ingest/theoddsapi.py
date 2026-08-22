@@ -77,6 +77,12 @@ PROP_MARKET_BY_KEY = {
     "player_anytime_td": "anytime_td",
 }
 DEFAULT_PROP_MARKETS = ",".join(PROP_MARKET_BY_KEY)
+# The per-event snapshot markets: props plus the team-total derivative. One
+# /events/{id}/odds call carries them all, so team totals ride the prop
+# collector for one extra market's worth of credits — and their banked closes
+# are what calibrates the ``min_team_total_disagreement`` gate
+# (docs/BACKTEST_NCAAF.md addendum).
+DEFAULT_EVENT_MARKETS = DEFAULT_PROP_MARKETS + ",team_totals"
 
 _PROP_SIDES = {"over": "over", "under": "under"}
 

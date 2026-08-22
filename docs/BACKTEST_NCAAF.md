@@ -155,3 +155,13 @@ What shipped on this evidence:
   **defaults to off** — no >52.4% cut exists on derived numbers, so the
   threshold waits for banked *posted* team-total closes to calibrate against,
   exactly how the full-game totals filter was promoted.
+
+**Update (2026-08):** banking is live. The props collector's per-event calls
+now carry `team_totals` (`DEFAULT_EVENT_MARKETS`), writing
+`team_totals_{league}_{tag}.parquet` beside the props archive twice daily.
+The calibration harness is ready to run as closes accumulate:
+`run_backtest_local.py --team-totals-study --team-total-lines <banked>`
+(`backtest/lab.py posted_team_total_study`) measures posted closes vs
+realized scores *and* vs the linear derivation — the over-rate table that
+will finally set the `min_team_total_disagreement` default, or keep the
+gate honestly off.

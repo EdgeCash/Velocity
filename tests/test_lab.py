@@ -639,3 +639,70 @@ def test_low_bye_rest_variants_are_registered(games) -> None:
         assert name in variants
         kind, _factory = variants[name]
         assert kind == "plays"
+
+
+def test_posted_team_total_study_closes_medians_and_gaps() -> None:
+    import pandas as pd
+    import pytest as _pytest
+    from velocity.backtest.lab import posted_team_total_study
+
+    kickoff = pd.Timestamp("2025-09-07 17:00")
+
+    def line(game, market, side, book, point, ts):
+        return {"line_id": f"{game}|{market}|{side}|{book}|{point}",
+                "game_id": game, "book": book, "market": market, "side": side,
+                "price": -110, "point": point, "timestamp": pd.Timestamp(ts),
+                "is_closing": False}
+
+    lines = pd.DataFrame([
+        # g1 home: bookA moves 23.5 → 24.5 pre-kick (close = 24.5); bookB
+        # closes at 26.5; a post-kick 30.5 must be ignored. Median close 25.5.
+        line("g1", "team_total_home", "over", "bookA", 23.5, "2025-09-06 12:00"),
+        line("g1", "team_total_home", "over", "bookA", 24.5, "2025-09-07 12:00"),
+        line("g1", "team_total_home", "over", "bookB", 26.5, "2025-09-07 12:00"),
+        line("g1", "team_total_home", "over", "bookA", 30.5, "2025-09-07 18:00"),
+        # g1 away: single book, 20.5.
+        line("g1", "team_total_away", "under", "bookA", 20.5, "2025-09-07 12:00"),
+        # g2 home: posted exactly on the realized score → a push, excluded
+        # from the over rate but counted in n/bias.
+        line("g2", "team_total_home", "over", "bookA", 21.0, "2025-09-07 12:00"),
+    ])
+    games = pd.DataFrame([
+        {"game_id": "g1", "kickoff": kickoff, "home_score": 27.0,
+         "away_score": 17.0, "spread_line": 6.0, "total_line": 44.0},
+        {"game_id": "g2", "kickoff": kickoff, "home_score": 21.0,
+         "away_score": 20.0, "spread_line": 0.0, "total_line": 40.0},
+    ])
+    out = posted_team_total_study(lines, games, edges=(0.0, 23.0, 100.0))
+
+    low = out[out["bucket"].str.contains("23.0]")].iloc[0]
+    # Low bucket: g1 away (posted 20.5, realized 17 → under) and g2 home
+    # (posted 21, realized 21 → push). Over rate = 0/1; bias mean = (−3.5+0)/2.
+    assert low["n"] == 2
+    assert low["over_rate"] == 0.0
+    assert low["bias"] == _pytest.approx((-3.5 + 0.0) / 2)
+    # Derivation gaps: g1 away derived (44−6)/2 = 19 → 20.5−19 = +1.5;
+    # g2 home derived 20 → 21−20 = +1. Mean +1.25.
+    assert low["posted_minus_derived"] == _pytest.approx(1.25)
+
+    high = out[out["bucket"].str.contains("100.0]")].iloc[0]
+    # High bucket: g1 home at the median close 25.5 (24.5, 26.5 across books;
+    # the post-kick 30.5 ignored), realized 27 → over. Derived (44+6)/2 = 25.
+    assert high["n"] == 1
+    assert high["mean_posted"] == _pytest.approx(25.5)
+    assert high["over_rate"] == 1.0
+    assert high["posted_minus_derived"] == _pytest.approx(0.5)
+
+
+def test_posted_team_total_study_guards_empty_inputs() -> None:
+    import pandas as pd
+    from velocity.backtest.lab import posted_team_total_study
+
+    empty = posted_team_total_study(pd.DataFrame(), pd.DataFrame())
+    assert empty.empty
+    no_tt = posted_team_total_study(
+        pd.DataFrame({"market": ["spread"], "game_id": ["g"], "point": [1.0]}),
+        pd.DataFrame({"game_id": ["g"], "kickoff": [pd.Timestamp("2025-01-01")],
+                      "home_score": [1.0], "away_score": [0.0]}),
+    )
+    assert no_tt.empty
