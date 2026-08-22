@@ -513,6 +513,14 @@ class BonusAdjustedModel:
 INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
     "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 100.0},
     "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
+    # 2026 walk-forward, pace×efficiency (docs/BUILD_NCAAB.md N2): residual
+    # sds from the calibration diagnostic. Ridge is *near-zero* — 360
+    # conference-clustered teams leave the fit compressed at football-scale
+    # λ (calibration slope act≈2.6·pred at λ=50, monotone down to 1.03 at
+    # λ=0.1) because shrinkage flattens cross-cluster strength differences;
+    # what predictions use is each team's offense+defense sum, which stays
+    # identified as λ→0. 0.5 balances that against early-season stability.
+    "ncaab": {"sd_margin": 13.0, "sd_total": 18.5, "sigma": 13.0, "ridge": 0.5},
 }
 
 
@@ -877,6 +885,68 @@ def wnba_pace_variants(
     }
 
 
+def ncaab_variants(
+    n_sims: int, box: pd.DataFrame, torvik: pd.DataFrame | None = None
+) -> dict[str, tuple[str, VariantFactory]]:
+    """The NCAAB pace×efficiency slate — ridge ladder + the Torvik prior.
+
+    The league's structural problem is connectivity: 360+ teams in
+    conference clusters compress the ridge fit's cross-cluster strength
+    differences (walk-forward calibration slope ≈ 2.6·pred at football-scale
+    λ=50), so the ladder sweeps *light* penalties. The prior variants append
+    :func:`velocity.ingest.ncaab.torvik_pseudo_games` — last season's final
+    Torvik ratings as K week-0 anchor games, decaying under the same recency
+    weights as real games. The leak gate inside the helper keys on the
+    training slice's own latest kickoff.
+    """
+    from velocity.ingest.ncaab import torvik_pseudo_games
+
+    cal = INSEASON_CALIBRATION["ncaab"]
+    sim = SimConfig(sd_margin=cal["sd_margin"], sd_total=cal["sd_total"],
+                    n_sims=n_sims)
+    pace = wnba_pace_frame(box)
+    half_life = 6.0  # ≈90 days — the bias-free total from the calibration run
+
+    def plain(lam: float, hl: float | None = half_life) -> VariantFactory:
+        def factory(train: pd.DataFrame) -> PaceEfficiencyModel:
+            return fit_pace_efficiency(
+                train, pace, sim, ridge_lambda=lam, half_life=hl
+            )
+
+        return factory
+
+    def prior(k: int, lam: float) -> VariantFactory:
+        assert torvik is not None
+
+        def factory(train: pd.DataFrame) -> PaceEfficiencyModel:
+            teams = set(train["home_team"]) | set(train["away_team"])
+            pseudo_games, pseudo_pace = torvik_pseudo_games(
+                torvik, teams, cutoff=pd.to_datetime(train["kickoff"]).max(), k=k
+            )
+            return fit_pace_efficiency(
+                pd.concat([train, pseudo_games], ignore_index=True),
+                pd.concat([pace, pseudo_pace], ignore_index=True),
+                sim, ridge_lambda=lam, half_life=half_life,
+            )
+
+        return factory
+
+    variants: dict[str, tuple[str, VariantFactory]] = {
+        "pace-eff": ("games", plain(cal["ridge"])),  # the promotion bar
+    }
+    variants.update({
+        f"ridge-{lam:g}": ("games", plain(lam)) for lam in (0.1, 0.25, 1.0, 2.0)
+    })
+    variants["pace-eff-flat"] = ("games", plain(cal["ridge"], None))
+    variants["recency-12"] = ("games", plain(cal["ridge"], 12.0))
+    if torvik is not None:
+        variants.update({
+            f"prior-k{k:g}": ("games", prior(k, cal["ridge"]))
+            for k in (6, 12, 24)
+        })
+    return variants
+
+
 def mlb_fip_priors(
     starters: pd.DataFrame, shrink_innings: float
 ) -> dict[str, float]:
@@ -1139,6 +1209,11 @@ def market_blend_sweep(
     Returns one row per weight: ``weight, brier_select, brier_holdout,
     n_select, n_holdout``.
     """
+    if "spread_line" not in games.columns:
+        # No joined closes (a games-only league, or the committed public
+        # frame) — there is no market to blend toward.
+        return pd.DataFrame(columns=["weight", "brier_select", "brier_holdout",
+                                     "n_select", "n_holdout"])
     line_cols = games[["game_id", "spread_line"]].copy()
     line_cols["game_id"] = line_cols["game_id"].astype(str)
     df = projections.copy()
