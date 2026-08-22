@@ -97,6 +97,32 @@ current-season games), the prior is a wash at low ridge (K=12 λ=1: sd
 source; its case is the early weeks, which the lab's full-season
 walk-forward measures.
 
+**The gate** (`model_lab.py --league ncaab --eval-from 2026`, n=5,531
+scored games, moneyline Brier — no closes joined yet, that's N3):
+
+| variant | Brier | log-loss | calibration error |
+|---------|-------|----------|-------------------|
+| **prior-k6** (λ=0.5) | **0.1804** | **0.5304** | 0.0257 |
+| prior-k3 | 0.1805 | 0.5309 | 0.0254 |
+| prior-k12 | 0.1816 | 0.5336 | 0.0259 |
+| ridge-0.25 | 0.1849 | 0.5456 | 0.0261 |
+| prior-k24 | 0.1847 | 0.5414 | 0.0250 |
+| pace-eff-flat (λ=0.5) | 0.1855 | 0.5493 | 0.0316 |
+| pace-eff (λ=0.5, hl=6) | 0.1859 | 0.5504 | 0.0355 |
+| ridge-0.1 | 0.1862 | 0.5479 | 0.0302 |
+| ridge-1 | 0.1895 | 0.5621 | 0.0468 |
+| ridge-2 | 0.1958 | 0.5797 | 0.0724 |
+
+The full-season read reverses the mid-season wash: with November in the
+denominator, **the prior variants sweep the top of the table** (k6 beats
+the no-prior default by 5.2 Brier points per thousand and the best
+no-prior ridge by 4.5), with the flat k3–k6 optimum saying a light prior
+carries the early weeks and hands off cleanly. **Promoted N2 config:
+pace×efficiency, λ=0.5, half-life 6, Torvik pseudo-games K=6** — the
+`prior-k6` lab variant. N3 re-arbitrates against real closes (Brier vs
+the close-implied baseline, CLV, and the segment cuts), where 0.1804 on
+moneyline-from-ratings means nothing until it prices against the market.
+
 ## Phase N3 — Backtest
 
 Walk-forward over the timemachine archive + sportsbookreviewsonline closes:

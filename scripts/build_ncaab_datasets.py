@@ -17,7 +17,6 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
-
 from velocity.ingest.ncaab import TorvikClient, load_hoopr_schedule, load_hoopr_team_box
 
 

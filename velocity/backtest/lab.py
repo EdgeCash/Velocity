@@ -942,7 +942,7 @@ def ncaab_variants(
     if torvik is not None:
         variants.update({
             f"prior-k{k:g}": ("games", prior(k, cal["ridge"]))
-            for k in (6, 12, 24)
+            for k in (3, 6, 12, 24)
         })
     return variants
 
