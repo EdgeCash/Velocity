@@ -1,6 +1,7 @@
 # Velocity — NCAAB Vertical: Phased Build Plan
 
-**Status:** Phases N1 (data adapter) + N2 (model) landed; N3+ planned
+**Status:** Phases N1 (data adapter), N2 (model), N3 (closes backtest —
+**null after FDR**) landed; N4 planned with the launch posture N3 dictates
 **Why this sport:** the edge research ([`EDGE_RESEARCH.md`](EDGE_RESEARCH.md)
 §3.1) — inefficiency concentrates where pregame information is scarce, and
 NCAAB is 360 teams × 5,000+ games with documented historical anomalies
@@ -123,14 +124,64 @@ pace×efficiency, λ=0.5, half-life 6, Torvik pseudo-games K=6** — the
 the close-implied baseline, CLV, and the segment cuts), where 0.1804 on
 moneyline-from-ratings means nothing until it prices against the market.
 
-## Phase N3 — Backtest
+## Phase N3 — Backtest (landed; the answer is null)
 
-Walk-forward over the timemachine archive + sportsbookreviewsonline closes:
-CLV and ATS by segment (November vs conference play, majors vs low-majors,
-sides vs totals vs 1H). The tier backtest (`backtest/intel_tiers.py`)
-replays here unchanged. Promotion bar: sustained segment-level edge with
-per-season robustness, FDR-controlled across the sweep family
-(`eval.metrics.benjamini_hochberg`).
+Walk-forward over the sportsbookreviewsonline closes: ATS/O-U by segment
+(November vs conference play, majors vs low-majors), FDR-controlled across
+the sweep family. Promotion bar: sustained segment-level edge. **Nothing
+cleared it.**
+
+### N3 results (2009–2022 walk-forward vs sbro closes)
+
+**Market.** `velocity/ingest/sbro.py` + `scripts/collect_sbro_ncaab.py`
+bank the free sbro archives (2007-08 through 2021-22; xlsx plus the final
+season's HTML table): paired V/H rows, the multiplexed Open/Close cells
+(the smaller number is the spread, on the favorite's row), pk/NL
+sentinels. Names resolve to hoopR locations by compaction + a hand-checked
+alias table (99.99% of ~125k name instances); games join per season on
+(ET date, home, away) with swapped-order and ±1-day fallbacks, ambiguous
+ids dropped and finals cross-checked against hoopR (99.8% agreement) —
+`datasets/ncaab/closes.parquet`, 61,847 games with closes (98.8% of the
+archive), home ATS 47–51% per decided season, matching the documented
+profile. The games/box/Torvik frames extend back to 2008 to cover it.
+
+**The gate** (`model_lab.py --league ncaab --eval-from 2009 --eval-to 2022
+--train-window 5`, 80,364 scored games):
+
+| variant | Brier | flat ATS | flat O/U | spread @≥6 pts | 
+|---------|-------|----------|----------|----------------|
+| pace-eff (no prior) | 0.1708 | 49.9% (49,944) | 50.1% (52,921) | 52.0% (4,308) |
+| **prior-k6** | **0.1702** | 50.1% (49,650) | 50.4% (52,923) | 52.4% (3,365) |
+| prior-k12 | 0.1714 | 50.4% (50,090) | 50.5% (52,958) | 52.9% (4,152) |
+
+- **The expectation discipline held exactly**: Torvik-class ratings are
+  the market's own inputs, and the raw model ties the close flat (~50%
+  both markets, all variants). prior-k6's Brier edge from N2 replicates
+  at 80k games.
+- **The close is the better forecaster**: the market-blend sweep picks
+  w=0.0 on the select window (2009–2017) and the holdout agrees (market
+  0.1791 vs best model 0.1831) — no residual win-prob information on top
+  of the closing spread.
+- **Selectivity climbs but never clears the vig**: disagreement sweeps
+  rise monotonically (prior variants uniformly above no-prior), reaching
+  52.4–52.9% at ≥6 points — break-even at −110, on ~4k bets.
+- **Segments: 0 of 90 cells survive FDR**
+  (`ncaab_segment_study` × 3 variants → `benjamini_hochberg`, α=0.05).
+  Best cell: prior-k12 spreads in conference play at ≥4 pts, 52.48% on
+  6,185 bets (p=0.45 vs break-even). November totals lean over (51.5–52%)
+  — the documented direction, not significance. The 2008-era anomalies
+  (home dogs, low-major softness) are visibly arbitraged out by the later
+  seasons of this window.
+
+**What this dictates for N4**: launch as a content/CLV surface, not a
+staking surface — project every game, grade CLV against live closes, keep
+the EV gate on posted prices (where the devig + disagreement machinery
+prices real numbers, not synthetic −110), and bank live closes from The
+Odds API to re-test the 2023+ market regime the free archive doesn't
+cover. The one hypothesis N3 licenses for a future sweep round: the
+prior-weight direction is monotone in the sweeps (k12 > k6 > none on
+selectivity), so a heavier/timemachine-refreshed prior belongs in the
+next family — as a pre-registered variant, not a cherry-pick.
 
 ## Phase N4 — Live
 
