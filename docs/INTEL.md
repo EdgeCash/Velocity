@@ -151,11 +151,15 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
 
 ## 5. What the layer is *not* claiming
 
-- **The signals are unproven as predictors.** The EV gate's edges are
-  backtested; the tiers are not (yet). Until §6's tier backtest runs, the
-  honest read is: tiers organize *evidence*, they do not add *measured
-  edge*. That is exactly why the layer only annotates and vetoes rather
-  than re-staking.
+- **The stat signals carry no measured edge — now verified.** The tier
+  backtest ([`docs/BACKTEST_INTEL.md`](BACKTEST_INTEL.md)) replayed 15 NFL
+  and 10 NCAAF seasons: context-confirmed picks did **not** outperform
+  context-contradicted ones (NFL mildly inverted, not significant; NCAAF
+  exactly flat). The expected null for public stats the close already
+  prices. Tiers organize *evidence*; they do not add edge — which is
+  exactly why the layer only annotates and vetoes rather than re-staking.
+  The injury/availability vetoes are the untested (and most promising)
+  channel: they carry the one input that is *not* in public season stats.
 - **Unit stats are raw season means,** not opponent-adjusted ratings — the
   same numbers as the deep-dive card, chosen for explainability. The
   opponent-adjusted fit already lives inside the projection; the signal is
@@ -166,18 +170,22 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
 
 ## 6. Next steps (each its own gated PR)
 
-1. **Tier backtest.** Replay banked slates through the layer (the archive
-   carries everything but injuries) and measure CLV/ROI *by tier*. If Prime
-   sustainably beats Model-only, tier-conditioned staking becomes a
-   candidate — through a walk-forward PR, per the standing rules.
-2. **Injuries history.** The collector banks snapshots but no history exists
-   yet (`collect_fantasypros.py`'s own comment). Once a season of snapshots
-   banks, the availability adjustment can move *inside* the prop model
-   (`redistribute_shares` finally gets a production caller) and the veto can
-   soften into a priced adjustment.
+1. ~~**Tier backtest.**~~ **Done** — `velocity/backtest/intel_tiers.py`,
+   results in [`docs/BACKTEST_INTEL.md`](BACKTEST_INTEL.md). Verdict: stat
+   signals add no measurable edge over the EV gate (so no tier-conditioned
+   staking); the untested injury channel is now the priority.
+2. **Injuries history — now the headline item.** The collector banks
+   snapshots but no history exists yet (`collect_fantasypros.py`'s own
+   comment). A season of snapshots makes the veto channel *measurable* (the
+   one signal family the tier backtest could not test), lets the
+   availability adjustment move *inside* the prop model
+   (`redistribute_shares` finally gets a production caller), and lets the
+   veto soften into a priced adjustment.
 3. **Player-level form.** `normalize_weekly_stats` (nflverse) is ingest-ready
    but unbanked; committing a player-week table unlocks prop form signals
    (usage trend, not just the opposing unit).
 4. **Opponent-adjusted signal units.** Swap `epa_form` raw means for the
    ridge fit's ratings in the matchup signal once the explainability story
-   (showing σ *and* the rating delta) is worked out on the card.
+   (showing σ *and* the rating delta) is worked out on the card — the
+   backtest's caveat list names raw-mean context as a possible reason for
+   the null.
