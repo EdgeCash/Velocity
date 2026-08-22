@@ -1309,6 +1309,107 @@ def ats_ou_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str,
     return out
 
 
+def ncaab_segment_study(
+    projections: pd.DataFrame,
+    games: pd.DataFrame,
+    torvik: pd.DataFrame | None = None,
+    *,
+    thresholds: tuple[float, ...] = (0.0, 2.0, 4.0),
+    november_weeks: int = 2,
+    major_rank: int = 100,
+) -> pd.DataFrame:
+    """ATS/O-U win rates by the documented NCAAB inefficiency segments.
+
+    The N3 promotion read (docs/BUILD_NCAAB.md): inefficiency concentrates
+    where pregame information is scarce — November (lines anchored to
+    priors), low-majors (thin markets) — while the tournament tests
+    efficient. Each row is one (market, segment, disagreement-threshold)
+    cell: bets, win rate vs the close at −110, and a one-sided normal
+    p-value against the 52.4% break-even. The caller runs the whole frame
+    through :func:`velocity.eval.metrics.benjamini_hochberg` — the family IS
+    the sweep, so no cell may be read alone.
+
+    Majors/low-majors split on **last season's** Torvik rank (the market's
+    own attention proxy, leak-free by construction): a game is ``major``
+    when both teams ranked inside ``major_rank``, ``low-major`` when both
+    ranked outside it or unranked.
+    """
+    import math
+
+    cols = ["game_id", "home_score", "away_score", "season", "week",
+            "home_team", "away_team", "neutral_site"]
+    for optional in ("spread_line", "total_line"):
+        if optional in games.columns:
+            cols.append(optional)
+    df = projections.merge(games[cols], on="game_id", how="inner",
+                           suffixes=("", "_g"))
+    rank: dict[tuple[int, str], float] = {}
+    if torvik is not None:
+        from velocity.ingest.ncaab import torvik_team_candidates
+
+        teams = set(df["home_team"]) | set(df["away_team"])
+        for r in torvik.to_dict("records"):
+            team = next(
+                (c for c in torvik_team_candidates(str(r["team"])) if c in teams),
+                None,
+            )
+            if team is not None:
+                # torvik season s ranks key the market's view of season s+1.
+                rank[(int(str(r["season"])) + 1, team)] = float(str(r["rank"]))
+
+    def team_rank(row: Mapping[object, object], side: str) -> float:
+        return rank.get((int(str(row["season"])), str(row[side])), float("inf"))
+
+    if rank:
+        ranks = pd.DataFrame(
+            [(team_rank(r, "home_team"), team_rank(r, "away_team"))
+             for r in df.to_dict("records")],
+            columns=["_home_rank", "_away_rank"], index=df.index,
+        )
+        df = pd.concat([df, ranks], axis=1)
+
+    segments: dict[str, pd.Series] = {
+        "all": pd.Series(True, index=df.index),
+        "november": df["week"] <= november_weeks,
+        "conference-play": df["week"] > november_weeks,
+    }
+    if rank:
+        segments["major"] = (df["_home_rank"] <= major_rank) & (
+            df["_away_rank"] <= major_rank)
+        segments["low-major"] = (df["_home_rank"] > major_rank) & (
+            df["_away_rank"] > major_rank)
+
+    rows = []
+    for market in ("spread", "total"):
+        line_col = "total_line" if market == "total" else "spread_line"
+        if line_col not in df.columns:
+            continue
+        if market == "total":
+            realized = df["home_score"] + df["away_score"]
+            gap = df["fair_total"] - df[line_col]
+            diff = realized - df[line_col]
+        else:
+            margin = df["home_score"] - df["away_score"]
+            gap = -df["fair_spread"] - df[line_col]
+            diff = margin - df[line_col]
+        win = ((gap > 0) & (diff > 0)) | ((gap < 0) & (diff < 0))
+        decided = df[line_col].notna() & (gap != 0) & (diff != 0)
+        for name, in_segment in segments.items():
+            for threshold in thresholds:
+                mask = decided & in_segment & (gap.abs() >= threshold)
+                n = int(mask.sum())
+                if n == 0:
+                    continue
+                rate = float(win[mask].mean())
+                z = (rate - 0.524) / math.sqrt(0.524 * 0.476 / n)
+                rows.append({
+                    "market": market, "segment": name, "threshold": threshold,
+                    "bets": n, "win_rate": rate,
+                    "p_value": 0.5 * math.erfc(z / math.sqrt(2.0)),
+                })
+    return pd.DataFrame(rows)
+
+
 def posted_team_total_study(
     lines: pd.DataFrame,
     games: pd.DataFrame,

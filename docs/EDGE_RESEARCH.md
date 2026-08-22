@@ -354,7 +354,11 @@ Worth building:
 > the model yet — nothing to re-estimate; noted for the MLB factor build.
 > P1: #7's sizing half (portfolio-sized combined card), #8's trust flags +
 > FDR helper shipped; #6 (injuries banking) and #9–10 remain. P2: #11
-> phase N1 (Torvik ingest + timemachine client, BUILD_NCAAB.md) shipped.
+> phases N1–N3 shipped (Torvik ingest + timemachine client, the
+> pace×efficiency model with the pseudo-games prior, and the sbro
+> closes-joined backtest — which came back **null after FDR** across all
+> 90 segment cells; the market-tie expectation held. BUILD_NCAAB.md has
+> the full record).
 
 **P0 — sweep-grade experiments on data we already have (each a lab PR):**
 1. NCAAF **team-totals censoring strategy** (Arscott) — implement in the

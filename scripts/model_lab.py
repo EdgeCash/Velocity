@@ -51,6 +51,8 @@ def main() -> None:
                         help="comma-separated subset (default: all)")
     parser.add_argument("--eval-from", type=int, default=None,
                         help="only predict seasons ≥ this (training still sees earlier)")
+    parser.add_argument("--eval-to", type=int, default=None,
+                        help="only predict seasons ≤ this (e.g. the closes-covered span)")
     parser.add_argument("--train-window", type=int, default=0,
                         help="cap training to the trailing N seasons (0 = all history)")
     parser.add_argument("--sweeps", action="store_true",
@@ -60,6 +62,21 @@ def main() -> None:
 
     folder = Path(args.data)
     games = load_games(_find(folder, "games"), league=args.league)
+    if args.league == "ncaab":
+        # The sbro closes commit as their own frame (collect_sbro_ncaab.py);
+        # joining them here puts NCAAB on the NCAAF convention — home-positive
+        # spread_line/total_line columns on the games frame.
+        closes_file = next((f for f in (folder / "closes.parquet",
+                                        Path("datasets/ncaab/closes.parquet"))
+                            if f.exists()), None)
+        if closes_file is not None:
+            closes = pd.read_parquet(closes_file)
+            games = games.merge(
+                closes[["game_id", "spread_close", "total_close"]].rename(columns={
+                    "spread_close": "spread_line", "total_close": "total_line",
+                }),
+                on="game_id", how="left",
+            )
     has_college_plays = False
     if args.league in ("mlb", "wnba", "ncaab"):
         # Daily leagues: games-only scores families. Point --data at the
@@ -91,6 +108,8 @@ def main() -> None:
         # Predict only recent seasons; the engine still trains on everything
         # before each predicted week (plays are passed unrestricted).
         games = games[games["season"] >= args.eval_from].reset_index(drop=True)
+    if args.eval_to is not None:
+        games = games[games["season"] <= args.eval_to].reset_index(drop=True)
 
     if args.league == "nfl":
         chosen = nfl_variants(args.n_sims, schedule=games)
@@ -197,8 +216,12 @@ def main() -> None:
     from velocity.backtest.lab import INSEASON_CALIBRATION, market_blend_sweep
 
     cal = INSEASON_CALIBRATION.get(args.league)
+    # NCAAB's closes archive spans 2009–2022, so its honesty split lives
+    # inside that window; the summer leagues' history starts in 2024.
+    select_through = 2017 if args.league == "ncaab" else 2025
     blend_kwargs = (
-        {"sigma": cal["sigma"], "select_through": 2025} if cal is not None else {}
+        {"sigma": cal["sigma"], "select_through": select_through}
+        if cal is not None else {}
     )
     blends = {name: market_blend_sweep(projections, games, **blend_kwargs)
               for name, projections in ledgers.items()}

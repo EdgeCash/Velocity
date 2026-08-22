@@ -748,3 +748,50 @@ def test_ncaab_variants_register_and_prior_orders_teams() -> None:
     model = variants["prior-k24"][1](train)
     proj = model.project("Duke", "Quinnipiac", neutral_site=True)
     assert proj.mu_home - proj.mu_away > 3.0
+
+
+def test_ncaab_segment_study_cuts_and_gates() -> None:
+    from velocity.backtest.lab import ncaab_segment_study
+    from velocity.eval.metrics import benjamini_hochberg
+
+    # Four games: November major, November low-major, later major, later
+    # low-major. Model over the close by 3 on totals everywhere; overs land
+    # in November games only.
+    games = pd.DataFrame([
+        {"game_id": f"g{i}", "season": 2020, "week": w,
+         "home_team": h, "away_team": a, "neutral_site": False,
+         "home_score": hs, "away_score": as_,
+         "spread_line": 5.0, "total_line": 140.0}
+        for i, (w, h, a, hs, as_) in enumerate([
+            (1, "Duke", "Kansas", 80, 65),        # total 145 → over wins
+            (1, "Wofford", "Mercer", 78, 67),     # over wins
+            (5, "Duke", "Kansas", 70, 65),        # total 135 → over loses
+            (5, "Wofford", "Mercer", 66, 65),     # over loses
+        ])
+    ])
+    projections = pd.DataFrame([
+        {"game_id": f"g{i}", "fair_spread": -6.0, "fair_total": 143.0}
+        for i in range(4)
+    ])
+    torvik = pd.DataFrame([
+        {"team": "Duke", "rank": 2, "season": 2019},
+        {"team": "Kansas", "rank": 5, "season": 2019},
+        {"team": "Wofford", "rank": 180, "season": 2019},
+        {"team": "Mercer", "rank": 220, "season": 2019},
+    ])
+    study = ncaab_segment_study(projections, games, torvik,
+                                thresholds=(0.0, 4.0), november_weeks=2)
+    by_key = study.set_index(["market", "segment", "threshold"])
+    # November totals: both overs won; conference play: both lost.
+    assert by_key.loc[("total", "november", 0.0), "win_rate"] == 1.0
+    assert by_key.loc[("total", "conference-play", 0.0), "win_rate"] == 0.0
+    assert by_key.loc[("total", "all", 0.0), "bets"] == 4
+    # The 3-point total gap dies at threshold 4; the 11-point spread gap
+    # (fair home margin +6 vs line +5 → gap 1) dies too — no such rows.
+    assert ("total", "all", 4.0) not in by_key.index
+    # Major/low-major split via prior-season Torvik ranks.
+    assert by_key.loc[("total", "major", 0.0), "bets"] == 2
+    assert by_key.loc[("total", "low-major", 0.0), "bets"] == 2
+    # p-values are valid inputs for the FDR gate.
+    assert ((study["p_value"] >= 0) & (study["p_value"] <= 1)).all()
+    assert len(benjamini_hochberg(study["p_value"])) == len(study)
