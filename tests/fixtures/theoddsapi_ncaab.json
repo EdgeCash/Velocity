@@ -1,0 +1,42 @@
+[
+  {
+    "id": "evt-ncaab-001",
+    "sport_key": "basketball_ncaab",
+    "commence_time": "2026-11-21T00:00:00Z",
+    "home_team": "Duke Blue Devils",
+    "away_team": "North Carolina Tar Heels",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-11-20T18:00:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-11-20T18:00:00Z",
+            "outcomes": [
+              {"name": "Duke Blue Devils", "price": -180},
+              {"name": "North Carolina Tar Heels", "price": 155}
+            ]
+          },
+          {
+            "key": "spreads",
+            "last_update": "2026-11-20T18:00:00Z",
+            "outcomes": [
+              {"name": "Duke Blue Devils", "price": -110, "point": -4.5},
+              {"name": "North Carolina Tar Heels", "price": -110, "point": 4.5}
+            ]
+          },
+          {
+            "key": "totals",
+            "last_update": "2026-11-20T18:00:00Z",
+            "outcomes": [
+              {"name": "Over", "price": -110, "point": 148.5},
+              {"name": "Under", "price": -110, "point": 148.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
