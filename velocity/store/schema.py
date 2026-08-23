@@ -38,6 +38,11 @@ PROP_MARKETS = [
     "receiving_yards",
     "receptions",
     "anytime_td",
+    # The headline props per sport (docs/PROPS.md): MLB pitcher Ks, NHL
+    # shots on goal, NBA rebounds (banked ahead of the NBA vertical).
+    "pitcher_strikeouts",
+    "shots_on_goal",
+    "rebounds",
 ]
 PROP_SIDES = ["over", "under"]
 

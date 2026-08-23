@@ -39,6 +39,17 @@ from velocity.ingest.theoddsapi import (
 
 _TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
 
+# Per-league default market sets: the football leagues pull the six-market
+# board + team totals; the other sports pull their HEADLINE prop
+# (docs/PROPS.md) — the archive the per-sport prop models backtest on.
+LEAGUE_PROP_MARKETS = {
+    "nfl": DEFAULT_EVENT_MARKETS,
+    "ncaaf": DEFAULT_EVENT_MARKETS,
+    "mlb": "pitcher_strikeouts",
+    "nhl": "player_shots_on_goal",
+    "nba": "player_rebounds",
+}
+
 
 def _payloads_from_file(path: str) -> list[tuple[str, object]]:
     """Banked per-event payloads from disk: a ``{event_id: payload}`` map or a list."""
@@ -101,8 +112,9 @@ def main() -> None:
     parser.add_argument("--out", default="artifacts/props", help="output folder (private)")
     parser.add_argument("--leagues", default="nfl ncaaf",
                         help="space-separated leagues to snapshot")
-    parser.add_argument("--markets", default=DEFAULT_EVENT_MARKETS,
-                        help="per-event market keys (props + team_totals)")
+    parser.add_argument("--markets", default="",
+                        help="per-event market keys (default: each league's "
+                             "own set from LEAGUE_PROP_MARKETS)")
     parser.add_argument("--from-file",
                         help="saved per-event payloads JSON (offline; single league)")
     parser.add_argument("--league", default="nfl",
@@ -116,7 +128,7 @@ def main() -> None:
 
     if args.from_file:
         payloads = _payloads_from_file(args.from_file)
-        print(f"prop snapshot (from file) @ {now.isoformat()} — markets: {args.markets}")
+        print(f"prop snapshot (from file) @ {now.isoformat()}")
         snapshot_league(args.league, payloads, out, tag, collected_at)
         print("processed 1 league from file")
         return
@@ -125,10 +137,11 @@ def main() -> None:
 
     client = TheOddsAPIClient.from_env()
     leagues = args.leagues.split()
-    print(f"prop snapshot @ {now.isoformat()} — leagues: {leagues}, markets: {args.markets}")
+    print(f"prop snapshot @ {now.isoformat()} — leagues: {leagues}")
     for league in leagues:
+        markets = args.markets or LEAGUE_PROP_MARKETS.get(league, DEFAULT_EVENT_MARKETS)
         try:
-            payloads = client.event_odds_payloads(league, args.markets)
+            payloads = client.event_odds_payloads(league, markets)
         except Exception as exc:  # noqa: BLE001 - one league's board never blocks the other
             print(f"  {league}: fetch failed ({exc}); skipping")
             continue

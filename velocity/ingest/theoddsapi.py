@@ -77,8 +77,14 @@ PROP_MARKET_BY_KEY = {
     "player_reception_yds": "receiving_yards",
     "player_receptions": "receptions",
     "player_anytime_td": "anytime_td",
+    "pitcher_strikeouts": "pitcher_strikeouts",
+    "player_shots_on_goal": "shots_on_goal",
+    "player_rebounds": "rebounds",
 }
-DEFAULT_PROP_MARKETS = ",".join(PROP_MARKET_BY_KEY)
+# The football six — the historical default; per-league prop pulls pass
+# their own market subsets (docs/PROPS.md).
+FOOTBALL_PROP_MARKETS = ",".join(list(PROP_MARKET_BY_KEY)[:6])
+DEFAULT_PROP_MARKETS = FOOTBALL_PROP_MARKETS
 # The per-event snapshot markets: props plus the team-total derivative. One
 # /events/{id}/odds call carries them all, so team totals ride the prop
 # collector for one extra market's worth of credits — and their banked closes
