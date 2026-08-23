@@ -218,3 +218,37 @@ def test_normalize_injuries_flags_out_statuses() -> None:
     assert bool(by_name.loc["RB Three", "is_out"])  # alias status key + IR
     assert normalize_injuries(None).empty
     assert normalize_injuries({}).empty
+
+
+class _StubMlbClient:
+    """MLB position=ALL is tier-limited (proven live 2026-08-23); per-position works."""
+
+    def raw_projections(self, sport, season, position="ALL", week=0):
+        assert sport == "mlb"
+        if position == "ALL":
+            return {"public_api_limited": True, "players": []}
+        if position in ("SP", "OF"):
+            return {"players": [{
+                "fpid": f"{position}-1", "name": f"{position} One",
+                "team_id": "NYY", "position_id": position,
+                "stats": ({"ip": 180.0, "k": 200.0, "gs": 30.0}
+                          if position == "SP" else
+                          {"h": 150.0, "hr": 30.0, "g": 140.0}),
+            }]}
+        return {"players": []}
+
+
+def test_fetch_league_frame_mlb_falls_back_per_position() -> None:
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "collect_fantasypros_mlb",
+        Path(__file__).resolve().parents[1] / "scripts" / "collect_fantasypros.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    frame, notes = mod.fetch_league_frame(_StubMlbClient(), "mlb", 2026, 0)
+    assert any("per-position" in n for n in notes)
+    assert set(frame["player_name"]) == {"SP One", "OF One"}

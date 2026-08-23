@@ -36,7 +36,13 @@ LEAGUES = ("nfl", "mlb")
 # The free public tier serves per-position requests reliably; a position=ALL
 # request can come back tier-limited (`public_api_limited`) with zero players.
 # The collector tries ALL first and falls back to fetching these one by one.
+# Proven live for NFL; the first MLB dispatch (2026-08-23) hit the same
+# `public_api_limited` empty response on ALL, so MLB gets the same fallback.
 NFL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
+FALLBACK_POSITIONS = {
+    "nfl": NFL_POSITIONS,
+    "mlb": ("C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"),
+}
 
 
 def _players_of(raw: object) -> list:
@@ -86,11 +92,12 @@ def fetch_league_frame(
             notes.append(f"non-standard response keys: {odd_keys}")
     if _players_of(raw):
         return normalize_projections(raw, season=season, week=week), notes
-    if league != "nfl":
+    positions = FALLBACK_POSITIONS.get(league)
+    if positions is None:
         return normalize_projections(raw, season=season, week=week), notes
     notes.append("position=ALL returned no players; falling back to per-position fetches")
     frames = []
-    for position in NFL_POSITIONS:
+    for position in positions:
         part = client.raw_projections(league, season, position=position, week=week)
         got = normalize_projections(part, season=season, week=week)
         if not got.empty:
