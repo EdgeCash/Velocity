@@ -406,3 +406,29 @@ def test_render_card_with_play_badges(tmp_path: Path) -> None:
     )
     paths = render_cards(cards, tmp_path, "20260910T120000Z", league="nfl")
     assert paths and paths[0].exists() and paths[0].stat().st_size > 10_000
+
+
+def test_supplied_watch_entries_override_the_sim_path(tmp_path: Path) -> None:
+    from velocity.report.social import WatchEntry, caption
+    from velocity.report.social_png import render_cards
+
+    entries = (
+        WatchEntry(player="Tarik Skubal", market="pitcher_strikeouts",
+                   line=7.5, p_over=0.38, mean=6.4, from_board=True,
+                   play="UNDER · -115 · 1.4u"),
+        WatchEntry(player="Ryan Pepiot", market="pitcher_strikeouts",
+                   line=4.5, p_over=0.55, mean=4.9),
+    )
+    cards = build_social_cards(
+        {"g1": _projection()}, EVENTS,
+        props_by_game={"g1": _props()},  # sim path present but overridden
+        key_to_name={"qb1": "Patrick Mahomes", "te1": "Travis Kelce"},
+        watch_by_game={"g1": entries},
+    )
+    assert cards[0].watch == entries
+    text = caption(cards[0])
+    assert "PLAY — Tarik Skubal (UNDER · -115 · 1.4u):" in text
+    assert "Ryan Pepiot: 55% to clear 4.5 Ks" in text
+    # The strip renders the PLAY pill path without error.
+    paths = render_cards(cards, tmp_path, "20260910T120000Z", league="mlb")
+    assert paths and paths[0].stat().st_size > 10_000

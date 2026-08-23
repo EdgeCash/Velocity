@@ -591,14 +591,17 @@ def main() -> None:
     props_by_game: dict = {}
     key_to_name: dict[str, str] = {}
     prop_lines_used: pd.DataFrame | None = None
+    watch_by_game: dict = {}
     if args.fp_projections and projections and not events.empty:
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )
     elif args.league == "mlb" and projections and not events.empty:
         # The headline MLB prop (docs/PROPS.md): pitcher strikeouts, priced
-        # from the banked starters history — no FantasyPros dependency.
-        props_frame = _mlb_k_slate(args, events, projections, now, generated_at)
+        # from the banked starters history — no FantasyPros dependency. The
+        # watch entries put the K board + staked calls on the sheets.
+        props_frame, watch_by_game = _mlb_k_slate(
+            args, events, projections, now, generated_at)
 
     # Pick'em board — the slip-EV engine over the same prop sim + prop lines.
     # Book-fair marginals, model correlation (velocity/wagering/pickem_slate).
@@ -679,6 +682,7 @@ def main() -> None:
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
                 game_log=game_log, convictions=convictions,
+                watch_by_game=watch_by_game,
             )
 
 
@@ -1017,8 +1021,11 @@ def _mlb_k_slate(
     projections: dict,
     now: datetime,
     generated_at: pd.Timestamp,
-) -> pd.DataFrame | None:
+) -> tuple[pd.DataFrame | None, dict]:
     """Pitcher-strikeout props off the banked starters history.
+
+    Returns ``(slate frame, watch_by_game)`` — the second piece feeds the
+    sheets' TOP PROPS strip so the graphic carries the K board + calls.
 
     The headline MLB prop (docs/PROPS.md): expected Ks = shrunken expected
     batters faced × the starter's shrunken K rate × the opposing lineup's
@@ -1037,12 +1044,12 @@ def _mlb_k_slate(
 
         starters_file = Path(args.data) / "starters.parquet"
         if not starters_file.exists():
-            return None
+            return None, {}
         if args.prop_lines_file:
             prop_lines = pd.read_parquet(args.prop_lines_file)
         elif args.snapshot_file:
             print("K prop slate skipped: offline run needs --prop-lines-file")
-            return None
+            return None, {}
         else:
             from velocity.ingest.theoddsapi import TheOddsAPIClient
 
@@ -1050,7 +1057,7 @@ def _mlb_k_slate(
                 args.league, markets="pitcher_strikeouts")
         if prop_lines.empty:
             print("K prop slate: no pitcher_strikeouts lines on the board")
-            return None
+            return None, {}
 
         starters = pd.read_parquet(starters_file)
         games = load_games(_find_games(Path(args.data)), league="mlb")
@@ -1077,7 +1084,7 @@ def _mlb_k_slate(
                 props_by_game[gid] = model.for_game(opponents)
         if not props_by_game:
             print("K prop slate: no announced probables matched the board")
-            return None
+            return None, {}
 
         name_index = build_name_index(
             starters.rename(columns={"starter_id": "player_id",
@@ -1091,6 +1098,8 @@ def _mlb_k_slate(
             ),
         )
         frame = prop_slate_to_frame(log)
+        watch_by_game = _k_watch_entries(
+            model, props_by_game, starters, prop_lines, frame)
         print(f"\n=== MLB pitcher Ks — {len(prop_lines)} lines, "
               f"{len(frame)} recommended ===")
         if not frame.empty:
@@ -1104,10 +1113,65 @@ def _mlb_k_slate(
             frame.assign(league=args.league, generated_at=generated_at).to_parquet(
                 dest, index=False)
             print(f"wrote {len(frame)} prop rows to {dest}")
-        return frame
+        return frame, watch_by_game
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"K prop slate skipped: {exc}")
-        return None
+        return None, {}
+
+
+def _k_watch_entries(
+    model: object,
+    props_by_game: dict,
+    starters: pd.DataFrame,
+    prop_lines: pd.DataFrame,
+    staked: pd.DataFrame,
+) -> dict:
+    """The sheets' TOP PROPS entries for the MLB K vertical, per game.
+
+    One entry per probable: his board consensus K line (model median when the
+    board hasn't posted him), the model's P(over) and expected Ks — and, when
+    the slate staked the line, the play detail the strip badges. Staked
+    entries lead so the sheet is the one graphic that carries the calls.
+    """
+    from velocity.report.social import WatchEntry, _prop_lines_index
+    from velocity.wagering.props_slate import _normalize
+
+    names = dict(zip(starters["starter_id"].astype(str),
+                     starters["starter_name"].astype(str), strict=True))
+    line_index = _prop_lines_index(prop_lines)
+    plays: dict[tuple[str, str], str] = {}
+    if staked is not None and not staked.empty:
+        for row in staked.to_dict("records"):
+            detail = (f"{str(row['side']).upper()} · {row['price']:+.0f} · "
+                      f"{row['stake']:.1f}u")
+            plays[(str(row["game_id"]), _normalize(str(row["player"])))] = detail
+
+    out: dict = {}
+    for gid, game_props in props_by_game.items():
+        entries = []
+        for pid, opponent in game_props.opponents.items():
+            dist = model.distribution(pid, opponent=opponent)  # type: ignore[attr-defined]
+            name = names.get(str(pid))
+            if dist is None or name is None:
+                continue
+            board_line = line_index.get(
+                (str(gid), "pitcher_strikeouts", _normalize(name)))
+            line = board_line if board_line is not None \
+                else float(int(dist.mean) + 0.5)
+            entries.append(WatchEntry(
+                player=name,
+                market="pitcher_strikeouts",
+                line=float(line),
+                p_over=float(game_props.prob_over(pid, "pitcher_strikeouts",
+                                                  float(line))),
+                mean=float(dist.mean),
+                from_board=board_line is not None,
+                play=plays.get((str(gid), _normalize(name))),
+            ))
+        entries.sort(key=lambda e: (e.play is None, -abs(e.p_over - 0.5)))
+        if entries:
+            out[str(gid)] = tuple(entries)
+    return out
 
 
 def _pickem_slate(
@@ -1178,6 +1242,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     *,
     game_log: object = None,
     convictions: list | None = None,
+    watch_by_game: dict | None = None,
 ) -> None:
     """Render the per-game social model cards + captions into the out folder.
 
@@ -1247,7 +1312,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             props_by_game=props_by_game, key_to_name=key_to_name,
             prop_lines=prop_lines, record_line=record_line, lines=canonical,
             aliases=aliases, team_colors=team_colors, max_watch=6,
-            plays_by_game=plays_by_game,
+            plays_by_game=plays_by_game, watch_by_game=watch_by_game,
         )
         paths = render_cards(cards, Path(args.out), stamp,
                              asset_dir=asset_dir, league=args.league,
