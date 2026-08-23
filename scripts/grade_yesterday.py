@@ -237,6 +237,49 @@ def _aliases_for(
     return aliases
 
 
+def _grade_mlb_props(  # pragma: no cover - network
+    props: pd.DataFrame, slate_date: datetime
+) -> pd.DataFrame | None:
+    """Grade pitcher-K props against the day's statsapi boxscores.
+
+    The same extractor that banks the starters dataset supplies the
+    actuals: one boxscore call per game on the graded day, starter name →
+    strikeouts. Missing players stay pending, never guessed.
+    """
+    try:
+        from datetime import timedelta
+
+        from build_mlb_pitching import (
+            _BOX_URL,
+            _SCHED_URL,
+            _get,
+            extract_starters,
+        )
+        from velocity.backtest.props_football import grade_prop_ledger
+
+        day = slate_date.date()
+        sched = _get(_SCHED_URL.format(start=(day - timedelta(days=1)).isoformat(),
+                                       end=(day + timedelta(days=1)).isoformat()))
+        pks = [str(g["gamePk"]) for d in sched.get("dates", [])
+               for g in d.get("games", [])]
+        rows = []
+        for pk in pks:
+            try:
+                rows.extend(extract_starters(_get(_BOX_URL.format(pk=pk)), pk))
+            except Exception:  # noqa: BLE001 - one bad boxscore never blocks
+                continue
+        if not rows:
+            return None
+        actuals = (pd.DataFrame(rows)
+                   .rename(columns={"starter_name": "player_name",
+                                    "k": "pitcher_strikeouts"})
+                   [["player_name", "pitcher_strikeouts"]])
+        return grade_prop_ledger(props, actuals)
+    except Exception as exc:  # noqa: BLE001 - grading never blocks the record
+        print(f"MLB prop grading skipped ({exc})")
+        return None
+
+
 def _grade_props(  # pragma: no cover - network
     league: str,
     props: pd.DataFrame | None,
@@ -249,8 +292,10 @@ def _grade_props(  # pragma: no cover - network
     of the slate); the weekly stats for those weeks are the actuals. Any
     failure leaves props ungraded rather than blocking the record.
     """
-    if props is None or props.empty or league != "nfl":
+    if props is None or props.empty or league not in ("nfl", "mlb"):
         return None
+    if league == "mlb":
+        return _grade_mlb_props(props, slate_date)
     try:
         from velocity.backtest.props_football import grade_prop_ledger
         from velocity.ingest.nfl import load_weekly_stats

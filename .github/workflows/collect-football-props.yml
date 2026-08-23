@@ -1,4 +1,4 @@
-name: Collect football player props
+name: Collect player-prop lines
 
 # Snapshots NFL + NCAAF player props (pass/rush/receiving yards, receptions,
 # pass TDs, anytime TD) PLUS the team-total derivative into a PRIVATE Actions
@@ -25,7 +25,7 @@ on:
       leagues:
         description: "Leagues to snapshot (space-separated)"
         required: false
-        default: "nfl ncaaf"
+        default: "nfl ncaaf mlb nhl"
       markets:
         description: "Prop market keys (comma-separated The Odds API keys)"
         required: false
@@ -60,7 +60,7 @@ jobs:
         env:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
         run: |
-          ARGS="--out artifacts/props --leagues '${{ github.event.inputs.leagues || 'nfl ncaaf' }}'"
+          ARGS="--out artifacts/props --leagues '${{ github.event.inputs.leagues || 'nfl ncaaf mlb nhl' }}'"
           if [ -n "${{ github.event.inputs.markets }}" ]; then
             ARGS="$ARGS --markets ${{ github.event.inputs.markets }}"
           fi

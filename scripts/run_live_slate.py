@@ -595,6 +595,10 @@ def main() -> None:
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )
+    elif args.league == "mlb" and projections and not events.empty:
+        # The headline MLB prop (docs/PROPS.md): pitcher strikeouts, priced
+        # from the banked starters history — no FantasyPros dependency.
+        props_frame = _mlb_k_slate(args, events, projections, now, generated_at)
 
     # Pick'em board — the slip-EV engine over the same prop sim + prop lines.
     # Book-fair marginals, model correlation (velocity/wagering/pickem_slate).
@@ -1005,6 +1009,105 @@ def _prop_slate(
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"prop slate skipped: {exc}")
         return None, {}, {}, None
+
+
+def _mlb_k_slate(
+    args: argparse.Namespace,
+    events: pd.DataFrame,
+    projections: dict,
+    now: datetime,
+    generated_at: pd.Timestamp,
+) -> pd.DataFrame | None:
+    """Pitcher-strikeout props off the banked starters history.
+
+    The headline MLB prop (docs/PROPS.md): expected Ks = shrunken expected
+    batters faced × the starter's shrunken K rate × the opposing lineup's
+    K tendency, priced as a negative binomial against the board's
+    ``pitcher_strikeouts`` lines. Probables come from the keyless statsapi
+    schedule; a game with no announced probable prices nothing.
+    """
+    try:
+        from build_mlb_pitching import fetch_probables
+        from velocity.models.props_mlb import PitcherKModel
+        from velocity.wagering.props_slate import (
+            build_name_index,
+            build_prop_slate,
+            prop_slate_to_frame,
+        )
+
+        starters_file = Path(args.data) / "starters.parquet"
+        if not starters_file.exists():
+            return None
+        if args.prop_lines_file:
+            prop_lines = pd.read_parquet(args.prop_lines_file)
+        elif args.snapshot_file:
+            print("K prop slate skipped: offline run needs --prop-lines-file")
+            return None
+        else:
+            from velocity.ingest.theoddsapi import TheOddsAPIClient
+
+            prop_lines = TheOddsAPIClient.from_env().player_props(
+                args.league, markets="pitcher_strikeouts")
+        if prop_lines.empty:
+            print("K prop slate: no pitcher_strikeouts lines on the board")
+            return None
+
+        starters = pd.read_parquet(starters_file)
+        games = load_games(_find_games(Path(args.data)), league="mlb")
+        model = PitcherKModel.fit(starters, games)
+
+        from datetime import date, timedelta
+
+        today = date.today()
+        probables = fetch_probables(str(today), str(today + timedelta(days=1)))
+        by_matchup = {(str(h), str(a)): sps for (h, a, _k), sps in probables.items()}
+        props_by_game: dict[str, object] = {}
+        for event in events.to_dict("records"):
+            gid = str(event["game_id"])
+            if gid not in projections:
+                continue
+            home, away = str(event["home_team"]), str(event["away_team"])
+            home_sp, away_sp = by_matchup.get((home, away), (None, None))
+            opponents = {}
+            if home_sp:
+                opponents[str(home_sp)] = away  # home SP faces the away lineup
+            if away_sp:
+                opponents[str(away_sp)] = home
+            if opponents:
+                props_by_game[gid] = model.for_game(opponents)
+        if not props_by_game:
+            print("K prop slate: no announced probables matched the board")
+            return None
+
+        name_index = build_name_index(
+            starters.rename(columns={"starter_id": "player_id",
+                                     "starter_name": "player_name"}))
+        log, unresolved = build_prop_slate(
+            props_by_game, prop_lines, name_index,
+            config=SlateConfig(
+                exclude_closing=False, min_edge=args.min_edge,
+                starting_bankroll=args.bankroll,
+                prob_shrink=args.prop_shrink,
+            ),
+        )
+        frame = prop_slate_to_frame(log)
+        print(f"\n=== MLB pitcher Ks — {len(prop_lines)} lines, "
+              f"{len(frame)} recommended ===")
+        if not frame.empty:
+            with pd.option_context("display.width", 160, "display.max_columns", None):
+                print(frame.to_string(index=False))
+        if unresolved:
+            print(f"{len(unresolved)} prop player(s) unresolved (skipped, never guessed)")
+        if args.out:
+            stamp = now.strftime("%Y%m%dT%H%M%SZ")
+            dest = Path(args.out) / f"slate_{args.league}_props_{stamp}.parquet"
+            frame.assign(league=args.league, generated_at=generated_at).to_parquet(
+                dest, index=False)
+            print(f"wrote {len(frame)} prop rows to {dest}")
+        return frame
+    except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
+        print(f"K prop slate skipped: {exc}")
+        return None
 
 
 def _pickem_slate(
