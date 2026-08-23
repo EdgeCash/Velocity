@@ -229,8 +229,22 @@ def _verdict_band(fig: plt.Figure, dive: DeepDive) -> None:
     card = dive.card
     _text(fig, 0.065, 0.152, "THE PLAY", color=INK_DIM, fontsize=13.5)
     if dive.plays:
+        ax = fig.add_axes((0, 0, 1, 1))
+        ax.axis("off")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
         for i, play in enumerate(list(dive.plays)[:3]):
-            _display(fig, 0.065, 0.118 - i * 0.036,
+            y = 0.118 - i * 0.036
+            # The badge Jim's sheet genre wears: a filled PLAY pill fronting
+            # each staked position, so the call reads at a glance.
+            ax.add_patch(FancyBboxPatch(
+                (0.065, y - 0.0075), 0.036, 0.026,
+                boxstyle="round,pad=0,rounding_size=0.005", mutation_aspect=9 / 16,
+                facecolor=_GOOD, edgecolor="none",
+            ))
+            _display(fig, 0.083, y - 0.001, "PLAY", color=BG, fontsize=9.5,
+                     ha="center", fontweight="bold")
+            _display(fig, 0.108, y,
                      play.label(card.away_code, card.home_code),
                      color=INK, fontsize=14, fontweight="semibold")
     else:

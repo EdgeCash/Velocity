@@ -351,3 +351,58 @@ def test_render_sim_check_and_record_card(tmp_path: Path) -> None:
     dest = tmp_path / "recordcard_nfl_20260911T120000Z.png"
     render_record_card(record, record, dest, date_label="Sep 10")
     assert dest.stat().st_size > 20_000
+
+
+def test_cards_carry_play_calls_and_caption_states_them() -> None:
+    from velocity.report.social import PlayCall, caption
+
+    spread = PlayCall("spread", "home", -2.5, -110, "dk", 2.0, tier="A")
+    total = PlayCall("total", "under", 47.5, 105, "fd", 0.5)
+    cards = build_social_cards(
+        {"g1": _projection()}, EVENTS,
+        plays_by_game={"g1": (spread, total)},
+    )
+    assert cards[0].plays == (spread, total)
+    text = caption(cards[0])
+    assert "The play: KC -2.5 · -110 (dk) · 2.0u · tier A; UNDER 47.5" in text
+    # A card with no staked plays keeps the plain lean grammar.
+    bare = build_social_cards({"g1": _projection()}, EVENTS)[0]
+    assert bare.plays == ()
+    assert "The play:" not in caption(bare)
+
+
+def test_play_call_positions() -> None:
+    from velocity.report.social import PlayCall
+
+    assert PlayCall("moneyline", "away", None, 140, "dk", 1.0).position(
+        "BUF", "KC") == "BUF ML"
+    assert PlayCall("spread", "home", -3.5, -110, "dk", 1.0).position(
+        "BUF", "KC") == "KC -3.5"
+    assert PlayCall("total", "over", 47.5, -108, "dk", 1.0).position(
+        "BUF", "KC") == "OVER 47.5"
+    assert PlayCall("team_total_away", "under", 21.5, -105, "dk", 1.0).position(
+        "BUF", "KC") == "BUF TT UNDER 21.5"
+
+
+def test_render_card_with_play_badges(tmp_path: Path) -> None:
+    from velocity.report.social import PlayCall
+    from velocity.report.social_png import render_cards
+
+    plays = (
+        PlayCall("spread", "home", -2.5, -182, "fanduel", 2.8, tier="A"),
+        # A second spread play (the line-shopped middle) — the badge keeps
+        # the higher stake; the deep dive band lists both.
+        PlayCall("spread", "away", 2.5, -120, "bovada", 0.3, tier="B"),
+        PlayCall("moneyline", "home", None, -145, "dk", 1.0),
+    )
+    cards = build_social_cards(
+        {"g1": _projection()}, EVENTS,
+        lines=pd.DataFrame([
+            {"game_id": "g1", "market": "spread", "side": "home",
+             "point": -2.5, "price": -110, "book": "dk",
+             "timestamp": pd.Timestamp("2026-09-10")},
+        ]),
+        plays_by_game={"g1": plays},
+    )
+    paths = render_cards(cards, tmp_path, "20260910T120000Z", league="nfl")
+    assert paths and paths[0].exists() and paths[0].stat().st_size > 10_000

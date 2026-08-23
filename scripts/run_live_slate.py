@@ -1218,6 +1218,28 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             aliases, team_colors, code_to_team = league_identity(
                 args.league, provider_names
             )
+        # The slate's staked plays (tier-chipped when the intel layer ran) —
+        # computed BEFORE the card render so the hero card's matrix wears the
+        # PLAY badges, then reused for the deep dive's verdict band + WHY.
+        from velocity.report.deepdive import plays_from_bets
+
+        tiers: dict[tuple[str, str, str], str] = {}
+        why_signals: dict[str, list[str]] = {}
+        if convictions:
+            best: dict[str, float] = {}
+            for c in convictions:
+                bet = c.bet
+                if bet.player is not None:
+                    continue
+                gid = str(bet.game_id)
+                tiers[(gid, bet.market, bet.side)] = c.tier
+                if not c.vetoed and c.score > best.get(gid, -1.0):
+                    best[gid] = c.score
+                    why_signals[gid] = [s.rationale for s in c.signals[:2]]
+        plays_by_game = (
+            plays_from_bets(game_log.bets, tiers=tiers)  # type: ignore[attr-defined]
+            if game_log is not None else {}
+        )
         # max_watch=6: the hero card renders its top three; the deep dive
         # carries the full six.
         cards = build_social_cards(
@@ -1225,6 +1247,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             props_by_game=props_by_game, key_to_name=key_to_name,
             prop_lines=prop_lines, record_line=record_line, lines=canonical,
             aliases=aliases, team_colors=team_colors, max_watch=6,
+            plays_by_game=plays_by_game,
         )
         paths = render_cards(cards, Path(args.out), stamp,
                              asset_dir=asset_dir, league=args.league,
@@ -1265,33 +1288,12 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                         )
                 except Exception as exc:  # noqa: BLE001 - cosmetic row only
                     print(f"probable-pitcher row skipped: {exc}")
-            # The verdict band: the slate's staked plays (tier-chipped when
-            # the intel layer ran) and the intel evidence lines for the WHY
-            # snippet — one per game, its highest-conviction unvetoed bet.
-            from velocity.report.deepdive import plays_from_bets
-
-            tiers: dict[tuple[str, str, str], str] = {}
-            why_signals: dict[str, list[str]] = {}
-            if convictions:
-                best: dict[str, float] = {}
-                for c in convictions:
-                    bet = c.bet
-                    if bet.player is not None:
-                        continue
-                    gid = str(bet.game_id)
-                    tiers[(gid, bet.market, bet.side)] = c.tier
-                    if not c.vetoed and c.score > best.get(gid, -1.0):
-                        best[gid] = c.score
-                        why_signals[gid] = [s.rationale for s in c.signals[:2]]
-            plays_by_game = (
-                plays_from_bets(game_log.bets, tiers=tiers)  # type: ignore[attr-defined]
-                if game_log is not None else {}
-            )
             dives = build_deep_dives(cards, projections, games, plays,
                                      plays_by_game=plays_by_game,
                                      why_signals=why_signals,
                                      team_names=code_to_team,
-                                     starters=starters, probables=probables)
+                                     starters=starters, probables=probables,
+                                     league=args.league)
             dive_paths = render_deep_dives(dives, Path(args.out), stamp,
                                            asset_dir=asset_dir, league=args.league)
             print(f"wrote {len(dive_paths)} deep dive card(s) to {args.out}")

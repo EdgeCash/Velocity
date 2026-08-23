@@ -61,6 +61,53 @@ class WatchEntry:
 
 
 @dataclass(frozen=True)
+class PlayCall:
+    """One suggested wager — the model's staked position on a game market.
+
+    A staked slate bet reduced to what a reader acts on: the position, the
+    number, the price/book it was shopped to, the stake, and (when the
+    intelligence layer ran) its conviction tier. ``edge`` is the model-vs-
+    devigged-market probability gap that qualified it. Lives here (not in
+    :mod:`deepdive`) because the hero card wears PLAY badges for the same
+    calls the deep dive's verdict band lists.
+    """
+
+    market: str
+    side: str
+    point: float | None
+    price: float
+    book: str
+    stake: float
+    edge: float | None = None
+    tier: str | None = None
+
+    def position(self, away_code: str, home_code: str) -> str:
+        """Just the position ("DET -3.5" / "OVER 47.5") — the badge text."""
+        if self.market == "moneyline":
+            who = home_code if self.side == "home" else away_code
+            return f"{who} ML"
+        if self.market == "spread":
+            who = home_code if self.side == "home" else away_code
+            return f"{who} {self.point:+g}" if self.point is not None else f"{who} spread"
+        if self.market == "total":
+            return f"{self.side.upper()} {self.point:g}" if self.point is not None \
+                else self.side.upper()
+        if self.market in ("team_total_home", "team_total_away"):
+            who = home_code if self.market.endswith("home") else away_code
+            return f"{who} TT {self.side.upper()} {self.point:g}" \
+                if self.point is not None else f"{who} team total {self.side}"
+        return f"{self.market} {self.side}"
+
+    def label(self, away_code: str, home_code: str) -> str:
+        """"DET -3.5 · -110 (bookA) · 2.1u" — the position as a bettor writes it."""
+        bits = [self.position(away_code, home_code),
+                f"{self.price:+.0f} ({self.book})", f"{self.stake:.1f}u"]
+        if self.tier:
+            bits.append(f"tier {self.tier}")
+        return " · ".join(bits)
+
+
+@dataclass(frozen=True)
 class MarketView:
     """One game's consensus market numbers, as numerics the matrix can lay out.
 
@@ -131,6 +178,10 @@ class SocialCard:
     # a fixed club table (NCAAF); None falls back to the NFL table / neutrals.
     away_color: str | None = None
     home_color: str | None = None
+    # The slate's staked plays for this game — the matrix wears a PLAY badge
+    # on each market carrying one. Empty when the slate didn't run (backtests,
+    # bare rebuilds) or the model passed.
+    plays: Sequence[PlayCall] = field(default_factory=tuple)
 
     def spread_label(self) -> str:
         """The fair line as a team-anchored string ("KC -2.7", or "PK")."""
@@ -298,6 +349,7 @@ def build_social_cards(
     record_line: str | None = None,
     lines: pd.DataFrame | None = None,
     team_colors: Mapping[str, str] | None = None,
+    plays_by_game: Mapping[str, Sequence[PlayCall]] | None = None,
 ) -> list[SocialCard]:
     """One :class:`SocialCard` per projected event, in board order.
 
@@ -305,6 +357,8 @@ def build_social_cards(
     cards render without them); ``lines`` is the canonical game board, from
     which each card's market strip is condensed. ``team_colors`` (display code
     → hex) carries brand colors for leagues without a fixed club table.
+    ``plays_by_game`` maps game_id → the slate's staked :class:`PlayCall`
+    tuples, worn as PLAY badges on the matrix.
     """
     from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
 
@@ -354,6 +408,7 @@ def build_social_cards(
                 market_view=market_view(lines, gid),
                 away_color=colors.get(away_code),
                 home_color=colors.get(home_code),
+                plays=tuple((plays_by_game or {}).get(gid, ())),
             )
         )
     return cards
@@ -463,6 +518,10 @@ def caption(card: SocialCard) -> str:
     ]
     if card.market:
         lines.append(f"Market: {card.market}.")
+    if card.plays:
+        calls = "; ".join(p.label(card.away_code, card.home_code)
+                          for p in card.plays)
+        lines.append(f"The play: {calls}.")
     leans = [
         f"{call.label} ({call.detail})"
         for call in card.edges().values() if call.fired
