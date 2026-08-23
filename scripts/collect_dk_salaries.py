@@ -54,7 +54,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot DraftKings salaries")
     parser.add_argument("--out", default="artifacts/dk_salaries",
                         help="output folder (private)")
-    parser.add_argument("--leagues", default="nfl ncaaf",
+    parser.add_argument("--leagues", default="nfl ncaaf mlb wnba nba ncaab nhl",
                         help="space-separated leagues to snapshot")
     parser.add_argument("--from-file",
                         help="saved draftables payload JSON (offline; single group)")

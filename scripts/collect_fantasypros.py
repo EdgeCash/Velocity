@@ -28,9 +28,10 @@ from velocity.ingest.fantasypros import FantasyProsClient, normalize_projections
 
 # The FantasyPros public v2 API serves projections for NFL, MLB and NBA only —
 # there is no NCAAF projections path (confirmed against the published OpenAPI
-# spec), which is why the college endpoint 404s. College projections need a
-# different source; this collector is NFL-only.
-LEAGUES = ("nfl",)
+# spec), which is why the college endpoint 404s. MLB projections are SEASON
+# totals (week is an NFL concept); the DFS scorer normalizes them to per-game
+# rates, so they're snapshot at week 0 year-round.
+LEAGUES = ("nfl", "mlb")
 
 # The free public tier serves per-position requests reliably; a position=ALL
 # request can come back tier-limited (`public_api_limited`) with zero players.
@@ -185,7 +186,10 @@ def main() -> None:
                   "endpoint; skipping")
             continue
         try:
-            df, notes = fetch_league_frame(client, league, args.season, args.week)
+            # Week is an NFL concept; every other sport's projections are
+            # season totals, fetched at week 0.
+            week = args.week if league == "nfl" else 0
+            df, notes = fetch_league_frame(client, league, args.season, week)
         except Exception as exc:  # noqa: BLE001 - one league's feed never blocks the other
             print(f"  {league}: fetch failed ({exc}); skipping")
             failed.append(league)

@@ -111,3 +111,167 @@ def test_is_season_long_flags_week_zero_frames() -> None:
     assert not is_season_long(weekly)
     assert not is_season_long(mixed)  # any weekly rows → usable
     assert not is_season_long(pd.DataFrame())  # empty is a different problem
+
+
+# --- MLB classic ---------------------------------------------------------------
+
+_MLB_BOARD = [
+    # name, DK position (raw), team, salary, opponent-competition
+    ("Ace One", "SP", "NYY", 10500),
+    ("Ace Two", "SP", "BOS", 9000),
+    ("Ace Three", "RP", "TB", 7000),
+    ("Catcher A", "C", "NYY", 4500),
+    ("Catcher B", "C", "BOS", 3000),
+    ("First A", "1B", "NYY", 5500),
+    ("First B", "1B", "TB", 3500),
+    ("Second A", "2B", "BOS", 4800),
+    ("Second B", "2B/SS", "TB", 3200),
+    ("Third A", "3B", "NYY", 5200),
+    ("Third B", "3B", "BAL", 2900),
+    ("Short A", "SS", "BOS", 5000),
+    ("Short B", "SS", "BAL", 2800),
+    ("Out A", "OF", "NYY", 6200),
+    ("Out B", "OF", "BOS", 5100),
+    ("Out C", "OF", "TB", 4200),
+    ("Out D", "OF", "BAL", 3300),
+    ("Out E", "OF", "NYY", 2600),
+]
+
+
+def _mlb_salaries() -> pd.DataFrame:
+    comp = {"NYY": "NYY @ BOS", "BOS": "NYY @ BOS", "TB": "TB @ BAL",
+            "BAL": "TB @ BAL"}
+    return pd.DataFrame([
+        {"draft_group_id": "7", "player_id": f"m{i}", "player_name": name,
+         "position": pos, "salary": salary, "team": team,
+         "competition": comp[team]}
+        for i, (name, pos, team, salary) in enumerate(_MLB_BOARD)
+    ])
+
+
+def _mlb_fp() -> pd.DataFrame:
+    """Season-total projections (week 0), the real FP MLB shape."""
+    rows = []
+
+    def add(name: str, pos: str, stats: dict) -> None:
+        rows.extend(
+            {"player_id": name, "player_name": name, "team": "X",
+             "position": pos, "stat": stat, "value": value, "week": 0}
+            for stat, value in stats.items()
+        )
+
+    # Pitchers: per-start value = (ip*2.25 + k*2 + w*4 - er*2 - h*.6 - bb*.6)/gs
+    add("Ace One", "SP", {"gs": 30, "g": 30, "ip": 180, "k": 210, "w": 14,
+                          "er": 60, "h": 150, "bb": 45})
+    add("Ace Two", "SP", {"gs": 28, "g": 28, "ip": 160, "k": 150, "w": 10,
+                          "er": 70, "h": 155, "bb": 50})
+    add("Ace Three", "RP", {"gs": 20, "g": 20, "ip": 100, "k": 90, "w": 6,
+                            "er": 45, "h": 100, "bb": 40})
+    # Hitters: per-game value from season counting stats over g games.
+    hitters = [("Catcher A", "C", 140), ("Catcher B", "C", 120),
+               ("First A", "1B", 150), ("First B", "1B", 130),
+               ("Second A", "2B", 145), ("Second B", "2B/SS", 125),
+               ("Third A", "3B", 150), ("Third B", "3B", 110),
+               ("Short A", "SS", 148), ("Short B", "SS", 100),
+               ("Out A", "OF", 152), ("Out B", "OF", 140),
+               ("Out C", "OF", 128), ("Out D", "OF", 115)]
+    for name, pos, g in hitters:
+        add(name, pos, {"g": g, "h": g * 1.0, "2b": g * 0.2, "hr": g * 0.15,
+                        "rbi": g * 0.5, "r": g * 0.5, "bb": g * 0.35,
+                        "sb": g * 0.05})
+    # Out E has no games projected → dropped from the pool entirely.
+    add("Out E", "OF", {"h": 50.0})
+    return pd.DataFrame(rows)
+
+
+def test_mlb_scorer_normalizes_season_totals_per_game() -> None:
+    from velocity.dfs.scoring import dk_expected_points_mlb
+
+    points = dk_expected_points_mlb(_mlb_fp())
+    ace = points[points["player_name"] == "Ace One"].iloc[0]
+    expected = (180 * 2.25 + 210 * 2 + 14 * 4 - 60 * 2 - 150 * 0.6
+                - 45 * 0.6) / 30
+    assert abs(ace["points"] - round(expected, 2)) < 0.01
+    hitter = points[points["player_name"] == "Out A"].iloc[0]
+    # Per-game: h*3 + 2b*2 + hr*7 + rbi*2 + r*2 + bb*2 + sb*5 (rates × weights)
+    expected_h = 1.0 * 3 + 0.2 * 2 + 0.15 * 7 + 0.5 * 2 + 0.5 * 2 + 0.35 * 2 + 0.05 * 5
+    assert abs(hitter["points"] - round(expected_h, 2)) < 0.01
+    # No games denominator → no projection.
+    assert "Out E" not in set(points["player_name"])
+
+
+def test_solve_slate_builds_a_legal_mlb_lineup() -> None:
+    from velocity.dfs.pipeline import LEAGUE_SPECS
+
+    spec, scorer = LEAGUE_SPECS["mlb"]
+    run = solve_slate(_mlb_salaries(), _mlb_fp(), spec=spec, scorer=scorer)
+    assert run.lineup is not None
+    slots = [s.slot for s in run.lineup.slots]
+    assert slots == ["P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"]
+    assert run.lineup.total_salary <= 50_000
+    # SP/RP both normalized into the P pool; the multi-position fielder
+    # ("2B/SS") is priced at the primary slot.
+    positions = {s.player_name: s.position for s in run.lineup.slots}
+    assert all(positions[n] == "P" for n in positions
+               if n.startswith("Ace") and n in positions)
+
+
+def test_normalize_positions_maps_dk_mlb_strings() -> None:
+    from velocity.dfs.optimizer import MLB_CLASSIC, NFL_CLASSIC
+    from velocity.dfs.pipeline import normalize_positions
+
+    board = pd.DataFrame({"position": ["SP", "RP", "2B/SS", "OF", "c "]})
+    out = normalize_positions(board, MLB_CLASSIC)
+    assert list(out["position"]) == ["P", "P", "2B", "OF", "C"]
+    # Football boards pass through untouched.
+    nfl = pd.DataFrame({"position": ["QB", "RB"]})
+    assert normalize_positions(nfl, NFL_CLASSIC) is nfl
+
+
+def test_mlb_solver_enforces_the_five_hitter_team_cap() -> None:
+    from velocity.dfs.pipeline import LEAGUE_SPECS
+
+    spec, scorer = LEAGUE_SPECS["mlb"]
+    # A board where one team (NYY) fields seven elite-value cheap hitters
+    # spanning every slot: the unconstrained optimum stacks 6+ of them, so
+    # the DK cap has to bite.
+    board_rows = [
+        ("Ace One", "SP", "BOS", 9000), ("Ace Two", "SP", "TB", 8500),
+        ("NYY C", "C", "NYY", 3000), ("NYY 1B", "1B", "NYY", 3000),
+        ("NYY 2B", "2B", "NYY", 3000), ("NYY 3B", "3B", "NYY", 3000),
+        ("NYY SS", "SS", "NYY", 3000), ("NYY OF1", "OF", "NYY", 3000),
+        ("NYY OF2", "OF", "NYY", 3000),
+        ("BOS C", "C", "BOS", 3200), ("BOS 1B", "1B", "BOS", 3200),
+        ("BOS 2B", "2B", "BOS", 3200), ("BOS 3B", "3B", "BOS", 3200),
+        ("BOS SS", "SS", "BOS", 3200), ("BOS OF", "OF", "BOS", 3200),
+        ("TB OF", "OF", "TB", 3200), ("BAL OF", "OF", "BAL", 3200),
+    ]
+    comp = {"NYY": "NYY @ BOS", "BOS": "NYY @ BOS", "TB": "TB @ BAL",
+            "BAL": "TB @ BAL"}
+    salaries = pd.DataFrame([
+        {"draft_group_id": "7", "player_id": f"c{i}", "player_name": name,
+         "position": pos, "salary": salary, "team": team,
+         "competition": comp[team]}
+        for i, (name, pos, team, salary) in enumerate(board_rows)
+    ])
+    rows = []
+    for name, pos, team, _ in board_rows:
+        if pos == "SP":
+            stats = {"gs": 30, "g": 30, "ip": 180, "k": 200, "w": 12,
+                     "er": 60, "h": 150, "bb": 45}
+        else:
+            hr = 0.6 if team == "NYY" else 0.1  # NYY bats are outliers
+            stats = {"g": 140, "h": 140.0, "hr": 140 * hr, "rbi": 70.0,
+                     "r": 70.0, "bb": 45.0}
+        rows.extend({"player_id": name, "player_name": name, "team": team,
+                     "position": pos, "stat": k, "value": v, "week": 0}
+                    for k, v in stats.items())
+    fp = pd.DataFrame(rows)
+    run = solve_slate(salaries, fp, spec=spec, scorer=scorer)
+    assert run.lineup is not None
+    per_team: dict[str, int] = {}
+    for s in run.lineup.slots:
+        if s.position != "P" and s.team:
+            per_team[s.team] = per_team.get(s.team, 0) + 1
+    assert per_team["NYY"] == 5  # capped, not the unconstrained 6-7
+    assert max(per_team.values()) <= 5

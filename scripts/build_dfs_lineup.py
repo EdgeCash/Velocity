@@ -32,7 +32,9 @@ def main() -> None:
     parser.add_argument("--fp", required=True,
                         help="FantasyPros projections parquet (long frame)")
     parser.add_argument("--out", required=True, help="output folder")
-    parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"])
+    parser.add_argument("--league", default="nfl",
+                        help="league to price (needs a roster spec — "
+                             "velocity.dfs.pipeline.LEAGUE_SPECS; others skip)")
     parser.add_argument("--draft-group", default=None,
                         help="pin a draft group id (default: auto-pick main slate)")
     # GPP portfolio (docs/EDGE_RESEARCH.md §5): tournaments pay the tail of a
@@ -46,10 +48,18 @@ def main() -> None:
                         help="max fraction of GPP lineups any player appears in")
     args = parser.parse_args()
 
-    from velocity.dfs.optimizer import CFB_CLASSIC, NFL_CLASSIC
-    from velocity.dfs.pipeline import is_season_long, lineup_frame, solve_slate
+    from velocity.dfs.pipeline import (
+        LEAGUE_SPECS,
+        is_season_long,
+        lineup_frame,
+        solve_slate,
+    )
     from velocity.report.dfs_png import dfs_caption, render_dfs_card
 
+    if args.league not in LEAGUE_SPECS:
+        print(f"{args.league}: no DK roster spec/scorer yet; skipping")
+        return
+    spec, scorer = LEAGUE_SPECS[args.league]
     salaries = pd.read_parquet(args.salaries)
     if "league" in salaries.columns:
         salaries = salaries[salaries["league"] == args.league]
@@ -59,13 +69,16 @@ def main() -> None:
     if salaries.empty or fp.empty:
         print("empty salaries or projections; no lineup to build")
         return
-    if is_season_long(fp):
+    # Football projections must be a real week — season totals price nonsense.
+    # The MLB scorer normalizes season totals to per-game rates itself, so
+    # week-0 frames are exactly what it expects.
+    if args.league in ("nfl", "ncaaf") and is_season_long(fp):
         print("FP snapshot carries season-long (week 0) projections — a weekly "
               "lineup can't be priced from season totals; skipping")
         return
 
-    spec = NFL_CLASSIC if args.league == "nfl" else CFB_CLASSIC
-    run = solve_slate(salaries, fp, draft_group=args.draft_group, spec=spec)
+    run = solve_slate(salaries, fp, draft_group=args.draft_group, spec=spec,
+                      scorer=scorer)
     if run.lineup is None:
         print(f"no solvable lineup (group {run.draft_group_id or 'none'}: "
               f"{run.n_salaried} salaried, {run.n_pool} projected)")
@@ -82,8 +95,9 @@ def main() -> None:
     lineup_frame(run).to_parquet(frame_dest, index=False)
     print(f"wrote lineup frame to {frame_dest}")
 
-    if args.gpp > 0:
-        # Best-effort like every surface past the cash lineup.
+    if args.gpp > 0 and args.league in ("nfl", "ncaaf"):
+        # Best-effort like every surface past the cash lineup. Football only:
+        # the GPP builder's stacking grammar is QB-anchored.
         try:
             from velocity.dfs.gpp import GppConfig, build_gpp_portfolio, portfolio_frame
             from velocity.dfs.optimizer import lineup_pool
@@ -108,7 +122,8 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 - the portfolio never breaks the lineup
             print(f"GPP portfolio skipped: {exc}")
 
-    kind = "DK CLASSIC" if args.league == "nfl" else "DK CFB CLASSIC"
+    kind = {"nfl": "DK CLASSIC", "ncaaf": "DK CFB CLASSIC",
+            "mlb": "DK MLB CLASSIC"}.get(args.league, "DK CLASSIC")
     slate_label = f"{kind} · {run.n_games} GAMES"
     when = datetime.now(UTC).strftime("%A, %b %-d").upper()
     card_dest = out / f"dfs_{args.league}_{stamp}.png"

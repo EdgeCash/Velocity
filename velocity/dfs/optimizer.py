@@ -51,6 +51,15 @@ CFB_CLASSIC = RosterSpec(
     {"QB": 1, "RB": 2, "WR": 3},
     (("FLEX", ("RB", "WR")), ("S-FLEX", ("QB", "RB", "WR"))),
 )
+# DK MLB classic: 2 P + the eight field slots, no flex/UTIL. SP/RP both fill
+# P; multi-eligible fielders ("2B/SS") price at their first listed position
+# (pipeline normalization) — always legal on DK, occasionally sub-optimal.
+MLB_CLASSIC = RosterSpec(
+    "mlb_classic",
+    ("P", "P", "C", "1B", "2B", "3B", "SS", "OF", "OF", "OF"),
+    {"P": 2, "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3},
+    (),
+)
 
 # NFL-classic aliases, kept for callers/tests that predate roster specs.
 SLOTS: tuple[str, ...] = NFL_CLASSIC.slots
