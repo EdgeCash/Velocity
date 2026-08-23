@@ -67,7 +67,50 @@ WNBA_IDENTITY: dict[str, tuple[str, str]] = {
     "Washington Mystics": ("WAS", "#0C2340"),
 }
 
-IDENTITY_BY_LEAGUE = {"mlb": MLB_IDENTITY, "wnba": WNBA_IDENTITY}
+# NHL: 32 clubs, NHL's own abbreviations (the datasets' team keys). Both
+# Utah identities and the accented Montréal spelling resolve. Dark-wearing
+# clubs (LAK) use a legible secondary.
+NHL_IDENTITY: dict[str, tuple[str, str]] = {
+    "Anaheim Ducks": ("ANA", "#F47A38"),
+    "Arizona Coyotes": ("ARI", "#8C2633"),
+    "Boston Bruins": ("BOS", "#FFB81C"),
+    "Buffalo Sabres": ("BUF", "#3B6EDC"),
+    "Calgary Flames": ("CGY", "#D2001C"),
+    "Carolina Hurricanes": ("CAR", "#CE1126"),
+    "Chicago Blackhawks": ("CHI", "#CF0A2C"),
+    "Colorado Avalanche": ("COL", "#8A2432"),
+    "Columbus Blue Jackets": ("CBJ", "#4A6E9C"),
+    "Dallas Stars": ("DAL", "#006847"),
+    "Detroit Red Wings": ("DET", "#CE1126"),
+    "Edmonton Oilers": ("EDM", "#FF4C00"),
+    "Florida Panthers": ("FLA", "#C8102E"),
+    "Los Angeles Kings": ("LAK", "#A2AAAD"),
+    "Minnesota Wild": ("MIN", "#2E7D5B"),
+    "Montreal Canadiens": ("MTL", "#AF1E2D"),
+    "Montréal Canadiens": ("MTL", "#AF1E2D"),
+    "Nashville Predators": ("NSH", "#FFB81C"),
+    "New Jersey Devils": ("NJD", "#CE1126"),
+    "New York Islanders": ("NYI", "#3D7DC6"),
+    "New York Rangers": ("NYR", "#3E66C4"),
+    "Ottawa Senators": ("OTT", "#DA1A32"),
+    "Philadelphia Flyers": ("PHI", "#F74902"),
+    "Pittsburgh Penguins": ("PIT", "#FCB514"),
+    "San Jose Sharks": ("SJS", "#008599"),
+    "Seattle Kraken": ("SEA", "#68A2B9"),
+    "St Louis Blues": ("STL", "#3D6DD6"),
+    "St. Louis Blues": ("STL", "#3D6DD6"),
+    "Tampa Bay Lightning": ("TBL", "#3B6EDC"),
+    "Toronto Maple Leafs": ("TOR", "#3F63AE"),
+    "Utah Hockey Club": ("UTA", "#6CACE4"),
+    "Utah Mammoth": ("UTA", "#6CACE4"),
+    "Vancouver Canucks": ("VAN", "#00843D"),
+    "Vegas Golden Knights": ("VGK", "#B4975A"),
+    "Washington Capitals": ("WSH", "#C8102E"),
+    "Winnipeg Jets": ("WPG", "#5578B5"),
+}
+
+IDENTITY_BY_LEAGUE = {"mlb": MLB_IDENTITY, "wnba": WNBA_IDENTITY,
+                      "nhl": NHL_IDENTITY}
 
 
 def league_identity(

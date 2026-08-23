@@ -173,6 +173,26 @@ def _load_schedule(
             # The wehoop release parquet is one small season file — the
             # CI-reachable transport (ESPN's API 403s datacenter IPs).
             return fetch_wnba_season(season, _date.today())
+        if league == "nhl" and slate_date is not None:
+            from datetime import timedelta
+
+            from velocity.ingest.hockey import (
+                fetch_json,
+                normalize_day_scores,
+                score_day_url,
+            )
+
+            # Finals straight from the NHL API, one call per day around the
+            # graded date.
+            day = slate_date.date()
+            frames = [
+                normalize_day_scores(fetch_json(score_day_url(
+                    (day + timedelta(days=offset)).isoformat())))
+                for offset in (-1, 0, 1)
+            ]
+            finals = pd.concat([f for f in frames if not f.empty],
+                               ignore_index=True)
+            return finals.drop_duplicates("game_id") if not finals.empty else None
         if league == "ncaab" and slate_date is not None:
             from velocity.ingest.ncaab import load_hoopr_schedule
 
@@ -204,6 +224,10 @@ def _aliases_for(
         from velocity.wagering.live import NFL_TEAM_ALIASES
 
         return dict(NFL_TEAM_ALIASES)
+    if league == "nhl":
+        from velocity.ingest.hockey import NHL_TEAM_ALIASES
+
+        return dict(NHL_TEAM_ALIASES)
     teams = set(schedule["home_team"].astype(str)) | set(schedule["away_team"].astype(str))
     aliases = {name: name for name in teams}
     if provider_names:
@@ -252,7 +276,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser.add_argument("--prev-dir", required=True, help="downloaded previous artifacts")
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
     parser.add_argument("--league", default="nfl",
-                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"])
+                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl"])
     parser.add_argument("--odds-dir", default="artifacts/odds",
                         help="downloaded odds-lines snapshots (the CLV close source)")
     args = parser.parse_args()

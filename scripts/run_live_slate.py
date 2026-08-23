@@ -113,7 +113,8 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
         scale = "pts/100 poss"
     elif isinstance(model, StarterAwareModel):
         rows = _scores_ratings_rows(model.ratings)
-        scale = "runs/gm (ex-starter)"
+        scale = ("goals/gm (ex-goalie)" if league == "nhl"
+                 else "runs/gm (ex-starter)")
     elif isinstance(model, BlendedGameModel):
         # The 50/50 college blend: each half converted to points first.
         epa = {r["team"]: r for r in _epa_ratings_rows(
@@ -132,7 +133,7 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
         if ratings is None:
             return pd.DataFrame()
         rows = _scores_ratings_rows(ratings)
-        scale = "runs/gm" if league == "mlb" else "pts/gm"
+        scale = {"mlb": "runs/gm", "nhl": "goals/gm"}.get(league, "pts/gm")
 
     frame = pd.DataFrame(rows)
     if frame.empty:
@@ -238,6 +239,9 @@ def _build_projection(
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
         "ncaab": SimConfig(sd_margin=13.0, sd_total=18.5, n_sims=args.n_sims),
+        # NHL: empirical outcome sds from the banked 2023–25 seasons
+        # (docs/BUILD_NHL.md) — goals are MLB-like low-scoring counts.
+        "nhl": SimConfig(sd_margin=2.6, sd_total=2.3, n_sims=args.n_sims),
     }
     sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
     # NCAAF: λ=10 promoted by the college lab; MLB: λ=100 promoted by the
@@ -248,8 +252,8 @@ def _build_projection(
     # fit compressed at heavier penalties (BUILD_NCAAB.md N2's compression
     # finding). The NFL scores path is only a no-plays fallback and keeps
     # the default.
-    ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0, "ncaab": 0.5}.get(
-        args.league, 25.0)
+    ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0, "ncaab": 0.5,
+             "nhl": 25.0}.get(args.league, 25.0)
     recency_hl = {"wnba": 8.0, "ncaab": 6.0}.get(args.league)
     weights = None
     if recency_hl is not None:
@@ -329,6 +333,29 @@ def _build_projection(
         except Exception as exc:  # noqa: BLE001 - the SP layer never blocks the slate
             print(f"starter decomposition skipped: {exc}")
 
+    nhl_starters = folder / "starters.parquet"
+    if args.league == "nhl" and nhl_starters.exists():
+        # The promoted NHL configuration (docs/BUILD_NHL.md H2): the goalie
+        # decomposition at q=40 on the λ=25 team fit — walk-forward Brier
+        # 0.24258 vs 0.24350 for the best plain fit, the MLB starter finding
+        # repeating in goals. No free confirmed-goalie feed exists pregame,
+        # so pricing is goalie-neutral (empty lookup — the decomposition
+        # still cleans the team estimates by removing goalie noise).
+        # Best-effort: any failure keeps the scores fit above.
+        try:
+            from velocity.backtest.lab import StarterAwareModel, mlb_starter_frame
+            from velocity.features.team import fit_qb_ratings
+
+            played = games.dropna(subset=["home_score", "away_score"])
+            ratings = fit_qb_ratings(
+                mlb_starter_frame(played, pd.read_parquet(nhl_starters)),
+                ridge_lambda=ridge, qb_lambda=40.0, min_dropbacks=6,
+            )
+            model = StarterAwareModel(ratings, {}, sim, hfa_points=0.15)
+            kind = f"goalie decomposition (λ={ridge:g}, q=40), goalie-neutral"
+        except Exception as exc:  # noqa: BLE001 - never blocks the slate
+            print(f"goalie decomposition skipped: {exc}")
+
     ncaaf_plays = folder / "plays.parquet"
     if args.league == "ncaaf" and ncaaf_plays.exists():
         # The promoted college configuration (docs/MODEL_LAB.md NCAAF Round
@@ -361,7 +388,7 @@ def _build_projection(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
-    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"],
+    parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl"],
                         required=True)
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
@@ -530,6 +557,11 @@ def main() -> None:
 
             provider_names = set(events["home_team"]) | set(events["away_team"])
             aliases = nickname_aliases(provider_names, known_teams)
+        elif args.league == "nhl":
+            # Provider full names → NHL abbreviations (the model's keys).
+            from velocity.ingest.hockey import NHL_TEAM_ALIASES
+
+            aliases = dict(NHL_TEAM_ALIASES)
         projections, unresolved = project_board(events, project, known_teams, aliases)
         canonical = canonicalize_sides(lines, events)
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
@@ -1069,7 +1101,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
         code_to_team: dict[str, str] = {}
         if args.league == "ncaaf":
             aliases, team_colors, code_to_team = _ncaaf_identity(events, asset_dir)
-        elif args.league in ("mlb", "wnba", "ncaab"):
+        elif args.league in ("mlb", "wnba", "ncaab", "nhl"):
             # Non-NFL identity: abbreviation + brand color blocks, no marks —
             # the NCAAF licensing posture (velocity/report/league_identity).
             # NCAAB has no curated table yet, so teams fall back to neutral

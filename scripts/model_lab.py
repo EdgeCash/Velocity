@@ -44,7 +44,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="NFL model-variant benchmark")
     parser.add_argument("--data", default="datasets/nfl", help="folder with games+plays")
     parser.add_argument("--league", default="nfl",
-                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"])
+                        choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl"])
     parser.add_argument("--n-sims", type=int, default=4000)
     parser.add_argument("--min-train-games", type=int, default=20)
     parser.add_argument("--variants", default="",
@@ -78,7 +78,7 @@ def main() -> None:
                 on="game_id", how="left",
             )
     has_college_plays = False
-    if args.league in ("mlb", "wnba", "ncaab"):
+    if args.league in ("mlb", "wnba", "ncaab", "nhl"):
         # Daily leagues: games-only scores families. Point --data at the
         # PRIVATE close-joined folder from join_historical_closes.py — the
         # committed frames carry no lines, and paid closes never enter git.
@@ -113,21 +113,23 @@ def main() -> None:
 
     if args.league == "nfl":
         chosen = nfl_variants(args.n_sims, schedule=games)
-    elif args.league in ("mlb", "wnba"):
+    elif args.league in ("mlb", "wnba", "nhl"):
         from velocity.backtest.lab import inseason_variants
 
         chosen = inseason_variants(args.league, args.n_sims)
-        # Starter decomposition (the market's dominant MLB factor) joins when
-        # the banked starters exist. --data is the private close-joined folder,
-        # so fall back to the committed dataset for the starters file.
-        if args.league == "mlb":
+        # Starter decomposition (the market's dominant MLB factor; the NHL's
+        # starting goalie is the same shape) joins when the banked starters
+        # exist. --data is the private close-joined folder, so fall back to
+        # the committed dataset for the starters file.
+        if args.league in ("mlb", "nhl"):
             for starters_file in (folder / "starters.parquet",
-                                  Path("datasets/mlb/starters.parquet")):
+                                  Path(f"datasets/{args.league}/starters.parquet")):
                 if starters_file.exists():
                     from velocity.backtest.lab import mlb_sp_variants
 
                     chosen.update(mlb_sp_variants(
-                        args.n_sims, games, pd.read_parquet(starters_file)
+                        args.n_sims, games, pd.read_parquet(starters_file),
+                        league=args.league,
                     ))
                     break
         # Pace×efficiency joins when wehoop team boxes are available (same

@@ -521,6 +521,11 @@ INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
     # what predictions use is each team's offense+defense sum, which stays
     # identified as λ→0. 0.5 balances that against early-season stability.
     "ncaab": {"sd_margin": 13.0, "sd_total": 18.5, "sigma": 13.0, "ridge": 0.5},
+    # NHL: empirical outcome sds from the banked 2023–25 games (goals are
+    # MLB-like low-scoring counts); ridge like MLB's heavy shrinkage — the
+    # true team spread in goals/game is small. Walk-forward gated below
+    # before anything ships (docs/BUILD_NHL.md).
+    "nhl": {"sd_margin": 2.6, "sd_total": 2.3, "sigma": 2.6, "ridge": 25.0},
 }
 
 
@@ -563,7 +568,9 @@ def inseason_variants(
         return factory
 
     sweep = {"mlb": (2.0, 10.0, 25.0, 50.0, 100.0, 200.0, 400.0),
-             "wnba": (3.0, 25.0, 50.0)}[league]
+             "wnba": (3.0, 25.0, 50.0),
+             # NHL round 1: bracket the MLB-like heavy-shrinkage hypothesis.
+             "nhl": (10.0, 25.0, 50.0, 100.0, 200.0, 400.0)}[league]
     variants: dict[str, tuple[str, VariantFactory]] = {
         "scores": ("games", ridge(live_ridge)),  # the live default — the bar
     }
@@ -573,7 +580,8 @@ def inseason_variants(
     # WNBA's ladder extends past 8: round 1 came back monotone through 8, so
     # the sweep brackets the bottom (as half-life → ∞ this is the flat fit).
     rec_sweep = {"mlb": (2.0, 4.0, 8.0),
-                 "wnba": (2.0, 4.0, 8.0, 12.0, 16.0, 24.0)}[league]
+                 "wnba": (2.0, 4.0, 8.0, 12.0, 16.0, 24.0),
+                 "nhl": (2.0, 4.0, 8.0)}[league]
     variants.update({
         f"recency-{hl:g}": ("games", recency(hl, live_ridge)) for hl in rec_sweep
     })
@@ -979,7 +987,8 @@ def mlb_fip_priors(
 
 
 def mlb_sp_variants(
-    n_sims: int, games: pd.DataFrame, starters: pd.DataFrame
+    n_sims: int, games: pd.DataFrame, starters: pd.DataFrame,
+    league: str = "mlb", hfa_points: float = 0.15,
 ) -> dict[str, tuple[str, VariantFactory]]:
     """The starter-decomposition slate — the market's dominant MLB factor.
 
@@ -988,10 +997,14 @@ def mlb_sp_variants(
     prices through :class:`StarterAwareModel` with the evaluated game's
     starters. ``min_dropbacks`` is starts here: a 6-start sample prices as
     his shrunk self, fewer prices league-average.
+
+    ``league`` generalizes the machinery to any starter-shaped sport: the
+    NHL's starting goalie is the same decomposition (goals = offense +
+    team defense + goalie), keyed by its own calibration and home edge.
     """
     from velocity.features.team import fit_qb_ratings
 
-    cal = INSEASON_CALIBRATION["mlb"]
+    cal = INSEASON_CALIBRATION[league]
     sim = SimConfig(sd_margin=cal["sd_margin"], sd_total=cal["sd_total"],
                     n_sims=n_sims)
     kick = pd.to_datetime(games["kickoff"])
@@ -1015,7 +1028,7 @@ def mlb_sp_variants(
                 frame, ridge_lambda=cal["ridge"], qb_lambda=qb_lambda,
                 min_dropbacks=6,
             )
-            return StarterAwareModel(ratings, lookup, sim)
+            return StarterAwareModel(ratings, lookup, sim, hfa_points=hfa_points)
 
         return factory
 
@@ -1042,13 +1055,13 @@ def mlb_sp_variants(
             )
             for sp_id, prior in priors.items():
                 ratings.qb[sp_id] = ratings.qb.get(sp_id, 0.0) + prior
-            return StarterAwareModel(ratings, lookup, sim)
+            return StarterAwareModel(ratings, lookup, sim, hfa_points=hfa_points)
 
         return factory
 
     # q80/q160 extend the sweep after q5→q40 came back monotone (as
     # qb_lambda → ∞ this collapses to the frame's team-only fit).
-    return {
+    variants: dict[str, tuple[str, VariantFactory]] = {
         "sp-q5": ("games", sp(5.0)),
         "sp-q15": ("games", sp(15.0)),
         "sp-q40": ("games", sp(40.0)),
@@ -1056,10 +1069,17 @@ def mlb_sp_variants(
         "sp-q160": ("games", sp(160.0)),
         "sp-q320": ("games", sp(320.0)),
         "sp-q640": ("games", sp(640.0)),
-        "sp-fip30": ("games", sp_fip(30.0)),
-        "sp-fip60": ("games", sp_fip(60.0)),
-        "sp-fip120": ("games", sp_fip(120.0)),
     }
+    # The FIP prior needs the pitching outcome columns; a goalie starters
+    # frame (shots against/saves) has no analog, so those variants only
+    # join when the columns exist.
+    if {"k", "bb", "hbp", "hr", "outs"}.issubset(starters.columns):
+        variants.update({
+            "sp-fip30": ("games", sp_fip(30.0)),
+            "sp-fip60": ("games", sp_fip(60.0)),
+            "sp-fip120": ("games", sp_fip(120.0)),
+        })
+    return variants
 
 
 class RestAdjustedModel:
