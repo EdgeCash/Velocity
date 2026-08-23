@@ -114,9 +114,20 @@ def closing_for_slate(
     per_book = closing_line(lines, games_map)
     if per_book.empty:
         return None
-    closing = (per_book.groupby(["game_id", "market", "side"], as_index=False)
-               .agg(price=("price", "median"), point=("point", "median")))
-    return closing
+    # Points are linear (plain median); prices are NOT — American odds are
+    # discontinuous across ±100, so the price consensus is taken in decimal
+    # space (the first live run crashed on a median of -2.0).
+    from velocity.wagering.odds import consensus_american
+
+    rows = []
+    for (gid, market, side), group in per_book.groupby(
+            ["game_id", "market", "side"]):
+        price = consensus_american(group["price"])
+        if price is None:
+            continue
+        rows.append({"game_id": gid, "market": market, "side": side,
+                     "price": price, "point": group["point"].median()})
+    return pd.DataFrame(rows) if rows else None
 
 
 def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:

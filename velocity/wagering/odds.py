@@ -14,6 +14,8 @@ American odds convention: a positive price is the profit on a 100 stake
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 
 def american_to_decimal(price: float) -> float:
     """Convert American odds to decimal odds (total return per unit staked)."""
@@ -22,6 +24,37 @@ def american_to_decimal(price: float) -> float:
     if price > 0:
         return 1.0 + price / 100.0
     return 1.0 + 100.0 / -price
+
+
+def consensus_american(prices: Iterable[float | None]) -> float | None:
+    """The cross-book consensus of American prices, taken in decimal space.
+
+    American odds are discontinuous across (−100, 100): the median of
+    ``[-105, +102]`` is the impossible ``-1.5``. Converting to decimal,
+    taking the median there, and converting back keeps the consensus on
+    the price scale the math actually lives on. Invalid inputs are
+    dropped; an empty set returns ``None``.
+    """
+    import math
+    import statistics
+
+    decimals = []
+    for price in prices:
+        if price is None:
+            continue
+        try:
+            value = float(price)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(value):
+            continue
+        try:
+            decimals.append(american_to_decimal(value))
+        except ValueError:
+            continue
+    if not decimals:
+        return None
+    return decimal_to_american(statistics.median(decimals))
 
 
 def decimal_to_american(decimal: float) -> float:
