@@ -1,18 +1,69 @@
 <script>
-  // Scrolling live scoreboard. Reads /api/scores (the Worker's edge-cached
-  // ESPN proxy) on mount and every 60s; renders nothing when the endpoint
-  // is unreachable (local dev) or every league is dark.
+  // Scrolling live scoreboard. ESPN's scoreboard API sends
+  // `access-control-allow-origin: *` but 403s Cloudflare Workers egress
+  // IPs, so the browser fetches ESPN DIRECTLY (viewer IPs are served
+  // fine) and the Worker's /api/scores proxy is only a fallback. Refreshes
+  // every 60s; renders nothing when every league is dark or offline.
   import { onMount, onDestroy } from 'svelte';
+
+  const SCOREBOARDS = {
+    NFL: 'football/nfl',
+    CFB: 'football/college-football',
+    MLB: 'baseball/mlb',
+    WNBA: 'basketball/wnba',
+    CBB: 'basketball/mens-college-basketball',
+  };
 
   let games = [];
   let timer;
 
+  async function fetchLeague(lg, path) {
+    const res = await fetch(
+      `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const out = [];
+    for (const event of data.events ?? []) {
+      const comp = event.competitions?.[0];
+      if (!comp) continue;
+      const away = comp.competitors?.find((c) => c.homeAway === 'away');
+      const home = comp.competitors?.find((c) => c.homeAway === 'home');
+      if (!away?.team || !home?.team) continue;
+      out.push({
+        lg,
+        away: away.team.abbreviation ?? away.team.shortDisplayName,
+        home: home.team.abbreviation ?? home.team.shortDisplayName,
+        as: Number(away.score ?? 0),
+        hs: Number(home.score ?? 0),
+        state: event.status?.type?.state ?? 'pre',
+        detail: event.status?.type?.shortDetail ?? '',
+        start: event.date ?? '',
+      });
+    }
+    return out;
+  }
+
   async function load() {
     try {
-      const res = await fetch('/api/scores');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data.games)) games = data.games;
+      const settled = await Promise.allSettled(
+        Object.entries(SCOREBOARDS).map(([lg, path]) => fetchLeague(lg, path)),
+      );
+      let all = settled
+        .filter((s) => s.status === 'fulfilled')
+        .flatMap((s) => s.value);
+      if (!all.length) {
+        // e.g. ESPN unreachable from this network — try the Worker proxy
+        const res = await fetch('/api/scores');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.games)) all = data.games;
+        }
+      }
+      const order = { in: 0, pre: 1, post: 2 };
+      all.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3));
+      games = all;
     } catch {
       // static preview or offline — the ticker just stays hidden
     }
