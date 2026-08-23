@@ -26,7 +26,7 @@ def american_to_decimal(price: float) -> float:
     return 1.0 + 100.0 / -price
 
 
-def consensus_american(prices: Iterable[object]) -> float | None:
+def consensus_american(prices: Iterable[float | None]) -> float | None:
     """The cross-book consensus of American prices, taken in decimal space.
 
     American odds are discontinuous across (−100, 100): the median of
@@ -40,6 +40,8 @@ def consensus_american(prices: Iterable[object]) -> float | None:
 
     decimals = []
     for price in prices:
+        if price is None:
+            continue
         try:
             value = float(price)
         except (TypeError, ValueError):
