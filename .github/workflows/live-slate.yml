@@ -198,14 +198,20 @@ jobs:
         continue-on-error: true
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
+          # MLB projections come from the free statsapi season stats (the FP
+          # public tier serves no MLB players), fetched fresh each run.
+          python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
+          MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
-            if [ -n "$FP_FILE" ] && [ -n "$DK_FILE" ]; then
+            PROJ_FILE="$FP_FILE"
+            if [ "${league}" = "mlb" ]; then PROJ_FILE="$MLB_STATS"; fi
+            if [ -n "$PROJ_FILE" ] && [ -n "$DK_FILE" ]; then
               python scripts/build_dfs_lineup.py \
-                --salaries "$DK_FILE" --fp "$FP_FILE" \
+                --salaries "$DK_FILE" --fp "$PROJ_FILE" \
                 --out artifacts/slate --league "${league}" || true
             else
-              echo "${league}: missing DK salaries or FP projections; skipping DFS lineup"
+              echo "${league}: missing DK salaries or projections; skipping DFS lineup"
             fi
           done
 

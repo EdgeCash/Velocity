@@ -94,14 +94,26 @@ def _dot(frame: pd.DataFrame, weights: dict[tuple[str, ...], float]) -> pd.Serie
     return total
 
 
-def dk_expected_points_mlb(fp: pd.DataFrame) -> pd.DataFrame:
-    """FantasyPros MLB season-long projections → expected DK points PER GAME.
+# Empirical-Bayes games priors for the per-game rate: a call-up's two hot
+# games must not out-project an everyday player's 130 (proven live — the
+# first raw-rate solve rostered a one-game outfielder and priced a reliever's
+# whole season against his single spot start). Shrunk toward the league's
+# per-game mean for the player's class.
+MLB_SHRINK_GAMES_HITTER = 15.0
+MLB_SHRINK_GAMES_PITCHER = 5.0
 
-    Returns the same shape as :func:`dk_expected_points`. Hitters divide the
-    season-total DK points by projected games; pitchers by projected starts
-    (DK's MLB P pool is the day's probables, so a per-start rate is the right
-    projection). Players without a games denominator are dropped — a season
-    total with no game count prices nothing.
+
+def dk_expected_points_mlb(fp: pd.DataFrame) -> pd.DataFrame:
+    """MLB season-total stats → expected DK points PER GAME, shrunken.
+
+    Returns the same shape as :func:`dk_expected_points`. Works on any long
+    frame with season totals (the statsapi snapshot, or a FantasyPros-shaped
+    projections frame). Everyone divides by APPEARANCES: for a true starter
+    games ≈ starts so the per-start rate is unchanged, while a reliever's
+    per-outing value is honestly small instead of his whole season divided
+    by one spot start. Rates shrink toward the league per-game mean of the
+    player's class with a games prior, so thin samples price conservatively.
+    Players without a games denominator are dropped.
     """
     if fp.empty:
         return pd.DataFrame(columns=[*_ID_COLUMNS, "points"])
@@ -120,11 +132,20 @@ def dk_expected_points_mlb(fp: pd.DataFrame) -> pd.DataFrame:
         return pd.Series(float("nan"), index=wide.index)
 
     games = column("g", "games")
-    starts = column("gs", "games_started")
     season_points = _dot(wide, _MLB_HITTER_WEIGHTS).where(
         ~is_pitcher, _dot(wide, _MLB_PITCHER_WEIGHTS))
-    denom = games.where(~is_pitcher, starts.fillna(games))
-    per_game = season_points / denom.where(denom > 0)
+    denom = games.where(games > 0)
+
+    def class_prior(mask: pd.Series) -> float:
+        pts = season_points[mask & denom.notna()].sum()
+        gms = denom[mask].sum()
+        return float(pts / gms) if gms and gms > 0 else 0.0
+
+    prior = pd.Series(class_prior(~is_pitcher), index=wide.index).where(
+        ~is_pitcher, class_prior(is_pitcher))
+    k = pd.Series(MLB_SHRINK_GAMES_HITTER, index=wide.index).where(
+        ~is_pitcher, MLB_SHRINK_GAMES_PITCHER)
+    per_game = (season_points + prior * k) / (denom + k)
 
     out = wide[["player_name", "player_id", "team", "position"]].assign(
         points=per_game.round(2))
