@@ -77,6 +77,48 @@ def _load(paths: dict[str, Path], kind: str) -> pd.DataFrame | None:
     return pd.read_parquet(path) if path is not None else None
 
 
+def closing_for_slate(
+    odds_dir: Path, slate: pd.DataFrame, games_map: pd.DataFrame, league: str
+) -> pd.DataFrame | None:
+    """The consensus closing line per bet key, from the hourly odds archive.
+
+    Reads every ``odds_lines_*.parquet`` snapshot under ``odds_dir``, keeps
+    this league's rows for the slate's games, canonicalizes provider side
+    labels against the slate's own games map, takes the honest close (last
+    pre-kickoff observation per game/market/side/book), and reduces across
+    books to a median-consensus ``price``/``point`` per (game_id, market,
+    side) — the exact key ``grade_slate`` matches CLV on. Returns ``None``
+    when the archive holds nothing for these games.
+    """
+    from velocity.store.pit import closing_line
+    from velocity.wagering.live import canonicalize_sides
+
+    snapshots = sorted(odds_dir.rglob("odds_lines_*.parquet"))
+    if not snapshots:
+        return None
+    game_ids = set(slate["game_id"].astype(str))
+    frames = []
+    for path in snapshots:
+        snap = pd.read_parquet(path)
+        if "league" in snap.columns:
+            snap = snap[snap["league"] == league]
+        snap = snap[snap["game_id"].astype(str).isin(game_ids)]
+        if not snap.empty:
+            frames.append(snap)
+    if not frames:
+        return None
+    lines = pd.concat(frames, ignore_index=True)
+    lines = canonicalize_sides(lines, games_map)
+    if lines.empty:
+        return None
+    per_book = closing_line(lines, games_map)
+    if per_book.empty:
+        return None
+    closing = (per_book.groupby(["game_id", "market", "side"], as_index=False)
+               .agg(price=("price", "median"), point=("point", "median")))
+    return closing
+
+
 def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
     """The season record chain from the newest downloaded artifact carrying one."""
     pattern = rf"cumulative_record_{re.escape(league)}_{_STAMP}\.parquet"
@@ -211,6 +253,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
     parser.add_argument("--league", default="nfl",
                         choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab"])
+    parser.add_argument("--odds-dir", default="artifacts/odds",
+                        help="downloaded odds-lines snapshots (the CLV close source)")
     args = parser.parse_args()
 
     from velocity.report.daily_record import (
@@ -255,7 +299,19 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                 | set(games_map["away_team"].astype(str)),
             )
             finals = finals_for_slate(games_map, schedule, aliases=aliases)
-            games_graded = None if slate is None or slate.empty else grade_slate(slate, finals)
+            # The closing lines from the hourly odds archive — best-effort;
+            # bets with no matched close grade normally with CLV left null.
+            closing = None
+            if slate is not None and not slate.empty:
+                try:
+                    closing = closing_for_slate(
+                        Path(args.odds_dir), slate, games_map, args.league)
+                    matched = 0 if closing is None else len(closing)
+                    print(f"closing lines: {matched} (game, market, side) keys matched")
+                except Exception as exc:  # noqa: BLE001 - CLV never blocks grading
+                    print(f"closing lines skipped ({exc})")
+            games_graded = (None if slate is None or slate.empty
+                            else grade_slate(slate, finals, closing))
             props_graded = _grade_props(args.league, props, schedule, slate_date)
             parlays_graded = (
                 None if parlays is None or parlays.empty
@@ -315,6 +371,17 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             rendered = render_sim_checks(checks, out, out_stamp,
                                          asset_dir=out / ".assets", league=args.league)
             print(f"rendered {len(rendered)} sim check card(s)")
+            if rendered:
+                # game_id → filename manifest (paths align with checks) so
+                # the site can pin each card to its matchup page.
+                pd.DataFrame(
+                    [{"game_id": str(check.game_id), "kind": "simcheck",
+                      "file": path.name}
+                     for check, path in zip(checks, rendered, strict=True)]
+                ).assign(league=args.league).to_parquet(
+                    out / f"cardindex_{args.league}_{out_stamp}.parquet",
+                    index=False,
+                )
         settled = record[record["result"].isin(["win", "loss", "push"])]
         if not settled.empty:
             when = record["slate_date"].dropna()

@@ -19,6 +19,40 @@ limit 1
 <BigValue data={proj} value=p_home_win title="Home win %" fmt='pct1' />
 <BigValue data={proj} value=fair_total title="Fair total" fmt='#,##0.0' />
 
+```sql conditions
+select w.covered, w.temp_f, w.wind_mph, w.precip_pct
+from velocity.weather w
+where w.game_id = '${params.game_id}'
+limit 1
+```
+
+<WeatherLine row={conditions[0]} />
+
+## Line movement
+
+```sql moves
+select
+  case market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'Moneyline' else market end as market_label,
+  upper(side) as side,
+  point_open, price_open, point_now, price_now,
+  case when market != 'moneyline' then point_now - point_open end as pt_move
+from velocity.line_moves
+where game_id = '${params.game_id}'
+order by market, side
+```
+
+<DataTable data={moves} emptySet=pass emptyMessage="Movement appears once the hourly odds archive has seen this game more than once.">
+  <Column id=market_label title="Market" />
+  <Column id=side title="Side" />
+  <Column id=point_open title="Open" fmt='#,##0.0' />
+  <Column id=price_open title="Open price" fmt='+#,##0;-#,##0' />
+  <Column id=point_now title="Now" fmt='#,##0.0' />
+  <Column id=price_now title="Now price" fmt='+#,##0;-#,##0' />
+  <Column id=pt_move title="Move" fmt='+#,##0.0;-#,##0.0' contentType=delta />
+</DataTable>
+
 ## Markets
 
 ```sql markets
@@ -85,3 +119,34 @@ order by value
   emptySet=pass
   emptyMessage="No distribution banked for this game."
 />
+
+## Injury report
+
+```sql inj
+select i.team, i.player_name, i.position, i.status, i.is_out
+from velocity.injuries i
+join velocity.projections p
+  on p.game_id = '${params.game_id}'
+ and (i.team = p.away or i.team = p.home)
+where i.league != '__none__'
+order by i.team, i.is_out desc, i.player_name
+```
+
+<DataTable data={inj} rows=30 groupBy=team emptySet=pass emptyMessage="No banked injury designations for these teams (the daily snapshot covers NFL).">
+  <Column id=player_name title="Player" />
+  <Column id=position title="Pos" />
+  <Column id=status title="Status" />
+</DataTable>
+
+## Cards
+
+The rendered graphics for this game — tap to open full-size, save to post.
+
+```sql game_cards
+select kind, league, file, away, home, caption
+from velocity.cards
+where league != '__none__' and game_id = '${params.game_id}'
+order by case kind when 'social' then 0 when 'deepdive' then 1 else 2 end
+```
+
+<CardGallery cards={game_cards} empty="No cards rendered for this game yet — they publish with each run." />

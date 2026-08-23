@@ -90,6 +90,13 @@ jobs:
               --limit 6 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/previous/$id" || true
           done
+          # The hourly odds snapshots covering yesterday's games — the CLV
+          # close source. ~30 runs ≈ the last 30 hours of line movement.
+          mkdir -p artifacts/odds
+          for id in $(gh run list --workflow collect-odds.yml --status success \
+              --limit 30 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/odds/$id" || true
+          done
 
       - name: Grade yesterday's slates
         continue-on-error: true
@@ -99,7 +106,7 @@ jobs:
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab' }}; do
             python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
-              --league "${league}" || true
+              --odds-dir artifacts/odds --league "${league}" || true
           done
 
       # ---- the freshest FantasyPros projections, for the prop slate -----------
@@ -262,7 +269,9 @@ jobs:
       - name: Build the site
         if: env.CLOUDFLARE_API_TOKEN != ''
         run: |
-          python scripts/build_site_data.py --slate-dir artifacts/slate
+          python scripts/build_site_data.py --slate-dir artifacts/slate \
+            --prev-dir artifacts/previous --odds-dir artifacts/odds \
+            --fp-dir artifacts/fp
           cd site
           npm ci
           npm run sources

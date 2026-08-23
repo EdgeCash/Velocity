@@ -79,7 +79,7 @@ def main() -> None:  # pragma: no cover - network orchestration
 
     season = args.season if args.season is not None else current_season()
     schedule = (_nfl_schedule if args.league == "nfl" else _ncaaf_schedule)(season)
-    project, known = _build_projection(args)
+    project, known, _ratings = _build_projection(args)
     if args.team not in set(schedule["home_team"]) | set(schedule["away_team"]):
         near = sorted(t for t in known if args.team.lower() in str(t).lower())[:8]
         raise SystemExit(f"{args.team!r} not on the {season} schedule"

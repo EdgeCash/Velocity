@@ -28,6 +28,9 @@ from velocity.wagering.odds import net_payout
 
 RECORD_COLUMNS = [
     "section", "play", "market", "side", "point", "price", "stake", "result", "profit",
+    # CLV vs the archived consensus close — null when no close was matched
+    # (props, parlays, games the hourly archive missed).
+    "price_clv", "line_clv",
 ]
 
 def empty_record() -> pd.DataFrame:
@@ -157,6 +160,8 @@ def build_daily_record(
             "stake": row.get("stake"),
             "result": row.get("result"),
             "profit": row.get("profit"),
+            "price_clv": row.get("price_clv"),
+            "line_clv": row.get("line_clv"),
         }
 
     if games_graded is not None:

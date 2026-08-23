@@ -76,7 +76,7 @@ def main() -> None:
     from velocity.report.social_png import render_cards
 
     fit_args = SimpleNamespace(league=args.league, data=args.data, n_sims=args.n_sims)
-    project, teams = runner._build_projection(fit_args)
+    project, teams, _ratings = runner._build_projection(fit_args)
     known = set(teams)
 
     games = load_games(runner._find_games(Path(args.data)), league=args.league)

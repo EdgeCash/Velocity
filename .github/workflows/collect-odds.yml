@@ -12,17 +12,17 @@ name: Collect The Odds API lines
 
 on:
   schedule:
-    # Hourly. Live /odds for 2 leagues × 3 markets ≈ 6 credits/run → ~4.3k/month,
-    # well under the 100k budget. Tighten toward kickoff windows if wanted.
-    # The scheduled snapshot covers both football leagues (nfl ncaaf); other
-    # manual dispatch below so it doesn't change the year-round credit spend.
+    # Hourly. Live /odds for 5 leagues × 3 markets ≈ 15 credits/run →
+    # ~11k/month, well under the 100k budget. All five slate leagues are
+    # snapshotted so every league's plays can be graded against a real
+    # close (the CLV loop in grade_yesterday.py).
     - cron: "30 * * * *"
   workflow_dispatch:
     inputs:
       leagues:
         description: "Leagues to snapshot (space-separated), e.g. 'nfl ncaaf'"
         required: false
-        default: "nfl ncaaf"
+        default: "nfl ncaaf mlb wnba ncaab"
 
 concurrency:
   group: collect-odds
@@ -56,7 +56,7 @@ jobs:
         run: |
           python scripts/collect_theoddsapi.py \
             --out artifacts/odds \
-            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf ncaab' }}
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab' }}
 
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4

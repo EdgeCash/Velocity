@@ -24,6 +24,49 @@ from ${season}
 <BigValue data={season_rate} value=wins title="Wins" />
 <BigValue data={season_rate} value=losses title="Losses" />
 
+## Closing line value
+
+The professional's yardstick: did each bet beat the number it closed at?
+Units are noisy; CLV converges fast. Line CLV is signed points beaten
+(spreads/totals); price CLV is the moneyline's decimal-odds edge vs close.
+
+```sql clv
+select
+  count(*) as graded,
+  count(*) filter (line_clv is not null or price_clv is not null) as with_close,
+  avg(line_clv) filter (line_clv is not null) as mean_line_clv,
+  avg(price_clv) filter (price_clv is not null) as mean_price_clv,
+  avg(case
+        when line_clv is not null then case when line_clv > 0 then 1.0 when line_clv < 0 then 0.0 end
+        when price_clv is not null then case when price_clv > 0 then 1.0 when price_clv < 0 then 0.0 end
+      end) as pct_beat_close
+from velocity.cumulative_record
+where league != '__none__' and result in ('win','loss','push')
+```
+
+<BigValue data={clv} value=mean_line_clv title="Mean line CLV (pts)" fmt='+#,##0.00;-#,##0.00' />
+<BigValue data={clv} value=pct_beat_close title="Beat the close" fmt='pct1' />
+<BigValue data={clv} value=with_close title="Bets with a close" />
+
+```sql clv_by_day
+select slate_date, upper(league) as lg,
+  avg(line_clv) as clv
+from velocity.cumulative_record
+where league != '__none__' and line_clv is not null
+group by slate_date, league
+order by slate_date
+```
+
+<LineChart
+  data={clv_by_day}
+  x=slate_date
+  y=clv
+  series=lg
+  yAxisTitle="mean line CLV (pts) per day"
+  emptySet=pass
+  emptyMessage="CLV accrues once graded plays match an archived close (the hourly odds snapshots)."
+/>
+
 ## Units over time
 
 ```sql units_by_day
