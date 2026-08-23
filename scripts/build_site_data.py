@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -115,6 +116,63 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
+# The rendered card families (velocity.report.*_png). Matchup-keyed kinds
+# carry `_{AWAY}_at_{HOME}` in the filename; recordcard is one per league.
+CARD_KINDS = ("social", "deepdive", "simcheck", "recordcard")
+
+
+def _card_captions(folder: Path, stem: str) -> dict[str, str]:
+    """``{kind}_{league}_{stamp}_captions.md`` parsed into AWAY @ HOME → text."""
+    path = next(iter(folder.rglob(f"{stem}_captions.md")), None)
+    if path is None:
+        return {}
+    captions: dict[str, str] = {}
+    for block in path.read_text().split("\n---\n"):
+        block = block.strip()
+        head = block.split(" — ", 1)[0].strip()
+        if head:
+            captions[head] = block
+    return captions
+
+
+def collect_cards(slate_dir: Path, static_out: Path) -> pd.DataFrame:
+    """Copy the newest-stamp card PNGs per (kind, league) into the site.
+
+    The PNGs land in ``static_out`` (served at ``/cards/<name>``) and the
+    returned manifest gives the Graphics page its gallery rows, with the
+    social caption attached where the captions file carries the matchup.
+    """
+    static_out.mkdir(parents=True, exist_ok=True)
+    for stale in static_out.glob("*.png"):
+        stale.unlink()
+    rows = []
+    for kind in CARD_KINDS:
+        for league in LEAGUES:
+            pattern = rf"{kind}_{league}_{_STAMP}(_.+)?\.png"
+            found = sorted(
+                {p.name: p for p in slate_dir.rglob("*.png")
+                 if re.fullmatch(pattern, p.name)}.values(),
+                key=lambda p: p.name,
+            )
+            if not found:
+                continue
+            stamp_match = re.search(_STAMP, found[-1].name)
+            stamp = stamp_match.group(1) if stamp_match else ""
+            batch = [p for p in found if stamp in p.name]
+            captions = _card_captions(slate_dir, f"{kind}_{league}_{stamp}")
+            for path in batch:
+                match = re.fullmatch(
+                    rf"{kind}_{league}_{stamp}_(.+)_at_(.+)\.png", path.name)
+                away, home = match.groups() if match else ("", "")
+                shutil.copy2(path, static_out / path.name)
+                rows.append({
+                    "kind": kind, "league": league, "stamp": stamp,
+                    "file": path.name, "away": away, "home": home,
+                    "caption": captions.get(f"{away} @ {home}", ""),
+                })
+    return pd.DataFrame(rows)
+
+
 def sentinel_frame(schema: dict[str, object]) -> pd.DataFrame:
     """One filterable placeholder row matching ``schema``.
 
@@ -154,6 +212,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Assemble the site's data dir")
     parser.add_argument("--slate-dir", default="artifacts/slate")
     parser.add_argument("--out", default="site/sources/velocity/data")
+    parser.add_argument("--cards-out", default="site/static/cards")
     args = parser.parse_args()
 
     slate_dir = Path(args.slate_dir)
@@ -172,6 +231,7 @@ def main() -> None:
         "dfs_gpp": collect(slate_dir, "dfs_gpp"),
         "portfolio": collect(slate_dir, "portfolio"),
         "model_config": model_config_frame(),
+        "cards": collect_cards(slate_dir, Path(args.cards_out)),
     }
     tables["units"] = build_units(tables["cumulative_record"]
                                   if not tables["cumulative_record"].empty
@@ -219,6 +279,8 @@ def main() -> None:
                       "price": float, "edge": float, "stake": float,
                       "stake_solo": float, "league": str, "stamp": str},
         "model_config": {"league": str, "label": str, "detail": str},
+        "cards": {"kind": str, "league": str, "stamp": str, "file": str,
+                  "away": str, "home": str, "caption": str},
         "units": {"league": str, "slate_date": "datetime64[ns]",
                   "profit": float, "bets": int, "units": float},
     }

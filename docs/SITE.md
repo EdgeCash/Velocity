@@ -19,13 +19,16 @@ site/
   sources/velocity/       DuckDB source; one .sql per table over data/*.parquet
     data/                 assembled per-run by scripts/build_site_data.py (gitignored)
   pages/
-    index.md              Today board (market · model · edge · tier)
+    index.md              Today board (market · model · edge · tier) + live ticker
     picks.md              tiered picks + intel vetoes
     performance.md        units, win rate, cumulative chart, graded slate
     matchup/[game_id].md  per-game page (markets, sim distributions)
     dfs.md                cash lineup + GPP set
+    graphics.md           card room — social/deepdive/simcheck PNGs + captions
     methods.md            the "what's live" transparency block + glossary
-  worker.js + wrangler.toml + deploy.sh   Cloudflare deploy
+  components/             LiveTicker / HeroBand / CardGallery (svelte)
+  static/cards/           newest-stamp card PNGs (gitignored, per-run)
+  worker.js + wrangler.toml + deploy.sh   Cloudflare deploy + /api/scores
 ```
 
 `scripts/build_site_data.py` finds the **latest stamp per league** for each
@@ -37,6 +40,17 @@ than an empty frame — Evidence's source runner writes no parquet at all
 for a zero-row query and the build then fails reading the missing
 extraction — and every page query filters `league != '__none__'`, so
 empty states still render.
+
+The same script copies the newest-stamp card PNGs per (kind, league) —
+social, deepdive, simcheck, recordcard — into `site/static/cards/` with a
+`cards` manifest table (matchup + post caption parsed from the captions
+files), which the Graphics page galleries with save/copy-caption actions.
+
+**Live scoreboard:** the Worker also serves `/api/scores` — a fan-out to
+ESPN's public scoreboard JSON for the five leagues, trimmed to ticker
+fields and edge-cached ~45s. `LiveTicker.svelte` polls it every 60s and
+renders the scrolling crawl on the Today page; it hides itself when the
+endpoint is unreachable (local preview) or all leagues are dark.
 
 ## Local preview
 

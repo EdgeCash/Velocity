@@ -41,7 +41,7 @@ order by edge desc
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' />
   <Column id=book title="Book" />
-  <Column id=price title="Price" fmt='+#,##0' />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
   <Column id=p_model title="Model %" fmt='pct1' />
   <Column id=p_fair title="Fair %" fmt='pct1' />
   <Column id=edge title="Edge" fmt='pct1' contentType=delta />

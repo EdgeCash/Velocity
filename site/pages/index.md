@@ -1,6 +1,9 @@
 ---
 title: Today
+hide_title: true
 ---
+
+<LiveTicker />
 
 ```sql tiles
 select
@@ -13,6 +16,12 @@ select
   (select max(stamp) from velocity.board
     where league != '__none__') as as_of
 ```
+
+<HeroBand
+  title="Today's board"
+  subtitle="Every priced market, ranked by model edge. Rows link to the matchup page; cards for sharing live in Graphics."
+  stamp={tiles[0]?.as_of}
+/>
 
 <BigValue data={tiles} value=games_today title="Games on the board" />
 <BigValue data={tiles} value=plays title="Plays (edge ≥ 2%)" />
@@ -48,7 +57,7 @@ order by edge desc
   <Column id=market_label title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' />
-  <Column id=price title="Price" fmt='+#,##0' />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
   <Column id=p_model title="Model %" fmt='pct1' />
   <Column id=edge title="Edge" fmt='pct1' contentType=delta />
   <Column id=tier title="Tier" />
