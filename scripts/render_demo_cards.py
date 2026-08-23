@@ -130,6 +130,28 @@ def main() -> None:
                                    league=args.league)
     print(f"rendered {len(dive_paths)} demo deep dive(s) to {out}")
 
+    # Compose the sheets exactly like the live runner (one graphic per game;
+    # the intermediates are consumed) so previews match the real artifact.
+    from velocity.report.sheet_png import compose_sheets
+
+    card_by_game = {str(c.game_id): p for c, p in zip(cards, paths, strict=True)}
+    dive_by_game = {str(d.card.game_id): p
+                    for d, p in zip(dives, dive_paths, strict=True)}
+    sheets = compose_sheets(card_by_game, dive_by_game, out)
+    social_captions = out / f"social_{args.league}_{stamp}_captions.md"
+    if social_captions.exists():
+        social_captions.rename(out / f"sheet_{args.league}_{stamp}_captions.md")
+    for stale in (*card_by_game.values(), *dive_by_game.values()):
+        stale.unlink(missing_ok=True)
+    (out / f"deepdive_{args.league}_{stamp}_captions.md").unlink(missing_ok=True)
+    pd.DataFrame(
+        [{"game_id": gid, "kind": "sheet", "file": p.name}
+         for gid, p in sheets.items()]
+    ).assign(league=args.league).to_parquet(
+        out / f"cardindex_{args.league}_{stamp}.parquet", index=False
+    )
+    print(f"composed {len(sheets)} demo sheet(s)")
+
     # The Matchups tab's frames — but deliberately no slate/props/parlays, so
     # the grader sees zero plays and the record chain stays untouched.
     events.assign(league=args.league).to_parquet(

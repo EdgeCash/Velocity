@@ -118,7 +118,9 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
 
 # The rendered card families (velocity.report.*_png). Matchup-keyed kinds
 # carry `_{AWAY}_at_{HOME}` in the filename; recordcard is one per league.
-CARD_KINDS = ("social", "deepdive", "simcheck", "recordcard")
+# `sheet` is the one all-inclusive pregame graphic (card + deep dive
+# composed); social/deepdive stay listed so older artifacts still surface.
+CARD_KINDS = ("sheet", "social", "deepdive", "simcheck", "recordcard")
 
 
 def build_ratings(slate_dir: Path, prev_dir: Path | None) -> pd.DataFrame:
