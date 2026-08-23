@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-LEAGUES = ("nfl", "ncaaf", "mlb", "wnba", "ncaab")
+LEAGUES = ("nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl")
 _STAMP = r"(\d{8}T\d{6}Z)"
 
 # Evidence's source runner writes no parquet at all for a query that returns

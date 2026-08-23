@@ -21,7 +21,7 @@ on:
       leagues:
         description: "Leagues to run (space-separated)"
         required: false
-        default: "nfl ncaaf mlb wnba"
+        default: "nfl ncaaf mlb wnba ncaab nhl"
       min_edge:
         description: "Minimum edge to bet"
         required: false
@@ -103,7 +103,7 @@ jobs:
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab' }}; do
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --league "${league}" || true
@@ -157,7 +157,7 @@ jobs:
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab' }}; do
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             echo "::group::${league} slate"
             EXTRA=""
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
@@ -198,7 +198,7 @@ jobs:
         continue-on-error: true
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab' }}; do
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
             if [ -n "$FP_FILE" ] && [ -n "$DK_FILE" ]; then
               python scripts/build_dfs_lineup.py \
