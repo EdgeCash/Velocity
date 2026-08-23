@@ -450,25 +450,44 @@ class TheOddsAPIClient:
             unwrap(self.historical_odds_payload(league, date, markets)), is_closing=True
         )
 
-    def event_ids(self, league: str) -> list[str]:  # pragma: no cover - network
-        """The current event ids for ``league`` (the cheap ``/events`` list)."""
+    def event_ids(  # pragma: no cover - network
+        self, league: str, *, days_ahead: float | None = None
+    ) -> list[str]:
+        """The current event ids for ``league`` (the cheap ``/events`` list).
+
+        ``days_ahead`` keeps only events commencing within that window —
+        the offseason board can carry a whole season (272 NFL events), and
+        every id here becomes one PAID per-event call downstream.
+        """
         data, _ = self._get(f"sports/{self.sport_key(league)}/events")
-        return [str(e["id"]) for e in (data or []) if e.get("id") is not None]
+        events = data or []
+        if days_ahead is not None:
+            import pandas as pd
+
+            horizon = pd.Timestamp.utcnow() + pd.Timedelta(days=days_ahead)
+            events = [
+                e for e in events
+                if pd.to_datetime(e.get("commence_time"), errors="coerce",
+                                  utc=True) <= horizon
+            ]
+        return [str(e["id"]) for e in events if e.get("id") is not None]
 
     def event_odds_payloads(  # pragma: no cover - network
-        self, league: str, markets: str
+        self, league: str, markets: str, *, days_ahead: float | None = 8.0
     ) -> list[tuple[str, Any]]:
-        """Raw per-event ``/events/{id}/odds`` payloads for every current event.
+        """Raw per-event ``/events/{id}/odds`` payloads for current events.
 
         One call per event (the only way The Odds API serves props + the additional
         markets — team totals, first-5-innings). Returns ``(event_id, raw payload)``
         pairs so a collector can bank them verbatim; nothing the credits bought is
         lost, even for markets without a normalizer yet. ``markets`` may combine prop
-        and derivative keys in a single credit-efficient call.
+        and derivative keys in a single credit-efficient call. ``days_ahead``
+        (default 8) clamps the paid calls to games actually near kickoff —
+        props barely post further out anyway.
         """
         sport = self.sport_key(league)
         out: list[tuple[str, Any]] = []
-        for event_id in self.event_ids(league):
+        for event_id in self.event_ids(league, days_ahead=days_ahead):
             data, meta = self._get(
                 f"sports/{sport}/events/{event_id}/odds",
                 regions=self.regions,
