@@ -188,8 +188,13 @@ def build_line_moves(slate_dir: Path, odds_dir: Path | None) -> pd.DataFrame:
     stamp_col = "collected_at" if "collected_at" in lines.columns else "timestamp"
     lines[stamp_col] = pd.to_datetime(lines[stamp_col])
     keys = ["game_id", "market", "side"]
+    # Price consensus in decimal space — a plain median of American odds
+    # straddling ±100 lands in the invalid gap.
+    from velocity.wagering.odds import consensus_american
+
     per_snap = (lines.groupby([*keys, stamp_col], as_index=False)
-                .agg(point=("point", "median"), price=("price", "median")))
+                .agg(point=("point", "median"),
+                     price=("price", consensus_american)))
     per_snap = per_snap.sort_values(stamp_col)
     opens = per_snap.groupby(keys, as_index=False).first()
     nows = per_snap.groupby(keys, as_index=False).last()

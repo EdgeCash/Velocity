@@ -86,7 +86,9 @@ def test_closing_for_slate_consensus(tmp_path: Path) -> None:
     row = closing.iloc[0]
     assert row["side"] == "home"
     assert row["point"] == pytest.approx(-2.25)  # median of −2.0, −2.5
-    assert row["price"] == pytest.approx(-125.0)
+    # Price consensus is taken in DECIMAL space (American odds are
+    # discontinuous across ±100), so −120/−130 lands at −124.8, not −125.
+    assert row["price"] == pytest.approx(-124.8, abs=0.05)
 
 
 def test_record_carries_clv_columns() -> None:
@@ -147,3 +149,45 @@ def test_site_data_new_tables(tmp_path: Path) -> None:
     for table in ("line_moves", "injuries", "weather"):
         frame = pd.read_parquet(tmp_path / "data" / f"{table}.parquet")
         assert len(frame) == 1 and frame.iloc[0]["league"] == "__none__"
+
+
+def test_consensus_american_straddles_the_gap() -> None:
+    from velocity.wagering.odds import consensus_american
+
+    # The first live CLV run crashed on median(-105, +102) = -1.5. The
+    # decimal-space consensus stays a valid price.
+    price = consensus_american([-105.0, 102.0])
+    assert price is not None
+    assert not -100.0 < price < 100.0
+    assert consensus_american([float("nan"), None]) is None
+    assert consensus_american([-110.0, -110.0]) == pytest.approx(-110.0)
+
+
+def test_closing_consensus_survives_gap_straddling_books(tmp_path: Path) -> None:
+    from grade_yesterday import closing_for_slate
+    from velocity.report.scorecard import grade_slate
+
+    kickoff = pd.Timestamp("2026-01-02 18:00")
+    games_map = pd.DataFrame([{
+        "game_id": "g1", "home_team": "Brewers", "away_team": "Cubs",
+        "kickoff": kickoff, "league": "mlb",
+    }])
+    slate = pd.DataFrame([{
+        "game_id": "g1", "market": "moneyline", "side": "home", "point": None,
+        "price": -104.0, "stake": 1.0, "p_model": 0.55,
+    }])
+    for i, (price, book) in enumerate([(-105.0, "dk"), (102.0, "fd")]):
+        pd.DataFrame([{
+            "line_id": "x", "game_id": "g1", "book": book,
+            "market": "moneyline", "side": "Brewers", "price": price,
+            "point": None, "timestamp": pd.Timestamp("2026-01-02 17:30"),
+            "is_closing": False, "league": "mlb",
+            "collected_at": pd.Timestamp("2026-01-02 17:30"),
+        }]).to_parquet(tmp_path / f"odds_lines_{i}.parquet", index=False)
+
+    closing = closing_for_slate(tmp_path, slate, games_map, "mlb")
+    assert closing is not None
+    assert not -100.0 < closing.iloc[0]["price"] < 100.0
+    finals = pd.DataFrame([{"game_id": "g1", "home_score": 4.0, "away_score": 2.0}])
+    graded = grade_slate(slate, finals, closing)  # must not raise
+    assert graded.iloc[0]["result"] == "win"

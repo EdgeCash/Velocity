@@ -64,7 +64,10 @@ def bets_from_slate(slate: pd.DataFrame, closing: pd.DataFrame | None = None) ->
                 stake=float(row.get("stake", 0.0) or 0.0),
                 p_model=float(row["p_model"]),
                 point=point_f,
-                closing_price=None if c_price is None or pd.isna(c_price) else float(c_price),
+                # An invalid close (no American price lives in (-100, 100))
+                # contributes no CLV rather than crashing the settle.
+                closing_price=None if c_price is None or pd.isna(c_price)
+                or -100.0 < float(c_price) < 100.0 else float(c_price),
                 closing_point=c_point,
                 player=row.get("player"),
                 p_fair=None if pd.isna(row.get("p_fair")) else row.get("p_fair"),
