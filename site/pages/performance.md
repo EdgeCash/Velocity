@@ -10,7 +10,7 @@ select
   coalesce(sum(profit), 0) as units,
   count(*) filter (result in ('win','loss')) as decided
 from velocity.cumulative_record
-where result in ('win','loss','push')
+where league != '__none__' and result in ('win','loss','push')
 ```
 
 ```sql season_rate
@@ -29,6 +29,7 @@ from ${season}
 ```sql units_by_day
 select slate_date, league, units
 from velocity.units
+where league != '__none__'
 order by slate_date
 ```
 
@@ -52,7 +53,7 @@ select
   count(*) filter (result = 'push') as p,
   coalesce(sum(profit), 0) as units
 from velocity.cumulative_record
-where result in ('win','loss','push')
+where league != '__none__' and result in ('win','loss','push')
 group by league
 order by units desc
 ```
@@ -71,7 +72,7 @@ order by units desc
 select upper(league) as lg, section, play, upper(side) as side, point, price,
   result, profit
 from velocity.record
-where result is not null
+where league != '__none__' and result is not null
 order by league, section
 ```
 

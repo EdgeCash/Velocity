@@ -4,10 +4,14 @@ title: Today
 
 ```sql tiles
 select
-  (select count(distinct game_id) from velocity.games) as games_today,
-  (select count(*) from velocity.board where edge >= 0.02) as plays,
-  coalesce((select sum(profit) from velocity.units), 0) as season_units,
-  (select max(stamp) from velocity.board) as as_of
+  (select count(distinct game_id) from velocity.games
+    where league != '__none__') as games_today,
+  (select count(*) from velocity.board
+    where league != '__none__' and edge >= 0.02) as plays,
+  coalesce((select sum(profit) from velocity.units
+    where league != '__none__'), 0) as season_units,
+  (select max(stamp) from velocity.board
+    where league != '__none__') as as_of
 ```
 
 <BigValue data={tiles} value=games_today title="Games on the board" />
@@ -34,6 +38,7 @@ select
   coalesce(tier, '') as tier,
   kickoff
 from velocity.board
+where league != '__none__'
 order by edge desc
 ```
 

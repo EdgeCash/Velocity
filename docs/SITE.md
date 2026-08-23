@@ -31,9 +31,12 @@ site/
 `scripts/build_site_data.py` finds the **latest stamp per league** for each
 artifact family in `--slate-dir`, joins what the pages need (slate ×
 games × projections × intel tiers), derives the running-units table, and
-writes stable-named parquets into `site/sources/velocity/data/`. Leagues
-with no artifacts contribute typed empty frames, so every page builds and
-renders its empty state.
+writes stable-named parquets into `site/sources/velocity/data/`. An absent
+family writes a typed **one-row sentinel** (`league = '__none__'`) rather
+than an empty frame — Evidence's source runner writes no parquet at all
+for a zero-row query and the build then fails reading the missing
+extraction — and every page query filters `league != '__none__'`, so
+empty states still render.
 
 ## Local preview
 
@@ -77,7 +80,9 @@ The `live-slate` workflow (after building slates): assemble
 `site/sources/velocity/data/` from the run's artifacts → `npm ci` →
 `npm run sources` → `npm run build` → `site/deploy.sh` (park oversized
 wasm in R2, `wrangler deploy`). Both site steps are gated on
-`CLOUDFLARE_API_TOKEN` being set.
+`CLOUDFLARE_API_TOKEN` being set, and they run **last** — after the slate
+artifact and email are delivered — so a site failure marks the run red
+(the honest signal the site didn't publish) without costing the slate.
 
 ## Retirement plan for the Streamlit app
 

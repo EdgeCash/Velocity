@@ -65,12 +65,19 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     units = pd.read_parquet(out / "units.parquet")
     assert units["units"].tolist() == pytest.approx([0.91, -0.09])
 
-    # Absent families still produce typed frames every page can query.
+    # Absent families still produce typed frames every page can query — with
+    # exactly one sentinel row, because Evidence's source runner writes no
+    # parquet at all for a zero-row query and the build then fails reading
+    # the missing extraction.
     dfs = pd.read_parquet(out / "dfs_lineup.parquet")
-    assert dfs.empty
-    assert "salary" in dfs.columns and "league" in dfs.columns
+    assert len(dfs) == 1
+    assert dfs.iloc[0]["league"] == "__none__"
+    assert "salary" in dfs.columns
     record = pd.read_parquet(out / "record.parquet")
-    assert "result" in record.columns
+    assert record.iloc[0]["league"] == "__none__"
+    # Dates stay real datetimes (all-null date columns would get downcast
+    # to Float64 by Evidence, changing the extracted column type).
+    assert str(record["slate_date"].dtype).startswith("datetime64")
 
 
 def test_build_units_coerces_object_profit(tmp_path: Path) -> None:

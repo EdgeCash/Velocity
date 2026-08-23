@@ -6,6 +6,7 @@ title: DFS
 select upper(league) as lg, slot, player_name, position, team, salary, points,
   case when salary > 0 then points / (salary / 1000.0) end as value
 from velocity.dfs_lineup
+where league != '__none__'
 order by league, salary desc
 ```
 
@@ -24,6 +25,7 @@ order by league, salary desc
 ```sql lineup_total
 select upper(league) as lg, sum(salary) as total_salary, sum(points) as total_points
 from velocity.dfs_lineup
+where league != '__none__'
 group by league
 ```
 
@@ -38,6 +40,7 @@ group by league
 ```sql gpp
 select upper(league) as lg, rank, stacks, total_points, total_salary, score, players
 from velocity.dfs_gpp
+where league != '__none__'
 order by league, rank
 ```
 

@@ -8,6 +8,7 @@ What's live in each league's model — promoted through the walk-forward lab
 ```sql config
 select upper(league) as lg, label, detail
 from velocity.model_config
+where league != '__none__'
 order by league
 ```
 
