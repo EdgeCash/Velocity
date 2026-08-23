@@ -214,36 +214,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 60
 
-      # ---- the site (optional) ------------------------------------------------
-      # Static Evidence build over the run's parquet, deployed to the
-      # Access-gated Cloudflare Worker (docs/SITE.md). Skipped entirely until
-      # the Cloudflare secrets exist — the site carries paid-odds-derived
-      # numbers and must only ever sit behind Cloudflare Access.
-      - name: Set up Node
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-
-      - name: Build the site
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        continue-on-error: true
-        run: |
-          python scripts/build_site_data.py --slate-dir artifacts/slate
-          cd site
-          npm ci
-          npm run sources
-          npm run build
-
-      - name: Deploy the site (Cloudflare Worker behind Access)
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        continue-on-error: true
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: cd site && ./deploy.sh
-
       # ---- email delivery (optional) ------------------------------------------
       # Sends the day's plays to MAIL_TO after the artifact is safely uploaded.
       # Skipped entirely until the mail secrets are configured — see
@@ -272,3 +242,34 @@ jobs:
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://artifacts/email/slate_email.html
           attachments: artifacts/slate/*.xlsx
+
+      # ---- the site (optional) ------------------------------------------------
+      # Static Evidence build over the run's parquet, deployed to the
+      # Access-gated Cloudflare Worker (docs/SITE.md). Skipped entirely until
+      # the Cloudflare secrets exist — the site carries paid-odds-derived
+      # numbers and must only ever sit behind Cloudflare Access. These steps
+      # run LAST and are allowed to fail the run: the slate artifact and email
+      # are already delivered by now, and a red run is the only honest signal
+      # that the site didn't publish.
+      - name: Set up Node
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Build the site
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: |
+          python scripts/build_site_data.py --slate-dir artifacts/slate
+          cd site
+          npm ci
+          npm run sources
+          npm run build
+
+      - name: Deploy the site (Cloudflare Worker behind Access)
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: cd site && ./deploy.sh

@@ -12,7 +12,7 @@ select
     when 'moneyline' then 'ML' else market end as market_label,
   upper(side) as side, point, price, stake, edge, tier, conviction
 from velocity.board
-where tier is not null and tier != 'X'
+where league != '__none__' and tier is not null and tier != 'X'
 order by conviction desc
 ```
 
@@ -35,7 +35,7 @@ select upper(league) as lg,
     when 'moneyline' then 'ML' else market end as market_label,
   upper(side) as side, edge
 from velocity.board
-where tier = 'X'
+where league != '__none__' and tier = 'X'
 order by edge desc
 ```
 

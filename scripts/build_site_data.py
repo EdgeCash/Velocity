@@ -26,6 +26,12 @@ import pandas as pd
 LEAGUES = ("nfl", "ncaaf", "mlb", "wnba", "ncaab")
 _STAMP = r"(\d{8}T\d{6}Z)"
 
+# Evidence's source runner writes no parquet at all for a query that returns
+# zero rows, and the build then dies reading the missing extraction ("too
+# small to be a Parquet file"). So an absent family ships exactly one
+# sentinel row, and every page query filters `league != '__none__'`.
+SENTINEL_LEAGUE = "__none__"
+
 # The "what's live" transparency block, mirrored from the plays app.
 from sys import path as _sys_path  # noqa: E402
 
@@ -109,6 +115,28 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
+def sentinel_frame(schema: dict[str, object]) -> pd.DataFrame:
+    """One filterable placeholder row matching ``schema``.
+
+    Dates get a real timestamp (Evidence downcasts all-null date columns to
+    Float64, which would change the extracted column type); everything else
+    is inert. The ``league`` column always exists and carries the marker.
+    """
+    def value(col: str, dtype: object) -> object:
+        if col == "league":
+            return SENTINEL_LEAGUE
+        if dtype is str:
+            return ""
+        if dtype is int:
+            return 0
+        if dtype is float:
+            return float("nan")
+        return pd.Timestamp("2000-01-01")
+
+    row = {col: value(col, dtype) for col, dtype in schema.items()}
+    return pd.DataFrame([row]).astype(schema)  # type: ignore[arg-type]
+
+
 def model_config_frame() -> pd.DataFrame:
     """The per-league "what's live" block, re-exported from the plays app."""
     try:
@@ -149,8 +177,9 @@ def main() -> None:
                                   if not tables["cumulative_record"].empty
                                   else tables["record"])
 
-    # An absent family still writes a typed empty frame so every page's SQL
-    # parses; the pages just render their empty states.
+    # An absent family still writes a typed one-row sentinel frame so every
+    # page's SQL parses AND every source query returns a row (see
+    # SENTINEL_LEAGUE); the pages filter the sentinel and render empty states.
     schemas: dict[str, dict[str, object]] = {
         "board": {"game_id": str, "market": str, "side": str, "point": float,
                   "book": str, "price": float, "p_model": float, "p_fair": float,
@@ -195,8 +224,7 @@ def main() -> None:
     }
     for name, frame in tables.items():
         if frame.empty:
-            frame = pd.DataFrame({col: pd.Series(dtype=dtype)  # type: ignore[arg-type]
-                                  for col, dtype in schemas[name].items()})
+            frame = sentinel_frame(schemas[name])
         frame.to_parquet(out / f"{name}.parquet", index=False)
         print(f"{name}: {len(frame)} rows")
 
