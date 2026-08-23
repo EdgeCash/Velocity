@@ -191,3 +191,50 @@ def test_closing_consensus_survives_gap_straddling_books(tmp_path: Path) -> None
     finals = pd.DataFrame([{"game_id": "g1", "home_score": 4.0, "away_score": 2.0}])
     graded = grade_slate(slate, finals, closing)  # must not raise
     assert graded.iloc[0]["result"] == "win"
+
+
+def test_k_watch_entries_carry_board_lines_and_plays() -> None:
+    from run_live_slate import _k_watch_entries
+    from velocity.models.props import NegativeBinomial
+    from velocity.models.props_mlb import GameKProps
+
+    class _StubK:
+        means = {"p1": 6.4, "p2": 4.9}
+
+        def distribution(self, pid, opponent=None):
+            mean = self.means.get(str(pid))
+            return None if mean is None else NegativeBinomial(mean, 30.0)
+
+    model = _StubK()
+    props_by_game = {"g1": GameKProps(model, {"p1": "Detroit Tigers",
+                                              "p2": "Tampa Bay Rays"})}
+    starters = pd.DataFrame([
+        {"starter_id": "p1", "starter_name": "Tarik Skubal"},
+        {"starter_id": "p2", "starter_name": "Ryan Pepiot"},
+    ])
+    prop_lines = pd.DataFrame([
+        {"game_id": "g1", "market": "pitcher_strikeouts",
+         "player": "Tarik Skubal", "side": "over", "point": 7.5,
+         "price": -115, "book": "dk", "timestamp": pd.Timestamp("2026-08-23"),
+         "is_closing": False, "line_id": "x"},
+    ])
+    staked = pd.DataFrame([
+        {"game_id": "g1", "player": "Tarik Skubal",
+         "market": "pitcher_strikeouts", "side": "under", "point": 7.5,
+         "book": "dk", "price": -115.0, "p_model": 0.62, "p_fair": 0.55,
+         "edge": 0.07, "stake": 1.4},
+    ])
+    watch = _k_watch_entries(model, props_by_game, starters, prop_lines, staked)
+    entries = watch["g1"]
+    assert len(entries) == 2
+    # The staked probable leads, at the board's line, wearing the play detail.
+    lead = entries[0]
+    assert lead.player == "Tarik Skubal"
+    assert lead.line == 7.5 and lead.from_board
+    assert lead.play == "UNDER · -115 · 1.4u"
+    assert 0.0 < lead.p_over < 1.0 and lead.mean == pytest.approx(6.4)
+    # The unlined probable states the model's own half-point line.
+    other = entries[1]
+    assert other.player == "Ryan Pepiot"
+    assert not other.from_board and other.play is None
+    assert other.line == 4.5  # int(4.9) + 0.5

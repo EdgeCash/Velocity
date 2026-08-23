@@ -34,6 +34,9 @@ _WATCH_MARKETS = {
     "rush_yards": ("rush yards", "RUSH YDS"),
     "receiving_yards": ("receiving yards", "REC YDS"),
     "receptions": ("receptions", "REC"),
+    "pitcher_strikeouts": ("pitcher Ks", "Ks"),
+    "player_shots_on_goal": ("shots on goal", "SOG"),
+    "player_rebounds": ("rebounds", "REB"),
 }
 
 
@@ -52,6 +55,9 @@ class WatchEntry:
     p_over: float
     mean: float
     from_board: bool = False
+    # Set when the slate actually staked this prop: the play detail the strip
+    # states beside its PLAY pill ("OVER · -115 · 1.4u"). None = a watch fact.
+    play: str | None = None
 
     def fact(self) -> str:
         """"61% to clear 249.5 PASS YDS (model avg 262)" — a statement, not a pick."""
@@ -350,6 +356,7 @@ def build_social_cards(
     lines: pd.DataFrame | None = None,
     team_colors: Mapping[str, str] | None = None,
     plays_by_game: Mapping[str, Sequence[PlayCall]] | None = None,
+    watch_by_game: Mapping[str, Sequence[WatchEntry]] | None = None,
 ) -> list[SocialCard]:
     """One :class:`SocialCard` per projected event, in board order.
 
@@ -358,7 +365,10 @@ def build_social_cards(
     which each card's market strip is condensed. ``team_colors`` (display code
     → hex) carries brand colors for leagues without a fixed club table.
     ``plays_by_game`` maps game_id → the slate's staked :class:`PlayCall`
-    tuples, worn as PLAY badges on the matrix.
+    tuples, worn as PLAY badges on the matrix. ``watch_by_game`` supplies
+    pre-built :class:`WatchEntry` tuples per game — the path for leagues
+    whose prop model isn't the football sim (MLB pitcher Ks) — and takes
+    precedence over the sim-built watch for those games.
     """
     from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
 
@@ -379,8 +389,11 @@ def build_social_cards(
         kickoff = event.get("kickoff")
         total_points = proj.sim.total
         watch: tuple[WatchEntry, ...] = ()
+        supplied = (watch_by_game or {}).get(gid)
         props = props_map.get(gid)
-        if props is not None:
+        if supplied is not None:
+            watch = tuple(supplied)[:max_watch]
+        elif props is not None:
             watch = _select_watch(
                 _watch_candidates(gid, props, names, line_index), max_watch
             )
@@ -528,5 +541,9 @@ def caption(card: SocialCard) -> str:
     ]
     lines.append("Model lean: " + ("; ".join(leans) + "." if leans
                                    else "no edge on this board."))
-    lines.extend(f"{entry.player}: {entry.fact()}." for entry in card.watch)
+    lines.extend(
+        (f"PLAY — {entry.player} ({entry.play}): {entry.fact()}."
+         if entry.play else f"{entry.player}: {entry.fact()}.")
+        for entry in card.watch
+    )
     return "\n".join(lines)

@@ -382,9 +382,23 @@ def _props_strip(fig: plt.Figure, card: SocialCard) -> None:
         return
     for i, entry in enumerate(card.watch[:3]):
         x = 0.075 + i * 0.30
-        # The teal accent bar marks a board-lined prop where the model's
-        # probability sits well off 50% — the same "edge only" color logic.
-        if entry.from_board and abs(entry.p_over - 0.5) >= 0.10:
+        name_x = x
+        if entry.play:
+            # A staked prop wears the same PLAY badge grammar as the matrix.
+            ax = fig.add_axes((0, 0, 1, 1))
+            ax.axis("off")
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.add_patch(FancyBboxPatch(
+                (x, 0.132), 0.036, 0.026,
+                boxstyle="round,pad=0,rounding_size=0.005",
+                mutation_aspect=9 / 16, facecolor=_GOOD, edgecolor="none"))
+            _display(fig, x + 0.018, 0.1385, "PLAY", color=BG, fontsize=9.5,
+                     ha="center", fontweight="bold")
+            name_x = x + 0.044
+        elif entry.from_board and abs(entry.p_over - 0.5) >= 0.10:
+            # The teal accent bar marks a board-lined prop where the model's
+            # probability sits well off 50% — the same "edge only" color logic.
             ax = fig.add_axes((x - 0.010, 0.108, 0.0035, 0.055))
             ax.axis("off")
             ax.set_xlim(0, 1)
@@ -392,15 +406,16 @@ def _props_strip(fig: plt.Figure, card: SocialCard) -> None:
             ax.add_patch(FancyBboxPatch(
                 (0, 0), 1, 1, boxstyle="round,pad=0,rounding_size=0.2",
                 facecolor=MODEL, edgecolor="none"))
-        _display(fig, x, 0.146, entry.player, color=INK, fontsize=18,
+        _display(fig, name_x, 0.146, entry.player, color=INK, fontsize=18,
                  fontweight="semibold")
         unit = _WATCH_MARKETS.get(entry.market, (entry.market, entry.market))[1]
         avg = f"{entry.mean:.1f}" if entry.mean < 20 else f"{entry.mean:.0f}"
         line_kind = "line" if entry.from_board else "model line"
-        _text(fig, x, 0.113,
-              f"{unit} · {line_kind} {entry.line:g} · model {avg} · "
-              f"{entry.p_over:.0%} over",
-              color=INK_DIM, fontsize=12.5)
+        detail = (f"{unit} · {line_kind} {entry.line:g} · model {avg} · "
+                  f"{entry.p_over:.0%} over")
+        if entry.play:
+            detail = f"{unit} {entry.line:g} · {entry.play} · model {avg}"
+        _text(fig, x, 0.113, detail, color=INK_DIM, fontsize=12.5)
 
 
 def _matchup_footer_note(card: SocialCard) -> str:
