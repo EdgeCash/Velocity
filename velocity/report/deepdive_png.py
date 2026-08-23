@@ -233,10 +233,13 @@ def _verdict_band(fig: plt.Figure, dive: DeepDive) -> None:
         ax.axis("off")
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
+        # Start 0.122 / pitch 0.030 keeps a third play fully inside the band
+        # panel (bottom 0.05) — the old 0.118/0.036 put row three at 0.046,
+        # on top of the footer.
         for i, play in enumerate(list(dive.plays)[:3]):
-            y = 0.118 - i * 0.036
-            # The badge Jim's sheet genre wears: a filled PLAY pill fronting
-            # each staked position, so the call reads at a glance.
+            y = 0.122 - i * 0.030
+            # The reference-genre badge: a filled PLAY pill fronting each
+            # staked position, so the call reads at a glance.
             ax.add_patch(FancyBboxPatch(
                 (0.065, y - 0.0075), 0.036, 0.026,
                 boxstyle="round,pad=0,rounding_size=0.005", mutation_aspect=9 / 16,
