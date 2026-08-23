@@ -187,17 +187,61 @@ def _mlb_fp() -> pd.DataFrame:
 def test_mlb_scorer_normalizes_season_totals_per_game() -> None:
     from velocity.dfs.scoring import dk_expected_points_mlb
 
-    points = dk_expected_points_mlb(_mlb_fp())
+    # One player per class: the league prior equals the player's own rate,
+    # so shrinkage is the identity and the raw per-game math is checkable.
+    rows = []
+    for stat, value in {"gs": 30, "g": 30, "ip": 180, "k": 210, "w": 14,
+                        "er": 60, "h": 150, "bb": 45}.items():
+        rows.append({"player_id": "p", "player_name": "Ace One", "team": "X",
+                     "position": "SP", "stat": stat, "value": value, "week": 0})
+    for stat, value in {"g": 100, "h": 100.0, "2b": 20.0, "hr": 15.0,
+                        "rbi": 50.0, "r": 50.0, "bb": 35.0, "sb": 5.0}.items():
+        rows.append({"player_id": "o", "player_name": "Out A", "team": "X",
+                     "position": "OF", "stat": stat, "value": value, "week": 0})
+    rows.append({"player_id": "x", "player_name": "Out E", "team": "X",
+                 "position": "OF", "stat": "h", "value": 50.0, "week": 0})
+    points = dk_expected_points_mlb(pd.DataFrame(rows))
     ace = points[points["player_name"] == "Ace One"].iloc[0]
     expected = (180 * 2.25 + 210 * 2 + 14 * 4 - 60 * 2 - 150 * 0.6
                 - 45 * 0.6) / 30
     assert abs(ace["points"] - round(expected, 2)) < 0.01
     hitter = points[points["player_name"] == "Out A"].iloc[0]
-    # Per-game: h*3 + 2b*2 + hr*7 + rbi*2 + r*2 + bb*2 + sb*5 (rates × weights)
-    expected_h = 1.0 * 3 + 0.2 * 2 + 0.15 * 7 + 0.5 * 2 + 0.5 * 2 + 0.35 * 2 + 0.05 * 5
+    expected_h = (100 * 3 + 20 * 2 + 15 * 7 + 50 * 2 + 50 * 2 + 35 * 2
+                  + 5 * 5) / 100
     assert abs(hitter["points"] - round(expected_h, 2)) < 0.01
-    # No games denominator → no projection.
+    # No games denominator -> no projection (Out E has stats but no g).
     assert "Out E" not in set(points["player_name"])
+
+
+def test_mlb_scorer_shrinks_thin_samples_and_relief_starts() -> None:
+    from velocity.dfs.scoring import dk_expected_points_mlb
+
+    rows = []
+
+    def add(name: str, pos: str, stats: dict) -> None:
+        rows.extend({"player_id": name, "player_name": name, "team": "X",
+                     "position": pos, "stat": k, "value": v, "week": 0}
+                    for k, v in stats.items())
+
+    # An everyday hitter and a one-game call-up with the SAME raw per-game
+    # production: shrinkage must price the call-up well below the regular
+    # (the weak bench bat drags the league prior below their shared rate,
+    # and only the one-game sample follows it down).
+    add("Regular", "OF", {"g": 130, "h": 130.0, "hr": 130 * 0.2, "r": 65.0})
+    add("Call Up", "OF", {"g": 1, "h": 1.0, "hr": 0.2, "r": 0.5})
+    add("Bench Bat", "OF", {"g": 120, "h": 60.0, "hr": 3.0, "r": 20.0})
+    # A true starter and a reliever with one spot start: the reliever's whole
+    # season must NOT be divided by his single start (the live bug).
+    add("Starter", "SP", {"g": 28, "gs": 28, "ip": 170, "k": 180, "w": 12,
+                          "er": 60, "h": 150, "bb": 45})
+    add("Reliever", "RP", {"g": 47, "gs": 1, "ip": 60, "k": 70, "w": 4,
+                           "er": 25, "h": 50, "bb": 20})
+    points = dk_expected_points_mlb(pd.DataFrame(rows)).set_index("player_name")
+    assert points.loc["Call Up", "points"] < points.loc["Regular", "points"] * 0.8
+    # Per-appearance: the reliever prices at his per-outing value (~6), far
+    # below the starter's per-start (~19) — not at 60 IP / 1 start.
+    assert points.loc["Reliever", "points"] < 12
+    assert points.loc["Starter", "points"] > points.loc["Reliever", "points"]
 
 
 def test_solve_slate_builds_a_legal_mlb_lineup() -> None:

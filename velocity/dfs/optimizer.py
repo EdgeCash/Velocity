@@ -303,9 +303,15 @@ def lineup_pool(salaries: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
     must never roster a player the model knows nothing about.
     """
     import re
+    import unicodedata
 
     def norm(name: object) -> str:
-        return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+        # Fold accents BEFORE stripping: statsapi spells "Sánchez", DK
+        # "Sanchez" — deleting the accented letter instead of folding it
+        # would silently drop the player from the pool.
+        folded = unicodedata.normalize("NFKD", str(name)).encode(
+            "ascii", "ignore").decode("ascii")
+        return re.sub(r"[^a-z0-9]+", "", folded.lower())
 
     s = salaries.copy()
     s["_key"] = s["player_name"].map(norm)
