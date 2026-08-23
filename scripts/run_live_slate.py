@@ -68,9 +68,87 @@ def _find_plays(folder: Path) -> Path | None:
     return None
 
 
+def _epa_ratings_rows(ratings: object, plays_per_game: float) -> list[dict]:
+    """Per-team rows from an EPA fit, converted to points per game."""
+    rows = []
+    for team in ratings.teams:  # type: ignore[attr-defined]
+        off = ratings.offense.get(team, 0.0) * plays_per_game  # type: ignore[attr-defined]
+        # Defense is "EPA allowed vs average" — negative is good.
+        dfn = ratings.defense.get(team, 0.0) * plays_per_game  # type: ignore[attr-defined]
+        rows.append({"team": team, "off": off, "def": dfn, "net": off - dfn})
+    return rows
+
+
+def _scores_ratings_rows(ratings: object) -> list[dict]:
+    """Per-team rows from a scores fit (already in points/runs per game)."""
+    rows = []
+    for team in ratings.teams:  # type: ignore[attr-defined]
+        off = ratings.offense.get(team, 0.0)  # type: ignore[attr-defined]
+        dfn = ratings.defense.get(team, 0.0)  # type: ignore[attr-defined]
+        rows.append({"team": team, "off": off, "def": dfn, "net": off - dfn})
+    return rows
+
+
+def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataFrame:
+    """The power-ratings table behind the live fit: team · off · def · net.
+
+    ``off``/``def`` are deviations from league average in the league's
+    natural per-game scale (points; runs for MLB; points per 100
+    possessions for the basketball leagues, which also carry ``pace``).
+    ``def`` is points *allowed* vs average, so negative is good and
+    ``net = off − def`` is the expected margin against an average
+    opponent on a neutral floor.
+    """
+    from velocity.backtest.lab import (
+        BlendedGameModel,
+        PaceEfficiencyModel,
+        StarterAwareModel,
+    )
+
+    pace: dict[str, float] = {}
+    if isinstance(model, PaceEfficiencyModel):
+        rows = _scores_ratings_rows(model.eff_model.ratings)
+        pace = {t: model.pace_league + 2.0 * model.pace_dev.get(t, 0.0)
+                for t in model.eff_model.ratings.teams}
+        scale = "pts/100 poss"
+    elif isinstance(model, StarterAwareModel):
+        rows = _scores_ratings_rows(model.ratings)
+        scale = "runs/gm (ex-starter)"
+    elif isinstance(model, BlendedGameModel):
+        # The 50/50 college blend: each half converted to points first.
+        epa = {r["team"]: r for r in _epa_ratings_rows(
+            model.primary.ratings, plays_per_game=65.0)}
+        rows = []
+        for row in _scores_ratings_rows(model.secondary.ratings):
+            half = epa.get(row["team"], {"off": 0.0, "def": 0.0, "net": 0.0})
+            rows.append({"team": row["team"],
+                         "off": 0.5 * row["off"] + 0.5 * half["off"],
+                         "def": 0.5 * row["def"] + 0.5 * half["def"],
+                         "net": 0.5 * row["net"] + 0.5 * half["net"]})
+        scale = "pts/gm (blend)"
+    else:
+        ratings = getattr(scores_model, "ratings", None) or getattr(
+            model, "ratings", None)
+        if ratings is None:
+            return pd.DataFrame()
+        rows = _scores_ratings_rows(ratings)
+        scale = "runs/gm" if league == "mlb" else "pts/gm"
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame["pace"] = frame["team"].map(pace).astype(float) if pace else float("nan")
+    frame["scale"] = scale
+    frame = frame.sort_values("net", ascending=False).reset_index(drop=True)
+    frame["rank"] = frame.index + 1
+    for col in ("off", "def", "net", "pace"):
+        frame[col] = frame[col].astype(float).round(2)
+    return frame
+
+
 def _build_projection(
     args: argparse.Namespace,
-) -> tuple[Callable[[str, str], GameProjection], list[str]]:
+) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame]:
     """Fit the league's promoted ratings from the committed data → ``(project, teams)``.
 
     NFL: the recency-weighted EPA fit (docs/MODEL_LAB.md — Brier 0.2234 vs
@@ -140,7 +218,14 @@ def _build_projection(
                 home, away, rng=make_rng(), kickoff=kickoff
             )
 
-        return project_epa, list(ratings.teams)
+        nfl_ratings = pd.DataFrame(_epa_ratings_rows(ratings, plays_per_game=63.0))
+        nfl_ratings["pace"] = float("nan")
+        nfl_ratings["scale"] = "pts/gm (EPA)"
+        nfl_ratings = nfl_ratings.sort_values("net", ascending=False).reset_index(drop=True)
+        nfl_ratings["rank"] = nfl_ratings.index + 1
+        for col in ("off", "def", "net"):
+            nfl_ratings[col] = nfl_ratings[col].round(2)
+        return project_epa, list(ratings.teams), nfl_ratings
 
     games = load_games(_find_games(folder), league=args.league)
     # Per-league outcome-noise calibration. Football's constants are the
@@ -270,7 +355,8 @@ def _build_projection(
     def project(home: str, away: str) -> GameProjection:
         return model.project(home, away, rng=make_rng())  # type: ignore[attr-defined,return-value]
 
-    return project, list(scores_model.ratings.teams)
+    return project, list(scores_model.ratings.teams), _ratings_frame(
+        args.league, model, scores_model)
 
 
 def main() -> None:
@@ -388,7 +474,7 @@ def main() -> None:
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
-    project, known_teams = _build_projection(args)
+    project, known_teams, ratings_frame = _build_projection(args)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
@@ -518,6 +604,12 @@ def main() -> None:
         parquet = out_dir / f"slate_{args.league}_{stamp}.parquet"
         persisted.to_parquet(parquet, index=False)
         print(f"\nwrote {len(persisted)} slate rows to {parquet}")
+        # The power-ratings table behind the fit — the site's Ratings page.
+        if not ratings_frame.empty:
+            ratings_frame.assign(league=args.league, generated_at=generated_at).to_parquet(
+                out_dir / f"ratings_{args.league}_{stamp}.parquet", index=False
+            )
+            print(f"wrote {len(ratings_frame)} team ratings")
         # Persist the game→teams+kickoff map so a later grader can join the
         # schedule feed's finals (a different id space) back onto these Odds-API
         # game ids.
@@ -1003,6 +1095,11 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                              asset_dir=asset_dir, league=args.league,
                              number_slides=args.carousel)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
+        # game_id → filename manifest so the site can pin each card to its
+        # matchup page (render_cards returns paths index-aligned with cards).
+        manifest = [{"game_id": str(card.game_id), "kind": "social",
+                     "file": path.name}
+                    for card, path in zip(cards, paths, strict=True)]
 
         # Deep Dive companions — the analytical page behind each matchup card
         # (form/EPA table, margin vs the market, extended props). Best-effort
@@ -1063,8 +1160,16 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             dive_paths = render_deep_dives(dives, Path(args.out), stamp,
                                            asset_dir=asset_dir, league=args.league)
             print(f"wrote {len(dive_paths)} deep dive card(s) to {args.out}")
+            manifest.extend({"game_id": str(dive.card.game_id), "kind": "deepdive",
+                             "file": path.name}
+                            for dive, path in zip(dives, dive_paths, strict=True))
         except Exception as exc:  # noqa: BLE001 - the companion never blocks the card run
             print(f"deep dives skipped: {exc}")
+        if manifest:
+            pd.DataFrame(manifest).assign(league=args.league).to_parquet(
+                Path(args.out) / f"cardindex_{args.league}_{stamp}.parquet",
+                index=False,
+            )
     except Exception as exc:  # noqa: BLE001 - a report surface, never breaks the slate
         print(f"social cards skipped: {exc}")
 

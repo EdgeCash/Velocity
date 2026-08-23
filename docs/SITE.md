@@ -21,12 +21,14 @@ site/
   pages/
     index.md              Today board (market · model · edge · tier) + live ticker
     picks.md              tiered picks + intel vetoes
-    performance.md        units, win rate, cumulative chart, graded slate
-    matchup/[game_id].md  per-game page (markets, sim distributions)
+    performance.md        units, win rate, CLV block, cumulative chart, graded slate
+    matchup/[game_id].md  the game dossier: line movement, markets, sims,
+                          weather, injury report, the game's own cards
+    ratings.md            per-league power ratings with movement
     dfs.md                cash lineup + GPP set
     graphics.md           card room — social/deepdive/simcheck PNGs + captions
     methods.md            the "what's live" transparency block + glossary
-  components/             LiveTicker / HeroBand / CardGallery (svelte)
+  components/             LiveTicker / HeroBand / CardGallery / WeatherLine
   static/cards/           newest-stamp card PNGs (gitignored, per-run)
   worker.js + wrangler.toml + deploy.sh   Cloudflare deploy + /api/scores
 ```

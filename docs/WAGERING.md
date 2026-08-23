@@ -91,9 +91,12 @@ slate before football arrives in September.
    is capped only within each pass, not across them.
 3. **No kill-switch in practice.** The circuit breaker exists but is
    unreachable without bankroll state (gap 1).
-4. **CLV loop is manual.** Backtests and grading run on dispatch; nothing
-   automatically grades yesterday's live slate, attaches closes to live prop
-   bets, or watches rolling CLV per market and flags decay.
+4. **Game-market CLV is automated; props are not.** The daily grader now
+   attaches consensus closes from the hourly odds archive to every game
+   bet (`closing_for_slate` in scripts/grade_yesterday.py — all five
+   leagues snapshot hourly), and the record chain carries
+   `price_clv`/`line_clv` onto the site's Performance page. Still open:
+   closes for prop bets, and automated per-market decay alerts.
 5. **One global `min_edge`.** DESIGN §6.2 calls for thresholds sized to
    estimation error (higher for props/NCAAF); today one number (0.02) serves
    every market. *(The NCAAF points-disagreement filter is now live — the

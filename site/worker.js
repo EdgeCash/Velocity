@@ -19,15 +19,23 @@ const SCOREBOARDS = {
   CBB: "basketball/mens-college-basketball",
 };
 
-async function fetchScores() {
+async function fetchScores(statuses) {
   const games = [];
   await Promise.all(
     Object.entries(SCOREBOARDS).map(async ([lg, path]) => {
       try {
+        // ESPN's edge 403s empty and browser-spoof user agents from
+        // datacenter IPs but passes honest tool UAs — send one.
         const res = await fetch(
           `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`,
-          { headers: { accept: "application/json" } },
+          {
+            headers: {
+              accept: "application/json",
+              "user-agent": "velocity-edge/1.0 (scores ticker)",
+            },
+          },
         );
+        if (statuses) statuses[lg] = res.status;
         if (!res.ok) return;
         const data = await res.json();
         for (const event of data.events ?? []) {
@@ -47,8 +55,9 @@ async function fetchScores() {
             start: event.date ?? "",
           });
         }
-      } catch {
+      } catch (err) {
         // one dark league never blanks the ticker
+        if (statuses) statuses[lg] = `error: ${err?.message ?? err}`;
       }
     }),
   );
@@ -59,21 +68,24 @@ async function fetchScores() {
 }
 
 async function scoresResponse(url, ctx) {
+  const debug = url.searchParams.has("debug");
   const cache = caches.default;
   const key = new Request(new URL("/api/scores", url.origin));
-  const cached = await cache.match(key);
-  if (cached) return cached;
-  const games = await fetchScores();
-  const response = new Response(
-    JSON.stringify({ updated: new Date().toISOString(), games }),
-    {
-      headers: {
-        "content-type": "application/json",
-        "cache-control": "public, max-age=30, s-maxage=45",
-      },
+  if (!debug) {
+    const cached = await cache.match(key);
+    if (cached) return cached;
+  }
+  const statuses = debug ? {} : null;
+  const games = await fetchScores(statuses);
+  const body = { updated: new Date().toISOString(), games };
+  if (debug) body.statuses = statuses;
+  const response = new Response(JSON.stringify(body), {
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "public, max-age=30, s-maxage=45",
     },
-  );
-  ctx.waitUntil(cache.put(key, response.clone()));
+  });
+  if (!debug) ctx.waitUntil(cache.put(key, response.clone()));
   return response;
 }
 
