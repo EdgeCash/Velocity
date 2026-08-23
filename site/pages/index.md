@@ -65,3 +65,8 @@ order by edge desc
 
 _Model output, graded in public. Edge = model probability minus the de-vigged
 market probability; the [Performance](/performance) page carries the record._
+
+<!-- Crawl seed: the matchup template route must have at least one
+     discoverable instance for the static build, even on an empty board
+     (offseason). The sentinel page renders its empty states. -->
+<a href="/matchup/__none__" style="display:none" aria-hidden="true">.</a>

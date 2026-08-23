@@ -26,7 +26,9 @@ site/
                           weather, injury report, the game's own cards
     ratings.md            per-league power ratings with movement
     dfs.md                cash lineup + GPP set
-    graphics.md           card room — social/deepdive/simcheck PNGs + captions
+    graphics/             card room section — per-league pages (left menu)
+                          of the SHEETS (one all-inclusive graphic per game:
+                          card + deep dive composed by report/sheet_png.py)
     methods.md            the "what's live" transparency block + glossary
   components/             LiveTicker / HeroBand / CardGallery / WeatherLine
   static/cards/           newest-stamp card PNGs (gitignored, per-run)

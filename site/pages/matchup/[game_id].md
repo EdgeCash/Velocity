@@ -146,7 +146,8 @@ The rendered graphics for this game — tap to open full-size, save to post.
 select kind, league, file, away, home, caption
 from velocity.cards
 where league != '__none__' and game_id = '${params.game_id}'
-order by case kind when 'social' then 0 when 'deepdive' then 1 else 2 end
+order by case kind when 'sheet' then 0 when 'social' then 1
+  when 'deepdive' then 2 else 3 end
 ```
 
 <CardGallery cards={game_cards} empty="No cards rendered for this game yet — they publish with each run." />

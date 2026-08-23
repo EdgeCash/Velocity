@@ -1095,11 +1095,11 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                              asset_dir=asset_dir, league=args.league,
                              number_slides=args.carousel)
         print(f"wrote {len(paths)} social card(s) to {args.out}")
-        # game_id → filename manifest so the site can pin each card to its
-        # matchup page (render_cards returns paths index-aligned with cards).
-        manifest = [{"game_id": str(card.game_id), "kind": "social",
-                     "file": path.name}
-                    for card, path in zip(cards, paths, strict=True)]
+        # game_id → path maps (render_cards returns paths index-aligned with
+        # cards) — the sheet composer joins the deep dives onto these below.
+        card_by_game = {str(card.game_id): path
+                        for card, path in zip(cards, paths, strict=True)}
+        dive_by_game: dict[str, Path] = {}
 
         # Deep Dive companions — the analytical page behind each matchup card
         # (form/EPA table, margin vs the market, extended props). Best-effort
@@ -1160,11 +1160,28 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             dive_paths = render_deep_dives(dives, Path(args.out), stamp,
                                            asset_dir=asset_dir, league=args.league)
             print(f"wrote {len(dive_paths)} deep dive card(s) to {args.out}")
-            manifest.extend({"game_id": str(dive.card.game_id), "kind": "deepdive",
-                             "file": path.name}
-                            for dive, path in zip(dives, dive_paths, strict=True))
+            dive_by_game = {str(dive.card.game_id): path
+                            for dive, path in zip(dives, dive_paths, strict=True)}
         except Exception as exc:  # noqa: BLE001 - the companion never blocks the card run
             print(f"deep dives skipped: {exc}")
+
+        # The sheet: ONE all-inclusive graphic per game (card + deep dive
+        # stacked), the artifact's only pregame PNG — the intermediate
+        # renders and the deep-dive captions are consumed into it.
+        from velocity.report.sheet_png import compose_sheets
+
+        sheets = compose_sheets(card_by_game, dive_by_game, Path(args.out))
+        social_captions = Path(args.out) / f"social_{args.league}_{stamp}_captions.md"
+        if social_captions.exists():
+            social_captions.rename(
+                Path(args.out) / f"sheet_{args.league}_{stamp}_captions.md")
+        for stale in (*card_by_game.values(), *dive_by_game.values()):
+            stale.unlink(missing_ok=True)
+        dive_captions = Path(args.out) / f"deepdive_{args.league}_{stamp}_captions.md"
+        dive_captions.unlink(missing_ok=True)
+        print(f"composed {len(sheets)} sheet(s)")
+        manifest = [{"game_id": gid, "kind": "sheet", "file": path.name}
+                    for gid, path in sheets.items()]
         if manifest:
             pd.DataFrame(manifest).assign(league=args.league).to_parquet(
                 Path(args.out) / f"cardindex_{args.league}_{stamp}.parquet",
