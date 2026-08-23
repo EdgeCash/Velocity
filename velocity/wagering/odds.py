@@ -14,6 +14,8 @@ American odds convention: a positive price is the profit on a 100 stake
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 
 def american_to_decimal(price: float) -> float:
     """Convert American odds to decimal odds (total return per unit staked)."""
@@ -24,7 +26,7 @@ def american_to_decimal(price: float) -> float:
     return 1.0 + 100.0 / -price
 
 
-def consensus_american(prices) -> float | None:
+def consensus_american(prices: Iterable[object]) -> float | None:
     """The cross-book consensus of American prices, taken in decimal space.
 
     American odds are discontinuous across (−100, 100): the median of
