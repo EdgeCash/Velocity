@@ -118,17 +118,21 @@ def _context_panel(fig: plt.Figure, lineup: Lineup, *, cap: int,
           color=INK_DIM, fontsize=12.5)
 
     stacks = lineup.stacks()
-    _text(fig, x, 0.408, "STACK", color=INK_DIM, fontsize=13.5)
-    if stacks:
-        for i, stack in enumerate(stacks[:2]):
-            _display(fig, x, 0.360 - i * 0.052, stack, color=MODEL, fontsize=19,
-                     fontweight="semibold")
-        _text(fig, x, 0.360 - len(stacks[:2]) * 0.052,
-              "QB with own pass-catchers: correlated scoring",
-              color=INK_DIM, fontsize=12)
-    else:
-        _text(fig, x, 0.360, "no QB stack in the optimal build", color=INK_DIM,
-              fontsize=14)
+    # QB-stack grammar is football's; a roster with no QB slot (MLB classic)
+    # simply has no stack section.
+    has_qb = any(s.position == "QB" for s in lineup.slots)
+    if has_qb:
+        _text(fig, x, 0.408, "STACK", color=INK_DIM, fontsize=13.5)
+        if stacks:
+            for i, stack in enumerate(stacks[:2]):
+                _display(fig, x, 0.360 - i * 0.052, stack, color=MODEL,
+                         fontsize=19, fontweight="semibold")
+            _text(fig, x, 0.360 - len(stacks[:2]) * 0.052,
+                  "QB with own pass-catchers: correlated scoring",
+                  color=INK_DIM, fontsize=12)
+        else:
+            _text(fig, x, 0.360, "no QB stack in the optimal build",
+                  color=INK_DIM, fontsize=14)
 
     _text(fig, x, 0.205, "PROJECTIONS", color=INK_DIM, fontsize=13.5)
     _text(fig, x, 0.170, source_note, color=INK_DIM, fontsize=13)

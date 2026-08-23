@@ -37,8 +37,18 @@ _FETCH_TIMEOUT = 60
 # DK serves these endpoints to browsers; the default urllib UA gets rejected.
 _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
 
-# DK sport codes for the football leagues.
-SPORT_CODES = {"nfl": "NFL", "ncaaf": "CFB"}
+# DK sport codes per league. Every covered vertical banks salary history
+# (the DFS analog of the CLV archive); the optimizer prices the leagues it
+# has a roster spec + projections for (velocity.dfs.pipeline.LEAGUE_SPECS).
+SPORT_CODES = {
+    "nfl": "NFL",
+    "ncaaf": "CFB",
+    "mlb": "MLB",
+    "wnba": "WNBA",
+    "nba": "NBA",
+    "ncaab": "CBB",
+    "nhl": "NHL",
+}
 
 
 class Salaries(pa.DataFrameModel):

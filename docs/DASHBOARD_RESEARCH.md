@@ -150,6 +150,15 @@ TE/DST; MLB 10 with 2P and ≤5 hitters/team; NBA 8; WNBA 6 = 2G/3F/UTIL;
 CBB 8 = 3G/3F/2UTIL); all Showdowns are CPT(1.5× pts and salary)+5 at
 $50k, both teams required.
 
+**Status (2026-08-23): MLB classic is live.** `SPORT_CODES` now covers all
+seven leagues (salary history banks daily for every board DK posts);
+`MLB_CLASSIC` prices the 10-slot roster with the ≤5-hitters-per-team rule
+enforced by iterative cuts, scored from FantasyPros season-total MLB
+projections normalized to per-game (hitters ÷ G) / per-start (pitchers ÷ GS)
+rates — `velocity/dfs/scoring.py:dk_expected_points_mlb`. WNBA/NBA/CBB
+still lack a projections source (FP's public API has none), so those boards
+bank salaries only.
+
 **FanDuel has no free feed in 2026.** `api.fanduel.com` requires a
 logged-in session token (the old public client key is dead; programmatic
 login is 2FA-gated and ToS-gray). The practical FD salary source is

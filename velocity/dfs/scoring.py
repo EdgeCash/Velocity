@@ -34,6 +34,103 @@ DK_POINTS_PER_STAT = {
 
 _ID_COLUMNS = ["player_id", "player_name", "team", "position"]
 
+# --- MLB classic ---------------------------------------------------------------
+# The FantasyPros MLB feed serves SEASON-TOTAL projections, so the scorer
+# normalizes to per-game rates before applying DK weights: hitters by games
+# (``g``), pitchers by starts (``gs``, falling back to ``g``). Stat keys are
+# alias-tolerant like the FP normalizer itself — the exact live spelling is
+# confirmed by the collector's --inspect run.
+
+# Hitter stats → DK points per unit. Singles aren't published directly, so
+# hits score at the single's weight and the extra-base columns top up the
+# difference (2B +5 = 3 + 2, 3B +8 = 3 + 5, HR +10 = 3 + 7).
+_MLB_HITTER_WEIGHTS = {
+    ("h", "hits"): 3.0,
+    ("2b", "doubles"): 2.0,
+    ("3b", "triples"): 5.0,
+    ("hr", "home_runs", "homeruns"): 7.0,
+    ("rbi", "rbis"): 2.0,
+    ("r", "runs"): 2.0,
+    ("bb", "walks"): 2.0,
+    ("hbp",): 2.0,
+    ("sb", "stolen_bases"): 5.0,
+}
+# Pitcher stats → DK points per unit (IP +2.25, K +2, W +4, ER −2; the hits/
+# walks-against −0.6 terms need "allowed" columns FP may not publish — absent
+# keys simply contribute nothing).
+_MLB_PITCHER_WEIGHTS = {
+    ("ip", "innings", "innings_pitched"): 2.25,
+    ("k", "so", "strikeouts"): 2.0,
+    ("w", "wins"): 4.0,
+    ("er", "earned_runs"): -2.0,
+    ("h", "hits", "ha", "hits_allowed"): -0.6,
+    ("bb", "walks", "bba", "walks_allowed"): -0.6,
+}
+_PITCHER_POSITIONS = frozenset({"P", "SP", "RP"})
+
+
+def _wide(fp: pd.DataFrame) -> pd.DataFrame:
+    """Pivot the FP long frame to one row per player with lowercase stat columns."""
+    df = fp.copy()
+    df["stat"] = df["stat"].astype(str).str.lower().str.strip()
+    df["value"] = pd.to_numeric(df["value"], errors="coerce").fillna(0.0)
+    ids = (
+        df.groupby("player_name", dropna=True)
+        .agg(player_id=("player_id", "first"), team=("team", "first"),
+             position=("position", "first"))
+    )
+    stats = df.pivot_table(index="player_name", columns="stat", values="value",
+                           aggfunc="mean")
+    return ids.join(stats, rsuffix="_stat").reset_index()
+
+
+def _dot(frame: pd.DataFrame, weights: dict[tuple[str, ...], float]) -> pd.Series:
+    """Σ weight × first-present-alias column, on the pivoted frame."""
+    total = pd.Series(0.0, index=frame.index)
+    for aliases, weight in weights.items():
+        col = next((a for a in aliases if a in frame.columns), None)
+        if col is not None:
+            total += frame[col].fillna(0.0) * weight
+    return total
+
+
+def dk_expected_points_mlb(fp: pd.DataFrame) -> pd.DataFrame:
+    """FantasyPros MLB season-long projections → expected DK points PER GAME.
+
+    Returns the same shape as :func:`dk_expected_points`. Hitters divide the
+    season-total DK points by projected games; pitchers by projected starts
+    (DK's MLB P pool is the day's probables, so a per-start rate is the right
+    projection). Players without a games denominator are dropped — a season
+    total with no game count prices nothing.
+    """
+    if fp.empty:
+        return pd.DataFrame(columns=[*_ID_COLUMNS, "points"])
+    wide = _wide(fp)
+    position = wide["position"].astype(str).str.upper().str.strip()
+    is_pitcher = position.str.split("/").str[0].isin(_PITCHER_POSITIONS)
+    # Earned runs may arrive only as a rate — derive the total from ERA × IP.
+    if "er" not in wide.columns and {"era", "ip"}.issubset(wide.columns):
+        wide["er"] = (pd.to_numeric(wide["era"], errors="coerce")
+                      * pd.to_numeric(wide["ip"], errors="coerce") / 9.0)
+
+    def column(*names: str) -> pd.Series:
+        for name in names:
+            if name in wide.columns:
+                return pd.to_numeric(wide[name], errors="coerce")
+        return pd.Series(float("nan"), index=wide.index)
+
+    games = column("g", "games")
+    starts = column("gs", "games_started")
+    season_points = _dot(wide, _MLB_HITTER_WEIGHTS).where(
+        ~is_pitcher, _dot(wide, _MLB_PITCHER_WEIGHTS))
+    denom = games.where(~is_pitcher, starts.fillna(games))
+    per_game = season_points / denom.where(denom > 0)
+
+    out = wide[["player_name", "player_id", "team", "position"]].assign(
+        points=per_game.round(2))
+    out = out.dropna(subset=["points"]).reset_index(drop=True)
+    return out[[*_ID_COLUMNS, "points"]]
+
 
 def dk_expected_points(fp: pd.DataFrame) -> pd.DataFrame:
     """Collapse a FantasyPros long frame into expected DK points per player.
