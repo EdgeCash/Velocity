@@ -116,7 +116,8 @@ def test_build_deep_dives_computes_cover_and_over() -> None:
     assert sum(dive.margin_pmf.values()) == pytest.approx(1.0)
     assert dive.stat_season == 2025
     assert dive.away_record and dive.home_record
-    assert len(dive.rows) == 8  # scoring + six EPA unit rows
+    assert len(dive.rows) == 10  # scoring + last-10 recency + six EPA unit rows
+    assert any(r.label == "POINTS / GM — LAST 10" for r in dive.rows)
     text = deep_dive_caption(dive)
     assert "covers in" in text and "sims" in text
 
@@ -128,7 +129,8 @@ def test_build_deep_dives_maps_display_codes_to_dataset_keys() -> None:
         team_names={"BUFF": "BUF", "KAN": "KC"},
     )
     assert dives[0].away_record != ""  # resolved through the mapping
-    assert len(dives[0].rows) == 2  # scoring rows only without plays
+    # Scoring + last-10 recency rows only without plays (no EPA table).
+    assert len(dives[0].rows) == 4
 
 
 def test_render_deep_dive_writes_a_png(tmp_path: Path) -> None:
@@ -303,3 +305,91 @@ def test_render_verdict_band_writes_a_png(tmp_path: Path) -> None:
     assert paths and paths[0].exists() and paths[0].stat().st_size > 10_000
     captions = tmp_path / "deepdive_nfl_20260910T120000Z_captions.md"
     assert "The play: OVER 47.5" in captions.read_text()
+
+
+def _mlb_games() -> pd.DataFrame:
+    rows = [
+        ("m1", 2026, 1, "New York Yankees", "Boston Red Sox", 5, 3),
+        ("m2", 2026, 2, "Boston Red Sox", "New York Yankees", 2, 6),
+        ("m3", 2026, 3, "New York Yankees", "Baltimore Orioles", 4, 4),
+    ]
+    return pd.DataFrame(rows, columns=["game_id", "season", "week", "home_team",
+                                       "away_team", "home_score", "away_score"])
+
+
+def test_recent_scoring_form_windows_the_newest_games() -> None:
+    from velocity.report.deepdive import recent_scoring_form
+
+    rows = [(2026, w, "A", "B", 10 + w, 0) for w in range(1, 13)]
+    games = pd.DataFrame(rows, columns=["season", "week", "home_team",
+                                        "away_team", "home_score", "away_score"])
+    recent = recent_scoring_form(games, 2026, n=10)
+    # A's last 10 home scores are weeks 3..12 → mean of 13..22.
+    assert recent.loc["A", "ppg"] == pytest.approx(sum(range(13, 23)) / 10)
+    assert recent.loc["B", "papg"] == pytest.approx(sum(range(13, 23)) / 10)
+
+
+def test_rotation_form_rates_and_lineup_ks() -> None:
+    from velocity.report.deepdive import rotation_form
+
+    starters = pd.DataFrame([
+        # NYY starter: 18 outs (6 IP), 8 K, 1 BB, 1 HR — faced BOS's lineup.
+        {"game_id": "m1", "team": "New York Yankees", "side": "home",
+         "outs": 18.0, "k": 8, "bb": 1, "hr": 1},
+        # BOS starter: 15 outs (5 IP), 3 K, 4 BB, 2 HR — faced NYY's lineup.
+        {"game_id": "m1", "team": "Boston Red Sox", "side": "away",
+         "outs": 15.0, "k": 3, "bb": 4, "hr": 2},
+    ])
+    form = rotation_form(starters, _mlb_games())
+    nyy = form.loc["New York Yankees"]
+    assert nyy["sp_k9"] == pytest.approx(8 / 6 * 9)
+    assert nyy["sp_ip"] == pytest.approx(6.0)
+    # NYY's lineup struck out 3 times against the opposing starter.
+    assert nyy["bat_k_pg"] == pytest.approx(3.0)
+    bos = form.loc["Boston Red Sox"]
+    assert bos["sp_bb9"] == pytest.approx(4 / 5 * 9)
+    assert bos["bat_k_pg"] == pytest.approx(8.0)
+
+
+def test_build_rows_mlb_wall_uses_runs_noun_and_rotation() -> None:
+    scoring = pd.DataFrame({
+        "ppg": {"New York Yankees": 5.2, "Boston Red Sox": 4.1},
+        "papg": {"New York Yankees": 3.9, "Boston Red Sox": 4.8},
+    })
+    rotation = pd.DataFrame({
+        "sp_k9": {"New York Yankees": 9.5, "Boston Red Sox": 7.2},
+        "sp_bb9": {"New York Yankees": 2.1, "Boston Red Sox": 3.8},
+        "sp_hr9": {"New York Yankees": 0.9, "Boston Red Sox": 1.4},
+        "sp_ip": {"New York Yankees": 5.8, "Boston Red Sox": 5.1},
+        "bat_k_pg": {"New York Yankees": 7.5, "Boston Red Sox": 9.8},
+    })
+    rows = build_rows("Boston Red Sox", "New York Yankees", scoring, None,
+                      rotation=rotation, league="mlb")
+    labels = [r.label for r in rows]
+    assert labels[0] == "RUNS / GM"
+    assert "SP K / 9" in labels and "LINEUP K / GM vs SP" in labels
+    k9 = next(r for r in rows if r.label == "SP K / 9")
+    assert k9.advantage == "home"  # 9.5 vs 7.2, higher is better
+    bb9 = next(r for r in rows if r.label == "SP BB / 9")
+    assert bb9.advantage == "home"  # 2.1 vs 3.8, lower is better
+
+
+def test_build_deep_dives_mlb_carries_the_stat_wall() -> None:
+    card = _card(away_name="Boston Red Sox", home_name="New York Yankees",
+                 away_code="BOS", home_code="NYY")
+    starters = pd.DataFrame([
+        {"game_id": "m1", "team": "New York Yankees", "side": "home",
+         "starter_id": "p1", "starter_name": "Ace One",
+         "outs": 18.0, "k": 8, "bb": 1, "hbp": 0, "hr": 1, "batters_faced": 24},
+        {"game_id": "m1", "team": "Boston Red Sox", "side": "away",
+         "starter_id": "p2", "starter_name": "Ace Two",
+         "outs": 15.0, "k": 3, "bb": 4, "hbp": 1, "hr": 2, "batters_faced": 23},
+    ])
+    dives = build_deep_dives(
+        [card], {"g1": _projection()}, _mlb_games(), None,
+        team_names={"BOS": "Boston Red Sox", "NYY": "New York Yankees"},
+        starters=starters, league="mlb",
+    )
+    labels = [r.label for r in dives[0].rows]
+    assert labels[0] == "RUNS / GM"
+    assert "SP K / 9" in labels and "SP INNINGS / START" in labels

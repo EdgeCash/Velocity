@@ -23,7 +23,10 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from velocity.report.social import MarketView, SocialCard, WatchEntry
+from velocity.report.social import MarketView, PlayCall, SocialCard, WatchEntry
+
+__all__ = ["DeepDive", "PlayCall", "StatRow", "build_deep_dives",
+           "deep_dive_caption", "plays_from_bets"]
 
 # A row's advantage fires only when the gap clears this fraction of the
 # league's cross-team standard deviation for that stat — coin-flip edges stay
@@ -49,48 +52,6 @@ class StatRow:
 
     def home_text(self) -> str:
         return self.fmt.format(self.home_value)
-
-
-@dataclass(frozen=True)
-class PlayCall:
-    """One suggested wager for the card's verdict band.
-
-    A staked slate bet reduced to what a reader acts on: the position, the
-    number, the price/book it was shopped to, the stake, and (when the
-    intelligence layer ran) its conviction tier. ``edge`` is the model-vs-
-    devigged-market probability gap that qualified it.
-    """
-
-    market: str
-    side: str
-    point: float | None
-    price: float
-    book: str
-    stake: float
-    edge: float | None = None
-    tier: str | None = None
-
-    def label(self, away_code: str, home_code: str) -> str:
-        """"DET -3.5 · -110 (bookA) · 2.1u" — the position as a bettor writes it."""
-        if self.market == "moneyline":
-            who = home_code if self.side == "home" else away_code
-            pos = f"{who} ML"
-        elif self.market == "spread":
-            who = home_code if self.side == "home" else away_code
-            pos = f"{who} {self.point:+g}" if self.point is not None else f"{who} spread"
-        elif self.market == "total":
-            pos = f"{self.side.upper()} {self.point:g}" if self.point is not None \
-                else self.side.upper()
-        elif self.market in ("team_total_home", "team_total_away"):
-            who = home_code if self.market.endswith("home") else away_code
-            pos = f"{who} TT {self.side.upper()} {self.point:g}" if self.point is not None \
-                else f"{who} team total {self.side}"
-        else:
-            pos = f"{self.market} {self.side}"
-        bits = [pos, f"{self.price:+.0f} ({self.book})", f"{self.stake:.1f}u"]
-        if self.tier:
-            bits.append(f"tier {self.tier}")
-        return " · ".join(bits)
 
 
 @dataclass(frozen=True)
@@ -193,6 +154,81 @@ def scoring_form(games: pd.DataFrame) -> tuple[int, pd.DataFrame]:
     return season, form
 
 
+def recent_scoring_form(games: pd.DataFrame, season: int, n: int = 10) -> pd.DataFrame:
+    """Per-team scoring form over each team's last ``n`` completed games.
+
+    The reference genre's recency split (their "L10"): season averages hide a
+    lineup change or a rotation turning over; the last-ten line shows it.
+    Columns mirror :func:`scoring_form` (``ppg``/``papg``), computed per team
+    over its own most recent ``n`` finals in ``season``.
+    """
+    played = games[
+        (games["season"] == season)
+        & games["home_score"].notna() & games["away_score"].notna()
+    ]
+    if played.empty:
+        return pd.DataFrame(columns=["ppg", "papg"])
+    order = next((c for c in ("kickoff", "week") if c in played.columns), None)
+    played = (played.sort_values(order) if order else played).reset_index(drop=True)
+    home = played[["home_team", "home_score", "away_score"]].rename(columns={
+        "home_team": "team", "home_score": "pf", "away_score": "pa"})
+    away = played[["away_team", "away_score", "home_score"]].rename(columns={
+        "away_team": "team", "away_score": "pf", "home_score": "pa"})
+    long = pd.concat([home, away]).sort_index(kind="stable")
+    recent = long.groupby("team").tail(n)
+    return recent.groupby("team").agg(ppg=("pf", "mean"), papg=("pa", "mean"))
+
+
+def rotation_form(starters: pd.DataFrame, games: pd.DataFrame) -> pd.DataFrame:
+    """Per-team rotation + lineup form from the committed MLB starters bank.
+
+    The bank carries every start's defense-independent line (outs, K, BB, HR,
+    batters faced), which is exactly the reference genre's pitching block —
+    minus ERA, which isn't banked and is the noisier signal anyway. Columns:
+
+    * ``sp_k9`` / ``sp_bb9`` / ``sp_hr9`` — the team's rotation rates per 9,
+    * ``sp_ip`` — innings per start (rotation length → bullpen exposure),
+    * ``bat_k_pg`` — the team's LINEUP strikeouts per game against opposing
+      starters (lower = a tougher lineup to put away).
+
+    ``starters`` should already be season-filtered (build_deep_dives does).
+    """
+    cols = ["sp_k9", "sp_bb9", "sp_hr9", "sp_ip", "bat_k_pg"]
+    needed = {"game_id", "team", "side", "outs", "k", "bb", "hr"}
+    if (starters is None or starters.empty
+            or not needed.issubset(starters.columns)
+            or "game_id" not in games.columns):
+        return pd.DataFrame(columns=cols)
+    span = starters.copy()
+    for col in ("outs", "k", "bb", "hr"):
+        span[col] = pd.to_numeric(span[col], errors="coerce")
+    span = span[span["outs"] > 0]
+    if span.empty:
+        return pd.DataFrame(columns=cols)
+    pitching = span.groupby("team").agg(
+        outs=("outs", "sum"), k=("k", "sum"), bb=("bb", "sum"),
+        hr=("hr", "sum"), starts=("game_id", "size"),
+    )
+    innings = pitching["outs"] / 3.0
+    out = pd.DataFrame({
+        "sp_k9": pitching["k"] / innings * 9.0,
+        "sp_bb9": pitching["bb"] / innings * 9.0,
+        "sp_hr9": pitching["hr"] / innings * 9.0,
+        "sp_ip": innings / pitching["starts"],
+    })
+    # The batting side: each start's K count charged to the OPPOSING lineup.
+    sides = games[["game_id", "home_team", "away_team"]].copy()
+    sides["game_id"] = sides["game_id"].astype(str)
+    merged = span.assign(game_id=span["game_id"].astype(str)).merge(
+        sides, on="game_id", how="inner")
+    merged["batting_team"] = merged["away_team"].where(
+        merged["side"].astype(str) == "home", merged["home_team"])
+    batting = merged.groupby("batting_team").agg(
+        k=("k", "sum"), n=("game_id", "size"))
+    out["bat_k_pg"] = batting["k"] / batting["n"]
+    return out[cols]
+
+
 def epa_form(plays: pd.DataFrame, season: int) -> pd.DataFrame:
     """Per-team EPA/play splits for ``season``: the model's own inputs.
 
@@ -287,18 +323,49 @@ def _record(form: pd.DataFrame, team: str) -> str:
     return base
 
 
+# What a "point" is called per league — the reference genre's own nouns.
+_SCORE_NOUN = {"mlb": "RUNS", "nhl": "GOALS"}
+
+
 def build_rows(
     away: str,
     home: str,
     scoring: pd.DataFrame,
     epa: pd.DataFrame | None,
+    *,
+    recent: pd.DataFrame | None = None,
+    rotation: pd.DataFrame | None = None,
+    league: str = "nfl",
 ) -> tuple[StatRow, ...]:
-    """The mirrored table: scoring form always; EPA unit rows when plays exist."""
+    """The mirrored table: scoring form always; EPA unit rows when plays exist;
+    last-10 recency rows when ``recent`` is supplied; MLB rotation/lineup rows
+    when the starters bank (``rotation``) is."""
+    noun = _SCORE_NOUN.get(league, "POINTS")
     candidates: list[StatRow | None] = [
-        _row("POINTS / GM", scoring["ppg"], away, home, higher_is_better=True),
-        _row("POINTS ALLOWED / GM", scoring["papg"], away, home,
+        _row(f"{noun} / GM", scoring["ppg"], away, home, higher_is_better=True),
+        _row(f"{noun} ALLOWED / GM", scoring["papg"], away, home,
              higher_is_better=False),
     ]
+    if recent is not None and not recent.empty:
+        candidates.extend([
+            _row(f"{noun} / GM — LAST 10", recent["ppg"], away, home,
+                 higher_is_better=True),
+            _row(f"{noun} ALLOWED — LAST 10", recent["papg"], away, home,
+                 higher_is_better=False),
+        ])
+    if rotation is not None and not rotation.empty:
+        candidates.extend([
+            _row("SP K / 9", rotation["sp_k9"], away, home,
+                 higher_is_better=True),
+            _row("SP BB / 9", rotation["sp_bb9"], away, home,
+                 higher_is_better=False),
+            _row("SP HR / 9", rotation["sp_hr9"], away, home,
+                 higher_is_better=False, fmt="{:.2f}"),
+            _row("SP INNINGS / START", rotation["sp_ip"], away, home,
+                 higher_is_better=True),
+            _row("LINEUP K / GM vs SP", rotation["bat_k_pg"], away, home,
+                 higher_is_better=False),
+        ])
     if epa is not None and not epa.empty:
         fmt = "{:+.3f}"
         candidates.extend([
@@ -424,6 +491,7 @@ def build_deep_dives(
     probables: Mapping[tuple[str, str, None], tuple[str | None, str | None]] | None = None,
     plays_by_game: Mapping[str, Sequence[PlayCall]] | None = None,
     why_signals: Mapping[str, Sequence[str]] | None = None,
+    league: str = "nfl",
 ) -> list[DeepDive]:
     """One :class:`DeepDive` per social card, from the committed data.
 
@@ -437,8 +505,10 @@ def build_deep_dives(
     card header.
     """
     stat_season, scoring = scoring_form(games)
+    recent = recent_scoring_form(games, stat_season)
     epa = epa_form(plays, stat_season) if plays is not None else None
     names = dict(team_names or {})
+    rotation = None
     if starters is not None and "game_id" in games.columns:
         # The probable's line is his CURRENT season (the reference
         # convention), not the whole multi-season bank.
@@ -446,6 +516,8 @@ def build_deep_dives(
             games.loc[games["season"] == stat_season, "game_id"].astype(str)
         )
         starters = starters[starters["game_id"].astype(str).isin(season_ids)]
+        if league == "mlb":
+            rotation = rotation_form(starters, games)
 
     dives: list[DeepDive] = []
     for card in cards:
@@ -471,7 +543,8 @@ def build_deep_dives(
         away_sp_id, home_sp_id = (None, None)
         if probables is not None:
             home_sp_id, away_sp_id = probables.get((home, away, None), (None, None))
-        rows = build_rows(away, home, scoring, epa)
+        rows = build_rows(away, home, scoring, epa,
+                          recent=recent, rotation=rotation, league=league)
         game_plays = tuple((plays_by_game or {}).get(card.game_id, ()))
         why = model_why(
             card, rows, p_cover, p_over,

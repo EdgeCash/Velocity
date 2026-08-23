@@ -40,7 +40,7 @@ from matplotlib.patches import FancyBboxPatch
 
 from velocity.report.assets import bar_colors, logo_path, register_fonts
 from velocity.report.sim_check import SimCheckCard, ordinal, sim_check_caption
-from velocity.report.social import _WATCH_MARKETS, MarketView, SocialCard
+from velocity.report.social import _WATCH_MARKETS, MarketView, PlayCall, SocialCard
 
 # Surfaces + ink (text) tokens.
 BG = "#0b0f14"
@@ -320,11 +320,40 @@ def _matrix(fig: plt.Figure, card: SocialCard) -> None:
               color=INK_DIM, fontsize=11.5, ha="center")
 
     edges = card.edges()
+    # The slate's staked plays, mapped onto the matrix columns (team totals
+    # stay on the deep dive's verdict band — they have no column here). Where
+    # a market carries a play, the PLAY badge outranks the softer LEAN chip;
+    # the highest stake wins a column with two plays (line-shopped middles).
+    play_cols: dict[str, PlayCall] = {}
+    col_of = {"spread": "spread", "total": "total", "moneyline": "win"}
+    for play in card.plays:
+        col = col_of.get(str(play.market))
+        if col and (col not in play_cols or play.stake > play_cols[col].stake):
+            play_cols[col] = play
     ax = fig.add_axes((0, 0, 1, 1))
     ax.axis("off")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     for key, cx in _COLS:
+        staked = play_cols.get(key)
+        if staked is not None:
+            ax.add_patch(FancyBboxPatch(
+                (cx - 0.105, 0.272), 0.21, 0.062,
+                boxstyle="round,pad=0,rounding_size=0.012", mutation_aspect=9 / 16,
+                facecolor=_GOOD, edgecolor="none",
+            ))
+            pos = staked.position(card.away_code, card.home_code)
+            badge = f"PLAY · {pos}"
+            _display(fig, cx, 0.308, badge, color=BG,
+                     fontsize=19.0 * min(1.0, 15 / len(badge)),
+                     ha="center", fontweight="bold")
+            bits = [f"{staked.price:+.0f}", f"{staked.stake:.1f}u"]
+            if staked.tier:
+                bits.append(f"tier {staked.tier}")
+            # The detail line sits inside the filled chip — dark ink, not dim.
+            _text(fig, cx, 0.280, " · ".join(bits), color=BG, fontsize=11.5,
+                  ha="center", fontweight="semibold")
+            continue
         call = edges[key]
         if call.fired:
             ax.add_patch(FancyBboxPatch(
