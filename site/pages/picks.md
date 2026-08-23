@@ -28,6 +28,37 @@ order by conviction desc
   <Column id=edge title="Edge" fmt='pct1' contentType=delta />
 </DataTable>
 
+```sql prop_picks
+select
+  upper(league) as lg,
+  player,
+  case market
+    when 'pitcher_strikeouts' then 'Pitcher Ks'
+    when 'player_shots_on_goal' then 'Shots on goal'
+    when 'player_rebounds' then 'Rebounds'
+    when 'receptions' then 'Receptions'
+    else market end as market_label,
+  upper(side) as side, point, price, stake, edge, p_model,
+  '/matchup/' || game_id as matchup_link
+from velocity.props
+where league != '__none__'
+order by edge desc
+```
+
+## Prop plays
+
+<DataTable data={prop_picks} link=matchup_link emptySet=pass emptyMessage="No prop plays today — the board posts when player lines are live.">
+  <Column id=lg title="League" />
+  <Column id=player title="Player" />
+  <Column id=market_label title="Market" />
+  <Column id=side title="Side" />
+  <Column id=point title="Line" fmt='#,##0.0' />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
+  <Column id=stake title="Stake" fmt='"$"#,##0.00' />
+  <Column id=p_model title="Model %" fmt='pct0' />
+  <Column id=edge title="Edge" fmt='pct1' contentType=delta />
+</DataTable>
+
 ```sql vetoed
 select upper(league) as lg,
   away_team || ' @ ' || home_team as matchup,
