@@ -48,7 +48,7 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir),
-         "--out", str(out)],
+         "--out", str(out), "--cards-out", str(tmp_path / "cards")],
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
@@ -80,6 +80,41 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     assert str(record["slate_date"].dtype).startswith("datetime64")
 
 
+def test_collect_cards_copies_newest_stamp_and_captions(tmp_path: Path) -> None:
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    old, new = "20260101T120000Z", "20260102T120000Z"
+    # An older stamp that must lose, and the newest batch with captions.
+    (slate_dir / f"social_nfl_{old}_NYJ_at_NE.png").write_bytes(b"old")
+    (slate_dir / f"social_nfl_{new}_BUF_at_KC.png").write_bytes(b"png1")
+    (slate_dir / f"social_nfl_{new}_DAL_at_PHI.png").write_bytes(b"png2")
+    (slate_dir / f"social_nfl_{new}_captions.md").write_text(
+        "BUF @ KC — model: BUF 69%.\n\n---\n\nDAL @ PHI — model: PHI 78%.\n")
+    (slate_dir / f"recordcard_mlb_{new}.png").write_bytes(b"rec")
+    static_out = tmp_path / "static" / "cards"
+    (static_out / "stale").mkdir(parents=True)
+    (static_out / "stale.png").write_bytes(b"stale")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir),
+         "--out", str(tmp_path / "data"), "--cards-out", str(static_out)],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+
+    copied = sorted(p.name for p in static_out.glob("*.png"))
+    assert copied == [f"recordcard_mlb_{new}.png",
+                      f"social_nfl_{new}_BUF_at_KC.png",
+                      f"social_nfl_{new}_DAL_at_PHI.png"]
+    cards = pd.read_parquet(tmp_path / "data" / "cards.parquet")
+    assert len(cards) == 3
+    buf = cards[cards["file"] == f"social_nfl_{new}_BUF_at_KC.png"].iloc[0]
+    assert (buf["away"], buf["home"]) == ("BUF", "KC")
+    assert buf["caption"].startswith("BUF @ KC — model")
+    rec = cards[cards["kind"] == "recordcard"].iloc[0]
+    assert rec["away"] == "" and rec["league"] == "mlb"
+
+
 def test_build_units_coerces_object_profit(tmp_path: Path) -> None:
     # Real graded frames arrive with profit as object dtype (pending rows mix
     # None upstream) — the crash that failed the first live site build.
@@ -99,7 +134,7 @@ def test_build_units_coerces_object_profit(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir),
-         "--out", str(tmp_path / "data")],
+         "--out", str(tmp_path / "data"), "--cards-out", str(tmp_path / "cards")],
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr

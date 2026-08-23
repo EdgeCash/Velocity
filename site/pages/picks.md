@@ -23,7 +23,7 @@ order by conviction desc
   <Column id=market_label title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' />
-  <Column id=price title="Price" fmt='+#,##0' />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
   <Column id=stake title="Stake" fmt='"$"#,##0.00' />
   <Column id=edge title="Edge" fmt='pct1' contentType=delta />
 </DataTable>
