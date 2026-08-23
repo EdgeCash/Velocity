@@ -98,6 +98,9 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
     settled = record[record["result"].isin(["win", "loss", "push"])].copy()
     if settled.empty:
         return pd.DataFrame()
+    # Real graded frames carry profit as object dtype (pending rows mix None
+    # in upstream) — coerce before any cython op.
+    settled["profit"] = pd.to_numeric(settled["profit"], errors="coerce").fillna(0.0)
     settled["slate_date"] = pd.to_datetime(settled["slate_date"]).dt.date
     daily = (settled.groupby(["league", "slate_date"], as_index=False)
              .agg(profit=("profit", "sum"), bets=("profit", "size")))

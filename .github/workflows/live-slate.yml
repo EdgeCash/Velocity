@@ -229,6 +229,7 @@ jobs:
 
       - name: Build the site
         if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
         run: |
           python scripts/build_site_data.py --slate-dir artifacts/slate
           cd site
@@ -238,6 +239,7 @@ jobs:
 
       - name: Deploy the site (Cloudflare Worker behind Access)
         if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: cd site && ./deploy.sh

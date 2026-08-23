@@ -71,3 +71,30 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     assert "salary" in dfs.columns and "league" in dfs.columns
     record = pd.read_parquet(out / "record.parquet")
     assert "result" in record.columns
+
+
+def test_build_units_coerces_object_profit(tmp_path: Path) -> None:
+    # Real graded frames arrive with profit as object dtype (pending rows mix
+    # None upstream) — the crash that failed the first live site build.
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    frame = pd.DataFrame([
+        {"section": "games", "play": "A@B", "market": "total", "side": "under",
+         "point": 8.5, "price": -110.0, "stake": 1.0, "result": "win",
+         "profit": 0.91, "slate_date": pd.Timestamp("2026-01-01")},
+        {"section": "games", "play": "C@D", "market": "spread", "side": "home",
+         "point": -3.0, "price": -110.0, "stake": 1.0, "result": "pending",
+         "profit": None, "slate_date": pd.Timestamp("2026-01-01")},
+    ])
+    frame["profit"] = frame["profit"].astype(object)
+    frame.to_parquet(slate_dir / "cumulative_record_mlb_20260101T120000Z.parquet",
+                     index=False)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir),
+         "--out", str(tmp_path / "data")],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    units = pd.read_parquet(tmp_path / "data" / "units.parquet")
+    assert units["units"].tolist() == pytest.approx([0.91])
