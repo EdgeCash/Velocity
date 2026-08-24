@@ -126,3 +126,64 @@ def test_slim_team_box_keeps_possession_columns_only() -> None:
     assert slim.loc[0, "game_id"] == "401"
     assert slim.loc[0, "field_goals_attempted"] == 68.0
     assert slim.loc[0, "season"] == 2026
+
+
+# --- batter lines (the home-run model's substrate) ------------------------------
+
+_BOX_BATTERS = {
+    "teams": {
+        "home": {
+            "team": {"name": "Seattle Mariners"},
+            # The TEAM list is the FINAL lineup: the replaced starter is gone
+            # from it, which is why the player-level code is authoritative.
+            "battingOrder": [1, 2, 99],
+            "players": {
+                "ID1": {"person": {"id": 1, "fullName": "Lead Off"},
+                        "battingOrder": "100",
+                        "stats": {"batting": {"plateAppearances": 5,
+                                              "atBats": 4, "homeRuns": 1}}},
+                "ID2": {"person": {"id": 2, "fullName": "Clean Up"},
+                        "battingOrder": "400",
+                        "stats": {"batting": {"plateAppearances": 4,
+                                              "atBats": 4, "homeRuns": 2}}},
+                "ID99": {"person": {"id": 99, "fullName": "Pinch Hitter"},
+                         "battingOrder": "401",
+                         "stats": {"batting": {"plateAppearances": 1,
+                                               "atBats": 1, "homeRuns": 0}}},
+                "ID3": {"person": {"id": 3, "fullName": "Late Glove"},
+                        "stats": {"batting": {"plateAppearances": 0}}},
+                "ID4": {"person": {"id": 4, "fullName": "Reliever"},
+                        "stats": {"pitching": {"inningsPitched": "1.0"}}},
+            },
+        },
+        "away": {"team": {"name": "Chicago Cubs"}, "players": {}},
+    }
+}
+
+
+def test_extract_batters_reads_slots_and_plate_appearances() -> None:
+    rows = bp.extract_batters(_BOX_BATTERS, "823101")
+    by_name = {r["batter_name"]: r for r in rows}
+    # Only players who actually batted appear — no defensive replacements,
+    # no pitchers.
+    assert set(by_name) == {"Lead Off", "Clean Up", "Pinch Hitter"}
+    assert by_name["Clean Up"]["hr"] == 2
+    assert by_name["Lead Off"]["lineup_slot"] == 1
+    assert by_name["Lead Off"]["pa"] == 5
+
+
+def test_extract_batters_marks_the_real_starters() -> None:
+    rows = bp.extract_batters(_BOX_BATTERS, "823101")
+    by_name = {r["batter_name"]: r for r in rows}
+    # "400" started the 4th slot even though the FINAL team list drops him;
+    # "401" came off the bench into the same slot.
+    assert by_name["Clean Up"]["started"] is True
+    assert by_name["Pinch Hitter"]["started"] is False
+    assert by_name["Pinch Hitter"]["lineup_slot"] == 4
+    assert all(r["game_id"] == "823101" for r in rows)
+    assert all(r["team"] == "Seattle Mariners" for r in rows)
+
+
+def test_extract_batters_survives_an_empty_payload() -> None:
+    assert bp.extract_batters({}, "g1") == []
+    assert bp.extract_batters({"teams": {"home": {}}}, "g1") == []

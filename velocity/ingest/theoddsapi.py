@@ -78,6 +78,7 @@ PROP_MARKET_BY_KEY = {
     "player_receptions": "receptions",
     "player_anytime_td": "anytime_td",
     "pitcher_strikeouts": "pitcher_strikeouts",
+    "batter_home_runs": "batter_home_runs",
     "player_shots_on_goal": "shots_on_goal",
     "player_rebounds": "rebounds",
 }

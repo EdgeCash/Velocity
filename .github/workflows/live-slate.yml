@@ -194,6 +194,14 @@ jobs:
             gh run download "$id" --dir artifacts/dk || true
           fi
 
+      # ---- the home-run board (props + DK's salary-free single-stat contest)
+      - name: Build the MLB home-run board
+        continue-on-error: true
+        run: |
+          python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
+          PYTHONPATH=scripts python scripts/build_hr_board.py \
+            --out artifacts/slate || true
+
       - name: Build DFS lineups
         continue-on-error: true
         run: |

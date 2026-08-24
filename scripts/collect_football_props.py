@@ -45,7 +45,7 @@ _TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
 LEAGUE_PROP_MARKETS = {
     "nfl": DEFAULT_EVENT_MARKETS,
     "ncaaf": DEFAULT_EVENT_MARKETS,
-    "mlb": "pitcher_strikeouts",
+    "mlb": "pitcher_strikeouts,batter_home_runs",
     "nhl": "player_shots_on_goal",
     "nba": "player_rebounds",
 }
