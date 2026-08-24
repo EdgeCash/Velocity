@@ -635,6 +635,28 @@ def main() -> None:
             args, events, projections, game_log, props_frame, now, generated_at
         )
 
+    # The PUBLISH gate — which of the staked plays are worth POSTING. A much
+    # higher bar than bettable (velocity/intel/publish.py): tier, an edge
+    # BAND with a ceiling, and no adverse line move. Most nights it returns
+    # nothing, which is the intended output — "no picks is a pick".
+    if convictions and args.out:
+        try:
+            from velocity.intel.publish import gate_summary, publish_slate
+
+            published, audit = publish_slate(convictions, canonical)
+            print(f"\npublish gate: {gate_summary(audit)}")
+            for c in published:
+                bet = c.bet
+                point = "" if bet.point is None else f" {bet.point:+g}"
+                print(f"  POST  {bet.market} {bet.side}{point} "
+                      f"({bet.price:+.0f} {bet.book}) tier {c.tier}")
+            stamp_gate = now.strftime("%Y%m%dT%H%M%SZ")
+            audit.assign(league=args.league, generated_at=generated_at).to_parquet(
+                Path(args.out) / f"publish_{args.league}_{stamp_gate}.parquet",
+                index=False)
+        except Exception as exc:  # noqa: BLE001 - a report surface, never the slate
+            print(f"publish gate skipped: {exc}")
+
     if args.out:
         out_dir = Path(args.out)
         out_dir.mkdir(parents=True, exist_ok=True)
