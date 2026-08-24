@@ -384,3 +384,36 @@ def test_game_time_ct_formats_and_handles_missing() -> None:
     assert game_time_ct(None) == "—"
     # January (CST, UTC-6): the tz database keeps the hour honest.
     assert game_time_ct(pd.Timestamp("2027-01-10 23:40")) == "5:40P CT"
+
+
+def test_eligible_board_drops_out_players_and_non_probable_pitchers() -> None:
+    from velocity.dfs.optimizer import MLB_CLASSIC, NFL_CLASSIC
+    from velocity.dfs.pipeline import eligible_board
+
+    board = pd.DataFrame([
+        {"player_name": "Real Probable", "position": "P", "probable": True,
+         "status": "None"},
+        {"player_name": "Bench Arm", "position": "P", "probable": False,
+         "status": "None"},
+        {"player_name": "IL Arm", "position": "P", "probable": True,
+         "status": "IL"},
+        {"player_name": "Everyday Hitter", "position": "OF", "probable": False,
+         "status": "None"},
+        {"player_name": "DTD Hitter", "position": "OF", "probable": False,
+         "status": "DTD"},
+        {"player_name": "Out Hitter", "position": "OF", "probable": False,
+         "status": "OUT"},
+    ])
+    kept = set(eligible_board(board, MLB_CLASSIC)["player_name"])
+    # Non-probable and IL'd pitchers leave (the live Turbo-lineup bug);
+    # hitters stay regardless of the flag; DTD plays, OUT doesn't.
+    assert kept == {"Real Probable", "Everyday Hitter", "DTD Hitter"}
+    # Football: the probable rule is MLB's; the status rule is universal.
+    nfl = pd.DataFrame([
+        {"player_name": "QB", "position": "QB", "status": "Q"},
+        {"player_name": "IR RB", "position": "RB", "status": "IR"},
+    ])
+    assert set(eligible_board(nfl, NFL_CLASSIC)["player_name"]) == {"QB"}
+    # Pre-flag snapshots (no status/probable columns) pass through untouched.
+    old = pd.DataFrame([{"player_name": "P Old", "position": "P"}])
+    assert len(eligible_board(old, MLB_CLASSIC)) == 1

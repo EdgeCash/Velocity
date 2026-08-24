@@ -63,6 +63,12 @@ class Salaries(pa.DataFrameModel):
     competition: Series[str] = Field(nullable=True)
     kickoff: Series[pa.DateTime] = Field(nullable=True)
     status: Series[str] = Field(nullable=True)
+    # DK's probable-pitcher marker (playerGameAttributes id 1) — true on
+    # exactly the announced starters, absent on every other pitcher and on
+    # hitters. The optimizer's P pool must respect it: DK lists EVERY rostered
+    # pitcher on the board (their app hides them behind a "remove non
+    # probables" toggle), and a non-probable never starts.
+    probable: Series[bool] = Field()
 
     class Config:
         coerce = True
@@ -70,7 +76,7 @@ class Salaries(pa.DataFrameModel):
 
 _COLUMNS = [
     "draft_group_id", "player_id", "player_name", "position", "salary",
-    "team", "competition", "kickoff", "status",
+    "team", "competition", "kickoff", "status", "probable",
 ]
 
 
@@ -86,6 +92,7 @@ def _empty_salaries() -> pd.DataFrame:
             "competition": pd.Series(dtype=str),
             "kickoff": pd.Series(dtype="datetime64[ns]"),
             "status": pd.Series(dtype=str),
+            "probable": pd.Series(dtype=bool),
         }
     )
     return Salaries.validate(empty)
@@ -106,6 +113,10 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
             continue
         player_id = d.get("playerDkId") or d.get("playerId") or name
         competition = d.get("competition") or {}
+        probable = any(
+            attr.get("id") == 1 and str(attr.get("value")).lower() == "true"
+            for attr in d.get("playerGameAttributes") or []
+        )
         rows.append(
             {
                 "draft_group_id": str(draft_group_id),
@@ -117,6 +128,7 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
                 "competition": competition.get("name"),
                 "kickoff": competition.get("startTime"),
                 "status": d.get("status"),
+                "probable": probable,
             }
         )
     if not rows:
