@@ -98,10 +98,51 @@ def test_publish_slate_splits_and_audits_every_candidate() -> None:
 
 def test_publish_slate_orders_by_conviction() -> None:
     published, _ = publish_slate([
-        _conv(score=0.7, game_id="g1"),
+        _conv(score=0.80, game_id="g1"),
         _conv(score=0.95, game_id="g2"),
     ])
     assert [c.bet.game_id for c in published] == ["g2", "g1"]
+
+
+def test_conviction_floor_is_stricter_than_tier_A() -> None:
+    # Tier A only needs a 0.65 composite, which the blend lets a bet reach on
+    # EDGE ALONE. Publishing demands more than merely bettable.
+    marginal = gate_bet(_conv(score=0.66))
+    assert not marginal.published and "conviction" in marginal.reason
+    assert gate_bet(_conv(score=0.80)).published
+
+
+def test_context_must_corroborate_not_merely_fail_to_object() -> None:
+    # A big edge that no signal supports is the shape of a line we have
+    # mispriced — the adverse-selection profile the record flagged.
+    uncorroborated = Conviction(bet=_bet(), edge_score=0.95,
+                                context_score=0.0, score=0.80, tier="A")
+    result = gate_bet(uncorroborated)
+    assert not result.published and "corroborate" in result.reason
+    # Actively negative context is likewise refused.
+    against = Conviction(bet=_bet(), edge_score=0.95, context_score=-0.4,
+                         score=0.80, tier="A")
+    assert not gate_bet(against).published
+
+
+def test_max_plays_caps_a_freak_board_but_is_not_a_quota() -> None:
+    many = [_conv(score=0.80 + i * 0.01, game_id=f"g{i}") for i in range(12)]
+    published, audit = publish_slate(many, max_plays=5)
+    assert len(published) == 5
+    # The cap keeps the HIGHEST conviction, and says so in the audit.
+    assert [c.bet.game_id for c in published] == ["g11", "g10", "g9", "g8", "g7"]
+    capped = audit[audit["reason"].str.contains("outside the top", na=False)]
+    assert len(capped) == 7
+    assert not capped["published"].any()
+    # A quiet board still returns nothing — the cap is a ceiling, not a floor.
+    assert publish_slate([_conv(tier="C")], max_plays=5)[0] == []
+
+
+def test_audit_banks_conviction_and_context_for_calibration() -> None:
+    _published, audit = publish_slate([_conv(score=0.83)])
+    row = audit.iloc[0]
+    assert row["conviction"] == pytest.approx(0.83)
+    assert row["context"] == pytest.approx(0.3)
 
 
 def test_no_picks_is_a_pick() -> None:

@@ -44,6 +44,19 @@ PUBLISHABLE_TIERS = ("A",)
 # the ceiling is the adverse-selection guard the record argued for.
 DEFAULT_MIN_EDGE = 0.030
 DEFAULT_MAX_EDGE = 0.120
+# Conviction floor on the intel composite. Tier A only needs 0.65, and the
+# blend (0.4*edge + 0.6*context) lets a bet reach that on EDGE ALONE with
+# neutral context — which is precisely the adverse-selection profile §2 of
+# docs/PUBLISH_GATE.md warns about. Publishing demands more than bettable.
+DEFAULT_MIN_CONVICTION = 0.72
+# ...and the context must actually corroborate, not merely fail to object.
+# This is the "conviction, not arithmetic" rule with teeth: a big edge no
+# signal supports is the exact shape of a line we have mispriced.
+DEFAULT_MIN_CONTEXT = 0.05
+# A guardrail, not a quota. "No picks is a pick" means the floor is zero;
+# this caps the ceiling so one freak board cannot dump 30 plays into a feed
+# that is supposed to read as high-conviction.
+DEFAULT_MAX_PLAYS = 5
 # How far the market may move against us (in probability terms, from the
 # price we shopped to the newest price on the board) before the play is
 # withdrawn. A couple of cents of drift is noise; a real move is a message.
@@ -121,6 +134,8 @@ def gate_bet(
     max_edge: float = DEFAULT_MAX_EDGE,
     max_adverse_drift: float = DEFAULT_MAX_ADVERSE_DRIFT,
     publishable_tiers: Sequence[str] = PUBLISHABLE_TIERS,
+    min_conviction: float = DEFAULT_MIN_CONVICTION,
+    min_context: float = DEFAULT_MIN_CONTEXT,
 ) -> GateResult:
     """Decide whether one judged bet is post-worthy."""
     bet = conviction.bet
@@ -129,6 +144,14 @@ def gate_bet(
         return GateResult(False, "vetoed by the intel layer", tier=tier)
     if tier not in publishable_tiers:
         return GateResult(False, f"tier {tier} below publishable", tier=tier)
+    if conviction.score < min_conviction:
+        return GateResult(False,
+                          f"conviction {conviction.score:.2f} below "
+                          f"{min_conviction:.2f}", tier=tier)
+    if conviction.context_score < min_context:
+        return GateResult(False,
+                          f"context {conviction.context_score:+.2f} does not "
+                          "corroborate the edge", tier=tier)
 
     p_fair = bet.p_fair
     if p_fair is None or pd.isna(p_fair):
@@ -161,6 +184,9 @@ def publish_slate(
     max_edge: float = DEFAULT_MAX_EDGE,
     max_adverse_drift: float = DEFAULT_MAX_ADVERSE_DRIFT,
     publishable_tiers: Sequence[str] = PUBLISHABLE_TIERS,
+    min_conviction: float = DEFAULT_MIN_CONVICTION,
+    min_context: float = DEFAULT_MIN_CONTEXT,
+    max_plays: int = DEFAULT_MAX_PLAYS,
 ) -> tuple[list[Conviction], pd.DataFrame]:
     """Split judged bets into the publishable set and a full audit frame.
 
@@ -169,9 +195,9 @@ def publish_slate(
     mysterious — the same discipline the vetoed-picks table already follows.
     """
     prices = current_prices(lines)
-    published: list[Conviction] = []
     rows: list[dict[str, object]] = []
-    for conviction in convictions:
+    passed: list[tuple[int, Conviction]] = []
+    for index, conviction in enumerate(convictions):
         bet = conviction.bet
         key = (str(bet.game_id), str(bet.market), str(bet.side))
         result = gate_bet(
@@ -179,22 +205,35 @@ def publish_slate(
             min_edge=min_edge, max_edge=max_edge,
             max_adverse_drift=max_adverse_drift,
             publishable_tiers=publishable_tiers,
+            min_conviction=min_conviction, min_context=min_context,
         )
         if result.published:
-            published.append(conviction)
+            passed.append((index, conviction))
         rows.append({
             "game_id": str(bet.game_id), "market": str(bet.market),
             "side": str(bet.side), "player": bet.player,
             "price": float(bet.price), "stake": float(bet.stake),
             "edge": result.edge, "tier": result.tier, "drift": result.drift,
+            # Banked so the thresholds can be CALIBRATED from real boards
+            # rather than argued about — see docs/PUBLISH_GATE.md §6.
+            "conviction": float(conviction.score),
+            "context": float(conviction.context_score),
             "published": result.published, "reason": result.reason,
         })
+
+    # Highest conviction first — the post's running order — then the ceiling.
+    passed.sort(key=lambda pair: pair[1].score, reverse=True)
+    if max_plays >= 0 and len(passed) > max_plays:
+        for index, _conviction in passed[max_plays:]:
+            rows[index]["published"] = False
+            rows[index]["reason"] = f"outside the top {max_plays} by conviction"
+        passed = passed[:max_plays]
+
     columns = ["game_id", "market", "side", "player", "price", "stake",
-               "edge", "tier", "drift", "published", "reason"]
+               "edge", "tier", "drift", "conviction", "context",
+               "published", "reason"]
     audit = pd.DataFrame(rows, columns=columns)
-    # Highest conviction first — the post's running order.
-    published.sort(key=lambda c: c.score, reverse=True)
-    return published, audit
+    return [conviction for _index, conviction in passed], audit
 
 
 def gate_summary(audit: pd.DataFrame) -> str:
