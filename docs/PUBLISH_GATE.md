@@ -49,8 +49,14 @@ Three rules, in the order they bite:
 1. **An edge BAND, not a floor.** Below `DEFAULT_MIN_EDGE` (0.030) there is
    no edge; above `DEFAULT_MAX_EDGE` (0.120) the number is a data-quality
    alarm, per §2.
-2. **Conviction, not arithmetic.** The intel layer must rate the bet tier A.
-   A vetoed bet never posts regardless of edge.
+2. **Conviction, not arithmetic.** Tier A, plus a composite floor
+   (`DEFAULT_MIN_CONVICTION` 0.72) and a *positive context* requirement
+   (`DEFAULT_MIN_CONTEXT` 0.05). Tier A alone is not enough: it needs only a
+   0.65 composite, and the blend (`0.4·edge + 0.6·context`) lets a bet reach
+   that on **edge alone with neutral context** — precisely the
+   adverse-selection profile of §2. A big edge that no signal corroborates
+   is the shape of a line we have mispriced. A vetoed bet never posts
+   regardless of edge.
 3. **The market must not have moved against us.** `adverse_drift` compares
    the price we shopped to the newest board price, in probability terms.
    Positive drift means the market moved away from our side. Note the sign
@@ -58,8 +64,22 @@ Three rules, in the order they bite:
    inverted comparison here would withdraw exactly the best plays, which is
    what the test suite pins.
 
+A fourth rule is a guardrail rather than a filter: `DEFAULT_MAX_PLAYS` (5)
+caps the night at the highest-conviction plays. "No picks is a pick" sets
+the floor at zero; this stops one freak board from dumping thirty plays into
+a feed that is supposed to read as high-conviction.
+
 Every candidate lands in an audit frame with the reason it failed, so a
 quiet night is explainable rather than mysterious.
+
+### Calibration status — these numbers are provisional
+
+The first live board cleared **30 of 121** candidates on tier A alone, which
+is not a high-conviction product; the conviction and context floors above
+were added in response. Their exact values are reasoned, not yet fitted: the
+audit frame banks `conviction` and `context` for every candidate precisely
+so the thresholds can be set from a few weeks of real boards. Expect these
+constants to move once there is data to move them with.
 
 **"No picks is a pick."** The gate returns nothing on most nights by
 design. An empty wager post is the honest output of a quiet board.
