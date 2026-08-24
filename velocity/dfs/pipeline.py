@@ -57,6 +57,91 @@ def is_season_long(fp: pd.DataFrame) -> bool:
     return bool((weeks == 0).all())
 
 
+@dataclass(frozen=True)
+class SlateInfo:
+    """One priceable slate grouping: DK's identity for a draft group."""
+
+    draft_group_id: str
+    start: pd.Timestamp | None  # slate lock (tz-naive UTC)
+    suffix: str  # DK's grouping label: "Turbo" / "Night" / "Early" / ""
+    n_games: int
+
+
+def classic_slates(salaries: pd.DataFrame) -> list[SlateInfo]:
+    """Every solvable classic slate grouping in a snapshot, in lock order.
+
+    DK posts several classic boards per day — the main slate plus Early /
+    Night / Turbo groupings — as separate draft groups sharing one contest
+    type. The main slate (most games) anchors which ``contest_type_id`` is
+    "classic" for this board, then every multi-game group of that type is a
+    slate worth solving. Snapshots banked before the type column existed
+    fall back to the multi-game filter alone (showdowns are single-game, and
+    salary-less formats like Tiers never survive normalization anyway).
+    """
+    main = main_slate_group(salaries)
+    if main is None:
+        return []
+    by_group = salaries.groupby(salaries["draft_group_id"].astype(str)).agg(
+        games=("competition", "nunique"),
+        start=("slate_start", "first") if "slate_start" in salaries.columns
+        else ("kickoff", "min"),
+        suffix=("suffix", "first") if "suffix" in salaries.columns
+        else ("draft_group_id", lambda _s: ""),
+        contest_type=("contest_type_id", "first")
+        if "contest_type_id" in salaries.columns
+        else ("draft_group_id", lambda _s: None),
+    )
+    multi = by_group[by_group["games"] >= 2]
+    classic_type = by_group.loc[str(main), "contest_type"]
+    if classic_type is not None and not pd.isna(classic_type):
+        multi = multi[multi["contest_type"] == classic_type]
+    multi = multi.sort_values(["start", "games"], ascending=[True, False])
+    return [
+        SlateInfo(
+            draft_group_id=str(gid),
+            start=None if pd.isna(row["start"]) else pd.Timestamp(row["start"]),
+            suffix="" if pd.isna(row["suffix"]) else str(row["suffix"]),
+            n_games=int(row["games"]),
+        )
+        for gid, row in multi.iterrows()
+    ]
+
+
+def game_time_ct(kickoff: object) -> str:
+    """A game start as the cards state times ("6:40P CT"), or an em-dash.
+
+    Central time via the real tz database (a fixed UTC offset would drift an
+    hour across DST), from the tz-naive-UTC kickoffs the DK snapshot banks.
+    """
+    try:
+        stamp = pd.Timestamp(kickoff)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "—"
+    if pd.isna(stamp):
+        return "—"
+    central = stamp.tz_localize("UTC").tz_convert("America/Chicago")
+    return central.strftime("%-I:%M%p CT").replace("AM", "A").replace("PM", "P")
+
+
+def slate_label_ct(slate: SlateInfo) -> str:
+    """"Mon 5:40 PM CT (Turbo) · 3 games" — the slate as DK's lobby names it.
+
+    Central time to match every other timestamp the cards state. Empty when
+    the snapshot carried no slate start (a --draft-group pin, old files).
+    """
+    bits: list[str] = []
+    if slate.start is not None:
+        central = slate.start.tz_localize("UTC").tz_convert("America/Chicago")
+        bits.append(central.strftime("%a %-I:%M %p CT"))
+    if slate.suffix:
+        bits.append(f"({slate.suffix})")
+    if slate.n_games:
+        noun = "game" if slate.n_games == 1 else "games"
+        bits.append(f"· {slate.n_games} {noun}" if bits
+                    else f"{slate.n_games} {noun}")
+    return " ".join(bits)
+
+
 def main_slate_group(salaries: pd.DataFrame) -> str | None:
     """The draft group that looks like the classic main slate.
 
@@ -179,10 +264,12 @@ def lineup_frame(run: LineupRun) -> pd.DataFrame:
     """The solved lineup as a persistable frame (empty when unsolved)."""
     if run.lineup is None:
         return pd.DataFrame(
-            columns=["slot", "player_name", "position", "team", "salary", "points"]
+            columns=["slot", "player_name", "position", "team", "salary",
+                     "points", "kickoff"]
         )
     return pd.DataFrame([
         {"slot": s.slot, "player_name": s.player_name, "position": s.position,
-         "team": s.team, "salary": s.salary, "points": s.points}
+         "team": s.team, "salary": s.salary, "points": s.points,
+         "kickoff": s.kickoff}
         for s in run.lineup.slots
     ]).assign(draft_group_id=run.draft_group_id)

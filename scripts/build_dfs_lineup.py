@@ -77,23 +77,61 @@ def main() -> None:
               "lineup can't be priced from season totals; skipping")
         return
 
-    run = solve_slate(salaries, fp, draft_group=args.draft_group, spec=spec,
-                      scorer=scorer)
-    if run.lineup is None:
-        print(f"no solvable lineup (group {run.draft_group_id or 'none'}: "
-              f"{run.n_salaried} salaried, {run.n_pool} projected)")
+    # Every classic slate grouping DK posted (main + Early/Night/Turbo), each
+    # solved on its own board; --draft-group pins one. The card renders the
+    # main slate; the parquet carries them all for the site's DFS page.
+    from velocity.dfs.pipeline import (
+        SlateInfo,
+        classic_slates,
+        game_time_ct,
+        slate_label_ct,
+    )
+
+    if args.draft_group:
+        slates = [SlateInfo(str(args.draft_group), None, "", 0)]
+    else:
+        slates = classic_slates(salaries)
+    if not slates:
+        print("no multi-game slate groupings on the board")
         return
-    print(f"draft group {run.draft_group_id}: {run.n_games} games, "
-          f"{run.n_pool}/{run.n_salaried} players projected")
-    print(f"optimal lineup: ${run.lineup.total_salary:,} · "
-          f"{run.lineup.total_points:.1f} DK pts")
+
+    frames: list[pd.DataFrame] = []
+    solved: list[tuple] = []
+    for slate in slates:
+        run = solve_slate(salaries, fp, draft_group=slate.draft_group_id,
+                          spec=spec, scorer=scorer)
+        label = slate_label_ct(slate)
+        if run.lineup is None:
+            print(f"{label or slate.draft_group_id}: no solvable lineup "
+                  f"({run.n_salaried} salaried, {run.n_pool} projected)")
+            continue
+        print(f"{label or slate.draft_group_id} (group {run.draft_group_id}): "
+              f"{run.n_games} games, {run.n_pool}/{run.n_salaried} projected → "
+              f"${run.lineup.total_salary:,} · {run.lineup.total_points:.1f} DK pts")
+        rows = lineup_frame(run)
+        frames.append(rows.assign(
+            slate_start=slate.start, suffix=slate.suffix, slate=label,
+            game_time=rows["kickoff"].map(game_time_ct)))
+        solved.append((slate, run))
+    if not solved:
+        print("no solvable lineup on any slate grouping")
+        return
+    # Today's main slate fronts the card + GPP: among the slates locking on
+    # the earliest date, the one with the most games (a bigger slate tomorrow
+    # must not outrank tonight's board).
+    first_day = min((s.start for s, _r in solved if s.start is not None),
+                    default=None)
+    todays = [pair for pair in solved
+              if first_day is None or pair[0].start is None
+              or pair[0].start.date() == first_day.date()]
+    slate, run = max(todays or solved, key=lambda pair: pair[1].n_games)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
-    lineup_frame(run).to_parquet(frame_dest, index=False)
-    print(f"wrote lineup frame to {frame_dest}")
+    pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
+    print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
 
     if args.gpp > 0 and args.league in ("nfl", "ncaaf"):
         # Best-effort like every surface past the cash lineup. Football only:
@@ -122,17 +160,27 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 - the portfolio never breaks the lineup
             print(f"GPP portfolio skipped: {exc}")
 
+    import dataclasses
+
     kind = {"nfl": "DK CLASSIC", "ncaaf": "DK CFB CLASSIC",
             "mlb": "DK MLB CLASSIC"}.get(args.league, "DK CLASSIC")
-    slate_label = f"{kind} · {run.n_games} GAMES"
+    label = f"{kind} · {run.n_games} GAMES"
+    # Lock time + grouping only — the game count is already stated.
+    lock = slate_label_ct(dataclasses.replace(slate, n_games=0))
+    if lock:
+        label = f"{label} · {lock.upper()}"
+    source = ("statsapi season rates scored as DK points" if args.league == "mlb"
+              else "FantasyPros consensus scored as DK points")
     when = datetime.now(UTC).strftime("%A, %b %-d").upper()
     card_dest = out / f"dfs_{args.league}_{stamp}.png"
-    render_dfs_card(run.lineup, card_dest, when=when, slate_label=slate_label)
+    render_dfs_card(run.lineup, card_dest, when=when, slate_label=label,
+                    source_note=source)
     print(f"rendered lineup card to {card_dest}")
     captions = out / f"dfs_{args.league}_{stamp}_captions.md"
+    caption_label = f"{kind.lower()} ({run.n_games} games"
+    caption_label += f", {lock})" if lock else ")"
     captions.write_text(
-        dfs_caption(run.lineup, slate_label=f"{kind.lower()} ({run.n_games} games)")
-        + "\n"
+        dfs_caption(run.lineup, slate_label=caption_label) + "\n"
     )
 
 

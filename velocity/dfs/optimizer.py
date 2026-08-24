@@ -78,6 +78,9 @@ class LineupSlot:
     team: str | None
     salary: int
     points: float
+    # The player's game start (tz-naive UTC, from the DK board) — the card's
+    # per-row time column. None when the pool didn't carry it.
+    kickoff: pd.Timestamp | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +218,7 @@ def _assign_slots(rows: pd.DataFrame, spec: RosterSpec) -> list[LineupSlot] | No
     slots: list[LineupSlot] = []
     for slot in spec.slots:
         row = assignment[slot] if slot in assignment else base_queues[slot].pop(0)
+        kickoff = getattr(row, "kickoff", None)
         slots.append(
             LineupSlot(
                 slot=slot,
@@ -223,6 +227,8 @@ def _assign_slots(rows: pd.DataFrame, spec: RosterSpec) -> list[LineupSlot] | No
                 team=None if pd.isna(row.team) else str(row.team),
                 salary=int(row.salary),
                 points=float(row.points),
+                kickoff=None if kickoff is None or pd.isna(kickoff)
+                else pd.Timestamp(kickoff),
             )
         )
     return slots

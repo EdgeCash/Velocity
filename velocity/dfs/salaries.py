@@ -133,11 +133,20 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
     return Salaries.validate(df[_COLUMNS])
 
 
+def _clean_suffix(suffix: Any) -> str:
+    """DK's ``ContestStartTimeSuffix`` (" (Turbo)", " (Night)") → "Turbo"."""
+    if not suffix:
+        return ""
+    return str(suffix).strip().strip("()").strip()
+
+
 def normalize_draft_groups(lobby: Mapping[str, Any]) -> pd.DataFrame:
     """The lobby's draft groups as a small frame: id, contest type, start, games.
 
     ``contest_type_id`` distinguishes the game styles (classic vs showdown
     etc.); the collector banks them all and downstream picks what it prices.
+    ``suffix`` is DK's own slate label ("Turbo", "Night", "Early"; empty for
+    the plain slates) — how the lobby tells same-day groupings apart.
     """
     rows = [
         {
@@ -146,12 +155,13 @@ def normalize_draft_groups(lobby: Mapping[str, Any]) -> pd.DataFrame:
             "start": g.get("StartDate"),
             "game_count": g.get("GameCount"),
             "tag": g.get("DraftGroupTag"),
+            "suffix": _clean_suffix(g.get("ContestStartTimeSuffix")),
         }
         for g in lobby.get("DraftGroups") or []
         if g.get("DraftGroupId") is not None
     ]
     df = pd.DataFrame(rows, columns=["draft_group_id", "contest_type_id", "start",
-                                     "game_count", "tag"])
+                                     "game_count", "tag", "suffix"])
     if not df.empty:
         start = pd.to_datetime(df["start"], errors="coerce", utc=True)
         df["start"] = start.dt.tz_localize(None)

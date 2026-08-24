@@ -80,3 +80,48 @@ def test_collector_from_file_banks_normalized_parquet(tmp_path: Path) -> None:
     assert len(salaries) == 2
     assert (salaries["league"] == "nfl").all()
     assert "collected_at" in salaries.columns
+
+
+def test_normalize_draft_groups_cleans_the_suffix() -> None:
+    lobby = {"DraftGroups": [
+        {"DraftGroupId": 1, "ContestTypeId": 28, "GameCount": 7,
+         "StartDate": "2026-08-24T23:40:00.0000000Z",
+         "ContestStartTimeSuffix": None},
+        {"DraftGroupId": 2, "ContestTypeId": 28, "GameCount": 3,
+         "StartDate": "2026-08-24T22:40:00.0000000Z",
+         "ContestStartTimeSuffix": " (Turbo)"},
+    ]}
+    groups = normalize_draft_groups(lobby)
+    assert list(groups["suffix"]) == ["", "Turbo"]
+
+
+def test_collector_banks_slate_metadata_with_rows(tmp_path: Path) -> None:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "collect_dk_salaries",
+        Path(__file__).resolve().parents[1] / "scripts" / "collect_dk_salaries.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["collect_dk_salaries"] = mod
+    spec.loader.exec_module(mod)
+
+    groups = normalize_draft_groups({"DraftGroups": [
+        {"DraftGroupId": 7, "ContestTypeId": 28, "GameCount": 2,
+         "StartDate": "2026-08-24T22:40:00.0000000Z",
+         "ContestStartTimeSuffix": " (Night)"},
+    ]})
+    frame = normalize_draftables({"draftables": [
+        {"displayName": "A Player", "salary": 5000, "playerDkId": 1,
+         "position": "OF", "teamAbbreviation": "NYY",
+         "competition": {"name": "NYY @ BOS",
+                         "startTime": "2026-08-25T01:40:00Z"}},
+    ]}, "7")
+    mod._write_league("mlb", [frame], tmp_path, "stamp",
+                      pd.Timestamp("2026-08-24"), groups=groups)
+    banked = pd.read_parquet(tmp_path / "dk_salaries_mlb_stamp.parquet")
+    row = banked.iloc[0]
+    assert row["contest_type_id"] == 28
+    assert row["suffix"] == "Night"
+    assert row["slate_start"] == pd.Timestamp("2026-08-24 22:40")

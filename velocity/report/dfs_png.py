@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch
 
 from velocity.dfs.optimizer import SALARY_CAP, Lineup
+from velocity.dfs.pipeline import game_time_ct
 from velocity.report.social_png import (
     BG,
     DPI,
@@ -41,7 +42,8 @@ from velocity.report.social_png import (
 )
 
 # Roster column x-positions inside the left panel.
-_X_CHIP, _X_NAME, _X_TEAM, _X_SALARY, _X_POINTS = 0.068, 0.135, 0.375, 0.475, 0.575
+_X_CHIP, _X_NAME, _X_TEAM = 0.068, 0.135, 0.335
+_X_TIME, _X_SALARY, _X_POINTS = 0.395, 0.495, 0.575
 
 
 def _stacked_names(lineup: Lineup) -> set[str]:
@@ -60,7 +62,8 @@ def _stacked_names(lineup: Lineup) -> set[str]:
 def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
     stacked = _stacked_names(lineup)
     for label, x, ha in (("POS", _X_CHIP, "left"), ("PLAYER", _X_NAME, "left"),
-                         ("TEAM", _X_TEAM, "left"), ("SALARY", _X_SALARY, "right"),
+                         ("TEAM", _X_TEAM, "left"), ("GAME", _X_TIME, "left"),
+                         ("SALARY", _X_SALARY, "right"),
                          ("PROJ", _X_POINTS, "right")):
         _text(fig, x, 0.795, label, color=INK_DIM, fontsize=12.5, ha=ha)
     ax = fig.add_axes((0, 0, 1, 1))
@@ -85,6 +88,8 @@ def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
         _display(fig, _X_NAME, y - 0.004, slot.player_name, color=INK,
                  fontsize=20, fontweight="semibold")
         _text(fig, _X_TEAM, y, slot.team or "—", color=INK_DIM, fontsize=14)
+        _text(fig, _X_TIME, y, game_time_ct(slot.kickoff), color=INK_DIM,
+              fontsize=13.5)
         _text(fig, _X_SALARY, y, f"${slot.salary:,}", color=INK, fontsize=15,
               ha="right")
         _display(fig, _X_POINTS, y - 0.004, f"{slot.points:.1f}", color=INK,

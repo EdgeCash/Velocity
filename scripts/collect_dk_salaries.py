@@ -40,10 +40,19 @@ def _write_league(
     out: Path,
     tag: str,
     collected_at: pd.Timestamp,
+    groups: pd.DataFrame | None = None,
 ) -> None:
     salaries = (
         pd.concat(frames, ignore_index=True) if frames else normalize_draftables({}, "0")
     ).assign(league=league, collected_at=collected_at)
+    if groups is not None and not groups.empty and not salaries.empty:
+        # Slate identity rides with every row: the game style (classic vs
+        # showdown/tiers/...), the slate's start, and DK's own grouping label
+        # ("Turbo"/"Night"/"Early") — what the multi-slate solver keys on.
+        meta = groups.rename(columns={"start": "slate_start"})[
+            ["draft_group_id", "contest_type_id", "slate_start", "suffix"]
+        ]
+        salaries = salaries.merge(meta, on="draft_group_id", how="left")
     dest = out / f"dk_salaries_{league}_{tag}.parquet"
     salaries.to_parquet(dest, index=False)
     n_groups = salaries["draft_group_id"].nunique() if not salaries.empty else 0
@@ -106,7 +115,7 @@ def main() -> None:
                 json.dumps(payload)
             )
             frames.append(normalize_draftables(payload, str(group_id)))
-        _write_league(league, frames, out, tag, collected_at)
+        _write_league(league, frames, out, tag, collected_at, groups=groups)
 
 
 if __name__ == "__main__":
