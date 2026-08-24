@@ -43,6 +43,9 @@ PROP_MARKETS = [
     "pitcher_strikeouts",
     "shots_on_goal",
     "rebounds",
+    # The lottery-ticket prop, modeled off batted-ball skill
+    # (velocity/models/props_hr.py, docs/PROPS_HR.md).
+    "batter_home_runs",
 ]
 PROP_SIDES = ["over", "under"]
 
