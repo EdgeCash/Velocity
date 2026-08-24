@@ -319,3 +319,68 @@ def test_mlb_solver_enforces_the_five_hitter_team_cap() -> None:
             per_team[s.team] = per_team.get(s.team, 0) + 1
     assert per_team["NYY"] == 5  # capped, not the unconstrained 6-7
     assert max(per_team.values()) <= 5
+
+
+def test_classic_slates_selects_same_type_multi_game_groups() -> None:
+    from velocity.dfs.pipeline import classic_slates, slate_label_ct
+
+    rows = []
+
+    def board(gid, n_games, ctype, start, suffix, players=12):
+        for i in range(players):
+            rows.append({
+                "draft_group_id": gid, "player_id": f"{gid}-{i}",
+                "player_name": f"P {gid} {i}", "position": "OF",
+                "salary": 3000, "team": f"T{i % (2 * n_games)}",
+                "competition": f"game {i % n_games}",
+                "contest_type_id": ctype,
+                "slate_start": pd.Timestamp(start), "suffix": suffix,
+            })
+
+    board("100", 7, 28, "2026-08-24 23:40", "")          # main classic
+    board("101", 3, 28, "2026-08-24 22:40", "Turbo")     # early turbo classic
+    board("102", 6, 28, "2026-08-25 00:38", "Night")     # night classic
+    board("103", 7, 45, "2026-08-24 23:40", "MLB Tiers")  # other game style
+    board("104", 1, 114, "2026-08-24 23:10", "ATL @ MIL")  # showdown
+    slates = classic_slates(pd.DataFrame(rows))
+    assert [s.draft_group_id for s in slates] == ["101", "100", "102"]  # lock order
+    assert [s.suffix for s in slates] == ["Turbo", "", "Night"]
+    label = slate_label_ct(slates[0])
+    # 22:40 UTC in August is 5:40 PM CDT.
+    assert label == "Mon 5:40 PM CT (Turbo) · 3 games"
+
+
+def test_classic_slates_falls_back_without_type_columns() -> None:
+    from velocity.dfs.pipeline import classic_slates
+
+    rows = []
+    for gid, n_games in (("1", 5), ("9", 1)):
+        for i in range(8):
+            rows.append({
+                "draft_group_id": gid, "player_id": f"{gid}-{i}",
+                "player_name": f"P{i}", "position": "OF", "salary": 3000,
+                "team": f"T{i}", "competition": f"g{i % n_games}",
+                "kickoff": pd.Timestamp("2026-08-24 23:40"),
+            })
+    slates = classic_slates(pd.DataFrame(rows))
+    # Old snapshots: multi-game filter alone — the showdown group drops.
+    assert [s.draft_group_id for s in slates] == ["1"]
+
+
+def test_lineup_frame_carries_kickoffs() -> None:
+    salaries = _salaries().assign(kickoff=pd.Timestamp("2026-09-13 17:00"))
+    run = solve_slate(salaries, _fp())
+    assert run.lineup is not None
+    assert all(s.kickoff == pd.Timestamp("2026-09-13 17:00")
+               for s in run.lineup.slots)
+    frame = lineup_frame(run)
+    assert (frame["kickoff"] == pd.Timestamp("2026-09-13 17:00")).all()
+
+
+def test_game_time_ct_formats_and_handles_missing() -> None:
+    from velocity.dfs.pipeline import game_time_ct
+
+    assert game_time_ct(pd.Timestamp("2026-08-24 23:40")) == "6:40P CT"
+    assert game_time_ct(None) == "—"
+    # January (CST, UTC-6): the tz database keeps the hour honest.
+    assert game_time_ct(pd.Timestamp("2027-01-10 23:40")) == "5:40P CT"
