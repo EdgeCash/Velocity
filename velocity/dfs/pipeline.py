@@ -218,6 +218,34 @@ def _solve_mlb(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
     return None
 
 
+# Statuses that mean the player is not taking the field — never rosterable.
+# DTD/Q (questionable) deliberately stay in: most of them play.
+_OUT_STATUSES = frozenset({"IL", "IR", "O", "OUT", "NA", "SUSP"})
+
+
+def eligible_board(board: pd.DataFrame, spec: RosterSpec) -> pd.DataFrame:
+    """Drop players who cannot take the field before the solve sees them.
+
+    Two live-proven rules (the first Turbo lineup rostered a non-probable
+    prospect and an IL'd reliever at P):
+
+    * anyone whose DK status marks them out (IL/OUT/...) leaves the pool;
+    * on an MLB board, the P pool keeps ONLY DK's flagged probables — DK
+      lists every rostered pitcher, but a non-probable never starts.
+
+    Call after :func:`normalize_positions` (the P check reads the normalized
+    slot vocabulary). Snapshots banked before the ``probable`` column existed
+    pass through the status filter alone.
+    """
+    if "status" in board.columns:
+        status = board["status"].astype(str).str.upper().str.strip()
+        board = board[~status.isin(_OUT_STATUSES)]
+    if spec is MLB_CLASSIC and "probable" in board.columns:
+        is_p = board["position"].astype(str) == "P"
+        board = board[~is_p | board["probable"].fillna(False).astype(bool)]
+    return board
+
+
 def solve_slate(
     salaries: pd.DataFrame,
     fp: pd.DataFrame,
@@ -241,7 +269,7 @@ def solve_slate(
     if group is None:
         return LineupRun(None, "", 0, 0, 0)
     board = salaries[salaries["draft_group_id"].astype(str) == str(group)]
-    board = normalize_positions(board, spec)
+    board = eligible_board(normalize_positions(board, spec), spec)
     score = scorer if callable(scorer) else dk_expected_points
     points = score(fp)
     pool = lineup_pool(board, points)

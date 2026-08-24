@@ -125,3 +125,21 @@ def test_collector_banks_slate_metadata_with_rows(tmp_path: Path) -> None:
     assert row["contest_type_id"] == 28
     assert row["suffix"] == "Night"
     assert row["slate_start"] == pd.Timestamp("2026-08-24 22:40")
+
+
+def test_normalize_draftables_extracts_the_probable_flag() -> None:
+    payload = {"draftables": [
+        {"displayName": "Real Probable", "salary": 8500, "playerDkId": 1,
+         "position": "SP", "teamAbbreviation": "BOS",
+         "playerGameAttributes": [{"id": 112, "value": "Alcantara (R)"},
+                                  {"id": 1, "value": "true"}]},
+        {"displayName": "Bench Arm", "salary": 8500, "playerDkId": 2,
+         "position": "SP", "teamAbbreviation": "BOS",
+         "playerGameAttributes": [{"id": 130, "value": "false"}]},
+        {"displayName": "A Hitter", "salary": 5000, "playerDkId": 3,
+         "position": "OF", "teamAbbreviation": "BOS"},
+    ]}
+    frame = normalize_draftables(payload, "7").set_index("player_name")
+    assert bool(frame.loc["Real Probable", "probable"])
+    assert not bool(frame.loc["Bench Arm", "probable"])
+    assert not bool(frame.loc["A Hitter", "probable"])
