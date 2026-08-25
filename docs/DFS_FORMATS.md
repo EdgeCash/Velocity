@@ -114,6 +114,75 @@ about 0.1 seconds.
 optimizer, never baked into the input. MLB uses the contextual model
 (`docs/DFS_MODEL.md`); football uses the FantasyPros consensus.
 
+### The showdown backtest
+
+DK is its own historical database: retired draft-group ids still serve their
+full board, so `scripts/harvest_dk_history.py --format showdown` walked ids
+149000–152700 and recovered **243 real MLB showdown boards** (45,068 priced
+rows) covering 6 June – 25 August 2026. Paired with the box-score banks —
+which carry the DK scoring line for every batter and starting pitcher — that
+is a complete backtest with no purchased data.
+
+`scripts/validate_dfs_showdown.py` fits the projection model walk-forward
+(each 14-day window sees only games that finished before it), builds the
+board, and scores the roster the way DK scored it. A rostered player with no
+box-score row scores 0.0 — exactly what DK pays a player who never appears.
+
+**240 boards scored:**
+
+| Build | Realized DK points |
+|---|---:|
+| Our projections through the optimizer | **59.50** |
+| The same optimizer run on DK's salaries | 49.10 |
+| Random legal rosters (the field proxy) | 44.13 |
+| Retrospective best possible roster | 112.62 |
+
+* Beat the salary build on **65.0%** of boards, **+10.40** DK points,
+  t = +5.53 (n = 240).
+* Mean field percentile **72.4%**, against the salary build's 57.7%.
+* Our captain was the top scorer of our own six **42.1%** of the time
+  (1 in 6 = 16.7% by chance).
+* We capture **54.3%** of the achievable ceiling.
+
+DK's salary is the market's projection, so beating it by ten points a board
+with t = 5.5 is the claim worth making. The captain choice, held to the same
+six players, barely matters: starring the top salary instead of our pick
+moves the mean 0.15 points. What moves the number is *which six*.
+
+**The methodological trap, stated because it nearly published a wrong
+result.** The first pass matched each board to its box score by name overlap
+on the same date. Two clubs play a three-game series with the same
+twenty-six names every night, so overlap cannot tell the games apart — half
+the boards matched the wrong day, silently scoring every roster against the
+wrong box score and dropping both starting pitchers (the one thing that
+changes daily). That version reported +1.98 points at t = 1.24: a null
+result, entirely manufactured by the bug. Matching on **start time**, with
+name overlap only as an eligibility bar, fixed it — 480 of 480 announced
+starters now match — and the real effect is five times larger.
+
+**One bias the backtest exposes.** Against realized DK points, pitchers
+project 9.5% high (14.79 vs 13.38 over 466 pitcher-games) while hitters
+project 3.7% high (6.70 vs 6.45 over 4,784). The ordering inside each class
+is fine; the *level between* them is not, and the optimizer chooses across
+classes. `--recalibrate` tests the fix: each window's projections are scaled
+by the class-level actual/projected ratio of the windows before it — strictly
+past data, the recalibration loop applied to the DFS model.
+
+It works on the bias and **does not help the rosters**, so it does not ship:
+
+| | Realized | Beat salary | Pitcher bias | Hitter bias |
+|---|---:|---:|---:|---:|
+| As shipped | **59.50** | **65.0%** | +1.40 | +0.25 |
+| With rolling recalibration | 59.25 | 64.2% | +0.61 | +0.17 |
+
+The scale halves the level error and costs a quarter of a point per board.
+A uniform per-class multiplier moves every player in a class together, so it
+barely reorders anything the optimizer actually compares — and what little it
+does move went the wrong way. The flag stays as a tested knob, off by
+default, the same way the pitcher context term stayed in `project_pitcher`
+after the classic backtest rejected it (`docs/DFS_MODEL.md` §4). A bias
+worth fixing needs a fix that changes rankings, not levels.
+
 ## Tiers and Single Stat — the formats with no cap
 
 Three formats hand you no salary cap at all, which sounds easy and is
@@ -167,6 +236,47 @@ python scripts/build_dfs_tiered.py --league mlb \
 Writes `dfs_tiered_{league}_{stamp}.parquet` plus a card and captions per
 format. Snake boards land in the same artifact (they are salary-free too)
 but are drafted rather than picked, so this script leaves them alone.
+
+## Where the money actually is
+
+Format coverage should follow entries, not novelty. Counted off DK's own
+lobby on 2026-08-25 (every contest listed for the sport, summing its current
+entrant count and entry fees):
+
+| Sport | Format | Contests | Entries | Entry fees |
+|---|---|---:|---:|---:|
+| NFL | Classic | 1,778 | 242,050 | $1,563,024 |
+| NFL | Showdown Captain Mode | 1,156 | 28,603 | $251,687 |
+| MLB | Classic | 913 | 21,068 | $1,374,970 |
+| CFB | Classic | 452 | 10,271 | $39,442 |
+| CFB | Showdown Captain Mode | 588 | 1,639 | $3,616 |
+| MLB | Showdown Captain Mode | 261 | 1,574 | $51,927 |
+| NFL | Madden Classic | 134 | 767 | $3,547 |
+| MLB | Tiers | 119 | 577 | $7,895 |
+| MLB | Single Stat - Home Runs | 90 | 447 | $444 |
+| NFL | Madden Showdown | 369 | 353 | $2,617 |
+| NFL | Best Ball | 74 | 64 | $12,787 |
+| CFB | Single Stat - Touchdowns | 6 | 19 | $55 |
+| MLB / NFL / CFB | **Snake** | 87 | **3** | **$7** |
+| MLB / NFL / CFB | **Snake Showdown** | 82 | **0** | **$0** |
+
+Two conclusions, both acted on:
+
+* Classic and Showdown are where the field is, which is why both are exact
+  solvers with backtests behind them.
+* **Snake and Snake Showdown are not worth building.** DK posts 169
+  contests across the three sports and they hold three entrants between
+  them; every one is a 3-player contest and almost all sit empty. A draft
+  advisor for them would be a well-tested tool for a format with no
+  opponents. The formats stay documented here, and the collector banks
+  their boards (they are salary-free, so they land in the tiered artifact
+  with their roster-slot eligibility intact) — if DK's liquidity ever
+  arrives, the data is already there and only the advisor is missing.
+
+NFL Best Ball is the one to watch: 64 entries but $12,787 in fees, so the
+buy-ins are large. It is a 20-man snake draft with position limits (QB 1-3,
+RB 2-6, WR 3-8, TE 1-3) — a different problem from a daily lineup, and a
+real one if the fees hold.
 
 ## Eligibility, and one live bug worth remembering
 
