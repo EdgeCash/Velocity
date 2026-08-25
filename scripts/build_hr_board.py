@@ -35,6 +35,7 @@ def main() -> None:
                         help="season to fit (0 = the newest in the bank)")
     args = parser.parse_args()
 
+    from build_dfs_lineup import apply_confirmed_cards
     from build_mlb_pitching import fetch_probables
     from velocity.models.props_hr import HomeRunModel
 
@@ -55,7 +56,8 @@ def main() -> None:
     # home club. A game with no announced probable still boards — the batter
     # rate and park carry it, the pitcher term simply stays neutral.
     today = date.today()
-    probables = fetch_probables(str(today), str(today + timedelta(days=1)))
+    tomorrow = today + timedelta(days=1)
+    probables = fetch_probables(str(today), str(tomorrow))
     if not probables:
         print("no probables posted; nothing to board")
         return
@@ -76,11 +78,17 @@ def main() -> None:
     name_of = dict(zip(recent["batter_id"].astype(str),
                        recent["batter_name"].astype(str), strict=False))
 
+    # The posted card, where statsapi has it: the slot becomes a fact and a
+    # bat that never leaves the bench leaves the board (docs/DFS_FORMATS.md).
+    eligible = apply_confirmed_cards(slot_of, team_of, str(today), str(tomorrow))
+
     rows: list[dict[str, object]] = []
     for (home, away, _k), (home_sp, away_sp) in probables.items():
         for team, opposing_sp in ((home, away_sp), (away, home_sp)):
             for pid, batter_team in team_of.items():
                 if batter_team != team:
+                    continue
+                if eligible is not None and pid not in eligible:
                     continue
                 slot = slot_of.get(pid)
                 p = model.probability(pid, opposing_starter=opposing_sp,

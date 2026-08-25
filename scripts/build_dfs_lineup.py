@@ -25,13 +25,59 @@ from pathlib import Path
 import pandas as pd
 
 
+def apply_confirmed_cards(
+    slot_of: dict[str, int], team_of: dict[str, str], start: str, end: str,
+) -> set[str] | None:
+    """Fold statsapi's posted batting orders into the slot and team maps.
+
+    Mutates ``slot_of`` (the confirmed order beats a guess from his last
+    start) and ``team_of`` (tonight's club beats the one he last played for,
+    which matters for a call-up), and returns the set of batter ids still
+    choosable: the announced nine for every team whose card is posted, plus
+    everyone on a team whose card is not.
+
+    Returns ``None`` when nothing is posted — the pool is unrestricted, and
+    the caller prices every banked bat exactly as before. This is the single
+    most valuable input the MLB DFS surfaces take: an early build carries
+    2.1 players who never appear out of six (docs/DFS_FORMATS.md).
+    """
+    from build_mlb_pitching import fetch_lineups
+
+    try:
+        cards = fetch_lineups(start, end)
+    except Exception as exc:  # noqa: BLE001 - falls back to recent slots
+        print(f"confirmed lineups unavailable ({exc}); using recent slots")
+        return None
+    if not cards:
+        print("no confirmed lineups posted yet; using recent slots")
+        return None
+    confirmed_teams = set(cards)
+    for team, order in cards.items():
+        for i, pid in enumerate(order):
+            slot_of[str(pid)] = i + 1
+            team_of[str(pid)] = team
+    eligible = {pid for order in cards.values() for pid in order}
+    eligible |= {pid for pid, team in team_of.items()
+                 if team not in confirmed_teams}
+    print(f"confirmed lineups: {len(confirmed_teams)} teams, "
+          f"{len(eligible)} eligible bats")
+    return eligible
+
+
 def _contextual_mlb_points() -> pd.DataFrame:
     """Today's contextual MLB DK projections from the committed banks.
 
     Opposing starters come from the free statsapi probables feed; the park is
-    each game's home club; the lineup slot is the batter's most recent
-    starting slot this season — the honest pregame guess until the official
-    card posts.
+    each game's home club. The lineup slot is the batter's **confirmed** slot
+    when statsapi has posted the card, and his most recent starting slot
+    otherwise.
+
+    The confirmed card is the single most valuable input here, ahead of every
+    context multiplier. Measured on the showdown backtest
+    (docs/DFS_FORMATS.md): a roster built before lineups post carries 2.1
+    players who never appear out of six, and the same optimizer fed the
+    confirmed card scores about 11 DK points more. So a team with a posted
+    lineup contributes exactly those nine bats and nobody else.
     """
     from datetime import date, timedelta
 
@@ -54,7 +100,11 @@ def _contextual_mlb_points() -> pd.DataFrame:
                for r in recent.to_dict("records")}
 
     today = date.today()
-    probables = fetch_probables(str(today), str(today + timedelta(days=1)))
+    tomorrow = today + timedelta(days=1)
+
+    eligible = apply_confirmed_cards(slot_of, team_of, str(today), str(tomorrow))
+
+    probables = fetch_probables(str(today), str(tomorrow))
     venue_of_team: dict[str, str] = {}
     facing: dict[str, str] = {}
     for (home, away, _k), (home_sp, away_sp) in probables.items():
@@ -68,7 +118,8 @@ def _contextual_mlb_points() -> pd.DataFrame:
 
     return dk_expected_points_mlb_contextual(
         batters, starters, games, opposing_starter=facing,
-        venue_of_team=venue_of_team, lineup_slot=slot_of, season=season)
+        venue_of_team=venue_of_team, lineup_slot=slot_of,
+        eligible_batters=eligible, season=season)
 
 
 def build_showdown_boards(

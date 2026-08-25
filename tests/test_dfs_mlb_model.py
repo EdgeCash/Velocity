@@ -158,3 +158,65 @@ def test_empty_bank_fits_without_raising() -> None:
     games = pd.DataFrame(columns=["game_id", "season", "home_team", "away_team"])
     model = DfsMlbModel.fit(empty, pd.DataFrame(), games)
     assert model.batter_rate == {} and model.project_hitter("x") is None
+
+
+def _card_bank() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """A tiny two-team bank: four bats, one starter a side, sixty games."""
+    rng = np.random.default_rng(23)
+    games, batters, starters = [], [], []
+    for i in range(60):
+        game_id = str(1000 + i)
+        games.append({"game_id": game_id, "season": 2026,
+                      "kickoff": pd.Timestamp("2026-05-01") + pd.Timedelta(days=i),
+                      "home_team": "Braves", "away_team": "Dodgers",
+                      "home_score": 4, "away_score": 3})
+        for side, team, bats in (("home", "Braves", ("b1", "b2")),
+                                 ("away", "Dodgers", ("d1", "d2"))):
+            for slot, pid in enumerate(bats, start=1):
+                batters.append({
+                    "game_id": game_id, "team": team, "side": side,
+                    "batter_id": pid, "batter_name": pid.upper(),
+                    "lineup_slot": slot, "started": True,
+                    "pa": 4, "ab": 4, "h": int(rng.integers(0, 3)), "double": 0,
+                    "triple": 0, "hr": int(rng.integers(0, 2)), "rbi": 1, "r": 1,
+                    "bb": 1, "hbp": 0, "sb": 0})
+            starters.append({
+                "game_id": game_id, "team": team, "side": side,
+                "starter_id": f"sp_{team}", "starter_name": f"SP {team}",
+                "outs": 18, "batters_faced": 24, "k": 6, "bb": 2, "hbp": 0,
+                "hr": 1, "er": 2, "hits_allowed": 5, "win": 0})
+    return (pd.DataFrame(batters), pd.DataFrame(starters), pd.DataFrame(games))
+
+
+def test_contextual_scorer_restricts_hitters_to_the_confirmed_card() -> None:
+    """The announced lineup is the highest-value input the scorer takes.
+
+    A roster built before lineups post carries players who never appear;
+    ``eligible_batters`` is how the confirmed card removes them. Pitchers are
+    unaffected — a starting pitcher's announcement is the probables feed, not
+    the batting order.
+    """
+    from velocity.dfs.scoring import dk_expected_points_mlb_contextual
+
+    batters, starters, games = _card_bank()
+    everyone = dk_expected_points_mlb_contextual(batters, starters, games,
+                                                 season=2026)
+    assert set(everyone["player_id"]) >= {"b1", "b2", "d1", "d2"}
+
+    carded = dk_expected_points_mlb_contextual(
+        batters, starters, games, eligible_batters={"b1", "d1"}, season=2026)
+    hitters = set(carded.loc[carded["position"] != "P", "player_id"])
+    assert hitters == {"b1", "d1"}
+    # Both starting pitchers still price: the card says nothing about them.
+    assert set(carded.loc[carded["position"] == "P", "player_id"]) == {
+        "sp_Braves", "sp_Dodgers"}
+
+
+def test_contextual_scorer_prices_everyone_when_no_card_is_posted() -> None:
+    from velocity.dfs.scoring import dk_expected_points_mlb_contextual
+
+    batters, starters, games = _card_bank()
+    out = dk_expected_points_mlb_contextual(batters, starters, games,
+                                            eligible_batters=None, season=2026)
+    assert set(out.loc[out["position"] != "P", "player_id"]) == {
+        "b1", "b2", "d1", "d2"}

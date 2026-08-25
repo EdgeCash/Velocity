@@ -276,7 +276,7 @@ def _mlb_cap_violation(lineup: Lineup) -> str | None:
     return max(over, key=lambda t: over[t]) if over else None
 
 
-def _solve_mlb(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
+def solve_mlb_lineup(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
     """Exact solve + iterative cuts for the ≤5-hitters-per-team rule.
 
     The knapsack has no team dimension, so the rule is enforced by cutting:
@@ -377,7 +377,7 @@ def solve_slate(
     if pool.empty:
         lineup = None
     elif spec is MLB_CLASSIC:
-        lineup = _solve_mlb(pool, spec)
+        lineup = solve_mlb_lineup(pool, spec)
     else:
         lineup = build_lineup(pool, spec=spec)
     return LineupRun(
