@@ -27,6 +27,8 @@ import json
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
@@ -58,6 +60,31 @@ def fetch_group(gid: int, timeout: int = 30) -> dict | None:
         return None
 
 
+def board_format(payload: dict) -> str:
+    """"showdown" or "classic", inferred from the board's own shape.
+
+    A showdown board is self-describing without the lobby: DK lists every
+    player twice, once at the captain slot for exactly 1.5x the flex salary.
+    A classic board also repeats players (an RB shows up again for FLEX) but
+    always at the SAME salary, so the ratio is the tell. Retired groups have
+    no lobby entry left to ask, which is why this reads the payload.
+    """
+    prices: dict[str, set[int]] = {}
+    for draftable in payload.get("draftables") or []:
+        pid = str(draftable.get("playerDkId") or draftable.get("displayName"))
+        salary = draftable.get("salary")
+        if salary is None:
+            continue
+        prices.setdefault(pid, set()).add(int(salary))
+    if not prices:
+        return "classic"
+    doubled = sum(
+        1 for values in prices.values()
+        if len(values) == 2 and max(values) == round(min(values) * 1.5)
+    )
+    return "showdown" if doubled >= 0.5 * len(prices) else "classic"
+
+
 def classify(payload: dict) -> tuple[str | None, pd.Timestamp | None]:
     """(league, start time) inferred from the board itself."""
     draftables = payload.get("draftables") or []
@@ -85,6 +112,31 @@ def classify(payload: dict) -> tuple[str | None, pd.Timestamp | None]:
     return league, start
 
 
+def _walk(
+    ids: range, *, workers: int, sleep: float
+) -> Iterator[tuple[int, dict | None]]:
+    """Fetch a range of ids, in order, optionally several at a time.
+
+    The walk is pure network latency, so a handful of workers turns hours
+    into minutes. Order is preserved so progress logs stay chronological;
+    ``--sleep`` still paces each worker, so raising both at once is the way
+    to stay polite while going faster.
+    """
+    if workers <= 1:
+        for gid in ids:
+            yield gid, fetch_group(gid)
+            time.sleep(sleep)
+        return
+
+    def one(gid: int) -> tuple[int, dict | None]:
+        payload = fetch_group(gid)
+        time.sleep(sleep)
+        return gid, payload
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        yield from pool.map(one, ids)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Harvest historical DK salaries")
     parser.add_argument("--from-id", type=int, help="first draft group id")
@@ -92,6 +144,11 @@ def main() -> None:
     parser.add_argument("--league", default="mlb", help="league to keep")
     parser.add_argument("--out", default="artifacts/dk_history")
     parser.add_argument("--sleep", type=float, default=0.15)
+    parser.add_argument("--workers", type=int, default=1,
+                        help="concurrent fetches (the walk is all latency)")
+    parser.add_argument("--format", default="any",
+                        choices=("any", "classic", "showdown"),
+                        help="keep only boards of this shape")
     parser.add_argument("--probe", help="report what dates a few sample ids "
                                         "cover, to locate a range")
     args = parser.parse_args()
@@ -118,10 +175,9 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     frames: list[pd.DataFrame] = []
     kept = scanned = 0
-    for gid in range(args.from_id, args.to_id + 1):
+    for gid, payload in _walk(range(args.from_id, args.to_id + 1),
+                              workers=args.workers, sleep=args.sleep):
         scanned += 1
-        payload = fetch_group(gid)
-        time.sleep(args.sleep)
         if payload is None:
             continue
         league, start = classify(payload)
@@ -130,7 +186,10 @@ def main() -> None:
         frame = normalize_draftables(payload, str(gid))
         if frame.empty or frame["salary"].sum() == 0:
             continue  # salary-free formats carry no backtest signal
-        frames.append(frame.assign(league=league, slate_start=start))
+        fmt = board_format(payload)
+        if args.format not in ("any", fmt):
+            continue
+        frames.append(frame.assign(league=league, slate_start=start, format=fmt))
         kept += 1
         if kept % 10 == 0:
             print(f"  {kept} {args.league} boards kept ({scanned} ids scanned)")

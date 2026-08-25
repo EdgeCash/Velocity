@@ -107,6 +107,89 @@ def classic_slates(salaries: pd.DataFrame) -> list[SlateInfo]:
     ]
 
 
+def showdown_slates(salaries: pd.DataFrame, league: str) -> list[SlateInfo]:
+    """Every Showdown Captain Mode board in a snapshot, in lock order.
+
+    Showdown groups are identified by DK's own format label — the
+    ``game_type`` name when the snapshot carries it, else the numeric
+    ``contest_type_id`` (MLB 114, NFL 96, CFB 95). Not by "one game": several
+    DK formats are single-game and only this one is captain-mode, and DK also
+    runs a simulated look-alike ("Madden Showdown Captain Mode") that must
+    not be priced off real-player projections. A snapshot with neither column
+    carries no showdown boards rather than guessing at them.
+    """
+    from velocity.dfs.showdown import SHOWDOWN_CONTEST_TYPES, SHOWDOWN_GAME_TYPE
+
+    if league not in SHOWDOWN_CONTEST_TYPES or salaries.empty:
+        return []
+    if "game_type" in salaries.columns and salaries["game_type"].notna().any():
+        board = salaries[salaries["game_type"].astype(str) == SHOWDOWN_GAME_TYPE]
+    elif "contest_type_id" in salaries.columns:
+        board = salaries[
+            pd.to_numeric(salaries["contest_type_id"], errors="coerce")
+            == SHOWDOWN_CONTEST_TYPES[league]
+        ]
+    else:
+        return []
+    if board.empty:
+        return []
+    by_group = board.groupby(board["draft_group_id"].astype(str)).agg(
+        games=("competition", "nunique"),
+        start=("slate_start", "first") if "slate_start" in board.columns
+        else ("kickoff", "min"),
+        game=("competition", "first"),
+    )
+    by_group = by_group.sort_values(["start", "games"])
+    return [
+        SlateInfo(
+            draft_group_id=str(gid),
+            start=None if pd.isna(row["start"]) else pd.Timestamp(row["start"]),
+            # The matchup is the label a showdown board wants ("LAD @ ATL"),
+            # not DK's Early/Night suffix — one game has no grouping.
+            suffix="" if pd.isna(row["game"]) else str(row["game"]),
+            n_games=int(row["games"]),
+        )
+        for gid, row in by_group.iterrows()
+    ]
+
+
+def solve_showdown(
+    salaries: pd.DataFrame,
+    fp: pd.DataFrame,
+    *,
+    draft_group: str,
+    league: str = "mlb",
+    points: pd.DataFrame | None = None,
+) -> LineupRun:
+    """Solve one Showdown Captain Mode board (docs/DFS_FORMATS.md).
+
+    Same contract as :func:`solve_slate` — an unsolvable board returns a run
+    with ``lineup=None``. The doubled DK board (every player priced twice,
+    captain and flex) is collapsed first; projections are the flex-slot
+    numbers, and the captain's 1.5x is applied by the optimizer.
+    """
+    from velocity.dfs.showdown import SHOWDOWN_SPECS, build_showdown, showdown_board
+
+    spec = SHOWDOWN_SPECS.get(league)
+    if spec is None:
+        return LineupRun(None, str(draft_group), 0, 0, 0)
+    board = salaries[salaries["draft_group_id"].astype(str) == str(draft_group)]
+    board = showdown_board(board)
+    board = eligible_board(normalize_positions(board, spec), spec)
+    if points is None:
+        scorer = (dk_expected_points_mlb if league == "mlb" else dk_expected_points)
+        points = scorer(fp)
+    pool = lineup_pool(board, points)
+    lineup = build_showdown(pool, spec=spec) if not pool.empty else None
+    return LineupRun(
+        lineup=lineup,
+        draft_group_id=str(draft_group),
+        n_games=int(board["competition"].nunique()) if not board.empty else 0,
+        n_salaried=len(board),
+        n_pool=len(pool),
+    )
+
+
 def game_time_ct(kickoff: object) -> str:
     """A game start as the cards state times ("6:40P CT"), or an em-dash.
 
@@ -160,7 +243,7 @@ def main_slate_group(salaries: pd.DataFrame) -> str | None:
     return str(sorted(winners.index)[0])
 
 
-def normalize_positions(board: pd.DataFrame, spec: RosterSpec) -> pd.DataFrame:
+def normalize_positions(board: pd.DataFrame, spec: object) -> pd.DataFrame:
     """Map DK position strings onto the spec's slot vocabulary (MLB only today).
 
     DK's MLB board spells pitchers ``SP``/``RP`` (both fill the P slots) and
@@ -169,7 +252,7 @@ def normalize_positions(board: pd.DataFrame, spec: RosterSpec) -> pd.DataFrame:
     legal, so the lineup stays valid, occasionally sub-optimal. Football
     boards pass through untouched.
     """
-    if spec is not MLB_CLASSIC:
+    if not str(getattr(spec, "name", "")).startswith("mlb"):
         return board
     pos = (
         board["position"].astype(str).str.upper().str.strip()
@@ -223,13 +306,19 @@ def _solve_mlb(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
 _OUT_STATUSES = frozenset({"IL", "IR", "O", "OUT", "NA", "SUSP"})
 
 
-def eligible_board(board: pd.DataFrame, spec: RosterSpec) -> pd.DataFrame:
+def eligible_board(board: pd.DataFrame, spec: object) -> pd.DataFrame:
     """Drop players who cannot take the field before the solve sees them.
 
-    Two live-proven rules (the first Turbo lineup rostered a non-probable
-    prospect and an IL'd reliever at P):
+    Three live-proven rules (the first Turbo lineup rostered a non-probable
+    prospect and an IL'd reliever at P; a later board hid the night's actual
+    starter):
 
     * anyone whose DK status marks them out (IL/OUT/...) leaves the pool;
+    * **unless** DK also flags him probable — the probable marker is a
+      statement about tonight's game, the status a roster designation DK
+      has not cleared yet, and the game-level fact wins. Live proof: DK
+      carried Tyler Glasnow as ``IL`` on the 8/25 LAD@ATL board while
+      flagging him probable, and statsapi had him announced as the starter;
     * on an MLB board, the P pool keeps ONLY DK's flagged probables — DK
       lists every rostered pitcher, but a non-probable never starts.
 
@@ -237,12 +326,19 @@ def eligible_board(board: pd.DataFrame, spec: RosterSpec) -> pd.DataFrame:
     slot vocabulary). Snapshots banked before the ``probable`` column existed
     pass through the status filter alone.
     """
+    probable = (
+        board["probable"].fillna(False).astype(bool) if "probable" in board.columns
+        else pd.Series(False, index=board.index)
+    )
     if "status" in board.columns:
         status = board["status"].astype(str).str.upper().str.strip()
-        board = board[~status.isin(_OUT_STATUSES)]
-    if spec is MLB_CLASSIC and "probable" in board.columns:
+        board = board[~status.isin(_OUT_STATUSES) | probable]
+        probable = probable.loc[board.index]
+    # Any MLB format (classic or showdown) — both specs name themselves
+    # "mlb_*", so the rule follows the sport rather than one roster object.
+    if str(getattr(spec, "name", "")).startswith("mlb") and "probable" in board.columns:
         is_p = board["position"].astype(str) == "P"
-        board = board[~is_p | board["probable"].fillna(False).astype(bool)]
+        board = board[~is_p | probable]
     return board
 
 
