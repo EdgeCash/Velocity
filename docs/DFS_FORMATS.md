@@ -123,31 +123,43 @@ rows) covering 6 June – 25 August 2026. Paired with the box-score banks —
 which carry the DK scoring line for every batter and starting pitcher — that
 is a complete backtest with no purchased data.
 
-`scripts/validate_dfs_showdown.py` fits the projection model walk-forward
+`scripts/validate_dfs_lineups.py` fits the projection model walk-forward
 (each 14-day window sees only games that finished before it), builds the
 board, and scores the roster the way DK scored it. A rostered player with no
 box-score row scores 0.0 — exactly what DK pays a player who never appears.
 
-**240 boards scored:**
+**When you build matters more than any projection term.** `--lineups` picks
+the scenario. *Early* is a build before statsapi posts the batting orders:
+every banked bat is choosable and his slot is his most recent one.
+*Confirmed* is the build most DFS players actually make, after the cards
+drop: the pool is the announced nine a side and the order is a fact.
 
-| Build | Realized DK points |
-|---|---:|
-| Our projections through the optimizer | **59.50** |
-| The same optimizer run on DK's salaries | 49.10 |
-| Random legal rosters (the field proxy) | 44.13 |
-| Retrospective best possible roster | 112.62 |
+| | Early build | Confirmed card |
+|---|---:|---:|
+| Our projections through the optimizer | 48.02 | **62.92** |
+| The same optimizer run on DK's salaries | 40.30 | 51.40 |
+| Random legal rosters (the field proxy) | 24.68 | 47.36 |
+| Retrospective best possible roster | 111.87 | 112.40 |
+| Beat the salary build | 65.8% | **67.5%** |
+| Edge over the salary build | +7.72 (t = 4.68) | **+11.51 (t = 5.83)** |
+| Our field percentile | 81.5% | 72.7% |
+| The salary build's field percentile | 73.2% | 56.1% |
+| Rostered a player who never appeared | **2.13 of 6** | 0.00 |
 
-* Beat the salary build on **65.0%** of boards, **+10.40** DK points,
-  t = +5.53 (n = 240).
-* Mean field percentile **72.4%**, against the salary build's 57.7%.
-* Our captain was the top scorer of our own six **42.1%** of the time
-  (1 in 6 = 16.7% by chance).
-* We capture **54.3%** of the achievable ceiling.
+Two things fall out, and both shipped:
 
-DK's salary is the market's projection, so beating it by ten points a board
-with t = 5.5 is the claim worth making. The captain choice, held to the same
-six players, barely matters: starring the top salary instead of our pick
-moves the mean 0.15 points. What moves the number is *which six*.
+1. **Waiting for the card is worth about fifteen DK points a roster** (48.02
+   → 62.92), which dwarfs every context multiplier in the model. Two of our
+   six players used to be men who never left the bench. So the live MLB
+   surfaces now read statsapi's posted lineups: a team with a card
+   contributes exactly its announced nine, at their announced slots, and a
+   team without one falls back to the banked pool
+   (`apply_confirmed_cards`, used by the lineup builder, the Tiers/Single
+   Stat builder, and the home-run board).
+2. **The edge over DK's own pricing is real either way.** DK's salary *is*
+   the market's projection, so +11.5 points a board at t = 5.8 is the claim
+   worth making — and it survives the early build, where it is +7.7 at
+   t = 4.7.
 
 **The methodological trap, stated because it nearly published a wrong
 result.** The first pass matched each board to its box score by name overlap
@@ -158,84 +170,20 @@ wrong box score and dropping both starting pitchers (the one thing that
 changes daily). That version reported +1.98 points at t = 1.24: a null
 result, entirely manufactured by the bug. Matching on **start time**, with
 name overlap only as an eligibility bar, fixed it — 480 of 480 announced
-starters now match — and the real effect is five times larger.
+starters now match — and the real effect is several times larger.
 
-**One bias the backtest exposes.** Against realized DK points, pitchers
-project 9.5% high (14.79 vs 13.38 over 466 pitcher-games) while hitters
-project 3.7% high (6.70 vs 6.45 over 4,784). The ordering inside each class
-is fine; the *level between* them is not, and the optimizer chooses across
-classes. `--recalibrate` tests the fix: each window's projections are scaled
-by the class-level actual/projected ratio of the windows before it — strictly
-past data, the recalibration loop applied to the DFS model.
-
-It works on the bias and **does not help the rosters**, so it does not ship:
-
-| | Realized | Beat salary | Pitcher bias | Hitter bias |
-|---|---:|---:|---:|---:|
-| As shipped | **59.50** | **65.0%** | +1.40 | +0.25 |
-| With rolling recalibration | 59.25 | 64.2% | +0.61 | +0.17 |
-
-The scale halves the level error and costs a quarter of a point per board.
-A uniform per-class multiplier moves every player in a class together, so it
-barely reorders anything the optimizer actually compares — and what little it
-does move went the wrong way. The flag stays as a tested knob, off by
-default, the same way the pitcher context term stayed in `project_pitcher`
-after the classic backtest rejected it (`docs/DFS_MODEL.md` §4). A bias
-worth fixing needs a fix that changes rankings, not levels.
-
-## Tiers and Single Stat — the formats with no cap
-
-Three formats hand you no salary cap at all, which sounds easy and is
-exactly the point: **the projection is the entire contest.** There is no
-knapsack to search, so nothing stands between the model and the result.
-
-DK ships these boards with `salary: null` on every draftable, so they cannot
-ride the salary parquet — the salary normalizer drops a priceless row rather
-than invent a number. The collector routes them to their own artifact
-(`dk_tiered_{league}_{stamp}.parquet`) with their own schema
-(`velocity.dfs.tiered.normalize_tiered`), where the tier ordinal replaces
-the price.
-
-**Reading the tiers.** DK does not label the tiers in the payload; it
-encodes them in the roster-slot ids, which ascend with the tier number. On
-the 8/25 MLB Tiers board slots 278…283 held 4/5/6/8/8/12 players — T1 the
-stars (Alvarez, Ohtani, Crow-Armstrong) down to T6, the pitcher tier. So the
-tier is the **sorted rank** of the slot id, which also handles the Single
-Stat boards correctly: one slot id, one pool, everything tier 1.
-
-**The two shape rules**, each with an exact answer rather than a repair:
-
-* Tiers requires at least two **games** (`gameCount.minValue: 2`). If every
-  tier's best pick sits in one game, the optimum moves exactly one tier —
-  moving more only costs more, since each tier's best alternative elsewhere
-  is by definition no better than its own best — so the fix is the cheapest
-  single move.
-* Single Stat requires at least two **teams** (`teamCount.minValue: 2`). If
-  the top three share a team then every other player on the slate ranks
-  below all three, so the optimum is the top two plus the best player from
-  anywhere else.
-
-**What prices each one:**
-
-| Format | Projection | Unit |
-|---|---|---|
-| MLB Tiers | contextual DK-points model (`docs/DFS_MODEL.md`) | DK points |
-| MLB Single Stat - Home Runs | empirical-Bayes HR model (`docs/PROPS_HR.md`) | home runs |
-| CFB Single Stat - Touchdowns | FantasyPros rushing + receiving TDs | touchdowns |
-
-A quarterback's passing touchdowns are deliberately excluded from the last
-one: DK's Single Stat - Touchdowns pays the player who reaches the end zone,
-and a thrown touchdown is scored by the receiver.
-
-```bash
-python scripts/build_dfs_tiered.py --league mlb \
-    --tiered artifacts/dk_salaries/dk_tiered_mlb_<stamp>.parquet \
-    --out artifacts/slate
-```
-
-Writes `dfs_tiered_{league}_{stamp}.parquet` plus a card and captions per
-format. Snake boards land in the same artifact (they are salary-free too)
-but are drafted rather than picked, so this script leaves them alone.
+**One bias found, one fix rejected.** Against realized DK points, pitchers
+project 9.5% high (14.79 vs 13.38) while hitters, once the card is known,
+are within 3% and slightly *low* (6.75 vs 6.92). The ordering inside each
+class is fine; the level between them is not, and the optimizer chooses
+across classes. A rolling recalibration — each window scaled by the
+class-level actual/projected ratio of the windows before it, strictly past
+data — halves the bias and costs a quarter of a point per board. It does not
+ship: a uniform per-class multiplier moves everyone in a class together, so
+it barely reorders anything the optimizer actually compares. A bias worth
+fixing needs a fix that changes rankings, not levels. (The same reasoning
+retired the pitcher context term after the classic backtest —
+`docs/DFS_MODEL.md` §4.)
 
 ## Where the money actually is
 

@@ -199,7 +199,11 @@ def main() -> None:
               f"[{args.from_id}, {args.to_id}]")
         return
     banked = pd.concat(frames, ignore_index=True)
-    dest = out / f"dk_history_{args.league}_{args.from_id}_{args.to_id}.parquet"
+    # The format is part of the name: a classic sweep and a showdown sweep
+    # over the same id range are different datasets and must not clobber
+    # each other (they did once).
+    dest = (out / f"dk_history_{args.league}_{args.format}_"
+                  f"{args.from_id}_{args.to_id}.parquet")
     banked.to_parquet(dest, index=False)
     span = (banked["slate_start"].min(), banked["slate_start"].max())
     print(f"\nkept {kept} boards / {len(banked):,} salary rows "

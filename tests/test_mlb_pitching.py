@@ -104,6 +104,35 @@ def test_extract_probables_keys_by_team_pair_first_game_wins() -> None:
     assert bp.extract_probables({}) == {}
 
 
+def _lineup_payload() -> dict:
+    return {"dates": [{"games": [
+        {"teams": {"home": {"team": {"name": "Baltimore Orioles"}},
+                   "away": {"team": {"name": "New York Yankees"}}},
+         "lineups": {
+             "homePlayers": [{"id": i, "fullName": f"O{i}"} for i in range(1, 10)],
+             "awayPlayers": [{"id": i, "fullName": f"Y{i}"} for i in range(11, 20)],
+         }},
+        {"teams": {"home": {"team": {"name": "Athletics"}},
+                   "away": {"team": {"name": "Seattle Mariners"}}}},  # not posted
+        {"teams": {"home": {"team": {"name": "Baltimore Orioles"}},
+                   "away": {"team": {"name": "New York Yankees"}}},
+         "lineups": {"homePlayers": [{"id": 99, "fullName": "Game Two"}]}},
+    ]}]}
+
+
+def test_extract_lineups_keeps_the_batting_order_and_first_game_wins() -> None:
+    cards = bp.extract_lineups(_lineup_payload())
+    # Order is the batting order: index 0 hits leadoff.
+    assert cards["Baltimore Orioles"] == [str(i) for i in range(1, 10)]
+    assert cards["New York Yankees"][0] == "11"
+    # A team whose card is not posted is simply absent — the caller falls
+    # back to the batter's most recent slot rather than guessing a nine.
+    assert "Athletics" not in cards
+    # The doubleheader's second game must not overwrite the first.
+    assert "99" not in cards["Baltimore Orioles"]
+    assert bp.extract_lineups({}) == {}
+
+
 def test_slim_team_box_keeps_possession_columns_only() -> None:
     import importlib.util as _ilu
 

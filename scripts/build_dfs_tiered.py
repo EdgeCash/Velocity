@@ -46,10 +46,14 @@ def _mlb_home_runs(season: int | None = None) -> pd.DataFrame:
 
     Same construction as ``scripts/build_hr_board.py``: today's probables
     give each side's opposing starter, the venue is the home club, and the
-    lineup slot is the batter's most recent start.
+    lineup slot is the batter's **confirmed** slot when statsapi has posted
+    the card (his most recent start otherwise). A team with a posted card
+    contributes exactly its announced nine — a bat that never leaves the
+    bench hits no home runs.
     """
     from datetime import date, timedelta
 
+    from build_dfs_lineup import apply_confirmed_cards
     from build_mlb_pitching import fetch_probables
     from velocity.models.props_hr import HomeRunModel
 
@@ -74,12 +78,16 @@ def _mlb_home_runs(season: int | None = None) -> pd.DataFrame:
                for r in recent.to_dict("records")}
 
     today = date.today()
-    probables = fetch_probables(str(today), str(today + timedelta(days=1)))
+    tomorrow = today + timedelta(days=1)
+    eligible = apply_confirmed_cards(slot_of, team_of, str(today), str(tomorrow))
+    probables = fetch_probables(str(today), str(tomorrow))
     rows = []
     for (home, away, _k), (home_sp, away_sp) in probables.items():
         for team, opposing_sp in ((home, away_sp), (away, home_sp)):
             for pid, batter_team in team_of.items():
                 if batter_team != team:
+                    continue
+                if eligible is not None and pid not in eligible:
                     continue
                 expected = model.expected_home_runs(
                     pid, opposing_starter=opposing_sp, venue=home,
