@@ -220,3 +220,72 @@ def test_contextual_scorer_prices_everyone_when_no_card_is_posted() -> None:
                                             eligible_batters=None, season=2026)
     assert set(out.loc[out["position"] != "P", "player_id"]) == {
         "b1", "b2", "d1", "d2"}
+
+
+def _form_bank(recent_dk_scale: float) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """One starter whose last month differs from the four before it."""
+    games, starters, batters = [], [], []
+    for i in range(60):
+        game_id = str(2000 + i)
+        kickoff = pd.Timestamp("2026-05-01") + pd.Timedelta(days=i)
+        games.append({"game_id": game_id, "season": 2026, "kickoff": kickoff,
+                      "home_team": "Braves", "away_team": "Dodgers",
+                      "home_score": 3, "away_score": 2})
+        # The last 20 games are the "recent" block.
+        strong = i >= 40
+        outs = 18.0 if not strong else 18.0 * recent_dk_scale
+        starters.append({
+            "game_id": game_id, "team": "Braves", "side": "home",
+            "starter_id": "ace", "starter_name": "Ace", "outs": outs,
+            "batters_faced": 24, "k": 6 if not strong else 6 * recent_dk_scale,
+            "bb": 1, "hbp": 0, "hr": 0, "er": 2, "hits_allowed": 5, "win": 0})
+        batters.append({
+            "game_id": game_id, "team": "Dodgers", "side": "away",
+            "batter_id": "bat", "batter_name": "Bat", "lineup_slot": 1,
+            "started": True, "pa": 4, "ab": 4, "h": 1, "double": 0,
+            "triple": 0, "hr": 0, "rbi": 1, "r": 1, "bb": 0, "hbp": 0, "sb": 0})
+    return pd.DataFrame(batters), pd.DataFrame(starters), pd.DataFrame(games)
+
+
+def test_recency_weights_halve_at_the_half_life() -> None:
+    from velocity.models.dfs_mlb import _recency_weights
+
+    frame = pd.DataFrame({"kickoff": [
+        pd.Timestamp("2026-06-30"),  # newest: weight 1
+        pd.Timestamp("2026-06-16"),  # 14 days back: weight 1/2
+        pd.Timestamp("2026-06-02"),  # 28 days back: weight 1/4
+    ]})
+    weights = _recency_weights(frame, 14.0)
+    assert list(weights.round(4)) == [1.0, 0.5, 0.25]
+    # Disabled, or with nothing to date, everything weighs the same.
+    assert list(_recency_weights(frame, None)) == [1.0, 1.0, 1.0]
+    assert list(_recency_weights(pd.DataFrame({"x": [1, 2]}), 14.0)) == [1.0, 1.0]
+
+
+def test_pitcher_half_life_pulls_the_rate_toward_recent_form() -> None:
+    """The knob has to actually move a rate, or testing it proves nothing."""
+    batters, starters, games = _form_bank(recent_dk_scale=2.0)
+    flat = DfsMlbModel.fit(batters, starters, games, season=2026)
+    recent = DfsMlbModel.fit(batters, starters, games, season=2026,
+                             pitcher_half_life=14.0)
+    assert recent.pitcher_rate["ace"] > flat.pitcher_rate["ace"]
+
+    # And symmetrically for an arm whose recent month is the WORSE one.
+    batters, starters, games = _form_bank(recent_dk_scale=0.4)
+    flat = DfsMlbModel.fit(batters, starters, games, season=2026)
+    recent = DfsMlbModel.fit(batters, starters, games, season=2026,
+                             pitcher_half_life=14.0)
+    assert recent.pitcher_rate["ace"] < flat.pitcher_rate["ace"]
+
+
+def test_fit_owns_the_game_join() -> None:
+    """A caller frame carrying the join columns must not produce _x/_y."""
+    batters, starters, games = _form_bank(recent_dk_scale=1.0)
+    context = games[["game_id", "kickoff", "home_team", "away_team"]]
+    # The backtest harness hands fit() frames that already carry these.
+    fat_bat = batters.merge(context, on="game_id", how="left")
+    fat_sp = starters.merge(context, on="game_id", how="left")
+    model = DfsMlbModel.fit(fat_bat, fat_sp, games, season=2026,
+                            pitcher_half_life=14.0)
+    assert model.pitcher_rate["ace"] != 0.0
+    assert model.batter_rate["bat"] > 0.0

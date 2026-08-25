@@ -172,7 +172,7 @@ result, entirely manufactured by the bug. Matching on **start time**, with
 name overlap only as an eligibility bar, fixed it — 480 of 480 announced
 starters now match — and the real effect is several times larger.
 
-**One bias found, one fix rejected.** Against realized DK points, pitchers
+**One bias found, two fixes rejected.** Against realized DK points, pitchers
 project 9.5% high (14.79 vs 13.38) while hitters, once the card is known,
 are within 3% and slightly *low* (6.75 vs 6.92). The ordering inside each
 class is fine; the level between them is not, and the optimizer chooses
@@ -181,9 +181,18 @@ class-level actual/projected ratio of the windows before it, strictly past
 data — halves the bias and costs a quarter of a point per board. It does not
 ship: a uniform per-class multiplier moves everyone in a class together, so
 it barely reorders anything the optimizer actually compares. A bias worth
-fixing needs a fix that changes rankings, not levels. (The same reasoning
-retired the pitcher context term after the classic backtest —
-`docs/DFS_MODEL.md` §4.)
+fixing needs a fix that changes rankings, not levels.
+
+The obvious such fix — weighting a starter's own history by recency — was
+then built and measured over 12,936 starts, and it fails monotonically:
+within-slate correlation runs +0.2682 flat, +0.2566 at a 45-day half-life,
++0.2297 at 14 days, with each slate's top-2 arms falling the same way. It
+shrinks the level bias (+0.62 to +0.22) exactly as the rescale did. Two
+independent attempts, one conclusion: **a starting pitcher's recent form is
+mostly noise, and his season-long rate is the best estimate of him
+available.** Both knobs survive, off, so the negative results stay
+executable (`docs/DFS_MODEL.md` §4, which also carries the pitcher context
+term the classic backtest retired).
 
 ## The classic backtest
 
@@ -334,12 +343,18 @@ portfolio's tail is wider than the table above.
 schedule rather than riding the betting slate's 16:00/22:00 UTC cadence,
 for exactly the reason the backtests give:
 
-| Cron (UTC) | Central | What it catches |
-|---|---|---|
-| `0 16 * * *` | 11:00 | the day-game slates |
-| `30 21 * * *` | 16:30 | the main slate, cards mostly posted |
-| `30 22 * * *` | 17:30 | a second pass nearer lock |
-| `0 1 * * *` | 20:00 | the night slate |
+Every window sits **after** the relevant availability news and **before**
+the slate it serves locks. MLB posts batting orders two to three hours out;
+the NFL posts inactives ninety minutes out.
+
+| Cron (UTC) | What it catches |
+|---|---|
+| `0 16 * * *` | MLB day games; NFL early-slate inactives (11:30 ET) |
+| `30 19 * * *` | NFL late-slate inactives (14:35 ET) |
+| `30 21 * * *` | MLB main slate, cards mostly in |
+| `30 22 * * *` | MLB main slate, second pass nearer lock |
+| `30 23 * * *` | Sunday-night inactives (18:50 ET); MLB west-coast cards |
+| `0 1 * * *` | MLB night slate |
 
 Each run takes a fresh DK snapshot (salaries move, and the probable-pitcher
 and lineup flags are game-day state), builds every format, and uploads a

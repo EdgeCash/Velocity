@@ -18,11 +18,15 @@ name: DFS slate
 
 on:
   schedule:
-    # UTC. MLB lineups post roughly 2-3 hours before first pitch.
-    - cron: "0 16 * * *"    # 11:00 CT — the day-game slates
-    - cron: "30 21 * * *"   # 16:30 CT — the main slate, cards mostly in
-    - cron: "30 22 * * *"   # 17:30 CT — a second pass nearer lock
-    - cron: "0 1 * * *"     # 20:00 CT — the night slate
+    # UTC, and every window sits AFTER the relevant availability news and
+    # BEFORE the slate it serves locks. MLB posts batting orders 2-3 hours
+    # out; the NFL posts inactives 90 minutes out.
+    - cron: "0 16 * * *"    # MLB day games; NFL early-slate inactives (11:30 ET)
+    - cron: "30 19 * * *"   # NFL late-slate inactives (14:35 ET)
+    - cron: "30 21 * * *"   # MLB main slate, cards mostly in
+    - cron: "30 22 * * *"   # MLB main slate, second pass nearer lock
+    - cron: "30 23 * * *"   # Sunday-night inactives (18:50 ET); MLB west cards
+    - cron: "0 1 * * *"     # MLB night slate
   workflow_dispatch:
     inputs:
       leagues:

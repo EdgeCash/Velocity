@@ -83,10 +83,34 @@ def pitcher_dk_points(frame: pd.DataFrame) -> pd.Series:
             + col("hbp") * PITCHER_POINTS["hbp"])
 
 
+# Columns the game join supplies. A caller frame that already carries them
+# (the backtest harness does) must give them up first, or pandas suffixes
+# both copies and the fit reads neither.
+_JOINED = ["home_team", "away_team", "kickoff"]
+
+
 def _shrink(total: pd.Series, exposure: pd.Series, league: float,
             prior: float) -> pd.Series:
     """Empirical-Bayes rate: observed blended toward league by prior weight."""
     return (total + league * prior) / (exposure + prior)
+
+
+def _recency_weights(frame: pd.DataFrame, half_life: float | None) -> pd.Series:
+    """Per-row exponential recency weight, or all ones when disabled.
+
+    ``half_life`` is in days and is measured against the newest game in the
+    fit window, so the weights mean the same thing whichever window a
+    walk-forward pass is on. A frame with no usable dates weighs everything
+    equally rather than inventing an ordering.
+    """
+    ones = pd.Series(1.0, index=frame.index)
+    if not half_life or half_life <= 0 or "kickoff" not in frame.columns:
+        return ones
+    stamps = pd.to_datetime(frame["kickoff"], errors="coerce")
+    if stamps.notna().sum() == 0:
+        return ones
+    age_days = (stamps.max() - stamps).dt.total_seconds() / 86_400.0
+    return pd.Series(0.5 ** (age_days / half_life), index=frame.index).fillna(1.0)
 
 
 @dataclass(frozen=True)
@@ -152,19 +176,39 @@ class DfsMlbModel:
     @classmethod
     def fit(
         cls, batters: pd.DataFrame, starters: pd.DataFrame, games: pd.DataFrame,
-        *, season: int | None = None,
+        *, season: int | None = None, pitcher_half_life: float | None = None,
     ) -> DfsMlbModel:
-        """Fit every rate and context term from the banked box scores."""
+        """Fit every rate and context term from the banked box scores.
+
+        ``pitcher_half_life`` (in days) weights a starter's own history by
+        recency: a start ``h`` days old counts half as much as today's.
+        **Off by default, on evidence.** It was built to attack the ~9%
+        level bias the lineup backtests found in pitcher projections, as a
+        candidate that changes rankings rather than levels — and it fails
+        monotonically (docs/DFS_MODEL.md §4): over 12,936 starts, mean
+        within-slate correlation runs +0.2682 flat, +0.2566 at a 45-day
+        half-life, +0.2297 at 14 days, with each slate's top-2 arms falling
+        the same way. It does shrink the level bias (+0.62 to +0.22), which
+        is exactly the shape of the per-class rescale the showdown backtest
+        also rejected: both buy calibration by discarding sample. A starting
+        pitcher's recent form is mostly noise. The knob stays so the negative
+        result is executable rather than a paragraph.
+        """
         games = games.copy()
         games["game_id"] = games["game_id"].astype(str)
         if season is not None and "season" in games.columns:
             games = games[games["season"] == season]
-        keys = games[["game_id", "home_team", "away_team"]]
+        columns = ["game_id", "home_team", "away_team"]
+        if "kickoff" in games.columns:
+            columns.append("kickoff")
+        keys = games[columns]
 
         bat = batters.copy()
         bat["game_id"] = bat["game_id"].astype(str)
         bat["batter_id"] = bat["batter_id"].astype(str)
-        bat = bat.drop(columns=["home_team", "away_team"], errors="ignore")
+        # Fit owns the game join: a caller frame that already carries these
+        # columns would otherwise merge into _x/_y and silently lose them.
+        bat = bat.drop(columns=_JOINED, errors="ignore")
         bat = bat.merge(keys, on="game_id", how="inner")
         bat["pa"] = pd.to_numeric(bat["pa"], errors="coerce")
         bat = bat[bat["pa"] > 0]
@@ -175,6 +219,7 @@ class DfsMlbModel:
         sp = starters.copy()
         sp["game_id"] = sp["game_id"].astype(str)
         sp["starter_id"] = sp["starter_id"].astype(str)
+        sp = sp.drop(columns=_JOINED, errors="ignore")
         sp = sp.merge(keys, on="game_id", how="inner")
         sp["dk"] = pitcher_dk_points(sp)
 
@@ -185,8 +230,9 @@ class DfsMlbModel:
         batter_rate = _shrink(by_batter["dk"], by_batter["pa"], league_h,
                               BATTER_PRIOR_PA)
 
-        by_pitcher = sp.groupby("starter_id").agg(dk=("dk", "sum"),
-                                                  starts=("game_id", "size"))
+        sp["weight"] = _recency_weights(sp, pitcher_half_life)
+        by_pitcher = sp.assign(weighted=sp["dk"] * sp["weight"]).groupby(
+            "starter_id").agg(dk=("weighted", "sum"), starts=("weight", "sum"))
         pitcher_rate = _shrink(by_pitcher["dk"], by_pitcher["starts"], league_p,
                                PITCHER_PRIOR_STARTS)
 
