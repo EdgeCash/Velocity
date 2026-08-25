@@ -43,17 +43,25 @@ import pandas as pd
 from velocity.dfs.backtest import (
     board_games,
     board_probables,
+    nfl_player_day_index,
     norm,
     player_day_index,
     prepare_banks,
+    prepare_nfl_weeks,
     random_rosters,
     realized,
     recent_slots,
 )
 from velocity.dfs.optimizer import MLB_CLASSIC
 from velocity.dfs.pipeline import solve_mlb_lineup
-from velocity.dfs.showdown import MLB_SHOWDOWN, build_showdown, showdown_board
+from velocity.dfs.showdown import (
+    MLB_SHOWDOWN,
+    NFL_SHOWDOWN,
+    build_showdown,
+    showdown_board,
+)
 from velocity.models.dfs_mlb import DfsMlbModel
+from velocity.models.dfs_nfl import SHOWDOWN_POSITIONS, DfsNflModel
 
 FIELD_SAMPLES = 300
 # The MLB classic position quota, for sampling a legal random roster.
@@ -169,6 +177,107 @@ def build_pool(board, *, model, index, played, slots, batter_ids, starter_ids,
     return pool
 
 
+# --- football -----------------------------------------------------------------
+# Showdown only, and deliberately so: DK's NFL classic roster requires a team
+# DST, and Velocity has no team-defense projection yet. A classic backtest
+# would be scoring a roster with a hole in it. Showdown has no required DST
+# slot, and it is the second-largest pool DK runs.
+
+
+def build_nfl_pool(board, *, model, index) -> pd.DataFrame:
+    """One NFL showdown board priced by the model and scored by the week.
+
+    Every board player with a fitted rate stays in the pool whether or not
+    he ended up playing, and one who never appears takes the 0.0 DK pays —
+    the same rule the MLB path uses, for the same reason.
+    """
+    rows: list[dict[str, object]] = []
+    for entry in board.to_dict("records"):
+        stamp = pd.Timestamp(entry["kickoff"])
+        if pd.isna(stamp):
+            continue
+        position = str(entry.get("position") or "").upper().strip()
+        if position not in SHOWDOWN_POSITIONS:
+            continue  # DST has no projection yet; defenders never score
+        appeared = index.get((norm(entry["player_name"]),
+                              stamp.normalize().date()))
+        points = model.project(str(appeared["player_id"])) if appeared else None
+        if points is None:
+            continue
+        rows.append({
+            "player_name": entry["player_name"], "position": position,
+            "team": entry.get("team"), "salary": int(entry["salary"]),
+            "captain_salary": int(entry.get("captain_salary")
+                                  or round(int(entry["salary"]) * 1.5)),
+            "points": float(points),
+            "actual": float(appeared["actual"]),
+            "played": bool(appeared["started"]),
+        })
+    return pd.DataFrame(rows)
+
+
+def evaluate_nfl(boards, weeks, *, confirmed=False):
+    """Walk-forward every NFL showdown board against the banked weeks.
+
+    The model is refit per NFL week from the weeks that finished before it —
+    the football unit of time, rather than the fourteen-day windows a daily
+    baseball slate wants.
+    """
+    rng = np.random.default_rng(17)
+    index = nfl_player_day_index(weeks)
+    boards = boards.copy()
+    boards["kickoff"] = pd.to_datetime(boards["kickoff"], errors="coerce")
+    boards = boards.dropna(subset=["kickoff"])
+    if boards.empty or weeks.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    played = weeks.dropna(subset=["kickoff"]).copy()
+    played["kickoff"] = pd.to_datetime(played["kickoff"], errors="coerce")
+    rows, priced = [], []
+    for gid, board in boards.groupby(boards["draft_group_id"].astype(str)):
+        lock = board["kickoff"].min()
+        past = played[played["kickoff"] < lock.normalize()]
+        if past["game_id"].nunique() < 64:  # about four weeks of football
+            continue
+        model = DfsNflModel.fit(past, positions=SHOWDOWN_POSITIONS)
+        pool = build_nfl_pool(board, model=model, index=index)
+        if confirmed and not pool.empty:
+            pool = pool[pool["played"]]
+        if len(pool) < 12:
+            continue
+        ours = build_showdown(pool, spec=NFL_SHOWDOWN)
+        chalk = build_showdown(pool.assign(points=pool["salary"] / 1000.0),
+                               spec=NFL_SHOWDOWN)
+        ceiling = build_showdown(pool.assign(points=pool["actual"]),
+                                 spec=NFL_SHOWDOWN)
+        if ours is None or chalk is None or ceiling is None:
+            continue
+        field = random_rosters(pool, rng, size=6, n=FIELD_SAMPLES,
+                               captain=True, min_teams=2)
+        actual_of = dict(zip(pool["player_name"], pool["actual"], strict=True))
+        mine = realized(ours.slots, actual_of)
+        priced.append(pool.assign(draft_group_id=str(gid), kickoff=lock))
+        rows.append({
+            "draft_group_id": str(gid), "kickoff": lock, "n_pool": len(pool),
+            "n_games": 1, "ours": mine,
+            "chalk": realized(chalk.slots, actual_of),
+            "ceiling": realized(ceiling.slots, actual_of),
+            "field_mean": float(field.mean()) if len(field) else np.nan,
+            "percentile": (float((field < mine).mean())
+                           if len(field) else np.nan),
+            "chalk_percentile": (
+                float((field < realized(chalk.slots, actual_of)).mean())
+                if len(field) else np.nan),
+            "gpp_best": np.nan, "gpp_mean": np.nan, "gpp_n": 0,
+            "gpp_percentile": np.nan,
+            "scratched": int((~pool.loc[
+                pool["player_name"].isin([s.player_name for s in ours.slots]),
+                "played"]).sum()),
+        })
+    return (pd.DataFrame(rows),
+            pd.concat(priced, ignore_index=True) if priced else pd.DataFrame())
+
+
 def solve(pool: pd.DataFrame, board_format: str, column: str = "points"):
     """Build the best roster for a format from an arbitrary points column."""
     priced = pool.assign(points=pool[column])
@@ -282,6 +391,12 @@ def main() -> None:
     parser.add_argument("--boards", required=True, help="harvested boards (glob ok)")
     parser.add_argument("--format", default="showdown",
                         choices=("showdown", "classic"))
+    parser.add_argument("--league", default="mlb", choices=("mlb", "nfl"),
+                        help="nfl supports showdown only — DK's classic roster "
+                             "needs a team DST and there is no DST projection")
+    parser.add_argument("--weeks", default="datasets/nfl/player_weeks.parquet",
+                        help="banked NFL player-weeks (--league nfl)")
+    parser.add_argument("--nfl-games", default="datasets/nfl/games.parquet")
     parser.add_argument("--batters", default="datasets/mlb/batters.parquet")
     parser.add_argument("--starters", default="datasets/mlb/starters.parquet")
     parser.add_argument("--games", default="datasets/mlb/games.parquet")
@@ -309,14 +424,25 @@ def main() -> None:
     print(f"{boards['draft_group_id'].nunique()} {args.format} boards "
           f"/ {len(boards):,} priced players")
 
-    bat, sp, played = prepare_banks(
-        pd.read_parquet(args.batters), pd.read_parquet(args.starters),
-        pd.read_parquet(args.games))
-    result, priced = evaluate(boards, bat, sp, played, board_format=args.format,
-                              step_days=args.step_days,
-                              min_train=args.min_train_games,
-                              confirmed=args.lineups == "confirmed",
-                              n_gpp=args.gpp, sample_every=args.sample_every)
+    if args.league == "nfl":
+        if args.format != "showdown":
+            raise SystemExit("--league nfl supports --format showdown only "
+                             "(DK's classic roster needs a DST projection)")
+        weeks = prepare_nfl_weeks(pd.read_parquet(args.weeks),
+                                  pd.read_parquet(args.nfl_games))
+        result, priced = evaluate_nfl(boards, weeks,
+                                      confirmed=args.lineups == "confirmed")
+    else:
+        bat, sp, played = prepare_banks(
+            pd.read_parquet(args.batters), pd.read_parquet(args.starters),
+            pd.read_parquet(args.games))
+        result, priced = evaluate(boards, bat, sp, played,
+                                  board_format=args.format,
+                                  step_days=args.step_days,
+                                  min_train=args.min_train_games,
+                                  confirmed=args.lineups == "confirmed",
+                                  n_gpp=args.gpp,
+                                  sample_every=args.sample_every)
     if result.empty:
         print("no board matched a banked box score; nothing to report")
         return
@@ -355,8 +481,10 @@ def main() -> None:
     if not priced.empty:
         # Level calibration by class: the optimizer chooses ACROSS classes, so
         # a systematic level error builds the wrong roster from a right order.
-        klass = priced["position"].astype(str).isin({"P"}).map(
-            {True: "pitchers", False: "hitters"})
+        pitcher_like = {"P"} if args.league == "mlb" else {"QB"}
+        labels = ({True: "pitchers", False: "hitters"} if args.league == "mlb"
+                  else {True: "quarterbacks", False: "skill players"})
+        klass = priced["position"].astype(str).isin(pitcher_like).map(labels)
         print("\n  projection level by class:")
         for name, group in priced.groupby(klass):
             bias = group["points"].mean() - group["actual"].mean()

@@ -52,8 +52,8 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 
 | Game type | Format | Roster | Cap | Draft | Velocity |
 |---|---|---|---|---|---|
-| 1 | Classic | QB,RB,RB,WR,WR,WR,TE,FLEX,DST | $50,000 | SalaryCap | **built** (`NFL_CLASSIC`) |
-| 96 | Showdown Captain Mode | CPT (1.5x), FLEX x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
+| 1 | Classic | QB,RB,RB,WR,WR,WR,TE,FLEX,DST | $50,000 | SalaryCap | **built**, unbacktested — needs a DST projection |
+| 96 | Showdown Captain Mode | CPT (1.5x), FLEX x5 | $50,000 | SalaryCap | **built + backtested** — legal and competitive, no measurable edge over DK's pricing |
 | 145 | Best Ball | QB,RB,RB,WR,WR,WR,TE,FLEX + 12 BN | — | SnakeDraft | planned; position limits QB 1-3, RB 2-6, WR 3-8, TE 1-3 |
 | 189 | Snake | QB,RB,WR/TE,WR/TE,FLEX,FLEX,BENCH | — | SnakeDraft | planned (draft advisor) |
 | 192 | Snake Showdown | S-FLEX x3, BENCH | — | SnakeDraft | planned (draft advisor) |
@@ -227,6 +227,102 @@ The hitter level bias makes it concrete: projected 6.48 against 3.34 actual
 in the early build, and 6.87 against 6.92 — essentially perfect — once the
 card is known. The model was never wrong about what a hitter does in a game.
 It was wrong about whether he was in one.
+
+## The football vertical
+
+The MLB verticals could be backtested because the box-score banks carry what
+every player actually scored. Football had no equivalent until now.
+
+**The bank.** nflverse publishes weekly player stats as a free public
+release asset per season, so `datasets/nfl/player_weeks.parquet` commits
+like every other dataset: 112,450 player-weeks over 2020–2025, 4,062
+players, each scored by `velocity.models.dfs_nfl.nfl_dk_points`.
+
+Two details separate a real DK score from an approximation:
+
+* **Milestone bonuses** (+3 at 300 passing / 100 rushing / 100 receiving).
+  Projections leave them out — a bonus is a tail event and adding it at the
+  mean overstates everyone — but actuals must include them, so the scorer
+  takes `bonuses` as an argument rather than an assumption.
+* **Kickers**, who DK's classic roster has no slot for but its Showdown
+  roster does, routinely as a captain. DK pays by distance (3 / 4 / 5 at
+  0–39, 40–49, 50+, plus 1 a conversion) and charges nothing for a miss.
+  nflverse buckets more finely than DK, so the normalizer collapses its
+  bands into DK's three.
+
+Hand-checked rather than trusted, against the best weeks in the bank: Tyreek
+Hill's 2020 week 12 (13-269-3) scores 60.9, Alvin Kamara's six-touchdown
+week 59.2, Chris Boswell's 2024 opener (1 short, 2 mid, 3 from 50+) exactly
+26.0.
+
+**The projection** is empirical-Bayes DK points per game, shrunk toward the
+player's *own position* mean — a quarterback averages 15.2 a game and a
+tight end 5.7, so one pooled prior would drag every quarterback down and
+every tight end up. Walk-forward over 27,342 player-weeks in 114 weeks:
+
+| Mean within-week correlation with actual DK points | |
+|---|---:|
+| player rate | **+0.5718** |
+| + opponent defense | +0.5695 (−0.0023) |
+
+**That number reframes where the DFS edge is.** MLB hitters rank at r ≈ 0.12
+within a slate and MLB starters at ≈ 0.27; a football slate ranks at 0.57.
+Usage in football is role-driven and stable — per-game DK points correlate
+r = 0.79–0.83 season over season — while a baseball hitter's night is four
+plate appearances of near-binary events. The opponent term earns nothing and
+stays off, the same verdict the MLB pitcher context term got.
+
+### The NFL showdown backtest, and the assumption it kills
+
+Harvested the same way MLB's was: ids 132,000–140,200 recovered **1,189 NFL
+boards** covering the whole 2025 season, preseason through the Super Bowl —
+869 showdown boards across 525 distinct games, plus 320 classic. 219 boards
+cleared the training-history bar and were scored, confirmed-card build.
+
+| | Realized DK points |
+|---|---:|
+| Our projections through the optimizer | 78.72 |
+| The same optimizer run on DK's salaries | 77.67 |
+| Random legal rosters (the field proxy) | 56.29 |
+| Retrospective best possible roster | 117.08 |
+| Beat the salary build | 53.0% |
+| Edge over the salary build | **+1.04 (t = 0.82)** |
+| Our field percentile | 83.8% |
+| The salary build's field percentile | 81.7% |
+
+**Our NFL projections are no better than DK's own pricing.** +1.04 points at
+t = 0.82 over 219 boards is indistinguishable from zero, and our field
+percentile (83.8%) barely separates from the salary build's (81.7%).
+
+Put beside the baseball numbers, that kills the obvious assumption:
+
+| | within-slate rank r | edge over DK's pricing |
+|---|---:|---:|
+| MLB classic | 0.12 (hitters) | **+13.06 (t = 5.77)** |
+| MLB showdown | 0.12 / 0.27 | **+11.51 (t = 5.83)** |
+| NFL showdown | **0.57** | +1.04 (t = 0.82) |
+
+The better projection produced the *smaller* edge. Ranking players well and
+beating a market are different problems, and what differs across these rows
+is not the model — it is the opposition. DK's NFL salaries already encode
+what our 0.57 projection knows, because the NFL DFS market is enormous and
+heavily modelled. Baseball's does not, because the thing that mattered there
+turned out to be the confirmed lineup card rather than the projection.
+
+So NFL showdown ships as **legal and competitive, not as an edge**: it beats
+a random field by 22 points and DK's pricing by nothing we can measure. Any
+NFL DFS edge has to come from somewhere the market is weaker — ownership
+leverage, correlation, or the inactive report — not from a better points
+projection.
+
+**And what is still missing, stated plainly.** `validate_dfs_lineups.py
+--league nfl` supports **showdown only**, and refuses classic rather than
+running it: DK's NFL classic roster requires a team DST and Velocity has no
+team-defense projection. A classic backtest would quietly fill that slot
+with a zero, produce a number that looks fine, and mean nothing. Until a DST
+model exists, the 242,050-entry NFL classic pool ships on plumbing
+confidence — the solver is verified on live boards, the projections are
+validated per player-week, and the roster as a whole is not.
 
 ## Where the money actually is
 

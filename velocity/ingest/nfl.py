@@ -325,6 +325,13 @@ _DFS_STAT_COLUMNS = {
 }
 # Columns DK scores that nflverse splits across several of its own.
 _DFS_SUMMED_COLUMNS = {
+    # DK pays kickers by distance band; nflverse buckets more finely than DK
+    # does, so 0-19/20-29/30-39 collapse into DK's single 0-39 tier and
+    # 50-59/60+ into its 50-plus tier.
+    "fg_made_0_39": ("fg_made_0_19", "fg_made_20_29", "fg_made_30_39"),
+    "fg_made_40_49": ("fg_made_40_49",),
+    "fg_made_50_plus": ("fg_made_50_59", "fg_made_60_"),
+    "pat_made": ("pat_made",),
     "fumbles_lost": ("rushing_fumbles_lost", "receiving_fumbles_lost",
                      "sack_fumbles_lost"),
     "return_tds": ("special_teams_tds", "pt_return_tds"),

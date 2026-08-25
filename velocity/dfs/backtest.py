@@ -109,6 +109,67 @@ def player_day_index(
     return index
 
 
+def prepare_nfl_weeks(weeks: pd.DataFrame, games: pd.DataFrame) -> pd.DataFrame:
+    """Banked NFL player-weeks joined to a kickoff and scored the way DK scores.
+
+    The football counterpart of :func:`prepare_banks`. nflverse keys a week
+    by ``game_id`` rather than a date, so the schedule supplies the kickoff
+    that :func:`player_day_index` needs — a player appears in at most one
+    game a day either way, so the (name, date) key still identifies him.
+
+    ``played`` marks a real appearance: touches, targets or pass attempts, or
+    a kicker's attempts. It is the football analogue of a posted lineup card,
+    and the reason a backtest can tell "projected badly" from "was inactive".
+    """
+    if weeks.empty:
+        return weeks.assign(kickoff=pd.Series(dtype="datetime64[ns]"),
+                            actual=pd.Series(dtype=float),
+                            key=pd.Series(dtype=str),
+                            played=pd.Series(dtype=bool))
+    schedule = games.copy()
+    schedule["game_id"] = schedule["game_id"].astype(str)
+    schedule["kickoff"] = pd.to_datetime(schedule["kickoff"], errors="coerce")
+    frame = weeks.copy()
+    frame["game_id"] = frame["game_id"].astype(str)
+    frame = frame.drop(columns=["kickoff"], errors="ignore")
+    frame = frame.merge(schedule[["game_id", "kickoff"]], on="game_id", how="left")
+
+    from velocity.models.dfs_nfl import nfl_dk_points
+
+    frame["actual"] = (pd.to_numeric(frame["dk_points"], errors="coerce")
+                       if "dk_points" in frame.columns else nfl_dk_points(frame))
+    frame["key"] = frame["player_name"].map(norm)
+    touches = pd.Series(0.0, index=frame.index)
+    for column in ("carries", "targets", "attempts", "fg_att", "pat_att"):
+        if column in frame.columns:
+            touches += pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
+    frame["played"] = touches > 0
+    return frame
+
+
+def nfl_player_day_index(
+    weeks: pd.DataFrame,
+) -> dict[tuple[str, object], dict[str, Any]]:
+    """(normalized name, date) → what that NFL player did that day."""
+    index: dict[tuple[str, object], dict[str, Any]] = {}
+    if weeks.empty:
+        return index
+    for row in weeks.dropna(subset=["kickoff"]).to_dict("records"):
+        day = pd.Timestamp(row["kickoff"]).normalize().date()
+        index[(str(row["key"]), day)] = {
+            "player_id": str(row["player_id"]),
+            "actual": float(row["actual"]),
+            "game_id": str(row["game_id"]),
+            "team": str(row.get("team") or ""),
+            "opponent": str(row.get("opponent") or ""),
+            "position": str(row.get("position") or ""),
+            "started": bool(row.get("played")),
+            "is_pitcher": False,
+            "lineup_slot": None,
+        }
+    return index
+
+
 def opposing_starters(sp: pd.DataFrame) -> dict[tuple[str, str], str]:
     """(game_id, side) → the starter that side FACES, for the hitter model."""
     if sp.empty:
