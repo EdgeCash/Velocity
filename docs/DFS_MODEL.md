@@ -70,6 +70,29 @@ absorbs much of what they attempt to add. The capability remains behind
 `use_context=False` so a properly fitted replacement can be switched on when
 it earns it.
 
+Pitcher **recency** was built, tested, and **rejected** too. The lineup
+backtests (docs/DFS_FORMATS.md) found pitcher projections running ~9% hot
+against realized points while hitters, once the confirmed card is known,
+come in within half a point. Weighting a starter's own history by recency
+is the obvious candidate that changes *rankings* rather than levels — so it
+was measured across 12,936 starts over 532 slates:
+
+| Pitchers | mean within-slate r | top-2 arms | level bias |
+| --- | --- | --- | --- |
+| **flat season rate (shipped)** | **+0.2682** | **19.05** | +0.62 |
+| recency half-life 45d | +0.2566 | 18.83 | +0.38 |
+| recency half-life 30d | +0.2494 | 18.94 | +0.33 |
+| recency half-life 21d | +0.2420 | 18.78 | +0.28 |
+| recency half-life 14d | +0.2297 | 18.50 | +0.22 |
+
+Monotone in the wrong direction: the shorter the half-life, the worse the
+ranking and the better the level. That is the *same shape* as the per-class
+rescale the showdown backtest rejected — both fix the bias by discarding
+sample, and both cost ranking. Two independent attempts now say the same
+thing: **a starting pitcher's recent form is mostly noise, and his
+season-long rate is the best estimate of him available.** The knob survives
+as `pitcher_half_life=None` so the negative result is executable.
+
 Worth noting the levels: pitchers project at **r ≈ 0.27**, hitters at
 **≈ 0.12**. Pitcher projections carry more than twice the signal, which is
 where roster and research effort is best spent.
