@@ -307,6 +307,88 @@ def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# The full DK scoring line per player-week, kept separate from the prop
+# actuals above: that normalizer is shaped by the prop markets and adding
+# columns to it would change what every prop grade reads.
+_DFS_STAT_COLUMNS = {
+    "pass_yards": ("passing_yards",),
+    "pass_tds": ("passing_tds",),
+    "interceptions": ("passing_interceptions", "interceptions"),
+    "rush_yards": ("rushing_yards",),
+    "rush_tds": ("rushing_tds",),
+    "receptions": ("receptions",),
+    "receiving_yards": ("receiving_yards",),
+    "receiving_tds": ("receiving_tds",),
+    "carries": ("carries",),
+    "targets": ("targets",),
+    "attempts": ("attempts",),
+}
+# Columns DK scores that nflverse splits across several of its own.
+_DFS_SUMMED_COLUMNS = {
+    "fumbles_lost": ("rushing_fumbles_lost", "receiving_fumbles_lost",
+                     "sack_fumbles_lost"),
+    "return_tds": ("special_teams_tds", "pt_return_tds"),
+    "two_point_conversions": ("passing_2pt_conversions",
+                              "rushing_2pt_conversions",
+                              "receiving_2pt_conversions"),
+}
+
+
+def normalize_dfs_weeks(raw: pd.DataFrame) -> pd.DataFrame:
+    """nflverse weekly player stats → the DK scoring line, one row per week.
+
+    Everything :func:`velocity.models.dfs_nfl.nfl_dk_points` scores, plus the
+    identity and opponent a projection needs. A column nflverse does not ship
+    contributes zero rather than raising, so an older season with a thinner
+    schema still banks.
+    """
+    if raw.empty:
+        return pd.DataFrame(columns=[
+            "season", "week", "season_type", "game_id", "player_id",
+            "player_name", "team", "opponent", "position",
+            *_DFS_STAT_COLUMNS, *_DFS_SUMMED_COLUMNS])
+
+    def first(*names: str) -> pd.Series:
+        for name in names:
+            if name in raw.columns:
+                return raw[name]
+        return pd.Series(pd.NA, index=raw.index)
+
+    def numeric(*names: str) -> pd.Series:
+        return pd.to_numeric(first(*names), errors="coerce").fillna(0.0)
+
+    out = pd.DataFrame({
+        "season": pd.to_numeric(raw["season"], errors="coerce").astype("Int64"),
+        "week": pd.to_numeric(raw["week"], errors="coerce").astype("Int64"),
+        "season_type": first("season_type").astype(str),
+        "game_id": first("game_id").astype(str),
+        "player_id": raw["player_id"].astype(str),
+        "player_name": first("player_display_name", "player_name").astype(str),
+        "team": first("team", "recent_team").astype(str),
+        "opponent": first("opponent_team").astype(str),
+        "position": first("position").astype(str),
+    })
+    for target, sources in _DFS_STAT_COLUMNS.items():
+        out[target] = numeric(*sources)
+    for target, sources in _DFS_SUMMED_COLUMNS.items():
+        total = pd.Series(0.0, index=raw.index)
+        for source in sources:
+            if source in raw.columns:
+                total += pd.to_numeric(raw[source], errors="coerce").fillna(0.0)
+        out[target] = total
+    return out.reset_index(drop=True)
+
+
+def load_dfs_weeks(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch and normalize the DK scoring line for ``years`` (network)."""
+    frames = [
+        normalize_dfs_weeks(_read_parquet_url(NFLVERSE_WEEKLY_STATS_URL.format(year=year)))
+        for year in years
+    ]
+    return pd.concat(frames, ignore_index=True) if frames else normalize_dfs_weeks(
+        pd.DataFrame())
+
+
 def load_weekly_stats(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
     """Fetch and normalize nflverse weekly player stats for ``years`` (network)."""
     frames = [
