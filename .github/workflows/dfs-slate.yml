@@ -89,8 +89,11 @@ jobs:
             PROJ_FILE="$FP_FILE"
             if [ "${league}" = "mlb" ]; then PROJ_FILE="$MLB_STATS"; fi
             if [ -n "$PROJ_FILE" ] && [ -n "$DK_FILE" ]; then
+              # Tournaments pay the right tail of a huge field, so the DFS
+              # unit is a diversified, stacked PORTFOLIO rather than one
+              # cash-optimal roster (docs/EDGE_RESEARCH.md §5).
               python scripts/build_dfs_lineup.py \
-                --salaries "$DK_FILE" --fp "$PROJ_FILE" \
+                --salaries "$DK_FILE" --fp "$PROJ_FILE" --gpp 20 \
                 --out artifacts/slate --league "${league}" || true
             else
               echo "${league}: missing DK salaries or projections; skipping"

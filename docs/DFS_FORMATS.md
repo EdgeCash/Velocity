@@ -295,6 +295,39 @@ Showdown output is a separate `dfs_showdown_{league}_{stamp}.parquet`
 carrying all solved boards, with a card and captions rendered for the
 strongest one. `--no-showdown` skips it.
 
+### The tournament unit is a portfolio
+
+A cash lineup maximizes the mean. Tournaments pay the right tail of a huge
+field, and the documented winning shape is many diversified, *stacked*
+entries with overlap and exposure caps (docs/EDGE_RESEARCH.md §5). The GPP
+builder already did that for football, anchored on a quarterback. Baseball
+has no such anchor: runs come in innings, so the correlated block is a run
+of the **batting order**. `velocity/dfs/gpp.py` now enforces that shape —
+a primary block of four or five hitters from one club (DK caps a classic
+roster at five) plus a two-hitter mini-stack from a second — and solves
+candidates through the MLB-legal solver so its best stacks are not illegal.
+
+Measured on 87 sampled classic boards, confirmed-card build, portfolios of
+up to five lineups:
+
+| | Realized DK points | Field percentile |
+|---|---:|---:|
+| Best entry of the portfolio | **106.03** | **77.4%** |
+| Mean entry of the portfolio | 92.13 | — |
+| The single cash lineup | 91.40 | 61.2% |
+
+Read it carefully: best-of-N is mechanically increasing in N, so the top row
+is not evidence that stacking beats the cash build. The evidence is the
+middle row. **The stack constraint costs nothing on the mean** — the average
+stacked entry scores as well as the cash-optimal one — while the spread of
+the portfolio reaches a much better tail. That is the whole argument for
+multi-entry, and it is now measured on real boards rather than assumed.
+
+The backtest's portfolios averaged 2.6 lineups a board (the 4+2 requirement
+and the overlap cap are restrictive at a small candidate budget); the live
+build asks for twenty at a larger budget and returns eighteen, so the real
+portfolio's tail is wider than the table above.
+
 ### The clock
 
 `.github/workflows/dfs-slate.yml` runs the DFS surfaces on their own
@@ -322,4 +355,6 @@ python scripts/harvest_dk_history.py --from-id 149000 --to-id 152700 \
     --league mlb --format classic --workers 8 --out artifacts/dk_history
 python scripts/validate_dfs_lineups.py --format classic --lineups confirmed \
     --boards 'artifacts/dk_history/dk_history_mlb_classic_*.parquet'
+# add --gpp 5 --sample-every 4 for the portfolio pass (it re-solves the
+# knapsack many times a board, so it samples rather than sweeping)
 ```
