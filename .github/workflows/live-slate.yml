@@ -221,6 +221,15 @@ jobs:
             else
               echo "${league}: missing DK salaries or projections; skipping DFS lineup"
             fi
+            # DK's salary-free formats (Tiers, Single Stat) ride their own
+            # artifact — every draftable on those boards is priceless, so the
+            # salary parquet cannot carry them (docs/DFS_FORMATS.md).
+            TIER_FILE=$(ls -t artifacts/dk/**/dk_tiered_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$TIER_FILE" ]; then
+              PYTHONPATH=scripts python scripts/build_dfs_tiered.py \
+                --tiered "$TIER_FILE" --league "${league}" \
+                ${PROJ_FILE:+--fp "$PROJ_FILE"} --out artifacts/slate || true
+            fi
           done
 
       - name: Upload slates (private artifact)

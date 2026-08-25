@@ -32,6 +32,7 @@ from velocity.dfs.salaries import (
     normalize_draft_groups,
     normalize_draftables,
 )
+from velocity.dfs.tiered import normalize_tiered
 
 
 def _write_league(
@@ -58,6 +59,39 @@ def _write_league(
     salaries.to_parquet(dest, index=False)
     n_groups = salaries["draft_group_id"].nunique() if not salaries.empty else 0
     print(f"  {league}: {len(salaries)} salary rows across {n_groups} draft group(s) → {dest}")
+
+
+def _write_tiered(
+    league: str,
+    frames: list[pd.DataFrame],
+    out: Path,
+    tag: str,
+    collected_at: pd.Timestamp,
+    groups: pd.DataFrame | None = None,
+) -> None:
+    """Bank the SALARY-FREE boards (Tiers, Single Stat) as their own artifact.
+
+    They cannot ride the salary parquet: every draftable on them ships
+    ``salary: null``, and the salary normalizer drops a priceless row rather
+    than invent a number. What stands in for the price is the tier ordinal
+    (velocity.dfs.tiered), so these boards get their own file and their own
+    schema.
+    """
+    if not frames:
+        return
+    tiered = pd.concat(frames, ignore_index=True).assign(
+        league=league, collected_at=collected_at)
+    if groups is not None and not groups.empty:
+        meta = groups.rename(columns={"start": "slate_start"})[
+            ["draft_group_id", "contest_type_id", "game_type", "slate_start",
+             "suffix"]
+        ]
+        tiered = tiered.merge(meta, on="draft_group_id", how="left")
+    dest = out / f"dk_tiered_{league}_{tag}.parquet"
+    tiered.to_parquet(dest, index=False)
+    n_groups = tiered["draft_group_id"].nunique()
+    print(f"  {league}: {len(tiered)} tiered rows across {n_groups} "
+          f"salary-free board(s) → {dest}")
 
 
 def main() -> None:
@@ -106,6 +140,7 @@ def main() -> None:
         print(f"  {league}: {len(groups)} draft group(s) in the lobby")
 
         frames: list[pd.DataFrame] = []
+        tiered: list[pd.DataFrame] = []
         for group_id in groups["draft_group_id"]:
             try:
                 payload = client.draftables(group_id)
@@ -115,8 +150,14 @@ def main() -> None:
             (raw_dir / f"{league}_draftables_{tag}_{group_id}.json").write_text(
                 json.dumps(payload)
             )
-            frames.append(normalize_draftables(payload, str(group_id)))
+            priced = normalize_draftables(payload, str(group_id))
+            if priced.empty and (payload.get("draftables") or []):
+                # A board DK served but priced nowhere: a salary-free format.
+                tiered.append(normalize_tiered(payload, str(group_id)))
+            else:
+                frames.append(priced)
         _write_league(league, frames, out, tag, collected_at, groups=groups)
+        _write_tiered(league, tiered, out, tag, collected_at, groups=groups)
 
 
 if __name__ == "__main__":
