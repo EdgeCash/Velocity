@@ -1,0 +1,127 @@
+name: DFS slate
+
+# The DFS surfaces on their own clock, because WHEN they run is worth more
+# than any model term in them.
+#
+# Backtested on 263 harvested DK classic boards (docs/DFS_FORMATS.md): built
+# before statsapi posts the batting orders, the optimal lineup's edge over
+# DK's own pricing is +3.2 DK points at t = 1.55 — indistinguishable from
+# zero, because three of its ten players never leave the bench. Built from
+# the confirmed card it is +13.1 at t = 5.77. Same projections, same
+# optimizer; only the hour differs.
+#
+# So this runs in the windows where the cards are posted and the slates have
+# not locked, rather than riding the 16:00/22:00 betting-slate cadence. Every
+# input is free and unauthenticated (DK's lobby, statsapi), so extra runs
+# cost nothing but minutes. Output is a PRIVATE artifact — DK salaries are
+# collected data and never land in the public repo.
+
+on:
+  schedule:
+    # UTC. MLB lineups post roughly 2-3 hours before first pitch.
+    - cron: "0 16 * * *"    # 11:00 CT — the day-game slates
+    - cron: "30 21 * * *"   # 16:30 CT — the main slate, cards mostly in
+    - cron: "30 22 * * *"   # 17:30 CT — a second pass nearer lock
+    - cron: "0 1 * * *"     # 20:00 CT — the night slate
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Leagues to build (space-separated)"
+        required: false
+        default: "mlb nfl ncaaf"
+
+concurrency:
+  group: dfs-slate
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read  # download the FantasyPros artifact for the football boards
+
+jobs:
+  dfs:
+    name: build DFS entries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # A fresh snapshot rather than the morning one: salaries move, and the
+      # probable-pitcher and lineup flags on the board are game-day state.
+      - name: Snapshot DraftKings boards
+        run: |
+          python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
+            --leagues "${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}"
+
+      # Football prices from the FantasyPros consensus; MLB from the free
+      # statsapi season stats (the FP public tier serves no MLB players).
+      - name: Fetch FantasyPros projections
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/fp
+          id=$(gh run list --workflow collect-fantasypros.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$id" ]; then
+            gh run download "$id" --dir artifacts/fp || true
+          fi
+
+      - name: Build DFS entries
+        run: |
+          FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
+          python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
+          MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
+          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}; do
+            echo "::group::${league} DFS"
+            DK_FILE=$(ls -t artifacts/dk_salaries/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
+            PROJ_FILE="$FP_FILE"
+            if [ "${league}" = "mlb" ]; then PROJ_FILE="$MLB_STATS"; fi
+            if [ -n "$PROJ_FILE" ] && [ -n "$DK_FILE" ]; then
+              python scripts/build_dfs_lineup.py \
+                --salaries "$DK_FILE" --fp "$PROJ_FILE" \
+                --out artifacts/slate --league "${league}" || true
+            else
+              echo "${league}: missing DK salaries or projections; skipping"
+            fi
+            # DK's salary-free formats ride their own artifact — every
+            # draftable on those boards is priceless (docs/DFS_FORMATS.md).
+            TIER_FILE=$(ls -t artifacts/dk_salaries/dk_tiered_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$TIER_FILE" ]; then
+              PYTHONPATH=scripts python scripts/build_dfs_tiered.py \
+                --tiered "$TIER_FILE" --league "${league}" \
+                ${PROJ_FILE:+--fp "$PROJ_FILE"} --out artifacts/slate || true
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Build the MLB home-run board
+        continue-on-error: true
+        run: |
+          python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
+          STATCAST=$(ls -t artifacts/statcast/*.parquet 2>/dev/null | head -1 || true)
+          PYTHONPATH=scripts python scripts/build_hr_board.py \
+            ${STATCAST:+--statcast "$STATCAST"} --out artifacts/slate || true
+
+      - name: Upload DFS entries (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dfs-slate-${{ github.run_id }}
+          path: |
+            artifacts/slate/*.parquet
+            artifacts/slate/*.png
+            artifacts/slate/*.md
+            artifacts/dk_salaries/*.parquet
+          if-no-files-found: warn
+          retention-days: 60

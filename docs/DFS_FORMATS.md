@@ -41,8 +41,8 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 
 | Game type | Format | Roster | Cap | Draft | Velocity |
 |---|---|---|---|---|---|
-| 2 | Classic | P,P,C,1B,2B,3B,SS,OF,OF,OF | $50,000 | SalaryCap | **built** (`MLB_CLASSIC`) |
-| 114 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
+| 2 | Classic | P,P,C,1B,2B,3B,SS,OF,OF,OF | $50,000 | SalaryCap | **built + backtested** (`MLB_CLASSIC`) |
+| 114 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built + backtested** (`velocity.dfs.showdown`) |
 | 45 | Tiers | T1…T6, one player per tier | — | Tiered | **built** (`velocity.dfs.tiered`) |
 | 346 | Single Stat - Home Runs | UTIL x3 | — | Tiered | **built** (`velocity.dfs.tiered` + `docs/PROPS_HR.md`) |
 | 178 | Snake | IF,IF,OF,OF,UTIL,UTIL,BN | — | SnakeDraft | planned (draft advisor) |
@@ -185,6 +185,40 @@ fixing needs a fix that changes rankings, not levels. (The same reasoning
 retired the pitcher context term after the classic backtest —
 `docs/DFS_MODEL.md` §4.)
 
+## The classic backtest
+
+The same machinery, pointed at the format that carries the field: 263
+harvested MLB classic boards (122,078 priced rows), 6 June – 25 August 2026,
+walk-forward, scored the way DK scored them.
+
+| | Early build | Confirmed card |
+|---|---:|---:|
+| Our projections through the optimizer | 73.10 | **96.13** |
+| The same optimizer run on DK's salaries | 69.87 | 83.07 |
+| Random legal rosters (the field proxy) | 53.89 | 80.96 |
+| Retrospective best possible roster | 213.19 | 215.81 |
+| Beat the salary build | 51.5% | **63.3%** |
+| Edge over the salary build | +3.23 (t = 1.55) | **+13.06 (t = 5.77)** |
+| Our field percentile | 72.5% | 66.5% |
+| The salary build's field percentile | 69.1% | 53.1% |
+| Rostered a player who never appeared | **3.03 of 10** | 0.01 |
+
+This is the sharpest statement of the same result. Built early, the classic
+lineup's edge over DK's own pricing is **+3.2 points at t = 1.55 —
+indistinguishable from zero**, because three of its ten players never left
+the bench. Built from the confirmed card it is +13.1 at t = 5.77. The
+projections did not change between those two columns. Only the hour did.
+
+The random field tells the same story from the other side: 53.89 points when
+rosters are drawn from every banked bat, 80.96 when they are drawn from the
+announced starters. Most of what looks like "picking better players" in an
+early build is really just picking players who play.
+
+The hitter level bias makes it concrete: projected 6.48 against 3.34 actual
+in the early build, and 6.87 against 6.92 — essentially perfect — once the
+card is known. The model was never wrong about what a hitter does in a game.
+It was wrong about whether he was in one.
+
 ## Where the money actually is
 
 Format coverage should follow entries, not novelty. Counted off DK's own
@@ -251,6 +285,41 @@ python scripts/build_dfs_lineup.py --league mlb \
 ```
 
 Solves every classic slate grouping (main / Early / Night / Turbo) **and**
-every showdown board on the snapshot. Showdown output is a separate
-`dfs_showdown_{league}_{stamp}.parquet` carrying all solved boards, with a
-card and captions rendered for the strongest one. `--no-showdown` skips it.
+every showdown board on the snapshot. **Run it after statsapi posts the
+batting orders** — roughly two hours before first pitch. The backtests above
+say that single choice is worth more than every context term in the model
+put together; run before the cards drop, the classic lineup's edge over DK's
+own pricing is not statistically distinguishable from zero.
+
+Showdown output is a separate `dfs_showdown_{league}_{stamp}.parquet`
+carrying all solved boards, with a card and captions rendered for the
+strongest one. `--no-showdown` skips it.
+
+### The clock
+
+`.github/workflows/dfs-slate.yml` runs the DFS surfaces on their own
+schedule rather than riding the betting slate's 16:00/22:00 UTC cadence,
+for exactly the reason the backtests give:
+
+| Cron (UTC) | Central | What it catches |
+|---|---|---|
+| `0 16 * * *` | 11:00 | the day-game slates |
+| `30 21 * * *` | 16:30 | the main slate, cards mostly posted |
+| `30 22 * * *` | 17:30 | a second pass nearer lock |
+| `0 1 * * *` | 20:00 | the night slate |
+
+Each run takes a fresh DK snapshot (salaries move, and the probable-pitcher
+and lineup flags are game-day state), builds every format, and uploads a
+private artifact. The betting-slate workflow pulls the newest one in before
+it publishes the site, so the DFS page shows the entries built closest to
+lock. Every input is free and unauthenticated, so the extra runs cost
+nothing but minutes.
+
+To re-run either backtest:
+
+```bash
+python scripts/harvest_dk_history.py --from-id 149000 --to-id 152700 \
+    --league mlb --format classic --workers 8 --out artifacts/dk_history
+python scripts/validate_dfs_lineups.py --format classic --lineups confirmed \
+    --boards 'artifacts/dk_history/dk_history_mlb_classic_*.parquet'
+```
