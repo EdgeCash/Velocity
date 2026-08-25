@@ -216,6 +216,12 @@ def main() -> None:
                         help="max players any two GPP lineups may share")
     parser.add_argument("--gpp-exposure", type=float, default=0.6,
                         help="max fraction of GPP lineups any player appears in")
+    parser.add_argument("--gpp-stack", type=int, default=4,
+                        help="MLB GPP: hitters required from one batting order "
+                             "(DK caps a classic roster at 5; 0 = off)")
+    parser.add_argument("--gpp-secondary", type=int, default=2,
+                        help="MLB GPP: hitters required from a second club "
+                             "(the mini-stack; 0 = off)")
     parser.add_argument("--no-showdown", dest="showdown", action="store_false",
                         help="skip the single-game Showdown Captain Mode boards")
     args = parser.parse_args()
@@ -322,9 +328,9 @@ def main() -> None:
     pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
     print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
 
-    if args.gpp > 0 and args.league in ("nfl", "ncaaf"):
-        # Best-effort like every surface past the cash lineup. Football only:
-        # the GPP builder's stacking grammar is QB-anchored.
+    if args.gpp > 0:
+        # Best-effort like every surface past the cash lineup. Football stacks
+        # on a QB; baseball stacks on a batting order (velocity/dfs/gpp.py).
         try:
             from velocity.dfs.gpp import GppConfig, build_gpp_portfolio, portfolio_frame
             from velocity.dfs.optimizer import lineup_pool
@@ -336,11 +342,14 @@ def main() -> None:
                 salaries["draft_group_id"].astype(str) == str(run.draft_group_id)
             ]
             board = eligible_board(normalize_positions(board, spec), spec)
-            pool = lineup_pool(board, dk_expected_points(fp))
+            pool = lineup_pool(board, points if points is not None
+                               else dk_expected_points(fp))
             portfolio = build_gpp_portfolio(
                 pool, spec=spec, rng=make_rng(),
                 config=GppConfig(n_lineups=args.gpp, max_overlap=args.gpp_overlap,
-                                 max_exposure=args.gpp_exposure),
+                                 max_exposure=args.gpp_exposure,
+                                 mlb_stack=args.gpp_stack,
+                                 mlb_secondary=args.gpp_secondary),
             )
             print(f"GPP portfolio: {len(portfolio.lineups)}/{args.gpp} lineups "
                   f"({portfolio.n_stacked} stacked of {portfolio.n_candidates} candidates)")

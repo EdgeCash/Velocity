@@ -16,6 +16,7 @@ from velocity.dfs.optimizer import (
     CFB_CLASSIC,
     MLB_CLASSIC,
     NFL_CLASSIC,
+    SALARY_CAP,
     Lineup,
     RosterSpec,
     build_lineup,
@@ -276,7 +277,8 @@ def _mlb_cap_violation(lineup: Lineup) -> str | None:
     return max(over, key=lambda t: over[t]) if over else None
 
 
-def solve_mlb_lineup(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
+def solve_mlb_lineup(pool: pd.DataFrame, spec: RosterSpec,
+                     cap: int = SALARY_CAP) -> Lineup | None:
     """Exact solve + iterative cuts for the ≤5-hitters-per-team rule.
 
     The knapsack has no team dimension, so the rule is enforced by cutting:
@@ -288,7 +290,7 @@ def solve_mlb_lineup(pool: pd.DataFrame, spec: RosterSpec) -> Lineup | None:
     """
     pool = pool.copy()
     for _ in range(20):
-        lineup = build_lineup(pool, spec=spec)
+        lineup = build_lineup(pool, cap=cap, spec=spec)
         if lineup is None:
             return None
         team = _mlb_cap_violation(lineup)

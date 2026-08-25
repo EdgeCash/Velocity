@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from velocity.dfs.optimizer import (
+    MLB_CLASSIC,
     NFL_CLASSIC,
     SALARY_CAP,
     Lineup,
@@ -74,6 +75,12 @@ class GppConfig:
     require_stack: bool = True
     stack_teammates: int = 2
     bring_backs: int = 1
+    # Baseball's stack is a block of the same batting order (runs come in
+    # innings). DK caps a classic roster at five hitters from one club, so
+    # 4-5 is the whole available range for the primary block; the secondary
+    # mini-stack is the standard companion. 0 turns either off.
+    mlb_stack: int = 4
+    mlb_secondary: int = 2
     # Tail objective: mean lineup score across the sims at or above this
     # quantile of the lineup's own distribution.
     tail_q: float = 0.85
@@ -98,16 +105,52 @@ def opponent_map(pool: pd.DataFrame) -> dict[str, str]:
     return out
 
 
+def team_hitter_counts(lineup: Lineup) -> list[int]:
+    """Rostered HITTERS per team, biggest first (MLB stack detection)."""
+    counts: Counter[str] = Counter()
+    for slot in lineup.slots:
+        if slot.position != "P" and slot.team:
+            counts[str(slot.team)] += 1
+    return sorted(counts.values(), reverse=True)
+
+
+def mlb_stack_ok(lineup: Lineup, config: GppConfig) -> bool:
+    """Does the lineup carry an MLB team stack of the requested shape?
+
+    Baseball's correlation is a batting order, not a passing game: runs come
+    in innings, so a team's bats score together and a tournament roster wants
+    a block of them. DK caps a classic lineup at five hitters from one club,
+    which makes 4–5 the whole available range for a primary stack; a
+    secondary mini-stack from a second club is the standard companion.
+
+    A lineup whose players carry no team data passes — the rule cannot apply.
+    """
+    counts = team_hitter_counts(lineup)
+    if not counts:
+        return True
+    if counts[0] < config.mlb_stack:
+        return False
+    if config.mlb_secondary:
+        second = counts[1] if len(counts) > 1 else 0
+        if second < config.mlb_secondary:
+            return False
+    return True
+
+
 def stack_ok(lineup: Lineup, opponents: Mapping[str, str], config: GppConfig) -> bool:
     """Does the lineup carry the documented GPP stack shape?
 
-    Checked for every rostered QB with a known team: ``stack_teammates``
-    same-team partners are required always; ``bring_backs`` opponents only
-    when the QB's opponent is known from the board. A lineup with no QB (or
-    no team data at all) passes — the rule can't apply.
+    Football: checked for every rostered QB with a known team —
+    ``stack_teammates`` same-team partners always, ``bring_backs`` opponents
+    when the QB's opponent is known from the board. Baseball has no QB to
+    anchor on, so a roster with no QB but with pitchers in it is read as an
+    MLB lineup and checked against :func:`mlb_stack_ok` instead. A lineup
+    with neither passes — the rule can't apply.
     """
     qbs = [s for s in lineup.slots if s.position == "QB" and s.team]
     if not qbs:
+        if any(s.position == "P" for s in lineup.slots):
+            return mlb_stack_ok(lineup, config)
         return True
     for qb in qbs:
         mates = sum(
@@ -180,6 +223,20 @@ class GppPortfolio:
     n_stacked: int  # candidates surviving the stack rule
 
 
+def _solve(pool: pd.DataFrame, *, cap: int, spec: RosterSpec) -> Lineup | None:
+    """Solve one candidate under the spec's own legality rules.
+
+    MLB classic has a constraint the knapsack cannot express (at most five
+    hitters from one club), enforced by the pipeline's iterative cuts — and a
+    GPP builder that ignored it would generate its best stacks illegal.
+    """
+    if spec is MLB_CLASSIC:
+        from velocity.dfs.pipeline import solve_mlb_lineup
+
+        return solve_mlb_lineup(pool, spec, cap)
+    return build_lineup(pool, cap=cap, spec=spec)
+
+
 def build_gpp_portfolio(
     pool: pd.DataFrame,
     *,
@@ -212,7 +269,7 @@ def build_gpp_portfolio(
         jittered = pool.copy()
         noise = rng.normal(1.0, config.jitter, len(jittered))
         jittered["points"] = (jittered["points"].astype(float) * np.clip(noise, 0.0, None))
-        lineup = build_lineup(jittered, cap=cap, spec=spec)
+        lineup = _solve(jittered, cap=cap, spec=spec)
         if lineup is None:
             continue
         roster = _players(lineup)

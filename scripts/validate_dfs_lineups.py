@@ -177,8 +177,28 @@ def solve(pool: pd.DataFrame, board_format: str, column: str = "points"):
     return solve_mlb_lineup(priced, MLB_CLASSIC)
 
 
+def gpp_scores(pool: pd.DataFrame, board_format: str, n_lineups: int,
+               rng) -> list[float]:
+    """Realized DK points of each lineup in a GPP portfolio.
+
+    Tournaments pay the right tail of a huge field, so the unit is a
+    PORTFOLIO, not a lineup, and the number that matters is the best one of
+    the set rather than the average. Showdown is skipped: the GPP builder
+    stacks a batting order, which a six-man single-game roster cannot do.
+    """
+    if n_lineups <= 0 or board_format != "classic":
+        return []
+    from velocity.dfs.gpp import GppConfig, build_gpp_portfolio
+
+    portfolio = build_gpp_portfolio(
+        pool, spec=MLB_CLASSIC, rng=rng,
+        config=GppConfig(n_lineups=n_lineups, candidate_factor=4))
+    actual_of = dict(zip(pool["player_name"], pool["actual"], strict=True))
+    return [realized(lineup.slots, actual_of) for lineup in portfolio.lineups]
+
+
 def evaluate(boards, bat, sp, played, *, board_format, step_days, min_train,
-             confirmed=False):
+             confirmed=False, n_gpp=0, sample_every=1):
     rng = np.random.default_rng(17)
     index = player_day_index(bat, sp)
     batter_ids, starter_ids = name_ids(bat, sp)
@@ -206,7 +226,10 @@ def evaluate(boards, bat, sp, played, *, board_format, step_days, min_train,
         slots = recent_slots(bat, cutoff)
         window = boards[(boards["kickoff"] >= cutoff)
                         & (boards["kickoff"] < cutoff + pd.Timedelta(days=step_days))]
-        for gid, board in window.groupby(window["draft_group_id"].astype(str)):
+        for seen, (gid, board) in enumerate(
+                window.groupby(window["draft_group_id"].astype(str))):
+            if sample_every > 1 and (len(rows) + seen) % sample_every:
+                continue
             pool = build_pool(board, model=model, index=index, played=played,
                               slots=slots, batter_ids=batter_ids,
                               starter_ids=starter_ids, board_format=board_format,
@@ -224,6 +247,7 @@ def evaluate(boards, bat, sp, played, *, board_format, step_days, min_train,
                                    groups=groups)
             actual_of = dict(zip(pool["player_name"], pool["actual"], strict=True))
             mine = realized(ours.slots, actual_of)
+            portfolio = gpp_scores(pool, board_format, n_gpp, rng)
             players.append(pool.assign(draft_group_id=str(gid),
                                        kickoff=board["kickoff"].min()))
             rows.append({
@@ -240,6 +264,11 @@ def evaluate(boards, bat, sp, played, *, board_format, step_days, min_train,
                 "chalk_percentile": (
                     float((field < realized(chalk.slots, actual_of)).mean())
                     if len(field) else np.nan),
+                "gpp_best": max(portfolio) if portfolio else np.nan,
+                "gpp_mean": float(np.mean(portfolio)) if portfolio else np.nan,
+                "gpp_n": len(portfolio),
+                "gpp_percentile": (float((field < max(portfolio)).mean())
+                                   if portfolio and len(field) else np.nan),
                 "scratched": int((~pool.loc[
                     pool["player_name"].isin([s.player_name for s in ours.slots]),
                     "played"]).sum()),
@@ -264,6 +293,12 @@ def main() -> None:
                              "card posts, every banked bat choosable) or "
                              "'confirmed' (after it posts — the announced "
                              "nine, batting order known)")
+    parser.add_argument("--gpp", type=int, default=0,
+                        help="also build a GPP portfolio of this many lineups "
+                             "per board and report its best (classic only)")
+    parser.add_argument("--sample-every", type=int, default=1,
+                        help="score every Nth board — the GPP pass re-solves "
+                             "the knapsack many times per board")
     parser.add_argument("--out", default=None, help="write the per-board frame here")
     args = parser.parse_args()
 
@@ -280,7 +315,8 @@ def main() -> None:
     result, priced = evaluate(boards, bat, sp, played, board_format=args.format,
                               step_days=args.step_days,
                               min_train=args.min_train_games,
-                              confirmed=args.lineups == "confirmed")
+                              confirmed=args.lineups == "confirmed",
+                              n_gpp=args.gpp, sample_every=args.sample_every)
     if result.empty:
         print("no board matched a banked box score; nothing to report")
         return
@@ -306,6 +342,15 @@ def main() -> None:
         t = float(diff.mean() / (diff.std(ddof=1) / np.sqrt(len(diff))))
         print(f"  ours - salary: {diff.mean():+.2f} DK pts (t = {t:+.2f}, "
               f"n = {len(diff)})")
+
+    if result["gpp_n"].fillna(0).sum():
+        played_gpp = result.dropna(subset=["gpp_best"])
+        print(f"\n  GPP portfolio ({played_gpp['gpp_n'].mean():.1f} lineups a board):")
+        print(f"    best of the set   {played_gpp['gpp_best'].mean():7.2f} DK pts")
+        print(f"    portfolio mean    {played_gpp['gpp_mean'].mean():7.2f}")
+        print(f"    the cash lineup   {played_gpp['ours'].mean():7.2f}")
+        print(f"    best-of-set field percentile "
+              f"{played_gpp['gpp_percentile'].mean():.1%}")
 
     if not priced.empty:
         # Level calibration by class: the optimizer chooses ACROSS classes, so

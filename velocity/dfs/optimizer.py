@@ -92,7 +92,17 @@ class Lineup:
     total_points: float
 
     def stacks(self) -> list[str]:
-        """QB-stack callouts: teammates of a rostered QB ("BUF: Allen + Shakir")."""
+        """Correlation callouts, in the sport's own grammar.
+
+        Football stacks on a quarterback ("BUF: Allen + Shakir"). Baseball
+        has no such anchor — runs come in innings, so the correlated block is
+        a run of the batting order — and a roster with pitcher slots and no
+        QB is read that way, reported as the hitter count per club
+        ("CIN x4 + STL x2").
+        """
+        if not any(s.position == "QB" for s in self.slots) and any(
+                s.position == "P" for s in self.slots):
+            return self._batting_order_stacks()
         out: list[str] = []
         for qb in (s for s in self.slots if s.position == "QB"):
             if not qb.team:
@@ -104,6 +114,22 @@ class Lineup:
                 names = " + ".join(_surname(m.player_name) for m in mates)
                 out.append(f"{qb.team}: {_surname(qb.player_name)} + {names}")
         return out
+
+    def _batting_order_stacks(self) -> list[str]:
+        """"CIN x4 + STL x2" — the rostered hitter blocks, biggest first.
+
+        Only blocks of two or more are reported: a lone bat from a club is
+        not a stack, it is a player.
+        """
+        counts: dict[str, int] = {}
+        for slot in self.slots:
+            if slot.position != "P" and slot.team:
+                counts[slot.team] = counts.get(slot.team, 0) + 1
+        blocks = sorted(((n, t) for t, n in counts.items() if n >= 2),
+                        key=lambda pair: (-pair[0], pair[1]))
+        if not blocks:
+            return []
+        return [" + ".join(f"{team} x{n}" for n, team in blocks)]
 
 
 def _surname(name: str) -> str:

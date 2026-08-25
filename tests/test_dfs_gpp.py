@@ -156,3 +156,81 @@ def test_cash_lineup_is_reachable_when_stacking_disabled() -> None:
     cash = build_lineup(_pool())
     assert cash is not None and portfolio.lineups
     assert portfolio.lineups[0].total_points == pytest.approx(cash.total_points)
+
+
+def _mlb_pool() -> pd.DataFrame:
+    """Four clubs, enough depth at every DK classic slot for many lineups."""
+    rows = []
+    games = {"CIN": "CIN @ STL", "STL": "CIN @ STL",
+             "KC": "KC @ CLE", "CLE": "KC @ CLE"}
+    for team, comp in games.items():
+        for j in range(2):
+            rows.append({"player_name": f"P {team}{j}", "position": "P",
+                         "team": team, "competition": comp,
+                         "salary": 8000 + 200 * j, "points": 16.0 + j})
+        for position in ("C", "1B", "2B", "3B", "SS"):
+            for j in range(2):
+                rows.append({"player_name": f"{position} {team}{j}",
+                             "position": position, "team": team,
+                             "competition": comp, "salary": 3600 + 100 * j,
+                             "points": 8.0 + j})
+        for j in range(4):
+            rows.append({"player_name": f"OF {team}{j}", "position": "OF",
+                         "team": team, "competition": comp,
+                         "salary": 3500 + 100 * j, "points": 8.0 + j * 0.5})
+    return pd.DataFrame(rows)
+
+
+def test_mlb_stack_reads_the_batting_order_not_a_quarterback() -> None:
+    """Baseball has no QB to anchor on: the block is a run of the order."""
+    from velocity.dfs.gpp import mlb_stack_ok, team_hitter_counts
+
+    stacked = Lineup((
+        _slot("P1", "P", "CLE"), _slot("P2", "P", "KC"),
+        _slot("C1", "C", "CIN"), _slot("1B", "1B", "CIN"),
+        _slot("2B", "2B", "CIN"), _slot("SS", "SS", "CIN"),
+        _slot("3B", "3B", "STL"), _slot("OF1", "OF", "STL"),
+        _slot("OF2", "OF", "TOR"), _slot("OF3", "OF", "SF"),
+    ), 50_000, 100.0)
+    # Pitchers never count toward a stack — they are on the other side of it.
+    assert team_hitter_counts(stacked) == [4, 2, 1, 1]
+    assert mlb_stack_ok(stacked, GppConfig(mlb_stack=4, mlb_secondary=2))
+    assert not mlb_stack_ok(stacked, GppConfig(mlb_stack=5, mlb_secondary=0))
+    assert not mlb_stack_ok(stacked, GppConfig(mlb_stack=4, mlb_secondary=3))
+    # And the sport is detected from the roster: this one has P slots, no QB.
+    assert stack_ok(stacked, {}, GppConfig(mlb_stack=4, mlb_secondary=2))
+    assert not stack_ok(stacked, {}, GppConfig(mlb_stack=5, mlb_secondary=0))
+
+
+def test_mlb_portfolio_stacks_and_stays_legal() -> None:
+    from velocity.dfs.optimizer import MLB_CLASSIC
+
+    portfolio = build_gpp_portfolio(
+        _mlb_pool(), spec=MLB_CLASSIC, rng=make_rng(),
+        config=GppConfig(n_lineups=6, candidate_factor=8, mlb_stack=4,
+                         mlb_secondary=2, max_overlap=8, max_exposure=1.0))
+    assert portfolio.lineups
+    for lineup in portfolio.lineups:
+        counts: dict[str, int] = {}
+        for slot in lineup.slots:
+            if slot.position != "P" and slot.team:
+                counts[slot.team] = counts.get(slot.team, 0) + 1
+        ordered = sorted(counts.values(), reverse=True)
+        assert ordered[0] >= 4  # the primary block
+        assert ordered[1] >= 2  # the mini-stack
+        # DK's own rule: never more than five hitters from one club.
+        assert ordered[0] <= 5
+        assert lineup.total_salary <= 50_000
+        assert len({s.player_name for s in lineup.slots}) == 10
+
+
+def test_batting_order_stacks_read_out_for_the_card() -> None:
+    lineup = Lineup((
+        _slot("P1", "P", "CLE"), _slot("P2", "P", "PIT"),
+        _slot("C1", "C", "CIN"), _slot("1B", "1B", "CIN"),
+        _slot("2B", "2B", "CIN"), _slot("SS", "SS", "CIN"),
+        _slot("3B", "3B", "STL"), _slot("OF1", "OF", "STL"),
+        _slot("OF2", "OF", "TOR"), _slot("OF3", "OF", "SF"),
+    ), 50_000, 100.0)
+    # A lone bat is a player, not a stack, so TOR and SF do not appear.
+    assert lineup.stacks() == ["CIN x4 + STL x2"]
