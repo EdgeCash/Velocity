@@ -18,6 +18,11 @@ Two details separate a real DK score from an approximation, and both matter:
 * **The negative columns.** Interceptions and lost fumbles are −1 each, and
   nflverse splits fumbles across rushing, receiving and sack columns.
 
+Kickers are scored too, because DK's Showdown boards roster them (its
+classic roster does not) and a kicker is routinely a live captain. DK pays
+by distance — 3 / 4 / 5 points at 0-39, 40-49 and 50+ — and does not charge
+for a miss.
+
 Pure functions of frames; offline-testable, no network.
 """
 
@@ -48,6 +53,15 @@ DK_NFL_BONUSES = (
     ("rush_yards", 100.0, 3.0),
     ("receiving_yards", 100.0, 3.0),
 )
+# Kickers score by DISTANCE, and only on a Showdown board — DK's classic
+# roster has no kicker slot, but its single-game format does, and a kicker
+# is routinely a live captain. Misses cost nothing in DK's NFL rules.
+DK_NFL_KICKING = {
+    "fg_made_0_39": 3.0,
+    "fg_made_40_49": 4.0,
+    "fg_made_50_plus": 5.0,
+    "pat_made": 1.0,
+}
 
 
 def nfl_dk_points(frame: pd.DataFrame, *, bonuses: bool = True) -> pd.Series:
@@ -65,6 +79,8 @@ def nfl_dk_points(frame: pd.DataFrame, *, bonuses: bool = True) -> pd.Series:
     total = pd.Series(0.0, index=frame.index)
     for name, weight in DK_NFL_POINTS.items():
         total += col(name) * weight
+    for name, weight in DK_NFL_KICKING.items():
+        total += col(name) * weight
     if bonuses:
         for name, threshold, award in DK_NFL_BONUSES:
             total += (col(name) >= threshold).astype(float) * award
@@ -81,6 +97,8 @@ def nfl_dk_points(frame: pd.DataFrame, *, bonuses: bool = True) -> pd.Series:
 # Positions DK actually rosters on a football board. Everyone else in the
 # nflverse weekly frame is a defender who scores nothing.
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
+# Showdown boards also roster kickers, so the projection has to cover them.
+SHOWDOWN_POSITIONS = ("QB", "RB", "WR", "TE", "K")
 # Games of prior. Roughly a quarter season: a two-game call-up must not
 # project like a starter, and a full-season starter is barely moved.
 PLAYER_PRIOR_GAMES = 4.0

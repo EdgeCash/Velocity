@@ -169,3 +169,48 @@ def test_random_rosters_enforces_the_two_team_rule_for_showdown() -> None:
     one_team = _pool().assign(team="AAA")
     assert len(random_rosters(one_team, rng, size=6, n=5, captain=True,
                               min_teams=2)) == 0
+
+
+def _nfl_weeks() -> tuple[pd.DataFrame, pd.DataFrame]:
+    games = pd.DataFrame([
+        {"game_id": "2025_01_KC_NYJ", "season": 2025, "week": 1,
+         "kickoff": pd.Timestamp("2025-09-07")},
+        {"game_id": "2025_02_KC_BUF", "season": 2025, "week": 2,
+         "kickoff": pd.Timestamp("2025-09-14")},
+    ])
+    weeks = pd.DataFrame([
+        {"season": 2025, "week": 1, "game_id": "2025_01_KC_NYJ",
+         "player_id": "00-01", "player_name": "Ronald Acuña Jr.", "team": "KC",
+         "opponent": "NYJ", "position": "WR", "carries": 0, "targets": 9,
+         "attempts": 0, "dk_points": 21.5},
+        {"season": 2025, "week": 2, "game_id": "2025_02_KC_BUF",
+         "player_id": "00-01", "player_name": "Ronald Acuña Jr.", "team": "KC",
+         "opponent": "BUF", "position": "WR", "carries": 0, "targets": 0,
+         "attempts": 0, "dk_points": 0.0},
+    ])
+    return weeks, games
+
+
+def test_prepare_nfl_weeks_joins_the_kickoff_and_marks_who_played() -> None:
+    from velocity.dfs.backtest import prepare_nfl_weeks
+
+    weeks, games = _nfl_weeks()
+    out = prepare_nfl_weeks(weeks, games)
+    assert list(out["kickoff"]) == [pd.Timestamp("2025-09-07"),
+                                    pd.Timestamp("2025-09-14")]
+    # Touches, targets or attempts mark a real appearance — the football
+    # analogue of a posted lineup card.
+    assert list(out["played"]) == [True, False]
+    # The name key folds the accent, like every other join in the harness.
+    assert out["key"].iloc[0] == "ronaldacunajr"
+
+
+def test_nfl_player_day_index_keys_on_the_date() -> None:
+    from datetime import date
+
+    from velocity.dfs.backtest import nfl_player_day_index, prepare_nfl_weeks
+
+    weeks, games = _nfl_weeks()
+    index = nfl_player_day_index(prepare_nfl_weeks(weeks, games))
+    assert index[("ronaldacunajr", date(2025, 9, 7))]["actual"] == 21.5
+    assert index[("ronaldacunajr", date(2025, 9, 14))]["started"] is False

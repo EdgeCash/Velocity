@@ -107,3 +107,30 @@ def test_empty_frame_keeps_the_schema() -> None:
     weeks = normalize_dfs_weeks(pd.DataFrame())
     assert weeks.empty
     assert {"player_id", "fumbles_lost", "opponent"} <= set(weeks.columns)
+
+
+def test_kickers_score_by_distance_band() -> None:
+    """Chris Boswell's 2024 opener: 1 from 0-39, 2 from 40-49, 3 from 50+."""
+    row = pd.DataFrame([{"fg_made_0_39": 1, "fg_made_40_49": 2,
+                         "fg_made_50_plus": 3, "pat_made": 0}])
+    assert nfl_dk_points(row).iloc[0] == pytest.approx(3 + 8 + 15)
+    # DK's NFL rules charge nothing for a miss.
+    with_misses = row.assign(fg_missed=4)
+    assert nfl_dk_points(with_misses).iloc[0] == pytest.approx(26.0)
+
+
+def test_normalizer_collapses_nflverse_bands_into_dks_three() -> None:
+    """nflverse buckets more finely than DK pays."""
+    raw = pd.DataFrame([{
+        "season": 2024, "week": 1, "player_id": "00-003",
+        "player_name": "A Kicker", "team": "PIT", "position": "K",
+        "fg_made_0_19": 1, "fg_made_20_29": 1, "fg_made_30_39": 1,
+        "fg_made_40_49": 2, "fg_made_50_59": 1, "fg_made_60_": 1,
+        "pat_made": 3,
+    }])
+    weeks = normalize_dfs_weeks(raw)
+    row = weeks.iloc[0]
+    assert row["fg_made_0_39"] == 3.0  # three nflverse bands, one DK tier
+    assert row["fg_made_40_49"] == 2.0
+    assert row["fg_made_50_plus"] == 2.0  # 50-59 and 60+ are one DK tier
+    assert nfl_dk_points(weeks).iloc[0] == pytest.approx(9 + 8 + 10 + 3)
