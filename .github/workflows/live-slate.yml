@@ -273,6 +273,24 @@ jobs:
           html_body: file://artifacts/email/slate_email.html
           attachments: artifacts/slate/*.xlsx
 
+      # The DFS surfaces run on their OWN clock (dfs-slate.yml), close to
+      # lineup lock, because building before statsapi posts the batting
+      # orders costs about fifteen DK points a roster (docs/DFS_FORMATS.md).
+      # Pull the freshest one in so the site shows those entries rather than
+      # this run's earlier ones — build_site_data takes the newest stamp per
+      # family, so the two artifacts merge by timestamp.
+      - name: Fetch the latest DFS entries
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/slate/dfs
+          id=$(gh run list --workflow dfs-slate.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$id" ]; then
+            gh run download "$id" --dir artifacts/slate/dfs || true
+          fi
+
       # ---- the site (optional) ------------------------------------------------
       # Static Evidence build over the run's parquet, deployed to the
       # Access-gated Cloudflare Worker (docs/SITE.md). Skipped entirely until
