@@ -25,6 +25,52 @@ from pathlib import Path
 import pandas as pd
 
 
+def _contextual_mlb_points() -> pd.DataFrame:
+    """Today's contextual MLB DK projections from the committed banks.
+
+    Opposing starters come from the free statsapi probables feed; the park is
+    each game's home club; the lineup slot is the batter's most recent
+    starting slot this season — the honest pregame guess until the official
+    card posts.
+    """
+    from datetime import date, timedelta
+
+    from build_mlb_pitching import fetch_probables
+    from velocity.dfs.scoring import dk_expected_points_mlb_contextual
+
+    batters = pd.read_parquet("datasets/mlb/batters.parquet")
+    starters = pd.read_parquet("datasets/mlb/starters.parquet")
+    games = pd.read_parquet("datasets/mlb/games.parquet")
+    season = int(games["season"].max())
+
+    ids = set(games.loc[games["season"] == season, "game_id"].astype(str))
+    recent = batters[batters["game_id"].astype(str).isin(ids)]
+    if "started" in recent.columns:
+        recent = recent[recent["started"].astype(bool)]
+    recent = recent.sort_values("game_id").drop_duplicates("batter_id", keep="last")
+    slot_of = {str(r["batter_id"]): int(r["lineup_slot"])
+               for r in recent.to_dict("records")}
+    team_of = {str(r["batter_id"]): str(r["team"])
+               for r in recent.to_dict("records")}
+
+    today = date.today()
+    probables = fetch_probables(str(today), str(today + timedelta(days=1)))
+    venue_of_team: dict[str, str] = {}
+    facing: dict[str, str] = {}
+    for (home, away, _k), (home_sp, away_sp) in probables.items():
+        venue_of_team[home] = home
+        venue_of_team[away] = home  # the away club plays in the home park
+        for pid, team in team_of.items():
+            if team == home and away_sp:
+                facing[pid] = str(away_sp)
+            elif team == away and home_sp:
+                facing[pid] = str(home_sp)
+
+    return dk_expected_points_mlb_contextual(
+        batters, starters, games, opposing_starter=facing,
+        venue_of_team=venue_of_team, lineup_slot=slot_of, season=season)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the optimal DK lineup")
     parser.add_argument("--salaries", required=True,
@@ -95,11 +141,22 @@ def main() -> None:
         print("no multi-game slate groupings on the board")
         return
 
+    # MLB prices from the CONTEXTUAL model (docs/DFS_MODEL.md): the banked
+    # box scores plus today's probables, park and lineup slot. Best-effort —
+    # if a bank or the probables feed is missing, the flat scorer still runs.
+    points = None
+    if args.league == "mlb":
+        try:
+            points = _contextual_mlb_points()
+            print(f"contextual MLB projections: {len(points)} players")
+        except Exception as exc:  # noqa: BLE001 - falls back to the flat scorer
+            print(f"contextual projections unavailable ({exc}); using flat rates")
+
     frames: list[pd.DataFrame] = []
     solved: list[tuple] = []
     for slate in slates:
         run = solve_slate(salaries, fp, draft_group=slate.draft_group_id,
-                          spec=spec, scorer=scorer)
+                          spec=spec, scorer=scorer, points=points)
         label = slate_label_ct(slate)
         if run.lineup is None:
             print(f"{label or slate.draft_group_id}: no solvable lineup "
