@@ -43,8 +43,8 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 |---|---|---|---|---|---|
 | 2 | Classic | P,P,C,1B,2B,3B,SS,OF,OF,OF | $50,000 | SalaryCap | **built** (`MLB_CLASSIC`) |
 | 114 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
-| 45 | Tiers | T1…T6, one player per tier | — | Tiered | planned |
-| 346 | Single Stat - Home Runs | UTIL x3 | — | Tiered | HR model built (`docs/PROPS_HR.md`); board picker planned |
+| 45 | Tiers | T1…T6, one player per tier | — | Tiered | **built** (`velocity.dfs.tiered`) |
+| 346 | Single Stat - Home Runs | UTIL x3 | — | Tiered | **built** (`velocity.dfs.tiered` + `docs/PROPS_HR.md`) |
 | 178 | Snake | IF,IF,OF,OF,UTIL,UTIL,BN | — | SnakeDraft | planned (draft advisor) |
 | 179 | Snake Showdown | UTIL x3, BN | — | SnakeDraft | planned (draft advisor) |
 
@@ -65,7 +65,7 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 |---|---|---|---|---|---|
 | 94 | Classic | QB,RB,RB,WR,WR,WR,FLEX,S-FLEX | $50,000 | SalaryCap | **built** (`CFB_CLASSIC`) |
 | 95 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
-| 364 | Single Stat - Touchdowns | FLEX x3 | — | Tiered | planned |
+| 364 | Single Stat - Touchdowns | FLEX x3 | — | Tiered | **built** (`velocity.dfs.tiered`) |
 | 377 | Snake | QB,RB,WR/TE,WR/TE,FLEX,S-FLEX,BENCH | — | SnakeDraft | planned (draft advisor) |
 | 378 | Snake Showdown | S-FLEX x3, BENCH | — | SnakeDraft | planned (draft advisor) |
 
@@ -113,6 +113,60 @@ about 0.1 seconds.
 **Projections** are the flex-slot numbers; the 1.5x is applied by the
 optimizer, never baked into the input. MLB uses the contextual model
 (`docs/DFS_MODEL.md`); football uses the FantasyPros consensus.
+
+## Tiers and Single Stat — the formats with no cap
+
+Three formats hand you no salary cap at all, which sounds easy and is
+exactly the point: **the projection is the entire contest.** There is no
+knapsack to search, so nothing stands between the model and the result.
+
+DK ships these boards with `salary: null` on every draftable, so they cannot
+ride the salary parquet — the salary normalizer drops a priceless row rather
+than invent a number. The collector routes them to their own artifact
+(`dk_tiered_{league}_{stamp}.parquet`) with their own schema
+(`velocity.dfs.tiered.normalize_tiered`), where the tier ordinal replaces
+the price.
+
+**Reading the tiers.** DK does not label the tiers in the payload; it
+encodes them in the roster-slot ids, which ascend with the tier number. On
+the 8/25 MLB Tiers board slots 278…283 held 4/5/6/8/8/12 players — T1 the
+stars (Alvarez, Ohtani, Crow-Armstrong) down to T6, the pitcher tier. So the
+tier is the **sorted rank** of the slot id, which also handles the Single
+Stat boards correctly: one slot id, one pool, everything tier 1.
+
+**The two shape rules**, each with an exact answer rather than a repair:
+
+* Tiers requires at least two **games** (`gameCount.minValue: 2`). If every
+  tier's best pick sits in one game, the optimum moves exactly one tier —
+  moving more only costs more, since each tier's best alternative elsewhere
+  is by definition no better than its own best — so the fix is the cheapest
+  single move.
+* Single Stat requires at least two **teams** (`teamCount.minValue: 2`). If
+  the top three share a team then every other player on the slate ranks
+  below all three, so the optimum is the top two plus the best player from
+  anywhere else.
+
+**What prices each one:**
+
+| Format | Projection | Unit |
+|---|---|---|
+| MLB Tiers | contextual DK-points model (`docs/DFS_MODEL.md`) | DK points |
+| MLB Single Stat - Home Runs | empirical-Bayes HR model (`docs/PROPS_HR.md`) | home runs |
+| CFB Single Stat - Touchdowns | FantasyPros rushing + receiving TDs | touchdowns |
+
+A quarterback's passing touchdowns are deliberately excluded from the last
+one: DK's Single Stat - Touchdowns pays the player who reaches the end zone,
+and a thrown touchdown is scored by the receiver.
+
+```bash
+python scripts/build_dfs_tiered.py --league mlb \
+    --tiered artifacts/dk_salaries/dk_tiered_mlb_<stamp>.parquet \
+    --out artifacts/slate
+```
+
+Writes `dfs_tiered_{league}_{stamp}.parquet` plus a card and captions per
+format. Snake boards land in the same artifact (they are salary-free too)
+but are drafted rather than picked, so this script leaves them alone.
 
 ## Eligibility, and one live bug worth remembering
 

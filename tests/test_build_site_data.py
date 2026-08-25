@@ -73,6 +73,13 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     assert len(dfs) == 1
     assert dfs.iloc[0]["league"] == "__none__"
     assert "salary" in dfs.columns
+    # Every DFS format the site renders needs its own typed sentinel: the
+    # page's SQL runs whether or not DK posted that board today.
+    for name, column in (("dfs_showdown", "salary"), ("dfs_tiered", "unit")):
+        frame = pd.read_parquet(out / f"{name}.parquet")
+        assert len(frame) == 1, name
+        assert frame.iloc[0]["league"] == "__none__", name
+        assert column in frame.columns, name
     record = pd.read_parquet(out / "record.parquet")
     assert record.iloc[0]["league"] == "__none__"
     # Dates stay real datetimes (all-null date columns would get downcast
