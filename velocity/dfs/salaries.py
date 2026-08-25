@@ -69,6 +69,10 @@ class Salaries(pa.DataFrameModel):
     # pitcher on the board (their app hides them behind a "remove non
     # probables" toggle), and a non-probable never starts.
     probable: Series[bool] = Field()
+    # DK's roster-slot id, as DK labelled the surviving row. Showdown boards
+    # list every player TWICE — once at the captain slot (1.5x salary) and
+    # once at flex/utility — and this names which entry a row came from.
+    roster_slot_id: Series[str] = Field(nullable=True)
 
     class Config:
         coerce = True
@@ -76,7 +80,7 @@ class Salaries(pa.DataFrameModel):
 
 _COLUMNS = [
     "draft_group_id", "player_id", "player_name", "position", "salary",
-    "team", "competition", "kickoff", "status", "probable",
+    "team", "competition", "kickoff", "status", "probable", "roster_slot_id",
 ]
 
 
@@ -93,6 +97,7 @@ def _empty_salaries() -> pd.DataFrame:
             "kickoff": pd.Series(dtype="datetime64[ns]"),
             "status": pd.Series(dtype=str),
             "probable": pd.Series(dtype=bool),
+            "roster_slot_id": pd.Series(dtype=str),
         }
     )
     return Salaries.validate(empty)
@@ -101,9 +106,14 @@ def _empty_salaries() -> pd.DataFrame:
 def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.DataFrame:
     """Flatten a DK draftables payload onto the canonical :class:`Salaries` schema.
 
-    One row per player: DK lists a player once per eligible roster slot (an RB
-    appears again for FLEX), so rows are deduped on the player id at the same
-    salary. A row without a name or salary is dropped, never guessed.
+    One row per player **per price**. DK lists a player once per eligible
+    roster slot, and the slot tells you which of two things that means: on a
+    classic board an RB's RB and FLEX entries carry the SAME salary and are
+    one row here; on a showdown board the captain entry is a genuinely
+    different, dearer price for the same player and both rows survive
+    (:func:`velocity.dfs.showdown.showdown_board` pairs them back up). Hence
+    the dedupe key is the price, not the roster slot. A row without a name or
+    salary is dropped, never guessed.
     """
     rows: list[dict[str, object]] = []
     for d in payload.get("draftables") or []:
@@ -129,6 +139,8 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
                 "kickoff": competition.get("startTime"),
                 "status": d.get("status"),
                 "probable": probable,
+                "roster_slot_id": None if d.get("rosterSlotId") is None
+                else str(d.get("rosterSlotId")),
             }
         )
     if not rows:
@@ -139,7 +151,7 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
     df["salary"] = pd.to_numeric(df["salary"], errors="coerce")
     df = (
         df.dropna(subset=["salary"])
-        .drop_duplicates(subset=["draft_group_id", "player_id"])
+        .drop_duplicates(subset=["draft_group_id", "player_id", "salary"])
         .reset_index(drop=True)
     )
     return Salaries.validate(df[_COLUMNS])
@@ -152,18 +164,43 @@ def _clean_suffix(suffix: Any) -> str:
     return str(suffix).strip().strip("()").strip()
 
 
+def game_type_names(lobby: Mapping[str, Any]) -> dict[str, str]:
+    """Draft group id → DK's own game-type NAME, read off the contest list.
+
+    The lobby names every format in plain English on its contests
+    ("Classic", "Showdown Captain Mode", "Tiers", "Single Stat - Home Runs",
+    "Snake Showdown"). That name is the honest format key: ``ContestTypeId``
+    is a parallel id space that agrees with the game-type ids for the newer
+    formats but not the oldest ones (MLB classic ships as 28, not 2), and DK
+    also runs look-alike simulated formats ("Madden Showdown Captain Mode")
+    that a numeric filter would have to know about separately.
+    """
+    names: dict[str, str] = {}
+    for contest in lobby.get("Contests") or []:
+        group = contest.get("dg")
+        name = contest.get("gameType")
+        if group is None or not name:
+            continue
+        names.setdefault(str(group), str(name))
+    return names
+
+
 def normalize_draft_groups(lobby: Mapping[str, Any]) -> pd.DataFrame:
     """The lobby's draft groups as a small frame: id, contest type, start, games.
 
-    ``contest_type_id`` distinguishes the game styles (classic vs showdown
-    etc.); the collector banks them all and downstream picks what it prices.
-    ``suffix`` is DK's own slate label ("Turbo", "Night", "Early"; empty for
-    the plain slates) — how the lobby tells same-day groupings apart.
+    ``contest_type_id`` and ``game_type`` both distinguish the game styles
+    (classic vs showdown etc.) — the id from the draft group, the name from
+    the contests that reference it (:func:`game_type_names`). The collector
+    banks them all and downstream picks what it prices. ``suffix`` is DK's
+    own slate label ("Turbo", "Night", "Early", or a showdown's matchup;
+    empty for the plain slates) — how the lobby tells groupings apart.
     """
+    names = game_type_names(lobby)
     rows = [
         {
             "draft_group_id": str(g.get("DraftGroupId")),
             "contest_type_id": g.get("ContestTypeId"),
+            "game_type": names.get(str(g.get("DraftGroupId"))),
             "start": g.get("StartDate"),
             "game_count": g.get("GameCount"),
             "tag": g.get("DraftGroupTag"),
@@ -172,8 +209,9 @@ def normalize_draft_groups(lobby: Mapping[str, Any]) -> pd.DataFrame:
         for g in lobby.get("DraftGroups") or []
         if g.get("DraftGroupId") is not None
     ]
-    df = pd.DataFrame(rows, columns=["draft_group_id", "contest_type_id", "start",
-                                     "game_count", "tag", "suffix"])
+    df = pd.DataFrame(rows, columns=["draft_group_id", "contest_type_id",
+                                     "game_type", "start", "game_count", "tag",
+                                     "suffix"])
     if not df.empty:
         start = pd.to_datetime(df["start"], errors="coerce", utc=True)
         df["start"] = start.dt.tz_localize(None)

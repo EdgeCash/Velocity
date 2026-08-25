@@ -50,7 +50,8 @@ def _write_league(
         # showdown/tiers/...), the slate's start, and DK's own grouping label
         # ("Turbo"/"Night"/"Early") — what the multi-slate solver keys on.
         meta = groups.rename(columns={"start": "slate_start"})[
-            ["draft_group_id", "contest_type_id", "slate_start", "suffix"]
+            ["draft_group_id", "contest_type_id", "game_type", "slate_start",
+             "suffix"]
         ]
         salaries = salaries.merge(meta, on="draft_group_id", how="left")
     dest = out / f"dk_salaries_{league}_{tag}.parquet"

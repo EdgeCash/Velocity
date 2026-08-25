@@ -70,9 +70,9 @@ def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
     ax.axis("off")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    # Row pitch adapts to the roster size (NFL classic 9 rows, CFB classic 8)
-    # so every format fills the same panel envelope.
-    step = 0.648 / max(len(lineup.slots), 9)
+    # Row pitch adapts to the roster size (NFL classic 9 rows, CFB classic 8,
+    # showdown 6) so every format fills the same panel envelope.
+    step = 0.648 / max(len(lineup.slots), 6)
     for i, slot in enumerate(lineup.slots):
         y = 0.735 - i * step
         in_stack = slot.player_name in stacked
@@ -94,6 +94,18 @@ def _roster_rows(fig: plt.Figure, lineup: Lineup) -> None:
               ha="right")
         _display(fig, _X_POINTS, y - 0.004, f"{slot.points:.1f}", color=INK,
                  fontsize=18, ha="right", fontweight="semibold")
+
+
+def _team_split(lineup: Lineup) -> str:
+    """"LAD 4 · ATL 2" — rostered players per team, biggest side first."""
+    counts: dict[str, int] = {}
+    for slot in lineup.slots:
+        if slot.team:
+            counts[slot.team] = counts.get(slot.team, 0) + 1
+    if not counts:
+        return "—"
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return " · ".join(f"{team} {n}" for team, n in ranked[:4])
 
 
 def _context_panel(fig: plt.Figure, lineup: Lineup, *, cap: int,
@@ -138,6 +150,18 @@ def _context_panel(fig: plt.Figure, lineup: Lineup, *, cap: int,
         else:
             _text(fig, x, 0.360, "no QB stack in the optimal build",
                   color=INK_DIM, fontsize=14)
+    else:
+        # No QB grammar to state (MLB, showdown) — the panel instead carries
+        # what those formats actually turn on: who is rostered from which
+        # side, and which player is carrying the captain multiplier.
+        _text(fig, x, 0.408, "ROSTER SPLIT", color=INK_DIM, fontsize=13.5)
+        _display(fig, x, 0.360, _team_split(lineup), color=MODEL, fontsize=19,
+                 fontweight="semibold")
+        captain = next((s for s in lineup.slots if s.slot == "CPT"), None)
+        if captain is not None:
+            _text(fig, x, 0.322,
+                  f"captain {captain.player_name} · 1.5x points and salary",
+                  color=INK_DIM, fontsize=12.5)
 
     _text(fig, x, 0.205, "PROJECTIONS", color=INK_DIM, fontsize=13.5)
     _text(fig, x, 0.170, source_note, color=INK_DIM, fontsize=13)

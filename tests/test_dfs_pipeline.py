@@ -395,7 +395,12 @@ def test_eligible_board_drops_out_players_and_non_probable_pitchers() -> None:
          "status": "None"},
         {"player_name": "Bench Arm", "position": "P", "probable": False,
          "status": "None"},
-        {"player_name": "IL Arm", "position": "P", "probable": True,
+        {"player_name": "IL Arm", "position": "P", "probable": False,
+         "status": "IL"},
+        # DK carried Tyler Glasnow as IL on the 8/25 LAD@ATL board while
+        # flagging him probable, and statsapi had him announced as the
+        # starter: the game-level flag beats the stale roster designation.
+        {"player_name": "Announced Off IL", "position": "P", "probable": True,
          "status": "IL"},
         {"player_name": "Everyday Hitter", "position": "OF", "probable": False,
          "status": "None"},
@@ -405,9 +410,11 @@ def test_eligible_board_drops_out_players_and_non_probable_pitchers() -> None:
          "status": "OUT"},
     ])
     kept = set(eligible_board(board, MLB_CLASSIC)["player_name"])
-    # Non-probable and IL'd pitchers leave (the live Turbo-lineup bug);
-    # hitters stay regardless of the flag; DTD plays, OUT doesn't.
-    assert kept == {"Real Probable", "Everyday Hitter", "DTD Hitter"}
+    # Non-probable and IL'd pitchers leave (the live Turbo-lineup bug) —
+    # unless DK also flags them probable for tonight; hitters stay regardless
+    # of the flag; DTD plays, OUT doesn't.
+    assert kept == {"Real Probable", "Announced Off IL", "Everyday Hitter",
+                    "DTD Hitter"}
     # Football: the probable rule is MLB's; the status rule is universal.
     nfl = pd.DataFrame([
         {"player_name": "QB", "position": "QB", "status": "Q"},

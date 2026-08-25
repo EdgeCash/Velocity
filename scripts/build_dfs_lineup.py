@@ -71,6 +71,79 @@ def _contextual_mlb_points() -> pd.DataFrame:
         venue_of_team=venue_of_team, lineup_slot=slot_of, season=season)
 
 
+def build_showdown_boards(
+    salaries: pd.DataFrame,
+    fp: pd.DataFrame,
+    points: pd.DataFrame | None,
+    league: str,
+    out: Path,
+    stamp: str,
+) -> None:
+    """Solve every Showdown Captain Mode board on the snapshot (best-effort).
+
+    Writes one parquet carrying all solved boards, then a card + captions for
+    the strongest board (highest projected total) — the one worth posting.
+    Like every surface past the cash lineup this never raises: a showdown
+    failure must not cost the slate its classic lineup.
+    """
+    from velocity.dfs.pipeline import (
+        game_time_ct,
+        lineup_frame,
+        showdown_slates,
+        solve_showdown,
+    )
+    from velocity.dfs.showdown import SHOWDOWN_SPECS
+    from velocity.report.dfs_png import dfs_caption, render_dfs_card
+
+    if league not in SHOWDOWN_SPECS:
+        return
+    boards = showdown_slates(salaries, league)
+    if not boards:
+        print("no showdown boards on the snapshot")
+        return
+    frames: list[pd.DataFrame] = []
+    solved: list[tuple] = []
+    for board in boards:
+        run = solve_showdown(salaries, fp, draft_group=board.draft_group_id,
+                             league=league, points=points)
+        if run.lineup is None:
+            print(f"showdown {board.suffix or board.draft_group_id}: no lineup "
+                  f"({run.n_salaried} salaried, {run.n_pool} projected)")
+            continue
+        print(f"showdown {board.suffix} (group {run.draft_group_id}): "
+              f"{run.n_pool}/{run.n_salaried} projected → "
+              f"${run.lineup.total_salary:,} · {run.lineup.total_points:.1f} DK pts")
+        rows = lineup_frame(run)
+        frames.append(rows.assign(slate_start=board.start, suffix=board.suffix,
+                                  slate=board.suffix, format="showdown",
+                                  game_time=rows["kickoff"].map(game_time_ct)))
+        solved.append((board, run))
+    if not solved:
+        return
+    dest = out / f"dfs_showdown_{league}_{stamp}.parquet"
+    pd.concat(frames, ignore_index=True).to_parquet(dest, index=False)
+    print(f"wrote {len(frames)} showdown lineup(s) to {dest}")
+
+    board, run = max(solved, key=lambda pair: pair[1].lineup.total_points)
+    kind = {"nfl": "DK NFL SHOWDOWN", "ncaaf": "DK CFB SHOWDOWN",
+            "mlb": "DK MLB SHOWDOWN"}[league]
+    label = f"{kind} · {board.suffix}" if board.suffix else kind
+    lock = game_time_ct(board.start)
+    if lock != "\u2014":
+        label = f"{label} · {lock}"
+    source = ("statsapi season rates scored as DK points" if league == "mlb"
+              else "FantasyPros consensus scored as DK points")
+    when = datetime.now(UTC).strftime("%A, %b %-d").upper()
+    card = out / f"dfs_showdown_{league}_{stamp}.png"
+    render_dfs_card(run.lineup, card, when=when, slate_label=label.upper(),
+                    source_note=source)
+    print(f"rendered showdown card to {card}")
+    captions = out / f"dfs_showdown_{league}_{stamp}_captions.md"
+    captions.write_text(
+        dfs_caption(run.lineup,
+                    slate_label=f"{kind.lower()} ({board.suffix})") + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the optimal DK lineup")
     parser.add_argument("--salaries", required=True,
@@ -92,6 +165,8 @@ def main() -> None:
                         help="max players any two GPP lineups may share")
     parser.add_argument("--gpp-exposure", type=float, default=0.6,
                         help="max fraction of GPP lineups any player appears in")
+    parser.add_argument("--no-showdown", dest="showdown", action="store_false",
+                        help="skip the single-game Showdown Captain Mode boards")
     args = parser.parse_args()
 
     from velocity.dfs.pipeline import (
@@ -133,14 +208,6 @@ def main() -> None:
         slate_label_ct,
     )
 
-    if args.draft_group:
-        slates = [SlateInfo(str(args.draft_group), None, "", 0)]
-    else:
-        slates = classic_slates(salaries)
-    if not slates:
-        print("no multi-game slate groupings on the board")
-        return
-
     # MLB prices from the CONTEXTUAL model (docs/DFS_MODEL.md): the banked
     # box scores plus today's probables, park and lineup slot. Best-effort —
     # if a bank or the probables feed is missing, the flat scorer still runs.
@@ -151,6 +218,23 @@ def main() -> None:
             print(f"contextual MLB projections: {len(points)} players")
         except Exception as exc:  # noqa: BLE001 - falls back to the flat scorer
             print(f"contextual projections unavailable ({exc}); using flat rates")
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    if args.showdown:
+        # Single-game captain-mode boards, solved before the classic slates so
+        # a showdown-only day (an NFL standalone, a light MLB card) still
+        # produces a lineup.
+        build_showdown_boards(salaries, fp, points, args.league, out, stamp)
+
+    if args.draft_group:
+        slates = [SlateInfo(str(args.draft_group), None, "", 0)]
+    else:
+        slates = classic_slates(salaries)
+    if not slates:
+        print("no multi-game slate groupings on the board")
+        return
 
     frames: list[pd.DataFrame] = []
     solved: list[tuple] = []
@@ -183,9 +267,6 @@ def main() -> None:
               or pair[0].start.date() == first_day.date()]
     slate, run = max(todays or solved, key=lambda pair: pair[1].n_games)
 
-    out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
     pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
     print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
