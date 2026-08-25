@@ -179,3 +179,66 @@ def dk_expected_points(fp: pd.DataFrame) -> pd.DataFrame:
     )
     grouped["points"] = grouped["points"].round(2)
     return grouped[[*_ID_COLUMNS, "points"]]
+
+
+def dk_expected_points_mlb_contextual(
+    batters: pd.DataFrame,
+    starters: pd.DataFrame,
+    games: pd.DataFrame,
+    *,
+    opposing_starter: dict[str, str] | None = None,
+    venue_of_team: dict[str, str] | None = None,
+    lineup_slot: dict[str, int] | None = None,
+    season: int | None = None,
+) -> pd.DataFrame:
+    """MLB DK projections WITH matchup context (velocity/models/dfs_mlb.py).
+
+    Returns the same ``[player_id, player_name, team, position, points]``
+    shape the flat scorer emits, so the optimizer consumes it unchanged.
+    Hitters carry the opposing-starter, park and lineup-slot terms; pitchers
+    are flat by evidence (docs/DFS_MODEL.md §4).
+
+    ``opposing_starter`` maps batter id → the starter he faces today,
+    ``venue_of_team`` team → the park, ``lineup_slot`` batter id → his slot.
+    Anything absent simply drops that term for that player.
+    """
+    from velocity.models.dfs_mlb import DfsMlbModel
+
+    model = DfsMlbModel.fit(batters, starters, games, season=season)
+    opposing = dict(opposing_starter or {})
+    venues = dict(venue_of_team or {})
+    slots = dict(lineup_slot or {})
+
+    # Identity comes from the banks: batters from the batter frame, starters
+    # from the starter frame, so the join key stays the MLBAM player id.
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    if not batters.empty:
+        recent = batters.drop_duplicates("batter_id", keep="last")
+        for row in recent.to_dict("records"):
+            pid = str(row["batter_id"])
+            team = str(row.get("team") or "")
+            points = model.project_hitter(
+                pid, opposing_starter=opposing.get(pid),
+                venue=venues.get(team), lineup_slot=slots.get(pid))
+            if points is None:
+                continue
+            seen.add(pid)
+            rows.append({"player_id": pid,
+                         "player_name": str(row.get("batter_name") or pid),
+                         "team": team, "position": None,
+                         "points": round(points, 2)})
+    if starters is not None and not starters.empty:
+        recent_sp = starters.drop_duplicates("starter_id", keep="last")
+        for row in recent_sp.to_dict("records"):
+            pid = str(row["starter_id"])
+            if pid in seen:
+                continue
+            points = model.project_pitcher(pid)
+            if points is None:
+                continue
+            rows.append({"player_id": pid,
+                         "player_name": str(row.get("starter_name") or pid),
+                         "team": str(row.get("team") or ""), "position": "P",
+                         "points": round(points, 2)})
+    return pd.DataFrame(rows, columns=[*_ID_COLUMNS, "points"])

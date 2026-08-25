@@ -87,6 +87,10 @@ def extract_starters(payload: dict, game_id: str) -> list[dict[str, object]]:
                 "bb": pd.to_numeric(stats.get("baseOnBalls"), errors="coerce"),
                 "hbp": pd.to_numeric(stats.get("hitBatsmen"), errors="coerce"),
                 "hr": pd.to_numeric(stats.get("homeRuns"), errors="coerce"),
+                # Completes the DK pitcher line (IP and K are already above).
+                "er": pd.to_numeric(stats.get("earnedRuns"), errors="coerce"),
+                "hits_allowed": pd.to_numeric(stats.get("hits"), errors="coerce"),
+                "win": pd.to_numeric(stats.get("wins"), errors="coerce"),
             })
             break  # one starter per side
     return rows
@@ -124,6 +128,10 @@ def extract_batters(payload: dict, game_id: str) -> list[dict[str, object]]:
             # honest read of who actually started.
             order = str(player.get("battingOrder") or "")
             slot = int(order) // 100 if order.isdigit() else 0
+
+            def num(key: str, _stats: dict = stats) -> float | None:
+                return pd.to_numeric(_stats.get(key), errors="coerce")
+
             rows.append({
                 "game_id": str(game_id),
                 "team": str(team_name),
@@ -133,8 +141,19 @@ def extract_batters(payload: dict, game_id: str) -> list[dict[str, object]]:
                 "lineup_slot": slot,
                 "started": order.isdigit() and order.endswith("00"),
                 "pa": pa,
-                "ab": pd.to_numeric(stats.get("atBats"), errors="coerce"),
-                "hr": pd.to_numeric(stats.get("homeRuns"), errors="coerce"),
+                "ab": num("atBats"),
+                # The full DraftKings scoring line. Singles are derived at
+                # scoring time (hits minus extra-base hits) so the bank stays
+                # the box score's own vocabulary.
+                "h": num("hits"),
+                "double": num("doubles"),
+                "triple": num("triples"),
+                "hr": num("homeRuns"),
+                "rbi": num("rbi"),
+                "r": num("runs"),
+                "bb": num("baseOnBalls"),
+                "hbp": num("hitByPitch"),
+                "sb": num("stolenBases"),
             })
     return rows
 

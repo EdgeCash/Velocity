@@ -253,6 +253,7 @@ def solve_slate(
     draft_group: str | None = None,
     spec: RosterSpec = NFL_CLASSIC,
     scorer: object = None,
+    points: pd.DataFrame | None = None,
 ) -> LineupRun:
     """Solve one draft group's optimal lineup from raw frames.
 
@@ -260,7 +261,10 @@ def solve_slate(
     groups — the main slate is auto-picked unless ``draft_group`` pins one);
     ``fp`` is the FantasyPros long frame; ``spec`` the contest format;
     ``scorer`` the FP-frame → per-player-points function (defaults to the
-    NFL classic scorer; MLB passes :func:`dk_expected_points_mlb`). An
+    NFL classic scorer). ``points`` supplies an already-computed projection
+    frame and bypasses ``scorer`` entirely — the path the contextual MLB
+    model uses, since it reads the box-score banks rather than a stat frame.
+    An
     unsolvable slate (no group, or an infeasible pool) returns a run with
     ``lineup=None`` rather than raising — an empty board is a state, not an
     error.
@@ -270,8 +274,9 @@ def solve_slate(
         return LineupRun(None, "", 0, 0, 0)
     board = salaries[salaries["draft_group_id"].astype(str) == str(group)]
     board = eligible_board(normalize_positions(board, spec), spec)
-    score = scorer if callable(scorer) else dk_expected_points
-    points = score(fp)
+    if points is None:
+        score = scorer if callable(scorer) else dk_expected_points
+        points = score(fp)
     pool = lineup_pool(board, points)
     if pool.empty:
         lineup = None
