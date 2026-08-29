@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -409,6 +409,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-weight", type=float, default=None,
                         help="market-anchoring weight for gating/staking "
                              "(1.0 = raw model; default: 0.2 for nfl, else 1.0)")
+    # Per-market selectivity (docs/WAGERING.md Phase W4). Props clear a wider
+    # bar than game markets: the same measured edge in a noisy prop market is
+    # more likely our own estimation error (DESIGN §6.2). Unset, the prop bar
+    # resolves to 2× --min-edge — a reasoned, provisional multiplier until the
+    # football shrink sweep re-tunes per-market values on the banked archive.
+    parser.add_argument("--prop-min-edge", type=float, default=None,
+                        help="edge threshold for player props "
+                             "(default: 2 × --min-edge)")
+    parser.add_argument("--min-edge-market", action="append", default=[],
+                        metavar="MARKET=EDGE",
+                        help="per-market edge override, repeatable "
+                             "(e.g. --min-edge-market pass_yards=0.05)")
+    # NCAAF sides: 50.1% ATS flat and no edge at any disagreement threshold
+    # (docs/BACKTEST_NCAAF.md) — the college edge is totals. Spreads sit out
+    # of the NCAAF game slate unless explicitly re-enabled.
+    parser.add_argument("--ncaaf-spreads", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="bet NCAAF spreads (backtest found no edge; off by default)")
     parser.add_argument("--bankroll", type=float, default=100.0)
     # The August board carries the whole season's games at stale opening
     # numbers (the first live run priced 272 NFL events and "staked" 20x the
@@ -526,6 +544,31 @@ def resolve_model_weight(explicit: float | None, league: str) -> float:
     return DEFAULT_MODEL_WEIGHT_BY_LEAGUE.get(league, 1.0)
 
 
+def resolve_prop_min_edge(explicit: float | None, min_edge: float) -> float:
+    """The prop slate's edge bar — the flag, else 2× the game bar.
+
+    Wider for the noisiest markets per DESIGN §6.2; the multiplier is a
+    reasoned, provisional policy until the football shrink sweep re-tunes
+    per-market values on the banked archive (docs/WAGERING.md Phase W4).
+    """
+    return float(explicit) if explicit is not None else 2.0 * min_edge
+
+
+def parse_market_edges(pairs: Sequence[str]) -> dict[str, float]:
+    """``MARKET=EDGE`` CLI pairs → the ``min_edge_by_market`` mapping."""
+    out: dict[str, float] = {}
+    for pair in pairs:
+        market, sep, value = pair.partition("=")
+        if not sep or not market.strip():
+            raise SystemExit(f"--min-edge-market wants MARKET=EDGE, got {pair!r}")
+        try:
+            out[market.strip()] = float(value)
+        except ValueError:
+            raise SystemExit(
+                f"--min-edge-market wants a numeric edge, got {pair!r}") from None
+    return out
+
+
 def main() -> None:
     args = build_parser().parse_args()
 
@@ -574,9 +617,17 @@ def main() -> None:
         # leaves it off and gates on probability edge alone.
         total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
         model_weight = resolve_model_weight(args.model_weight, args.league)
+        game_excludes = frozenset()
+        if args.league == "ncaaf" and not args.ncaaf_spreads:
+            game_excludes = frozenset({"spread"})
+            print("NCAAF spreads: sitting out (50.1% ATS flat, no edge at any "
+                  "disagreement threshold — docs/BACKTEST_NCAAF.md); "
+                  "--ncaaf-spreads re-enables")
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
             model_weight=model_weight,
+            min_edge_by_market=parse_market_edges(args.min_edge_market),
+            exclude_markets=game_excludes,
             min_total_disagreement=total_edge,
             min_team_total_disagreement=args.team_total_edge,
         )
@@ -1048,7 +1099,9 @@ def _prop_slate(
             prop_lines,
             name_index_from_fp(fp),
             config=SlateConfig(
-                exclude_closing=False, min_edge=args.min_edge,
+                exclude_closing=False,
+                min_edge=resolve_prop_min_edge(args.prop_min_edge, args.min_edge),
+                min_edge_by_market=parse_market_edges(args.min_edge_market),
                 starting_bankroll=args.bankroll,
                 prob_shrink=args.prop_shrink,
                 exclude_markets=frozenset(
@@ -1058,7 +1111,8 @@ def _prop_slate(
         )
         frame = prop_slate_to_frame(log)
         print(f"\n=== {args.league.upper()} props — {len(prop_lines)} lines, "
-              f"{len(frame)} recommended ===")
+              f"{len(frame)} recommended (edge bar "
+              f"{resolve_prop_min_edge(args.prop_min_edge, args.min_edge):g}) ===")
         if not frame.empty:
             with pd.option_context("display.width", 160, "display.max_columns", None):
                 print(frame.to_string(index=False))
@@ -1154,7 +1208,9 @@ def _mlb_k_slate(
         log, unresolved = build_prop_slate(
             props_by_game, prop_lines, name_index,
             config=SlateConfig(
-                exclude_closing=False, min_edge=args.min_edge,
+                exclude_closing=False,
+                min_edge=resolve_prop_min_edge(args.prop_min_edge, args.min_edge),
+                min_edge_by_market=parse_market_edges(args.min_edge_market),
                 starting_bankroll=args.bankroll,
                 prob_shrink=args.prop_shrink,
             ),

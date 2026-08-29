@@ -37,3 +37,34 @@ def test_cli_default_leaves_weight_to_league_policy() -> None:
     args = _runner().build_parser().parse_args(["--league", "nfl"])
     assert args.model_weight is None  # sentinel — resolved by league, not argparse
     assert args.min_edge == 0.02
+
+
+def test_prop_min_edge_defaults_to_double_the_game_bar() -> None:
+    runner = _runner()
+    # Unset → 2× the game threshold (wider for the noisiest markets,
+    # DESIGN §6.2); explicit always wins; a zero game bar stays zero.
+    assert runner.resolve_prop_min_edge(None, 0.02) == 0.04
+    assert runner.resolve_prop_min_edge(None, 0.0) == 0.0
+    assert runner.resolve_prop_min_edge(0.03, 0.02) == 0.03
+
+
+def test_market_edge_pairs_parse_exactly() -> None:
+    import pytest
+
+    runner = _runner()
+    assert runner.parse_market_edges([]) == {}
+    parsed = runner.parse_market_edges(["total=0.03", " pass_yards =0.05"])
+    assert parsed == {"total": 0.03, "pass_yards": 0.05}
+    with pytest.raises(SystemExit):
+        runner.parse_market_edges(["total"])  # no '='
+    with pytest.raises(SystemExit):
+        runner.parse_market_edges(["total=lots"])  # not a number
+
+
+def test_ncaaf_spreads_sit_out_by_default() -> None:
+    args = _runner().build_parser().parse_args(["--league", "ncaaf"])
+    # The backtested college posture: no ATS edge at any threshold, so
+    # spreads are off unless deliberately re-enabled.
+    assert args.ncaaf_spreads is False
+    on = _runner().build_parser().parse_args(["--league", "ncaaf", "--ncaaf-spreads"])
+    assert on.ncaaf_spreads is True
