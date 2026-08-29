@@ -29,6 +29,11 @@ import pandas as pd
 from velocity.features.scores import fit_scores_ratings
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
+from velocity.intel.publish import (
+    DEFAULT_MAX_PLAYS,
+    DEFAULT_MIN_CONTEXT,
+    DEFAULT_MIN_CONVICTION,
+)
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import SimConfig
@@ -482,6 +487,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--injuries-file",
                         help="normalized injuries parquet (the collect_fantasypros "
                              "artifact) — enables availability vetoes")
+    # The publish gate's floors (docs/PUBLISH_GATE.md §3) are provisional —
+    # "reasoned, not yet fitted" — so they are settable per run while
+    # scripts/calibrate_publish_gate.py accumulates the boards to fit them on.
+    # Moving a *default* stays a deliberate edit in velocity/intel/publish.py.
+    parser.add_argument("--publish-min-conviction", type=float,
+                        default=DEFAULT_MIN_CONVICTION,
+                        help="composite floor a play must reach to post")
+    parser.add_argument("--publish-min-context", type=float,
+                        default=DEFAULT_MIN_CONTEXT,
+                        help="context score that must corroborate a posted play")
+    parser.add_argument("--publish-max-plays", type=int, default=DEFAULT_MAX_PLAYS,
+                        help="nightly cap on posted plays (the guardrail, not a quota)")
     # Pick'em board: the slip-EV engine over the same prop sim + prop lines
     # (velocity/wagering/pickem_slate) — book-fair marginals, model
     # correlation. Slips below the EV floor are simply not persisted.
@@ -734,7 +751,12 @@ def main() -> None:
         try:
             from velocity.intel.publish import gate_summary, publish_slate
 
-            published, audit = publish_slate(convictions, canonical)
+            published, audit = publish_slate(
+                convictions, canonical,
+                min_conviction=args.publish_min_conviction,
+                min_context=args.publish_min_context,
+                max_plays=args.publish_max_plays,
+            )
             print(f"\npublish gate: {gate_summary(audit)}")
             for c in published:
                 bet = c.bet
