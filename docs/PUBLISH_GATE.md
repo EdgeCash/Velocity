@@ -81,6 +81,14 @@ audit frame banks `conviction` and `context` for every candidate precisely
 so the thresholds can be set from a few weeks of real boards. Expect these
 constants to move once there is data to move them with.
 
+`scripts/calibrate_publish_gate.py` is that move made routine: pointed at
+the runner's `--out` folder, it sweeps a floor grid over every banked audit
+frame and reports the volume each pair would have produced (plays/night,
+empty-night share). The runner also takes `--publish-min-conviction`,
+`--publish-min-context`, and `--publish-max-plays` per run; changing a
+*default* remains a deliberate human edit here and in
+`velocity/intel/publish.py`.
+
 **"No picks is a pick."** The gate returns nothing on most nights by
 design. An empty wager post is the honest output of a quiet board.
 
