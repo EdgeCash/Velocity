@@ -386,7 +386,8 @@ def _build_projection(
         args.league, model, scores_model)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The live-slate CLI — a function so tests can pin the policy defaults."""
     parser = argparse.ArgumentParser(description="Live slate of staked recommendations")
     parser.add_argument("--league", choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl"],
                         required=True)
@@ -394,6 +395,20 @@ def main() -> None:
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--min-edge", type=float, default=0.02)
+    # Market anchoring (docs/MODEL_LAB.md Round 3): the NFL close's Brier beats
+    # every pure model in this family, so the belief used for gating and Kelly
+    # sizing is regressed toward each line's devigged probability:
+    #   p_belief = p_market + w · (p_model − p_market)
+    # At w the measured edge scales by w, so clearing --min-edge takes 1/w times
+    # the raw disagreement — the selectivity lever the Round-3 finding argued
+    # for. Unset, the weight resolves per league (resolve_model_weight): 0.2
+    # for the NFL (the round's select-chosen blend weight), 1.0 (raw model)
+    # everywhere else until a league's own lab argues otherwise. Leans and
+    # matchup cards keep the pure model either way — wagering policy, not a
+    # fit change.
+    parser.add_argument("--model-weight", type=float, default=None,
+                        help="market-anchoring weight for gating/staking "
+                             "(1.0 = raw model; default: 0.2 for nfl, else 1.0)")
     parser.add_argument("--bankroll", type=float, default=100.0)
     # The August board carries the whole season's games at stale opening
     # numbers (the first live run priced 272 NFL events and "staked" 20x the
@@ -493,7 +508,26 @@ def main() -> None:
     parser.add_argument("--max-slate-fraction", type=float, default=0.25,
                         help="aggregate cap: max fraction of bankroll staked per slate")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
-    args = parser.parse_args()
+    return parser
+
+
+# The NFL default is the Round-3 select-chosen blend weight (docs/MODEL_LAB.md:
+# select ≤2019 picked w*=0.2, holdout Brier 0.2118 vs 0.2109 for the close
+# itself). Every other league keeps the raw model: the anchoring evidence is
+# NFL-specific, and the NCAAF totals cut was backtested on the raw model's
+# disagreement, which a global anchor would silently re-gate.
+DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2}
+
+
+def resolve_model_weight(explicit: float | None, league: str) -> float:
+    """The market-anchoring weight for this run — the flag, else the league default."""
+    if explicit is not None:
+        return explicit
+    return DEFAULT_MODEL_WEIGHT_BY_LEAGUE.get(league, 1.0)
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
@@ -539,11 +573,17 @@ def main() -> None:
         # NCAAF bets totals on points of disagreement (the backtested cut); NFL
         # leaves it off and gates on probability edge alone.
         total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
+        model_weight = resolve_model_weight(args.model_weight, args.league)
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
+            model_weight=model_weight,
             min_total_disagreement=total_edge,
             min_team_total_disagreement=args.team_total_edge,
         )
+        if model_weight != 1.0:
+            print(f"market anchoring: belief = market + {model_weight:g} × "
+                  f"(model − market); clearing min-edge {args.min_edge:g} takes "
+                  f"{args.min_edge / model_weight:g} of raw disagreement")
         if total_edge > 0.0:
             print(f"NCAAF totals filter: model must differ from the number by "
                   f"≥ {total_edge:g} points")

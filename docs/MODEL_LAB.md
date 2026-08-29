@@ -150,7 +150,10 @@ its latest game — priced back in at projection time, honest in walk-forward).
    Open-Meteo history is free; stadium coordinates are a small static table.
 4. **Market-anchored staking** — use blend-weight probabilities for Kelly
    sizing while the pure model keeps driving leans and cards (the Round-3
-   market-regression finding, applied where it belongs).
+   market-regression finding, applied where it belongs). *Wired: the live
+   runner now anchors the NFL slate's gating/staking belief at w=0.2 (the
+   select-chosen weight) via `--model-weight`; other leagues stay raw until
+   their own labs argue otherwise. Still open: tuning w from live paper CLV.*
 5. **Success-rate / early-down EPA blends** — alternative efficiency
    definitions per the DVOA/PFF literature, testable as drop-in `epa_col`
    variants.
