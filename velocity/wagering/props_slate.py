@@ -174,7 +174,9 @@ def _best_prop(
         shrink = config.shrink_for(market)
         if shrink != 1.0:
             p_model = 0.5 + shrink * (p_model - 0.5)
-        signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
+        signal = evaluate(
+            p_model, float(row["price"]), p_fair, min_edge=config.min_edge_for(market)
+        )
         if not signal.qualifies:
             continue
         if best is None or signal.ev > best["ev"]:

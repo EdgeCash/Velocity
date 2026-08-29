@@ -98,9 +98,13 @@ slate before football arrives in September.
    `price_clv`/`line_clv` onto the site's Performance page. Still open:
    closes for prop bets, and automated per-market decay alerts.
 5. **One global `min_edge`.** DESIGN §6.2 calls for thresholds sized to
-   estimation error (higher for props/NCAAF); today one number (0.02) serves
-   every market. *(The NCAAF points-disagreement filter is now live — the
-   remaining gap is per-market probability thresholds.)*
+   estimation error (higher for props/NCAAF); one number (0.02) used to serve
+   every market. *(Now wired: `SlateConfig.min_edge_by_market` overrides the
+   global per market in both slates; the runner defaults the prop bar to 2×
+   the game bar (`--prop-min-edge`), takes `--min-edge-market MARKET=EDGE`
+   overrides, and sits NCAAF spreads out per the backtest's no-edge finding.
+   The remaining gap is W4's re-tune: replacing the reasoned 2× prop
+   multiplier with archive-fitted per-market values.)*
 6. **Execution seams unmodeled.** No stale-snapshot guard (a slate can price a
    board minutes before lineups shift), no limit-aware stakes (prop limits are
    $200–500), no repricing at MLB lineup release, and football team-name alias

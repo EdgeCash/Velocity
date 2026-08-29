@@ -83,10 +83,19 @@ class SlateConfig:
     # football prop backtest re-tunes it. Empty (default) = every market uses
     # ``prob_shrink``. Ignored by the game slate, which has no per-market props.
     prop_shrink_by_market: Mapping[str, float] = field(default_factory=dict)
-    # Prop markets to skip entirely. A market the backtest finds unprofitable at
+    # Markets to skip entirely. A market the backtest finds unprofitable at
     # *every* shrink has no confidence lever to rescue it — the honest treatment
-    # is to not bet it. Empty (default) = bet every market.
+    # is to not bet it. Honored by both the game slate and the prop slate
+    # (e.g. NCAAF spreads: 50.1% ATS flat, no edge at any disagreement
+    # threshold — docs/BACKTEST_NCAAF.md). Empty (default) = bet every market.
     exclude_markets: frozenset[str] = frozenset()
+    # Per-market edge thresholds (docs/WAGERING.md Phase W4, DESIGN §6.2): a
+    # market listed here clears its own bar instead of ``min_edge`` — wider
+    # for the noisier markets, where the same measured edge is more likely to
+    # be our own estimation error. Keys are market names as they appear on the
+    # board ("total", "pass_yards", …). Empty (default) = every market uses
+    # ``min_edge``.
+    min_edge_by_market: Mapping[str, float] = field(default_factory=dict)
     # Selectivity on full-game totals, measured in **points of disagreement**
     # rather than probability: bet a total only when the model's fair total
     # differs from the offered number by at least this much, *in the direction
@@ -112,6 +121,10 @@ class SlateConfig:
     def shrink_for(self, market: str) -> float:
         """The confidence shrink to apply to ``market`` — its override, else the global."""
         return self.prop_shrink_by_market.get(market, self.prob_shrink)
+
+    def min_edge_for(self, market: str) -> float:
+        """The edge threshold for ``market`` — its override, else the global."""
+        return float(self.min_edge_by_market.get(market, self.min_edge))
 
 
 def total_disagreement(proj: GameProjection, side: str, point: float) -> float:
@@ -212,6 +225,8 @@ def build_slate(
         pending: dict[str, dict] = {}
 
         for market, sides in _MARKET_SIDES.items():
+            if market in config.exclude_markets:  # no edge found → not bet
+                continue
             for side in sides:
                 best = _best_opportunity(
                     game_lines, snapshots, proj, market, side, config
@@ -303,7 +318,9 @@ def _best_opportunity(
         if config.model_weight != 1.0:  # market anchoring (Round 3): regress the
             # staking belief toward this line's own devigged probability.
             p_model = p_fair + config.model_weight * (p_model - p_fair)
-        signal = evaluate(p_model, float(row["price"]), p_fair, min_edge=config.min_edge)
+        signal = evaluate(
+            p_model, float(row["price"]), p_fair, min_edge=config.min_edge_for(market)
+        )
         if not signal.qualifies:
             continue
         if best is None or signal.ev > best["ev"]:
