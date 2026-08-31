@@ -20,7 +20,8 @@ site/
     data/                 assembled per-run by scripts/build_site_data.py (gitignored)
   pages/
     index.md              Today board (market · model · edge · tier) + live ticker
-    picks.md              tiered picks + intel vetoes
+    picks.md              "Plays": the publish gate's calls + the held-back
+                          audit with reasons (the full board stays on index)
     performance.md        units, win rate, CLV block, cumulative chart, graded slate
     matchup/[game_id].md  the game dossier: line movement, markets, sims,
                           weather, injury report, the game's own cards

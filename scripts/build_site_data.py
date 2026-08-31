@@ -98,6 +98,27 @@ def build_board(slate_dir: Path) -> pd.DataFrame:
     return board
 
 
+def build_publish(slate_dir: Path) -> pd.DataFrame:
+    """The publish gate's verdicts, joined with matchup names.
+
+    Every candidate the gate judged that run — the published few AND every
+    held-back row with the exact rule that stopped it — so the plays page
+    leads with the calls and shows the discipline behind them instead of
+    the full raw board.
+    """
+    audit = collect(slate_dir, "publish")
+    games = collect(slate_dir, "games")
+    if audit.empty:
+        return audit
+    if not games.empty:
+        audit = audit.merge(
+            games[["game_id", "home_team", "away_team", "kickoff"]]
+            .drop_duplicates("game_id"),
+            on="game_id", how="left",
+        )
+    return audit
+
+
 def build_units(record: pd.DataFrame) -> pd.DataFrame:
     """Per-day settled profit and running units per league, for the record chart."""
     if record.empty or "result" not in record.columns:
@@ -416,6 +437,7 @@ def main() -> None:
         "dfs_tiered": collect(slate_dir, "dfs_tiered"),
         "dfs_gpp": collect(slate_dir, "dfs_gpp"),
         "portfolio": collect(slate_dir, "portfolio"),
+        "publish": build_publish(slate_dir),
         "model_config": model_config_frame(),
         "cards": collect_cards(slate_dir, Path(args.cards_out)),
         "ratings": build_ratings(slate_dir, Path(args.prev_dir)),
@@ -485,6 +507,12 @@ def main() -> None:
         "portfolio": {"game_id": str, "market": str, "side": str, "kind": str,
                       "price": float, "edge": float, "stake": float,
                       "stake_solo": float, "league": str, "stamp": str},
+        "publish": {"game_id": str, "market": str, "side": str, "player": str,
+                    "price": float, "stake": float, "edge": float, "tier": str,
+                    "drift": float, "conviction": float, "context": float,
+                    "published": bool, "reason": str, "league": str,
+                    "stamp": str, "home_team": str, "away_team": str,
+                    "kickoff": "datetime64[ns]"},
         "model_config": {"league": str, "label": str, "detail": str},
         "cards": {"kind": str, "league": str, "stamp": str, "file": str,
                   "away": str, "home": str, "caption": str, "game_id": str},
