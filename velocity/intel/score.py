@@ -57,6 +57,10 @@ DEFAULT_SIGNAL_WEIGHTS: Mapping[str, float] = {
     # on the exact line, so it carries a bit more weight than a season-old
     # rating — still confirmation, never a promoter.
     "prop_external": 0.30,
+    # Consensus-outlier demotion (demote-only): a shopped number far
+    # friendlier than consensus is the stale-line shape, and the weight has
+    # to bite for the flag to matter.
+    "line_outlier": 0.30,
 }
 
 TIER_FLAGGED = "X"

@@ -520,6 +520,24 @@ def _is_na(value: object) -> bool:
     return value is None or value != value  # NaN is the only value unequal to itself
 
 
+def _bp_prop_index(frame: object) -> dict[tuple[str, str], Mapping[str, object]]:
+    """A banked BP props frame → {(normalized player, our market): row}.
+
+    Rows without a mapped slug or a player name are dropped — an unmapped
+    slug (or a pre-slug snapshot) abstains, never guesses.
+    """
+    from velocity.ingest.bettingpros import BP_PROP_SLUG_TO_MARKET  # noqa: PLC0415
+
+    index: dict[tuple[str, str], Mapping[str, object]] = {}
+    for row in frame.to_dict("records"):  # type: ignore[attr-defined]
+        market = BP_PROP_SLUG_TO_MARKET.get(str(row.get("market_slug") or ""))
+        player = row.get("player_name")
+        if market is None or _is_na(player):
+            continue
+        index[(_name_key(str(player)), market)] = row
+    return index
+
+
 @dataclass(frozen=True)
 class PropExternalSignal:
     """BettingPros' own projection agreeing or arguing with a prop play.
@@ -548,15 +566,10 @@ class PropExternalSignal:
         ``BP_PROP_SLUG_TO_MARKET``); rows without a mapped slug, a player
         name, or a recommended side contribute nothing.
         """
-        from velocity.ingest.bettingpros import BP_PROP_SLUG_TO_MARKET  # noqa: PLC0415
-
-        index: dict[tuple[str, str], Mapping[str, object]] = {}
-        for row in frame.to_dict("records"):  # type: ignore[attr-defined]
-            market = BP_PROP_SLUG_TO_MARKET.get(str(row.get("market_slug") or ""))
-            player = row.get("player_name")
-            if market is None or _is_na(player) or _is_na(row.get("recommended_side")):
-                continue
-            index[(_name_key(str(player)), market)] = row
+        index = {
+            key: row for key, row in _bp_prop_index(frame).items()
+            if not _is_na(row.get("recommended_side"))
+        }
         return cls(index=index, label=label)
 
     def evaluate(self, bet: Bet, ctx: GameContext) -> SignalResult | None:
@@ -587,6 +600,73 @@ class PropExternalSignal:
             self.name,
             _clip(score),
             f"{self.label} recommends the {side} ({basis}{proj_text})",
+        )
+
+
+# How far past consensus a prop number may sit before it reads as stale, per
+# market — roughly the normal cross-book dispersion for each line type.
+# Reasoned constants, stated as provisional: the banked snapshots will show
+# the real dispersion once a few weeks accumulate.
+DEFAULT_OUTLIER_POINTS: Mapping[str, float] = {
+    "pass_yards": 15.0,
+    "rush_yards": 10.0,
+    "receiving_yards": 10.0,
+    "receptions": 1.0,
+    "pass_tds": 0.5,
+}
+
+
+@dataclass(frozen=True)
+class PropLineOutlierSignal:
+    """Demotes a prop whose shopped number is a favorable outlier vs consensus.
+
+    The adverse-selection lesson (docs/PUBLISH_GATE.md §2) as a working rule:
+    when our best-shopped line is far *friendlier* than the consensus number
+    — a lower over, a higher under — the likeliest explanation is a stale
+    line the market has moved off, not free money. This signal only ever
+    demotes (score ≤ 0): sitting at or near consensus is the absence of a
+    red flag, not corroboration, so it abstains rather than reward it.
+
+    Demotion starts beyond the market's normal cross-book dispersion
+    (``DEFAULT_OUTLIER_POINTS``) and saturates at twice it. Consensus lines
+    are free-tier fields, so this works on any banked snapshot with slugs.
+    """
+
+    index: Mapping[tuple[str, str], Mapping[str, object]] = field(default_factory=dict)
+    thresholds: Mapping[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_OUTLIER_POINTS))
+    label: str = "consensus"
+    name: str = "line_outlier"
+
+    @classmethod
+    def from_frame(cls, frame: object) -> PropLineOutlierSignal:
+        return cls(index=_bp_prop_index(frame))
+
+    def evaluate(self, bet: Bet, ctx: GameContext) -> SignalResult | None:
+        if bet.player is None or bet.side not in _TOTAL_SIDES or bet.point is None:
+            return None
+        threshold = self.thresholds.get(bet.market)
+        if threshold is None:
+            return None
+        row = self.index.get((_name_key(bet.player), bet.market))
+        if row is None:
+            return None
+        consensus = row.get(f"consensus_{bet.side}_line")
+        if _is_na(consensus):  # the paired side's consensus is the same number
+            consensus = row.get(
+                f"consensus_{'under' if bet.side == 'over' else 'over'}_line")
+        if _is_na(consensus):
+            return None
+        # Favorable deviation: an over bet on a LOWER number than consensus,
+        # an under on a HIGHER one.
+        favorable = (float(consensus) - float(bet.point)) * _total_sign(bet.side)  # type: ignore[arg-type]
+        if favorable <= threshold:
+            return None  # inside normal book dispersion — nothing to flag
+        score = -min(1.0, (favorable - threshold) / threshold)
+        return SignalResult(
+            self.name, score,
+            f"our {bet.point:g} sits {favorable:g} pts friendlier than the "
+            f"{float(consensus):g} {self.label} line — stale-line shape",  # type: ignore[arg-type]
         )
 
 
