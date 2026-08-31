@@ -58,22 +58,36 @@ def _prop_lines() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _bp_props() -> pd.DataFrame:
+    """A banked BettingPros snapshot recommending the Allen over — the outside
+    corroboration the intel layer should arm from --bp-props-file."""
+    return pd.DataFrame([{
+        "market_slug": "passing-yards", "player_name": "Josh Allen",
+        "recommended_side": "over", "bet_rating": 4.0, "probability": 61.0,
+        "projection": 268.4,
+    }])
+
+
 def test_prop_slate_end_to_end(tmp_path: Path) -> None:
     fp_path = tmp_path / "fp.parquet"
     lines_path = tmp_path / "prop_lines.parquet"
+    bp_path = tmp_path / "bp_props.parquet"
     _fp_frame().to_parquet(fp_path, index=False)
     _prop_lines().to_parquet(lines_path, index=False)
+    _bp_props().to_parquet(bp_path, index=False)
     out = tmp_path / "slate"
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--league", "nfl", "--data", "datasets/nfl",
          "--snapshot-file", str(SNAPSHOT), "--fp-projections", str(fp_path),
-         "--prop-lines-file", str(lines_path), "--n-sims", "2000", "--max-days", "0",
+         "--prop-lines-file", str(lines_path), "--bp-props-file", str(bp_path),
+         "--n-sims", "2000", "--max-days", "0",
          "--min-edge", "0.0", "--out", str(out)],
         capture_output=True, text=True, cwd=REPO,
     )
     assert result.returncode == 0, result.stderr
     assert "props" in result.stdout
+    assert "BettingPros corroboration armed (1 projected props)" in result.stdout
 
     props_files = list(out.glob("slate_nfl_props_*.parquet"))
     assert props_files, result.stdout

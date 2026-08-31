@@ -261,7 +261,12 @@ def test_normalize_props_flattens_the_board() -> None:
     }
     df = normalize_props(payload)
     assert len(df) == 2
+    assert (df["market_slug"] == "").all()  # no metadata passed → empty, not a guess
+    df = normalize_props(payload, {102: "passing-yards"})
     allen = df[df["player_name"] == "Josh Allen"].iloc[0]
+    assert allen["market_slug"] == "passing-yards"  # stamped from /markets metadata
+    cook_slug = df[df["player_name"] == "James Cook"].iloc[0]["market_slug"]
+    assert cook_slug == ""  # id 103 unknown to the listing → empty
     assert allen["market_id"] == 102
     assert allen["team"] == "BUF"
     assert allen["over_line"] == 249.5

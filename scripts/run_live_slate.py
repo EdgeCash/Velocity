@@ -514,6 +514,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--injuries-file",
                         help="normalized injuries parquet (the collect_fantasypros "
                              "artifact) — enables availability vetoes")
+    # BettingPros prop snapshot (the collect-bettingpros artifact): their own
+    # projection block judges every qualifying prop — outside corroboration
+    # for the plays product, never a pick source.
+    parser.add_argument("--bp-props-file",
+                        help="banked bp_props parquet — arms the BettingPros "
+                             "prop corroboration signal")
     # The publish gate's floors (docs/PUBLISH_GATE.md §3) are provisional —
     # "reasoned, not yet fitted" — so they are settable per run while
     # scripts/calibrate_publish_gate.py accumulates the boards to fit them on.
@@ -1039,7 +1045,19 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
                       f"season {sp_season} finals)")
 
         convictions = assess_bets(game_bets, contexts, game_signals)
-        convictions += assess_bets(prop_bets, contexts, default_prop_signals(player_teams))
+        prop_signals: list = list(default_prop_signals(player_teams))
+        if args.bp_props_file:
+            from velocity.intel import PropExternalSignal
+
+            bp_signal = PropExternalSignal.from_frame(pd.read_parquet(args.bp_props_file))
+            if bp_signal.index:
+                prop_signals.append(bp_signal)
+                print(f"intel: BettingPros corroboration armed "
+                      f"({len(bp_signal.index)} projected props)")
+            else:
+                print("intel: BettingPros snapshot has no mappable projections "
+                      "(pre-slug snapshot or free-tier fields) — signal abstains")
+        convictions += assess_bets(prop_bets, contexts, prop_signals)
         sets = build_pick_sets(convictions)
         print("\n" + render_pick_sets(
             sets, heading=f"{args.league.upper()} intelligence card"

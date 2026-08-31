@@ -214,15 +214,30 @@ def to_lines(long: pd.DataFrame, is_closing: bool = False) -> pd.DataFrame:
 
 
 _PROP_COLUMNS = [
-    "sport", "market_id", "event_id", "player_id", "player_name", "team",
-    "position", "over_line", "over_odds", "over_book", "under_line",
+    "sport", "market_id", "market_slug", "event_id", "player_id", "player_name",
+    "team", "position", "over_line", "over_odds", "over_book", "under_line",
     "under_odds", "under_book", "consensus_over_line", "consensus_under_line",
     "projection", "recommended_side", "probability", "expected_value",
     "bet_rating", "diff",
 ]
 
+# BettingPros prop market slug → our canonical prop market name. Deliberately
+# conservative: only the slugs whose meaning is unambiguous are mapped, and an
+# unmapped slug (or an old snapshot without the column) simply abstains
+# downstream — skipped, never guessed. Extend as real snapshots confirm slugs.
+BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
+    "passing-yards": "pass_yards",
+    "passing-touchdowns": "pass_tds",
+    "rushing-yards": "rush_yards",
+    "receiving-yards": "receiving_yards",
+    "receptions": "receptions",
+}
 
-def normalize_props(payload: Mapping[str, Any] | None) -> pd.DataFrame:
+
+def normalize_props(
+    payload: Mapping[str, Any] | None,
+    market_slugs: Mapping[int, str] | None = None,
+) -> pd.DataFrame:
     """Flatten a ``/props`` response into one row per (player, market) prop.
 
     Best over/under lines with their books, consensus lines, and the
@@ -230,6 +245,11 @@ def normalize_props(payload: Mapping[str, Any] | None) -> pd.DataFrame:
     probability, EV, bet rating) are null on free-tier credentials and stay
     NaN here — absence of a paid field is data, not an error. Rows without a
     participant or market are dropped.
+
+    ``market_slugs`` (market_id → slug, from the ``/markets`` listing) stamps
+    a human-readable ``market_slug`` onto each row — numeric prop market ids
+    are not stable across sports, slugs are, so the banked snapshot carries
+    the durable key. Unknown ids get an empty slug.
     """
 
     def _num(value: Any) -> float | None:
@@ -254,6 +274,7 @@ def normalize_props(payload: Mapping[str, Any] | None) -> pd.DataFrame:
             {
                 "sport": str(prop.get("sport") or ""),
                 "market_id": int(market_id),
+                "market_slug": str((market_slugs or {}).get(int(market_id), "")),
                 "event_id": None if prop.get("event_id") is None
                 else str(prop.get("event_id")),
                 "player_id": None if participant.get("id") is None
