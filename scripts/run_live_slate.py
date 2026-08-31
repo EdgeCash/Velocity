@@ -1047,9 +1047,10 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
         convictions = assess_bets(game_bets, contexts, game_signals)
         prop_signals: list = list(default_prop_signals(player_teams))
         if args.bp_props_file:
-            from velocity.intel import PropExternalSignal
+            from velocity.intel import PropExternalSignal, PropLineOutlierSignal
 
-            bp_signal = PropExternalSignal.from_frame(pd.read_parquet(args.bp_props_file))
+            bp_frame = pd.read_parquet(args.bp_props_file)
+            bp_signal = PropExternalSignal.from_frame(bp_frame)
             if bp_signal.index:
                 prop_signals.append(bp_signal)
                 print(f"intel: BettingPros corroboration armed "
@@ -1057,6 +1058,11 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
             else:
                 print("intel: BettingPros snapshot has no mappable projections "
                       "(pre-slug snapshot or free-tier fields) — signal abstains")
+            outlier = PropLineOutlierSignal.from_frame(bp_frame)
+            if outlier.index:  # consensus lines are free-tier — usually armed
+                prop_signals.append(outlier)
+                print(f"intel: consensus-outlier demotion armed "
+                      f"({len(outlier.index)} consensus lines)")
         convictions += assess_bets(prop_bets, contexts, prop_signals)
         sets = build_pick_sets(convictions)
         print("\n" + render_pick_sets(
