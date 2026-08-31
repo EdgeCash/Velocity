@@ -143,6 +143,8 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
     frame = pd.DataFrame(rows)
     if frame.empty:
         return frame
+    # Prior anchors ("__PRIOR__", "__SP_PRIOR__") are fit scaffolding, not teams.
+    frame = frame[~frame["team"].astype(str).str.fullmatch(r"__.*__")]
     frame["pace"] = frame["team"].map(pace).astype(float) if pace else float("nan")
     frame["scale"] = scale
     frame = frame.sort_values("net", ascending=False).reset_index(drop=True)
@@ -265,8 +267,30 @@ def _build_projection(
         from velocity.features.scores import scores_recency_weights
 
         weights = scores_recency_weights(games, recency_hl)
+    # SP+ previous-season prior (docs/BACKTEST_NCAAF.md 2026-08-31 addendum):
+    # K pseudo-games per team from the latest FINISHED season's final SP+
+    # ratings, the Torvik pattern ported to football. Walk-forward Brier
+    # improves at every tested K (0.2038 stock → 0.2019 at K=6 → 0.2009 at
+    # K=12) with the totals strategy unharmed; the prior carries the roster
+    # knowledge a results-only fit lacks in the early weeks. Only the scores
+    # fit sees the pseudo-games — the EPA half, ncaaf_base_points, and every
+    # other reader keep the real games frame.
+    fit_games = games
+    sp_file = folder / "sp_ratings.parquet"
+    if args.league == "ncaaf" and sp_file.exists():
+        from velocity.ingest.ncaaf import sp_pseudo_games
+
+        pseudo = sp_pseudo_games(
+            pd.read_parquet(sp_file),
+            set(games["home_team"]) | set(games["away_team"]),
+            cutoff=pd.to_datetime(games["kickoff"]).max(),
+        )
+        if not pseudo.empty:
+            fit_games = pd.concat([games, pseudo], ignore_index=True)
+            print(f"SP+ prior: {len(pseudo)} pseudo-games from season "
+                  f"{int(pseudo['season'].max()) - 1}'s final ratings")
     scores_model = ScoresGameModel(
-        fit_scores_ratings(games, ridge_lambda=ridge, weights=weights),
+        fit_scores_ratings(fit_games, ridge_lambda=ridge, weights=weights),
         ScoresModelConfig(sim=sim),
     )
     model: object = scores_model
@@ -441,12 +465,13 @@ def build_parser() -> argparse.ArgumentParser:
     # the window are priced, staked, and carded.
     parser.add_argument("--max-days", type=float, default=6.0,
                         help="only price games kicking off within this many days (0 = all)")
-    # NCAAF selectivity, in POINTS of total disagreement — the edge exactly as
-    # backtested (docs/BACKTEST_NCAAF.md): flat totals 51.6%, but 52.8% when the
-    # model differs from the number by ≥4 points (5,477 bets, positive in 7 of 10
-    # seasons) and 53.4% at ≥6. Applies to full-game totals only; NCAAF spreads
-    # showed no edge at any threshold, so nothing is bet there on this cut.
-    parser.add_argument("--ncaaf-total-edge", type=float, default=4.0,
+    # NCAAF selectivity, in POINTS of total disagreement (docs/BACKTEST_NCAAF.md).
+    # With the restored 2025 season on the record the ≥4-point cut no longer
+    # clears the 52.4% break-even (52.3% on 5,657 walk-forward bets; 51.2% in
+    # 2025 alone), while ≥6 still does (53.0%, 53.1% with the SP+ prior) — so
+    # the default moved 4 → 6 on 2026-08-31. Applies to full-game totals only;
+    # NCAAF spreads showed no edge at any threshold and sit out by default.
+    parser.add_argument("--ncaaf-total-edge", type=float, default=6.0,
                         help="NCAAF: min points of total disagreement to bet (0 = off)")
     # Team totals — the censored-score derivative (docs/EDGE_RESEARCH.md §2.2).
     # Books derive them linearly from total+spread, ignoring the zero floor on
