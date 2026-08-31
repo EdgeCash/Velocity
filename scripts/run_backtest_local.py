@@ -66,7 +66,7 @@ def _ncaaf_factory(n_sims: int):
     return factory
 
 
-def _scores_factory(n_sims: int, league: str):
+def _scores_factory(n_sims: int, league: str, trailing_seasons: int = 0):
     # College games are higher-variance than the NFL; widen the sim accordingly.
     sim = (
         SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
@@ -75,7 +75,11 @@ def _scores_factory(n_sims: int, league: str):
     )
 
     def factory(train_games: pd.DataFrame) -> ScoresGameModel:
-        return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
+        window = train_games
+        if trailing_seasons > 0:
+            cutoff = int(train_games["season"].max()) - (trailing_seasons - 1)
+            window = train_games[train_games["season"] >= cutoff]
+        return ScoresGameModel(fit_scores_ratings(window), ScoresModelConfig(sim=sim))
 
     return factory
 
@@ -86,6 +90,7 @@ def run(
     n_sims: int,
     min_train_games: int,
     rating: str = "epa",
+    trailing_seasons: int = 0,
 ) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     folder = Path(data_dir)
     games_path = _find(folder, "games")
@@ -105,8 +110,10 @@ def run(
     if rating == "scores":
         # Schedule-only rating: the games themselves are the training frame.
         train_frame = games
-        factory = _scores_factory(n_sims, league)
+        factory = _scores_factory(n_sims, league, trailing_seasons)
     else:
+        if trailing_seasons:
+            raise SystemExit("--trailing-seasons applies to --rating scores only")
         plays_path = _find(folder, "plays")
         if plays_path is None:
             raise SystemExit(f"--rating epa needs a plays file in {folder}/ (see the README)")
@@ -224,6 +231,14 @@ def main() -> None:
         "--rating", choices=["epa", "scores"], default="epa",
         help="epa needs a plays file; scores fits on games only",
     )
+    # Tested and NOT promoted (docs/BACKTEST_NCAAF.md): a trailing window does
+    # not improve the totals strategy — 52.3% vs 52.4% at ≥4 pts, and worse at
+    # ≥6 (52.2% vs 53.4%). Kept as an executable negative so the re-test is
+    # one flag, not an argument.
+    parser.add_argument(
+        "--trailing-seasons", type=int, default=0,
+        help="scores rating only: fit on the trailing N seasons (0 = expanding)",
+    )
     parser.add_argument(
         "--totals-sweep", action="store_true",
         help="print the points-of-disagreement totals sweep (the NCAAF strategy)",
@@ -273,7 +288,8 @@ def main() -> None:
         return
 
     metrics, projections, games, ledger = run(
-        args.league, args.data, args.n_sims, args.min_train_games, args.rating
+        args.league, args.data, args.n_sims, args.min_train_games, args.rating,
+        args.trailing_seasons,
     )
     print(f"=== Local backtest: {args.league.upper()} from {args.data} ===")
     for key, value in metrics.items():
