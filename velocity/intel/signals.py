@@ -452,6 +452,70 @@ class PropMatchupSignal:
         )
 
 
+@dataclass(frozen=True)
+class ExternalRatingSignal:
+    """Agreement of an independent public rating system with the bet's side.
+
+    "Use every available resource" made concrete: an external system that
+    embeds information our results-only fit lacks (SP+ carries returning
+    production, recruiting, and portal priors) either corroborates a play or
+    argues with it. Per the intel contract it can never promote — a bet
+    reaches this signal only after clearing the EV gate — and per the
+    adverse-selection finding (docs/PUBLISH_GATE.md §2) an *uncorroborated*
+    big edge is exactly the shape of a mispriced line, which is what makes
+    disagreement here worth points of conviction.
+
+    ``ratings`` maps team → (offense, defense) on the system's adjusted
+    points-per-game scale (SP+ via :func:`velocity.ingest.ncaaf.sp_rating_table`
+    — leak-gated to the latest finished season, so in-season it is last
+    year's book: real but fading knowledge, priced accordingly by the modest
+    default weight). Implied home margin adds ``hfa_points`` unless the
+    market context says otherwise; ``scale`` is the points of agreement that
+    saturate the score. Abstains when either team is unrated.
+    """
+
+    ratings: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    label: str = "SP+"
+    hfa_points: float = 2.5
+    scale: float = 7.0
+    name: str = "external_rating"
+
+    def _implied(self, ctx: GameContext) -> tuple[float, float] | None:
+        home = self.ratings.get(ctx.home.team)
+        away = self.ratings.get(ctx.away.team)
+        if home is None or away is None:
+            return None
+        home_pts = (home[0] + away[1]) / 2.0  # home offense vs away defense
+        away_pts = (away[0] + home[1]) / 2.0
+        return home_pts - away_pts + self.hfa_points, home_pts + away_pts
+
+    def evaluate(self, bet: Bet, ctx: GameContext) -> SignalResult | None:
+        implied = self._implied(ctx)
+        if implied is None:
+            return None
+        margin, total = implied
+        point = None if bet.point is None else float(bet.point)
+        if bet.market in ("spread", "moneyline") and bet.side in ("home", "away"):
+            side_margin = margin if bet.side == "home" else -margin
+            # A spread side covers when side_margin + point > 0 (slate.py's
+            # convention); a moneyline just wants the side to win.
+            agreement = side_margin if point is None else side_margin + point
+            text = (f"{self.label} implies {ctx.home.team} by {margin:+.1f}"
+                    if margin >= 0 else
+                    f"{self.label} implies {ctx.away.team} by {-margin:+.1f}")
+        elif bet.market == "total" and bet.side in _TOTAL_SIDES and point is not None:
+            agreement = (total - point) * _total_sign(bet.side)
+            text = f"{self.label} implies a total of {total:.1f} vs the {point:g} line"
+        else:
+            return None  # team totals / props: no external number to compare
+        score = _clip(agreement / self.scale)
+        stance = "corroborates" if score > 0 else "argues with"
+        return SignalResult(
+            self.name, score,
+            f"{text} — {stance} the {bet.side} ({agreement:+.1f} pts)",
+        )
+
+
 def default_game_signals() -> tuple[MatchupSignal, FormSignal, RestSignal, InjurySignal]:
     """The standing signal set for game markets."""
     return (MatchupSignal(), FormSignal(), RestSignal(), InjurySignal())

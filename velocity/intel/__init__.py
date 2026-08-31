@@ -24,6 +24,7 @@ from velocity.intel.score import (
     assess_bets,
 )
 from velocity.intel.signals import (
+    ExternalRatingSignal,
     FormSignal,
     InjurySignal,
     MatchupSignal,
@@ -40,6 +41,7 @@ __all__ = [
     "TIER_FLAGGED",
     "ContextLibrary",
     "Conviction",
+    "ExternalRatingSignal",
     "FormSignal",
     "GameContext",
     "InjuryOut",

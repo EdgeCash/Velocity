@@ -151,6 +151,34 @@ def distill_rest_plays(rows: list[dict] | pd.DataFrame, season: int, week: int) 
 SP_PRIOR_ANCHOR = "__SP_PRIOR__"
 
 
+def sp_rating_table(
+    sp: pd.DataFrame, cutoff: pd.Timestamp
+) -> tuple[dict[str, tuple[float, float]], int | None]:
+    """The latest *finished* season's SP+ as ``{team: (offense, defense)}``.
+
+    Same leak gate as :func:`sp_pseudo_games` (a rating season enters only
+    once the cutoff reaches Feb 1 following it), same fallback for rows
+    missing a component (league-average 26.5 ± ``rating``/2). Returns the
+    table and the rating season it came from — ``({}, None)`` when no season
+    is finished yet.
+    """
+    cutoff = pd.Timestamp(cutoff)
+    finished = sp[[
+        pd.Timestamp(year=int(s) + 1, month=2, day=1) <= cutoff for s in sp["season"]
+    ]]
+    if finished.empty:
+        return {}, None
+    season = int(finished["season"].max())
+    table: dict[str, tuple[float, float]] = {}
+    for r in finished[finished["season"] == season].to_dict("records"):
+        off, dfn = r.get("offense"), r.get("defense")
+        if off is None or dfn is None or pd.isna(off) or pd.isna(dfn):
+            off = 26.5 + float(r["rating"]) / 2.0
+            dfn = 26.5 - float(r["rating"]) / 2.0
+        table[str(r["team"])] = (float(off), float(dfn))
+    return table, season
+
+
 def sp_pseudo_games(
     sp: pd.DataFrame,
     teams: Collection[str],
@@ -177,23 +205,14 @@ def sp_pseudo_games(
     the prior; older seasons are already represented by their real games.
     Teams outside ``teams`` contribute nothing, never a guess.
     """
-    cutoff = pd.Timestamp(cutoff)
-    finished = sp[[
-        pd.Timestamp(year=int(s) + 1, month=2, day=1) <= cutoff for s in sp["season"]
-    ]]
-    if finished.empty:
+    table, rating_season = sp_rating_table(sp, cutoff)
+    if rating_season is None:
         return pd.DataFrame()
-    rating_season = int(finished["season"].max())
     rows: list[dict[str, object]] = []
-    for r in finished[finished["season"] == rating_season].to_dict("records"):
-        team = str(r["team"])
+    season = rating_season + 1
+    for team, (off, dfn) in table.items():
         if team not in teams:
             continue
-        off, dfn = r.get("offense"), r.get("defense")
-        if off is None or dfn is None or pd.isna(off) or pd.isna(dfn):
-            off = 26.5 + float(r["rating"]) / 2.0
-            dfn = 26.5 - float(r["rating"]) / 2.0
-        season = rating_season + 1
         for i in range(int(k)):
             rows.append({
                 "game_id": f"sp-prior-{season}-{team}-{i}",

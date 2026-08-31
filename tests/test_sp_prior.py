@@ -42,6 +42,16 @@ def test_leak_gate_holds_mid_season() -> None:
     assert sp_pseudo_games(SP, TEAMS, cutoff=pd.Timestamp("2024-11-01"), k=1).empty
 
 
+def test_rating_table_shares_the_gate_and_fallback() -> None:
+    from velocity.ingest.ncaaf import sp_rating_table
+
+    table, season = sp_rating_table(SP, pd.Timestamp("2026-08-30"))
+    assert season == 2025
+    assert table["Georgia"] == (31.0, 13.0)  # the 2025 finals, not 2024's
+    empty, none_season = sp_rating_table(SP, pd.Timestamp("2024-11-01"))
+    assert empty == {} and none_season is None  # nothing finished yet
+
+
 def test_missing_components_fall_back_and_unknown_teams_are_skipped() -> None:
     pseudo = sp_pseudo_games(SP, TEAMS, cutoff=pd.Timestamp("2025-08-01"), k=1)
     kent = pseudo[pseudo["home_team"] == "Kent State"].iloc[0]

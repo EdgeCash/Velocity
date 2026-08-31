@@ -49,6 +49,10 @@ DEFAULT_SIGNAL_WEIGHTS: Mapping[str, float] = {
     "injury": 0.25,
     "availability": 0.45,
     "prop_matchup": 0.35,
+    # An independent public rating system (SP+) agreeing or arguing — real
+    # outside information, but last season's book in-season, so it confirms
+    # at the margin rather than deciding.
+    "external_rating": 0.25,
 }
 
 TIER_FLAGGED = "X"
