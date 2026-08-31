@@ -516,6 +516,80 @@ class ExternalRatingSignal:
         )
 
 
+def _is_na(value: object) -> bool:
+    return value is None or value != value  # NaN is the only value unequal to itself
+
+
+@dataclass(frozen=True)
+class PropExternalSignal:
+    """BettingPros' own projection agreeing or arguing with a prop play.
+
+    The prop-side analogue of :class:`ExternalRatingSignal`: an independent
+    outside system — here the banked BettingPros premium projection block
+    (``recommended_side`` / ``probability`` / ``bet_rating``) — judges every
+    prop that cleared the EV gate. Agreement scores positive, disagreement
+    negative; magnitude comes from their own conviction (star rating out of
+    five when present, else distance of their probability from a coin flip,
+    else a modest default). Abstains for players or markets the snapshot
+    doesn't project — including every row of a pre-slug snapshot — skipped,
+    never guessed. Per the intel contract it can never promote a bet, and it
+    never touches stakes.
+    """
+
+    index: Mapping[tuple[str, str], Mapping[str, object]] = field(default_factory=dict)
+    label: str = "BettingPros"
+    name: str = "prop_external"
+
+    @classmethod
+    def from_frame(cls, frame: object, label: str = "BettingPros") -> PropExternalSignal:
+        """Build from a banked ``bp_props_*.parquet`` frame.
+
+        Keys on (normalized player name, our market name via
+        ``BP_PROP_SLUG_TO_MARKET``); rows without a mapped slug, a player
+        name, or a recommended side contribute nothing.
+        """
+        from velocity.ingest.bettingpros import BP_PROP_SLUG_TO_MARKET  # noqa: PLC0415
+
+        index: dict[tuple[str, str], Mapping[str, object]] = {}
+        for row in frame.to_dict("records"):  # type: ignore[attr-defined]
+            market = BP_PROP_SLUG_TO_MARKET.get(str(row.get("market_slug") or ""))
+            player = row.get("player_name")
+            if market is None or _is_na(player) or _is_na(row.get("recommended_side")):
+                continue
+            index[(_name_key(str(player)), market)] = row
+        return cls(index=index, label=label)
+
+    def evaluate(self, bet: Bet, ctx: GameContext) -> SignalResult | None:
+        if bet.player is None or bet.side not in _TOTAL_SIDES:
+            return None
+        row = self.index.get((_name_key(bet.player), bet.market))
+        if row is None:
+            return None
+        side = str(row.get("recommended_side")).lower()
+        if side not in _TOTAL_SIDES:
+            return None
+        rating, prob = row.get("bet_rating"), row.get("probability")
+        if not _is_na(rating):
+            magnitude = min(1.0, float(rating) / 5.0)  # type: ignore[arg-type]
+            basis = f"rating {float(rating):g}/5"  # type: ignore[arg-type]
+        elif not _is_na(prob):
+            p = float(prob)  # type: ignore[arg-type]
+            p = p / 100.0 if p > 1.0 else p  # the API has served both scales
+            magnitude = min(1.0, max(0.3, 2.0 * abs(p - 0.5)))
+            basis = f"p={p:.0%}"
+        else:
+            magnitude = 0.35  # a bare recommendation, taken at modest weight
+            basis = "no rating"
+        score = magnitude if side == bet.side else -magnitude
+        proj = row.get("projection")
+        proj_text = "" if _is_na(proj) else f", projects {float(proj):g}"  # type: ignore[arg-type]
+        return SignalResult(
+            self.name,
+            _clip(score),
+            f"{self.label} recommends the {side} ({basis}{proj_text})",
+        )
+
+
 def default_game_signals() -> tuple[MatchupSignal, FormSignal, RestSignal, InjurySignal]:
     """The standing signal set for game markets."""
     return (MatchupSignal(), FormSignal(), RestSignal(), InjurySignal())

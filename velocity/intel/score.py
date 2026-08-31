@@ -53,6 +53,10 @@ DEFAULT_SIGNAL_WEIGHTS: Mapping[str, float] = {
     # outside information, but last season's book in-season, so it confirms
     # at the margin rather than deciding.
     "external_rating": 0.25,
+    # BettingPros' live prop projection block: current-week outside judgment
+    # on the exact line, so it carries a bit more weight than a season-old
+    # rating — still confirmation, never a promoter.
+    "prop_external": 0.30,
 }
 
 TIER_FLAGGED = "X"

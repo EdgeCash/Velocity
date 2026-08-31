@@ -207,7 +207,17 @@ def main() -> None:
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             (raw_dir / f"props_{sport.lower()}_{tag}.json").write_text(json.dumps(payload))
-            props = normalize_props(payload).assign(
+            # The /markets listing supplies the durable market_slug per id —
+            # what the intel layer keys its slug→market table on. Best-effort:
+            # a failed listing just leaves the column empty (abstain, never
+            # guess).
+            try:
+                slugs = {int(m["id"]): str(m.get("slug") or "")
+                         for m in client.markets(sport) if m.get("id") is not None}
+            except Exception as exc:  # noqa: BLE001 - slug metadata is additive
+                print(f"  {sport} market slugs skipped ({exc})")
+                slugs = {}
+            props = normalize_props(payload, slugs).assign(
                 league=sport.lower(), collected_at=stamp
             )
             dest = out / f"bp_props_{sport.lower()}_{tag}.parquet"
