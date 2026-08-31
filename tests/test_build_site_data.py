@@ -38,6 +38,18 @@ def _slate_frames(folder: Path) -> None:
          "point": -3.0, "price": -110.0, "stake": 1.0, "result": "loss",
          "profit": -1.0, "slate_date": pd.Timestamp("2026-01-02")},
     ]).to_parquet(folder / f"cumulative_record_mlb_{new}.parquet", index=False)
+    # The publish gate's audit — one posted play, one held back with its reason.
+    pd.DataFrame([
+        {"game_id": "g1", "market": "total", "side": "under", "player": None,
+         "price": -110.0, "stake": 1.2, "edge": 0.056, "tier": "A",
+         "drift": None, "conviction": 0.81, "context": 0.22,
+         "published": True, "reason": ""},
+        {"game_id": "g1", "market": "moneyline", "side": "home", "player": None,
+         "price": -145.0, "stake": 0.8, "edge": 0.041, "tier": "A",
+         "drift": None, "conviction": 0.66, "context": -0.05,
+         "published": False,
+         "reason": "context -0.05 does not corroborate the edge"},
+    ]).to_parquet(folder / f"publish_mlb_{new}.parquet", index=False)
 
 
 def test_build_site_data_end_to_end(tmp_path: Path) -> None:
@@ -64,6 +76,15 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
 
     units = pd.read_parquet(out / "units.parquet")
     assert units["units"].tolist() == pytest.approx([0.91, -0.09])
+
+    # The plays page's table: the gate's verdicts joined with matchup names,
+    # published and held-back rows alike (the reason rides along).
+    publish = pd.read_parquet(out / "publish.parquet")
+    assert len(publish) == 2
+    posted = publish[publish["published"]].iloc[0]
+    assert posted["home_team"] == "Brewers" and posted["market"] == "total"
+    held = publish[~publish["published"]].iloc[0]
+    assert "does not corroborate" in held["reason"]
 
     # Absent families still produce typed frames every page can query — with
     # exactly one sentinel row, because Evidence's source runner writes no
