@@ -33,6 +33,12 @@ on:
       ncaaf_pbp_seasons:
         description: "One-off: backfill NCAAF play-by-play for this inclusive season range (e.g. '2015 2024') instead of the weekly refresh"
         required: false
+      cfbd_lines_years:
+        description: "One-off: pull NCAAF games+closing lines for this year range (e.g. '2025' or '2015-2025') into games_lines.parquet"
+        required: false
+      cfbd_sp_years:
+        description: "One-off: pull SP+ season ratings for this year range (e.g. '2014-2025') into sp_ratings.parquet"
+        required: false
 
 concurrency:
   group: refresh-datasets
@@ -61,7 +67,7 @@ jobs:
           pip install -e .
 
       - name: Refresh datasets
-        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' && github.event.inputs.mlb_pitching != 'true' }}
+        if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' && github.event.inputs.mlb_pitching != 'true' && github.event.inputs.cfbd_lines_years == '' && github.event.inputs.cfbd_sp_years == '' }}
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
@@ -88,6 +94,22 @@ jobs:
         run: |
           python scripts/build_ncaaf_pbp_datasets.py \
             --seasons ${{ github.event.inputs.ncaaf_pbp_seasons }}
+
+      - name: Pull NCAAF closing lines (CFBD)
+        if: ${{ github.event.inputs.cfbd_lines_years != '' }}
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          python scripts/pull_cfbd_lines.py \
+            --years ${{ github.event.inputs.cfbd_lines_years }}
+
+      - name: Pull SP+ season ratings (CFBD)
+        if: ${{ github.event.inputs.cfbd_sp_years != '' }}
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          python scripts/pull_cfbd_sp.py \
+            --years ${{ github.event.inputs.cfbd_sp_years }}
 
       - name: Commit refreshed datasets
         run: |
