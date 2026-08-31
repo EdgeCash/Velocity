@@ -201,12 +201,19 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
    accordingly). Per the contract it corroborates or argues, never promotes;
    the adverse-selection finding is exactly why disagreement here matters —
    a big edge no outside system supports is the shape of a mispriced line.
-6. **BettingPros corroboration (props).** The collector already snapshots
-   the premium projection block (`recommended_side`, `probability`,
-   `bet_rating`, consensus lines) every 3 hours as private artifacts —
-   nothing consumes it. A prop-side `ExternalRatingSignal` analogue would
-   give props the same outside-corroboration term game bets now have; needs
-   the live slate to download the freshest snapshot (same pattern as
-   `--injuries-file`) and a leak-honest join. The consensus-vs-best-line gap
-   in the same snapshot is a second signal: an outlier best price is the
-   stale-line shape §2 warns about — a demotion input, not a celebration.
+6. ~~**BettingPros corroboration (props).**~~ **Done, three stages** —
+   the 3-hourly snapshots now feed two prop signals. *Corroboration*
+   (`PropExternalSignal`, weight 0.30): BettingPros' own recommended side
+   judges every qualifying prop at their conviction (star rating, else
+   probability distance, else a modest default); joins on the durable
+   `market_slug` the collector now stamps from `/markets`, with unmapped
+   slugs abstaining, never guessed. *Consensus-outlier demotion*
+   (`PropLineOutlierSignal`, weight 0.30, demote-only): a shopped number
+   past normal cross-book dispersion on the *friendly* side of consensus is
+   the stale-line shape the adverse-selection study warns about — flagged,
+   never celebrated; near-consensus abstains rather than rewards. The live
+   slate downloads the freshest snapshot automatically (`--bp-props-file`,
+   the `--injuries-file` pattern). Still open: replacing the reasoned
+   per-market dispersion constants (`DEFAULT_OUTLIER_POINTS`) with values
+   measured from the banked snapshots, and confirming the slug table
+   against a real post-deploy snapshot.
