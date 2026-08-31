@@ -15,7 +15,7 @@ lazily import the ``cfbd`` client (network) and are not part of the test gate.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 
 import numpy as np
 import pandas as pd
@@ -146,6 +146,65 @@ def distill_rest_plays(rows: list[dict] | pd.DataFrame, season: int, week: int) 
     plays = normalize_plays(raw)
     keep = plays["posteam"].notna() & plays["epa"].notna()
     return plays[keep].reset_index(drop=True)
+
+
+SP_PRIOR_ANCHOR = "__SP_PRIOR__"
+
+
+def sp_pseudo_games(
+    sp: pd.DataFrame,
+    teams: Collection[str],
+    *,
+    cutoff: pd.Timestamp,
+    k: int = 12,
+) -> pd.DataFrame:
+    """Last season's final SP+ ratings → ``k`` synthetic week-0 games per team.
+
+    The NCAAB Torvik-prior pattern (:func:`velocity.ingest.ncaab.torvik_pseudo_games`)
+    ported to the football scores fit: each rating row for SP+ season ``s``
+    becomes ``k`` copies of a neutral-site week-0 game of season ``s+1`` —
+    the team scoring its SP+ *offense* rating against :data:`SP_PRIOR_ANCHOR`
+    scoring the team's SP+ *defense* rating (both are adjusted points-per-game
+    scales, so the fit recovers the components directly; a row missing either
+    component falls back to a league-average 26.5 ± ``rating``/2 split). The
+    anchor plays every team, so its own fitted rating settles at average and
+    re-centers SP+'s scale onto the fit's base.
+
+    Leak gate, stated plainly: CFBD serves each season's **final** SP+, so a
+    rating row enters only for the season *after* it — and only once its own
+    season was finished at the caller's knowledge point (``cutoff`` must reach
+    Feb 1 following the rating season). Only the latest eligible season forms
+    the prior; older seasons are already represented by their real games.
+    Teams outside ``teams`` contribute nothing, never a guess.
+    """
+    cutoff = pd.Timestamp(cutoff)
+    finished = sp[[
+        pd.Timestamp(year=int(s) + 1, month=2, day=1) <= cutoff for s in sp["season"]
+    ]]
+    if finished.empty:
+        return pd.DataFrame()
+    rating_season = int(finished["season"].max())
+    rows: list[dict[str, object]] = []
+    for r in finished[finished["season"] == rating_season].to_dict("records"):
+        team = str(r["team"])
+        if team not in teams:
+            continue
+        off, dfn = r.get("offense"), r.get("defense")
+        if off is None or dfn is None or pd.isna(off) or pd.isna(dfn):
+            off = 26.5 + float(r["rating"]) / 2.0
+            dfn = 26.5 - float(r["rating"]) / 2.0
+        season = rating_season + 1
+        for i in range(int(k)):
+            rows.append({
+                "game_id": f"sp-prior-{season}-{team}-{i}",
+                "league": "ncaaf", "season": season, "week": 0,
+                "season_type": "REG",
+                "kickoff": pd.Timestamp(year=season, month=8, day=1),
+                "home_team": team, "away_team": SP_PRIOR_ANCHOR,
+                "neutral_site": True,
+                "home_score": float(off), "away_score": float(dfn),
+            })
+    return pd.DataFrame(rows)
 
 
 def _import_cfbd():  # type: ignore[no-untyped-def]

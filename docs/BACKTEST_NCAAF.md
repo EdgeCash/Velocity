@@ -203,3 +203,52 @@ margins (MAE ~7.7 — SP+ carries roster/portal priors we don't) and sits
 +1 to +3 on totals vs the posted O/Us depending on configuration, versus
 SP+'s −1.2. Week-1 college numbers are the year's least informed; treat
 opening-week totals as paper-tracking, not proof either way.
+
+## Addendum (2026-08-31, later): 2025 verified, the threshold moves, and the SP+ prior
+
+The keyed CFBD pulls ran (workflow one-offs): 2025's consensus closes are
+attached (930 backfilled rows lined, 667 CFBD-only games appended, 4 left
+fit-only) and `sp_ratings.parquet` carries SP+ 2014–2025.
+
+**1. The 2025 market test softens the ≥4 cut below its own bar.** Same
+walk-forward, scores rating, now through 2025:
+
+| cut | all-history | 2025 alone |
+| --- | --- | --- |
+| ≥4 pts | **52.3%** on 5,657 → 6,451 bets | 51.2% on 781 |
+| ≥6 pts | **53.0%** on 4,398 | 50.6% on 496 |
+
+2025 was below water at both cuts (one season, ~1σ — a warning, not a
+verdict), and the aggregate ≥4 rate no longer clears the 52.4% break-even.
+The burden of proof stays a robust >52.4%: the live default moved to
+`--ncaaf-total-edge 6`, and early-2026 college totals are paper-tracked
+until live CLV says otherwise.
+
+**2. SP+ as a previous-season prior — tested and PROMOTED (K=12).** The
+Torvik pseudo-games pattern ported to football (`sp_pseudo_games` in
+`ingest/ncaaf.py`): the latest *finished* season's final SP+ ratings become
+K neutral pseudo-games per team in the following season (leak-gated —
+CFBD serves final ratings, so a season may only ever inform the next one).
+Walk-forward, 2015–2025:
+
+| variant | Brier | Brier wks ≤4 | totals ≥4 | totals ≥6 | 2025 ≥4 |
+| --- | --- | --- | --- | --- | --- |
+| stock | 0.2038 | 0.1862 | 52.3% | 53.0% | 51.2% |
+| K=3 | 0.2027 | 0.1849 | 52.4% | 52.9% | 51.3% |
+| K=6 | 0.2019 | 0.1840 | 52.6% | 52.9% | 51.5% |
+| **K=12** | **0.2009** | **0.1830** | 52.4% | **53.1%** | **51.9%** |
+| K=24 | 0.2000 | 0.1823 | 52.1% | 53.0% | 51.7% |
+
+Brier improves monotonically with K but the ≥4 totals rate breaks down at
+K=24 — the prior starts anchoring the model to the consensus SP+ tracks.
+K=12 takes the best ≥6 totals and 2025 numbers with near-best Brier. The
+live runner applies the prior to the scores fit only (the EPA half,
+`ncaaf_base_points`, and the ratings table see real games; the
+`__SP_PRIOR__` anchor is filtered from display) whenever
+`sp_ratings.parquet` is present.
+
+What SP+ is and is not, recorded once: it is roster knowledge the
+results-only fit lacks (returning production, recruiting, transfers) —
+worth points of early-season calibration. It is **not** an edge source:
+its own public record tracks the closing line (~53% ATS), and blending
+toward it moves us toward the market, not past it.

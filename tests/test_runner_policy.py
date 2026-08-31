@@ -37,6 +37,9 @@ def test_cli_default_leaves_weight_to_league_policy() -> None:
     args = _runner().build_parser().parse_args(["--league", "nfl"])
     assert args.model_weight is None  # sentinel — resolved by league, not argparse
     assert args.min_edge == 0.02
+    # The 2025 extension left ≥4 pts of totals disagreement at break-even
+    # (52.3% on 5,657) while ≥6 still clears (53.0%) — the default moved.
+    assert args.ncaaf_total_edge == 6.0
 
 
 def test_prop_min_edge_defaults_to_double_the_game_bar() -> None:
