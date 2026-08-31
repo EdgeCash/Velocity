@@ -130,6 +130,13 @@ jobs:
           if [ -n "$inj_id" ]; then
             gh run download "$inj_id" --dir artifacts/fp || true
           fi
+          # The freshest BettingPros snapshot (3-hour cadence) — the prop
+          # corroboration + consensus-outlier signals read it at bet time.
+          bp_id=$(gh run list --workflow collect-bettingpros.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -n "$bp_id" ]; then
+            gh run download "$bp_id" --dir artifacts/bp || true
+          fi
 
       # Demo mode: cards for a real historical week (genuine closing lines from
       # the committed schedules) through the same artifact the app reads — a
@@ -157,6 +164,7 @@ jobs:
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
+          BP_FILE=$(ls -t artifacts/bp/**/bp_props_nfl_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             echo "::group::${league} slate"
             EXTRA=""
@@ -165,6 +173,9 @@ jobs:
             fi
             if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
               EXTRA="$EXTRA --injuries-file $INJ_FILE"
+            fi
+            if [ "${league}" = "nfl" ] && [ -n "$BP_FILE" ]; then
+              EXTRA="$EXTRA --bp-props-file $BP_FILE"
             fi
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"
