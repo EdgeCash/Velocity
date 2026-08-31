@@ -193,3 +193,20 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
    (showing σ *and* the rating delta) is worked out on the card — the
    backtest's caveat list names raw-mean context as a possible reason for
    the null.
+5. ~~**External-rating corroboration.**~~ **Done (SP+, NCAAF)** —
+   `ExternalRatingSignal` compares the bet's side to the margin/total implied
+   by an independent public system, in points, weight 0.25. NCAAF arms it
+   from the banked `sp_ratings.parquet` (leak-gated to the latest *finished*
+   season via `sp_rating_table` — in-season it is last year's book, priced
+   accordingly). Per the contract it corroborates or argues, never promotes;
+   the adverse-selection finding is exactly why disagreement here matters —
+   a big edge no outside system supports is the shape of a mispriced line.
+6. **BettingPros corroboration (props).** The collector already snapshots
+   the premium projection block (`recommended_side`, `probability`,
+   `bet_rating`, consensus lines) every 3 hours as private artifacts —
+   nothing consumes it. A prop-side `ExternalRatingSignal` analogue would
+   give props the same outside-corroboration term game bets now have; needs
+   the live slate to download the freshest snapshot (same pattern as
+   `--injuries-file`) and a leak-honest join. The consensus-vs-best-line gap
+   in the same snapshot is a second signal: an outlier best price is the
+   stale-line shape §2 warns about — a demotion input, not a celebration.

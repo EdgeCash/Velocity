@@ -1019,7 +1019,26 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
                     for r in named.to_dict("records")
                 }
 
-        convictions = assess_bets(game_bets, contexts, default_game_signals())
+        # "Every available resource": an independent public rating system
+        # corroborating or arguing with each play. NCAAF gets SP+ (banked,
+        # leak-gated to the latest finished season) — outside roster knowledge
+        # the results-only fit lacks, weighted as confirmation, never a
+        # promoter (the intel contract).
+        game_signals: list = list(default_game_signals())
+        sp_file = folder / "sp_ratings.parquet"
+        if args.league == "ncaaf" and sp_file.exists():
+            from velocity.ingest.ncaaf import sp_rating_table
+            from velocity.intel import ExternalRatingSignal
+
+            table, sp_season = sp_rating_table(pd.read_parquet(sp_file), generated_at)
+            if table and sp_season is not None:
+                game_signals.append(
+                    ExternalRatingSignal(ratings=table, label=f"SP+ '{sp_season % 100:02d}")
+                )
+                print(f"intel: SP+ corroboration armed ({len(table)} teams, "
+                      f"season {sp_season} finals)")
+
+        convictions = assess_bets(game_bets, contexts, game_signals)
         convictions += assess_bets(prop_bets, contexts, default_prop_signals(player_teams))
         sets = build_pick_sets(convictions)
         print("\n" + render_pick_sets(
