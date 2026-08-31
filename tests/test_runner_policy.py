@@ -61,6 +61,23 @@ def test_market_edge_pairs_parse_exactly() -> None:
         runner.parse_market_edges(["total=lots"])  # not a number
 
 
+def test_ncaaf_base_points_tracks_the_current_scoring_regime() -> None:
+    import numpy as np
+    import pandas as pd
+
+    runner = _runner()
+    games = pd.DataFrame({
+        # Old regime 60-point totals, current regime 50 — the trailing two
+        # seasons (2024–25) set the level; 2015 must not drag it up.
+        "season": [2015, 2015, 2024, 2025],
+        "home_score": [35, 33, 27, 24],
+        "away_score": [25, 27, 23, 26],
+    })
+    assert runner.ncaaf_base_points(games) == 25.0  # (50+50)/2 totals → 25/team
+    empty = games.assign(home_score=np.nan, away_score=np.nan)
+    assert runner.ncaaf_base_points(empty) == 28.5  # degenerate → old constant
+
+
 def test_ncaaf_spreads_sit_out_by_default() -> None:
     args = _runner().build_parser().parse_args(["--league", "ncaaf"])
     # The backtested college posture: no ATS edge at any threshold, so

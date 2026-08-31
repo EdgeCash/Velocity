@@ -374,13 +374,15 @@ def _build_projection(
 
         plays = load_plays(ncaaf_plays)
         cells = compress_plays(plays)
+        base = ncaaf_base_points(games)
         epa_model = NFLGameModel(
             fit_ratings(cells, ridge_lambda=50.0, weights=cells["n"].astype(float)),
-            NFLModelConfig(base_points=28.5, plays_per_game=65.0,
+            NFLModelConfig(base_points=base, plays_per_game=65.0,
                            hfa_points=2.5, sim=sim),
         )
         model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
-        kind = f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5) on {len(plays)} plays"
+        kind = (f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5, "
+                f"base {base:.1f}) on {len(plays)} plays")
 
     print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
 
@@ -559,6 +561,24 @@ def resolve_model_weight(explicit: float | None, league: str) -> float:
     if explicit is not None:
         return explicit
     return DEFAULT_MODEL_WEIGHT_BY_LEAGUE.get(league, 1.0)
+
+
+def ncaaf_base_points(games: pd.DataFrame, seasons: int = 2) -> float:
+    """The NCAAF blend's per-team scoring level: half the trailing-two-season
+    mean total.
+
+    Replaces the hardcoded 28.5, a level constant from the pre-2023-clock-rules
+    regime: college totals dropped ~4 points per game after the rule change
+    (57–58 through 2018 → ~53 by 2023–25), and a fixed 28.5 pushed the blend's
+    every projected total high — on the 2026 week-1 board it tilted the ≥4-point
+    totals filter to 22 overs of 25 fired. The blend's *ratings* (offense/defense
+    deviations) are unaffected; only the level they hang from tracks the data.
+    """
+    recent = games[games["season"] >= int(games["season"].max()) - (seasons - 1)]
+    played = recent.dropna(subset=["home_score", "away_score"])
+    if played.empty:  # degenerate frame — fall back to the historic constant
+        return 28.5
+    return float((played["home_score"] + played["away_score"]).mean()) / 2.0
 
 
 def resolve_prop_min_edge(explicit: float | None, min_edge: float) -> float:

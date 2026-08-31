@@ -165,3 +165,41 @@ The calibration harness is ready to run as closes accumulate:
 realized scores *and* vs the linear derivation — the over-rate table that
 will finally set the `min_team_total_disagreement` default, or keep the
 gate honestly off.
+
+## Addendum (2026-08-31): the 2025 gap, the trailing-window negative, and the base-points fix
+
+Three findings from putting the fit next to a public yardstick (Bill
+Connelly's posted SP+ Week-1 2026 card):
+
+1. **The 2025 season was missing from `games.parquet` entirely.** The CFBD
+   lines pull last ran through 2024 and the in-season refresher only appends
+   current rows, so 2026 pricing was fit on ratings that ended in January
+   2025. `scripts/backfill_games_from_boxscores.py` now lifts a season of
+   finals from the banked boxscores into the games schema — **fit-only rows**:
+   they carry no closing lines, so the ratings see them and the market
+   backtest (which drops lineless rows) does not. Backfilled: 934 games of
+   2025. Lines for 2025 still want a keyed `pull_cfbd_lines.py` run.
+
+2. **A trailing-4-season window was tested and NOT promoted.** Same
+   walk-forward, same sweep as above, scores rating: ≥4 pts 52.3% on 5,338
+   (vs 52.4% on 5,657 expanding), and *worse* where the edge is fattest —
+   ≥6 pts 52.2% vs 53.4%. Re-run it with
+   `run_backtest_local.py --league ncaaf --rating scores --trailing-seasons 4
+   --totals-sweep`; the flag exists so this stays an executable negative.
+
+3. **The live blend's `base_points=28.5` was a stale regime constant.**
+   College totals dropped ~4 points per game after the 2023 clock rules
+   (57–58 through 2018 → ~53 in 2023–25), and the hardcoded level pushed
+   every projected total high — on the 2026 Week-1 board the ≥4-point filter
+   would have fired 22 overs of 25 picks, +4.6 points of pure baseline bias
+   against the posted O/Us. The runner now derives the level from the
+   trailing two seasons (`ncaaf_base_points`), which balances the fired card
+   (15 over / 6 under, +2.6 residual). The scores half of the blend — the
+   configuration the totals sweep above actually validated — is untouched.
+
+Yardstick context, for calibration expectations: against the 39 shared
+FBS-vs-FBS games of that SP+ card, the corrected fit correlates 0.86 on
+margins (MAE ~7.7 — SP+ carries roster/portal priors we don't) and sits
++1 to +3 on totals vs the posted O/Us depending on configuration, versus
+SP+'s −1.2. Week-1 college numbers are the year's least informed; treat
+opening-week totals as paper-tracking, not proof either way.
