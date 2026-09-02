@@ -100,7 +100,7 @@ def consensus_line_text(
         else:
             parts.append(f"{away_code} {-spread_home:g}")
     if total is not None and total == total:
-        parts.append(f"{total:g}")
+        parts.append(f"O/U {total:g}")
     return " · ".join(parts)
 
 
@@ -198,7 +198,7 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     end = (max(g.kickoff_et for g in games) + pd.Timedelta(hours=duration_hours)).ceil("h")
     hours = (end - start).total_seconds() / 3600.0
 
-    lane_h, header_h, footer_h, gutter = 0.62, 1.05, 0.42, 2.1
+    lane_h, header_h, footer_h, gutter = 0.70, 1.05, 0.42, 2.1
     fig_h = header_h + n_lanes * lane_h + footer_h
     fig, ax = plt.subplots(figsize=(16, fig_h), dpi=100)
     fig.patch.set_facecolor(BG)
@@ -263,13 +263,17 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 width = duration_hours
                 away_c = _chip_color(game.away_color)
                 home_c = _chip_color(game.home_color)
-                band = (0.86 if game.line_text else 1.0) * 0.92
+                kick = game.kickoff_et.strftime("%I:%M").lstrip("0")
+                # With a fact strip the color bands make room for it; the
+                # strip gets its own dark surface so spread/total read in
+                # full-contrast ink, never against a brand color.
+                band = 0.65 if game.line_text else 0.92
                 ax.add_patch(Rectangle((x0, y + 0.04), width, band * 0.5,
                                        fc=away_c, ec=EDGE, lw=0.6, zorder=3))
                 ax.add_patch(Rectangle((x0, y + 0.04 + band * 0.5), width,
                                        band * 0.5, fc=home_c, ec=EDGE, lw=0.6,
                                        zorder=3))
-                logo_h = band * 0.44
+                logo_h = band * 0.46
                 away_w = place_logo(game.away_logo, x0 + 0.05,
                                     y + 0.04 + band * 0.25, logo_h)
                 home_w = place_logo(game.home_logo, x0 + 0.05,
@@ -282,16 +286,26 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 ax.text(text_x, y + 0.04 + band * 0.75, f"@ {game.home}",
                         color=_ink_for(home_c), fontsize=11, family=display,
                         weight="bold", ha="left", va="center", zorder=4)
-                strip = game.kickoff_et.strftime("%I:%M").lstrip("0")
                 if game.line_text:
-                    strip += f" · {game.line_text}"
-                ax.text(x0 + width - 0.09, y + 0.04 + band * 0.75, strip,
-                        color=_ink_for(home_c), fontsize=8.5, family=body,
-                        ha="right", va="center", zorder=4, alpha=0.95)
+                    strip_h = 0.23
+                    ax.add_patch(Rectangle((x0, y + 0.04 + band), width,
+                                           strip_h, fc=SURFACE, ec=EDGE,
+                                           lw=0.6, zorder=3))
+                    ax.text(x0 + 0.09, y + 0.04 + band + strip_h / 2, kick,
+                            color=INK_DIM, fontsize=9.5, family=body,
+                            ha="left", va="center", zorder=4)
+                    ax.text(x0 + width - 0.09, y + 0.04 + band + strip_h / 2,
+                            game.line_text, color=INK, fontsize=10.5,
+                            family=display, weight="bold", ha="right",
+                            va="center", zorder=4)
+                else:
+                    ax.text(x0 + width - 0.09, y + 0.04 + band * 0.75, kick,
+                            color=_ink_for(home_c), fontsize=9, family=body,
+                            ha="right", va="center", zorder=4, alpha=0.95)
             y += 1.0
         # Row label in the gutter + separator.
         ax.text(-gutter + 0.08, (row_top + y) / 2.0, row, color=INK,
-                fontsize=11, family=display, weight="bold",
+                fontsize=15, family=display, weight="bold",
                 ha="left", va="center")
         ax.plot([-gutter, hours], [y, y], color=EDGE, lw=1.1, zorder=2)
 
@@ -311,7 +325,7 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     if subtitle:
         fig.text(title_x, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
                  family=body, ha="left", va="top")
-    fig.text(0.994, 1 - 0.28 / fig_h, "VELOCITY", color=BRAND, fontsize=14,
+    fig.text(0.994, 1 - 0.28 / fig_h, "MATCHUP LABS", color=BRAND, fontsize=14,
              family=display, weight="bold", ha="right", va="top")
     fig.text(0.006, 0.12 / fig_h, footer, color=INK_DIM, fontsize=9,
              family=body, ha="left", va="bottom")
