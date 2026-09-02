@@ -141,7 +141,8 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
 # carry `_{AWAY}_at_{HOME}` in the filename; recordcard is one per league.
 # `sheet` is the one all-inclusive pregame graphic (card + deep dive
 # composed); social/deepdive stay listed so older artifacts still surface.
-CARD_KINDS = ("sheet", "social", "deepdive", "simcheck", "recordcard")
+# `grid` is the weekend broadcast grid (one per league-day, no matchup key).
+CARD_KINDS = ("grid", "sheet", "social", "deepdive", "simcheck", "recordcard")
 
 
 def build_ratings(slate_dir: Path, prev_dir: Path | None) -> pd.DataFrame:
