@@ -35,6 +35,7 @@ from velocity.report.broadcast_grid import (
     eastern,
     normalize_media,
     render_grid,
+    render_window_board,
     window_label,
 )
 from velocity.wagering.live import NFL_TEAM_ALIASES, nickname_aliases
@@ -47,6 +48,14 @@ _DURATION = {"ncaaf": 3.5, "nfl": 3.25}
 def newest(folder: Path, pattern: str) -> Path | None:
     matches = sorted(p for p in folder.rglob("*") if re.fullmatch(pattern, p.name))
     return matches[-1] if matches else None
+
+
+def resolve_layout(explicit: str, league: str) -> str:
+    """The layout policy: NFL Sundays are four discrete windows, so they get
+    the window board; college's twelve-hour spread earns the timeline."""
+    if explicit != "auto":
+        return explicit
+    return "windows" if league == "nfl" else "timeline"
 
 
 def target_date(league: str, today: pd.Timestamp) -> pd.Timestamp:
@@ -141,6 +150,9 @@ def main() -> None:
     parser.add_argument("--odds-dir", default="artifacts/odds")
     parser.add_argument("--out", default="artifacts/slate")
     parser.add_argument("--date", help="ET date YYYY-MM-DD (default: next Sat/Sun)")
+    parser.add_argument("--layout", choices=["auto", "timeline", "windows"],
+                        default="auto",
+                        help="auto: windows for nfl, timeline for ncaaf")
     parser.add_argument("--asset-dir",
                         help="logo/identity cache (default: <out>/.assets, "
                              "the runner's convention)")
@@ -182,13 +194,18 @@ def main() -> None:
     day_name = day_date.strftime("%A").upper()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(args.out) / f"grid_{args.league}_{stamp}.png"
-    render_grid(
-        blocks, dest,
-        title=f"{args.league.upper()} {day_name} — {day_date.strftime('%b %-d').upper()}",
-        subtitle="All times Eastern · consensus spread & total per game",
-        duration_hours=_DURATION[args.league],
-        league_logo=league_logo_path(args.league, asset_dir),
-    )
+    layout = resolve_layout(args.layout, args.league)
+    renderer_kwargs = {
+        "title": f"{args.league.upper()} {day_name} — "
+                 f"{day_date.strftime('%b %-d').upper()}",
+        "subtitle": "All times Eastern · consensus spread & total per game",
+        "league_logo": league_logo_path(args.league, asset_dir),
+    }
+    if layout == "windows":
+        render_window_board(blocks, dest, **renderer_kwargs)
+    else:
+        render_grid(blocks, dest, duration_hours=_DURATION[args.league],
+                    **renderer_kwargs)
     print(f"grid: {len(blocks)} games ({n_lined} with lines, "
           f"{len({b.row for b in blocks})} rows) → {dest}")
     caption = (f"Every {args.league.upper()} game this {day_name.title()} — "
