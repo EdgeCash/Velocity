@@ -8,6 +8,15 @@ hide_title: true
   subtitle="The all-inclusive game sheets from the latest NFL run — tap to open full-size, save it, or copy the post text."
 />
 
+```sql grid
+select kind, league, file, away, home, caption
+from velocity.cards
+where league = 'nfl' and kind = 'grid'
+order by file desc limit 1
+```
+
+<CardGallery cards={grid} empty="The Sunday broadcast grid renders with the weekend runs." />
+
 ```sql sheets
 select kind, league, file, away, home, caption
 from velocity.cards

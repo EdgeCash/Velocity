@@ -138,6 +138,28 @@ jobs:
             gh run download "$bp_id" --dir artifacts/bp || true
           fi
 
+      # Weekend broadcast grids — the whole Saturday/Sunday as one shareable
+      # frame with consensus spreads/totals (no picks). Rendered the evening
+      # before and on the day itself, from artifacts already in hand (banked
+      # games + the hourly odds archive + CFBD media) — zero extra odds spend.
+      - name: Render weekend broadcast grids
+        if: github.event.inputs.demo != 'true'
+        continue-on-error: true
+        env:
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+        run: |
+          dow=$(TZ=America/New_York date +%u)  # 1..7 = Mon..Sun, Eastern
+          if [ "$dow" = "5" ] || [ "$dow" = "6" ]; then
+            python scripts/render_broadcast_grid.py --league ncaaf \
+              --slate-dir artifacts/slate --odds-dir artifacts/odds \
+              --out artifacts/slate || true
+          fi
+          if [ "$dow" = "6" ] || [ "$dow" = "7" ]; then
+            python scripts/render_broadcast_grid.py --league nfl \
+              --slate-dir artifacts/slate --odds-dir artifacts/odds \
+              --out artifacts/slate || true
+          fi
+
       # Demo mode: cards for a real historical week (genuine closing lines from
       # the committed schedules) through the same artifact the app reads — a
       # look-and-feel preview with no odds spend and nothing for the grader.
