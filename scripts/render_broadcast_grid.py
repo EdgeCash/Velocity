@@ -50,6 +50,40 @@ def newest(folder: Path, pattern: str) -> Path | None:
     return matches[-1] if matches else None
 
 
+def date_span_text(start: pd.Timestamp, end: pd.Timestamp) -> str:
+    """``SEP 10–14``, or ``SEP 30 – OCT 4`` across a month boundary."""
+    if start.month == end.month:
+        return f"{start.strftime('%b').upper()} {start.day}–{end.day}"
+    return (f"{start.strftime('%b').upper()} {start.day} – "
+            f"{end.strftime('%b').upper()} {end.day}")
+
+
+def infer_week(data_dir: Path, start: pd.Timestamp, end: pd.Timestamp) -> int | None:
+    """The week number from the committed schedule, or None.
+
+    Modal ``week`` among schedule rows kicking off inside the span (padded a
+    day each way for timezones). Best-effort: any trouble returns None and
+    the title simply drops the week.
+    """
+    try:
+        for ext in (".parquet", ".pq", ".csv"):
+            path = data_dir / f"games{ext}"
+            if path.exists():
+                break
+        else:
+            return None
+        frame = (pd.read_csv(path) if path.suffix == ".csv"
+                 else pd.read_parquet(path))
+        kickoff = pd.to_datetime(frame["kickoff"], errors="coerce")
+        window = frame[(kickoff >= start - pd.Timedelta(days=1))
+                       & (kickoff <= end + pd.Timedelta(days=2))]
+        if window.empty or "week" not in window.columns:
+            return None
+        return int(window["week"].mode().iloc[0])
+    except Exception:  # noqa: BLE001 - a title nicety, never fatal
+        return None
+
+
 def resolve_layout(explicit: str, league: str) -> str:
     """The layout policy: NFL Sundays are four discrete windows, so they get
     the window board; college's twelve-hour spread earns the timeline."""
@@ -150,6 +184,12 @@ def main() -> None:
     parser.add_argument("--odds-dir", default="artifacts/odds")
     parser.add_argument("--out", default="artifacts/slate")
     parser.add_argument("--date", help="ET date YYYY-MM-DD (default: next Sat/Sun)")
+    parser.add_argument("--week", type=int,
+                        help="NFL week number for the title (default: inferred "
+                             "from the committed schedule)")
+    parser.add_argument("--data",
+                        help="league datasets folder for week inference "
+                             "(default: datasets/<league>)")
     parser.add_argument("--layout", choices=["auto", "timeline", "windows"],
                         default="auto",
                         help="auto: windows for nfl, timeline for ncaaf")
@@ -169,9 +209,18 @@ def main() -> None:
     day_date = (pd.Timestamp(args.date) if args.date
                 else target_date(args.league, now_et))
     kick_et = games["kickoff"].map(eastern)
-    day = games[kick_et.dt.date == day_date.date()].copy()
+    if args.league == "nfl":
+        # The NFL board covers the whole week: Thursday night through Monday
+        # night around the anchor Sunday.
+        span = (day_date - pd.Timedelta(days=3), day_date + pd.Timedelta(days=1))
+    else:
+        span = (day_date, day_date)
+    in_span = ((kick_et.dt.date >= span[0].date())
+               & (kick_et.dt.date <= span[1].date()))
+    day = games[in_span].copy()
     if day.empty:
-        raise SystemExit(f"no {args.league} games on {day_date.date()} in {games_path.name}")
+        raise SystemExit(f"no {args.league} games {span[0].date()}..{span[1].date()} "
+                         f"in {games_path.name}")
 
     consensus: dict[str, dict[str, float]] = {}
     lines_path = newest(odds_dir, rf"odds_lines_{_STAMP}\.parquet") \
@@ -192,12 +241,22 @@ def main() -> None:
     blocks = build_games(args.league, day, consensus, media, asset_dir)
     n_lined = sum(1 for b in blocks if b.line_text)
     day_name = day_date.strftime("%A").upper()
+    if args.league == "nfl":
+        data_dir = Path(args.data) if args.data else Path("datasets") / args.league
+        week = args.week or infer_week(data_dir, span[0], span[1])
+        span_text = date_span_text(span[0], span[1])
+        title = f"NFL WEEK {week} — {span_text}" if week else f"NFL — {span_text}"
+        caption_lead = (f"Every NFL game in Week {week}" if week
+                        else "Every NFL game this week")
+    else:
+        title = (f"{args.league.upper()} {day_name} — "
+                 f"{day_date.strftime('%b %-d').upper()}")
+        caption_lead = f"Every {args.league.upper()} game this {day_name.title()}"
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(args.out) / f"grid_{args.league}_{stamp}.png"
     layout = resolve_layout(args.layout, args.league)
     renderer_kwargs = {
-        "title": f"{args.league.upper()} {day_name} — "
-                 f"{day_date.strftime('%b %-d').upper()}",
+        "title": title,
         "subtitle": "All times Eastern · consensus spread & total per game",
         "league_logo": league_logo_path(args.league, asset_dir),
     }
@@ -208,9 +267,8 @@ def main() -> None:
                     **renderer_kwargs)
     print(f"grid: {len(blocks)} games ({n_lined} with lines, "
           f"{len({b.row for b in blocks})} rows) → {dest}")
-    caption = (f"Every {args.league.upper()} game this {day_name.title()} — "
-               "what's on, when, with the consensus spread and total. "
-               "All times ET. Not picks, just the map. 🗺️")
+    caption = (f"{caption_lead} — what's on, when, with the consensus "
+               "spread and total. All times ET. Not picks, just the map. 🗺️")
     dest.with_suffix(".txt").write_text(caption)
 
 

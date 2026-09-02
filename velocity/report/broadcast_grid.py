@@ -75,15 +75,32 @@ def eastern(kickoff_utc: pd.Timestamp | str) -> pd.Timestamp:
 
 
 def window_label(kickoff_et: pd.Timestamp) -> str:
-    """The NFL fallback rows: the Sunday windows everyone already thinks in."""
+    """Kickoff-window sections, day-aware so a whole-week board reads itself.
+
+    Thursday/Monday are their own night slots; Sunday buckets into the
+    windows everyone already thinks in; Saturday (the college fallback when
+    no media listing is available, and December NFL Saturdays) buckets by
+    time of day. Oddball weekdays just wear their day name.
+    """
+    day = kickoff_et.weekday()
+    fixed = {0: "MONDAY NIGHT", 1: "TUESDAY", 2: "WEDNESDAY",
+             3: "THURSDAY NIGHT", 4: "FRIDAY"}
+    if day in fixed:
+        return fixed[day]
     hour = kickoff_et.hour + kickoff_et.minute / 60.0
-    if hour < 12.0:
-        return "MORNING"
+    if day == 6:
+        if hour < 12.0:
+            return "SUNDAY MORNING"
+        if hour < 15.0:
+            return "SUNDAY EARLY (1:00)"
+        if hour < 18.5:
+            return "SUNDAY LATE (4:05 / 4:25)"
+        return "SUNDAY NIGHT"
     if hour < 15.0:
-        return "EARLY (1:00)"
+        return "SATURDAY EARLY"
     if hour < 18.5:
-        return "LATE (4:05 / 4:25)"
-    return "PRIME TIME"
+        return "SATURDAY AFTERNOON"
+    return "SATURDAY NIGHT"
 
 
 def consensus_line_text(
