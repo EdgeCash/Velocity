@@ -47,7 +47,7 @@ EASTERN = "America/New_York"
 
 @dataclass(frozen=True)
 class GridGame:
-    """One block on the grid — display codes, colors, and the fact strip."""
+    """One block on the grid — display codes, colors, marks, the fact strip."""
 
     row: str  # network name, or a kickoff-window label
     away: str
@@ -56,6 +56,10 @@ class GridGame:
     away_color: str | None = None
     home_color: str | None = None
     line_text: str = ""  # "UGA -13.5 · 51.5"; "" renders nothing
+    # Cached logo PNGs (ESPN CDN via report/assets.py); None degrades to the
+    # abbreviation chip alone — a mark is a nicety, never a requirement.
+    away_logo: Path | str | None = None
+    home_logo: Path | str | None = None
 
 
 def eastern(kickoff_utc: pd.Timestamp | str) -> pd.Timestamp:
@@ -96,7 +100,7 @@ def consensus_line_text(
         else:
             parts.append(f"{away_code} {-spread_home:g}")
     if total is not None and total == total:
-        parts.append(f"{total:g}")
+        parts.append(f"O/U {total:g}")
     return " · ".join(parts)
 
 
@@ -183,6 +187,7 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     subtitle: str = "",
     footer: str = "Consensus lines at render time · schedule and lines move · not betting advice",
     duration_hours: float = 3.5,
+    league_logo: Path | str | None = None,
 ) -> Path:
     """Draw the grid to ``dest`` (PNG, 1600px wide, height fits the slate)."""
     display, body = register_fonts()
@@ -193,7 +198,7 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     end = (max(g.kickoff_et for g in games) + pd.Timedelta(hours=duration_hours)).ceil("h")
     hours = (end - start).total_seconds() / 3600.0
 
-    lane_h, header_h, footer_h, gutter = 0.62, 1.05, 0.42, 2.1
+    lane_h, header_h, footer_h, gutter = 0.70, 1.05, 0.42, 2.1
     fig_h = header_h + n_lanes * lane_h + footer_h
     fig, ax = plt.subplots(figsize=(16, fig_h), dpi=100)
     fig.patch.set_facecolor(BG)
@@ -207,6 +212,39 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
 
     def x_of(ts: pd.Timestamp) -> float:
         return (ts - start).total_seconds() / 3600.0
+
+    axes_top = 1 - header_h / fig_h
+    axes_bottom = footer_h / fig_h
+    lane_frac = (axes_top - axes_bottom) / n_lanes
+
+    def place_logo(path: Path | str | None, x_hour: float, y_lane: float,
+                   h_lanes: float) -> float:
+        """Draw a cached mark at data coords; return its width in hour units
+        (0.0 when absent/corrupt — the chip alone carries identity)."""
+        if not path:
+            return 0.0
+        try:
+            img = plt.imread(str(path))
+        except Exception:  # noqa: BLE001 - a corrupt cache entry is cosmetic
+            return 0.0
+        fx, fy = fig.transFigure.inverted().transform(
+            ax.transData.transform((x_hour, y_lane)))
+        h_frac = h_lanes * lane_frac
+        w_frac = h_frac * fig_h / 16.0  # square despite the wide figure
+        box = fig.add_axes((fx, fy - h_frac / 2, w_frac, h_frac))
+        box.imshow(img)
+        # A light holding chip with a little inset, so a mark the same color
+        # as its brand band never sinks into it.
+        box.set_xlim(-img.shape[1] * 0.12, img.shape[1] * 1.12)
+        box.set_ylim(img.shape[0] * 1.12, -img.shape[0] * 0.12)
+        box.patch.set_facecolor("#eef1f5")
+        box.patch.set_alpha(0.92)
+        box.set_xticks([])
+        box.set_yticks([])
+        for spine in box.spines.values():
+            spine.set_visible(False)
+        box.set_zorder(6)
+        return w_frac / 0.99 * (gutter + hours)
 
     # Hour grid + labels.
     for hour_i in range(int(hours) + 1):
@@ -225,37 +263,69 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 width = duration_hours
                 away_c = _chip_color(game.away_color)
                 home_c = _chip_color(game.home_color)
-                band = (0.86 if game.line_text else 1.0) * 0.92
+                kick = game.kickoff_et.strftime("%I:%M").lstrip("0")
+                # With a fact strip the color bands make room for it; the
+                # strip gets its own dark surface so spread/total read in
+                # full-contrast ink, never against a brand color.
+                band = 0.65 if game.line_text else 0.92
                 ax.add_patch(Rectangle((x0, y + 0.04), width, band * 0.5,
                                        fc=away_c, ec=EDGE, lw=0.6, zorder=3))
                 ax.add_patch(Rectangle((x0, y + 0.04 + band * 0.5), width,
                                        band * 0.5, fc=home_c, ec=EDGE, lw=0.6,
                                        zorder=3))
-                ax.text(x0 + 0.09, y + 0.04 + band * 0.25, game.away,
+                logo_h = band * 0.46
+                away_w = place_logo(game.away_logo, x0 + 0.05,
+                                    y + 0.04 + band * 0.25, logo_h)
+                home_w = place_logo(game.home_logo, x0 + 0.05,
+                                    y + 0.04 + band * 0.75, logo_h)
+                pad = max(away_w, home_w)
+                text_x = x0 + 0.09 + (pad + 0.06 if pad else 0.0)
+                ax.text(text_x, y + 0.04 + band * 0.25, game.away,
                         color=_ink_for(away_c), fontsize=11, family=display,
                         weight="bold", ha="left", va="center", zorder=4)
-                ax.text(x0 + 0.09, y + 0.04 + band * 0.75, f"@ {game.home}",
+                ax.text(text_x, y + 0.04 + band * 0.75, f"@ {game.home}",
                         color=_ink_for(home_c), fontsize=11, family=display,
                         weight="bold", ha="left", va="center", zorder=4)
-                strip = game.kickoff_et.strftime("%I:%M").lstrip("0")
                 if game.line_text:
-                    strip += f" · {game.line_text}"
-                ax.text(x0 + width - 0.09, y + 0.04 + band * 0.75, strip,
-                        color=_ink_for(home_c), fontsize=8.5, family=body,
-                        ha="right", va="center", zorder=4, alpha=0.95)
+                    strip_h = 0.23
+                    ax.add_patch(Rectangle((x0, y + 0.04 + band), width,
+                                           strip_h, fc=SURFACE, ec=EDGE,
+                                           lw=0.6, zorder=3))
+                    ax.text(x0 + 0.09, y + 0.04 + band + strip_h / 2, kick,
+                            color=INK_DIM, fontsize=9.5, family=body,
+                            ha="left", va="center", zorder=4)
+                    ax.text(x0 + width - 0.09, y + 0.04 + band + strip_h / 2,
+                            game.line_text, color=INK, fontsize=10.5,
+                            family=display, weight="bold", ha="right",
+                            va="center", zorder=4)
+                else:
+                    ax.text(x0 + width - 0.09, y + 0.04 + band * 0.75, kick,
+                            color=_ink_for(home_c), fontsize=9, family=body,
+                            ha="right", va="center", zorder=4, alpha=0.95)
             y += 1.0
         # Row label in the gutter + separator.
         ax.text(-gutter + 0.08, (row_top + y) / 2.0, row, color=INK,
-                fontsize=11, family=display, weight="bold",
+                fontsize=15, family=display, weight="bold",
                 ha="left", va="center")
         ax.plot([-gutter, hours], [y, y], color=EDGE, lw=1.1, zorder=2)
 
-    fig.text(0.006, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
+    title_x = 0.006
+    if league_logo is not None:
+        try:
+            mark = plt.imread(str(league_logo))
+            box = fig.add_axes((0.006, 1 - 0.86 / fig_h, 0.68 / 16.0,
+                                0.68 / fig_h))
+            box.imshow(mark)
+            box.axis("off")
+            title_x = 0.006 + 0.68 / 16.0 + 0.007
+        except Exception:  # noqa: BLE001 - the league mark is a nicety
+            pass
+    fig.text(title_x, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
              family=display, weight="bold", ha="left", va="top")
     if subtitle:
-        fig.text(0.006, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
+        fig.text(title_x, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
                  family=body, ha="left", va="top")
-    fig.text(0.994, 1 - 0.28 / fig_h, "VELOCITY", color=BRAND, fontsize=14,
+    fig.text(0.994, 1 - 0.28 / fig_h, "MATCHUP LABS", color=BRAND, fontsize=14,
              family=display, weight="bold", ha="right", va="top")
     fig.text(0.006, 0.12 / fig_h, footer, color=INK_DIM, fontsize=9,
              family=body, ha="left", va="bottom")

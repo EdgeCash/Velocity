@@ -49,10 +49,10 @@ def test_pack_lanes_splits_only_concurrent_games() -> None:
 
 
 def test_fact_strip_states_the_market_without_advice() -> None:
-    assert consensus_line_text("UGA", "GT", 13.5, 51.5) == "UGA -13.5 · 51.5"
-    assert consensus_line_text("UGA", "GT", -6.5, 44.0) == "GT -6.5 · 44"
-    assert consensus_line_text("UGA", "GT", 0.0, 47.5) == "PK · 47.5"
-    assert consensus_line_text("UGA", "GT", None, 47.5) == "47.5"
+    assert consensus_line_text("UGA", "GT", 13.5, 51.5) == "UGA -13.5 · O/U 51.5"
+    assert consensus_line_text("UGA", "GT", -6.5, 44.0) == "GT -6.5 · O/U 44"
+    assert consensus_line_text("UGA", "GT", 0.0, 47.5) == "PK · O/U 47.5"
+    assert consensus_line_text("UGA", "GT", None, 47.5) == "O/U 47.5"
     assert consensus_line_text("UGA", "GT", float("nan"), None) == ""
 
 
@@ -115,3 +115,36 @@ def test_target_date_lands_on_the_league_day() -> None:
     # The day itself counts — a Saturday render targets that Saturday.
     assert rbg.target_date("ncaaf", pd.Timestamp("2026-09-05 09:00")) \
         == pd.Timestamp("2026-09-05")
+
+
+def test_render_grid_places_marks_when_available(tmp_path: Path) -> None:
+    """Logos are a nicety: a real mark renders, a corrupt one degrades to the
+    chip, and the league mark shifts the title without being required."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    mark = tmp_path / "mark.png"
+    plt.imsave(mark, np.ones((32, 32, 3)) * 0.5)
+    corrupt = tmp_path / "corrupt.png"
+    corrupt.write_bytes(b"not a png")
+
+    games = [
+        GridGame("ABC", "ECU", "BAMA", pd.Timestamp("2026-09-05 12:00"),
+                 "#592A8A", "#9E1B32", line_text="BAMA -28.5 · 53.5",
+                 away_logo=mark, home_logo=corrupt),
+    ]
+    dest = render_grid(games, tmp_path / "grid.png",
+                       title="MARKS", league_logo=mark)
+    assert dest.exists() and dest.stat().st_size > 10_000
+
+
+def test_school_meta_carries_the_espn_id() -> None:
+    from velocity.report.assets import parse_ncaaf_teams
+
+    index = parse_ncaaf_teams([
+        {"school": "Alabama", "abbreviation": "BAMA", "color": "#9E1B32",
+         "id": 333},
+        {"school": "Mystery U", "abbreviation": "MYS", "id": "junk"},
+    ])
+    assert index["Alabama"].espn_id == 333  # the ESPN CDN logo key
+    assert index["Mystery U"].espn_id is None  # unparseable id, never a guess

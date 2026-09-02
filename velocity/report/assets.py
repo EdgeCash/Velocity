@@ -152,23 +152,50 @@ def logo_path(team_code: str, cache_dir: Path | str | None) -> Path | None:
 
 # --- NCAAF school identity ----------------------------------------------------
 #
-# College marks are owned by each university (licensed via CLC/Learfield), so
-# NCAAF cards deliberately carry **no logos and no player imagery** — identity
-# is the school's abbreviation plus its official colors, both plain facts.
+# The base identity is the school's abbreviation plus its official colors —
+# plain facts, always available. School marks now ALSO render where the owner
+# opted in (the broadcast grid; 2026-09 decision, mirroring the NFL cards'
+# public-CDN logo treatment): fetched best-effort from the ESPN CDN by the
+# ESPN team id CFBD's teams payload carries, cached, and always degrading to
+# the abbreviation chip when a fetch fails. Player imagery stays out.
 # The identity table comes from the CFBD teams endpoint (the same source the
 # model's schedule uses), cached to the asset dir; with no API key the cards
 # fall back to provider names and the neutral bar colors.
 
 _CFBD_TEAMS_URL = "https://api.collegefootballdata.com/teams/fbs"
+_ESPN_NCAA_LOGO = "https://a.espncdn.com/i/teamlogos/ncaa/500"
+_ESPN_LEAGUE_LOGO = "https://a.espncdn.com/i/teamlogos/leagues/500"
 
 
 @dataclass(frozen=True)
 class SchoolMeta:
-    """A school's display abbreviation and official colors (no marks)."""
+    """A school's display abbreviation, official colors, and ESPN team id."""
 
     abbreviation: str
     color: str | None = None
     alt_color: str | None = None
+    espn_id: int | None = None
+
+
+def ncaaf_logo_path(espn_id: int | None, cache_dir: Path | str | None) -> Path | None:
+    """Cached ESPN-CDN school mark for a CFBD/ESPN team id, or None."""
+    if espn_id is None or cache_dir is None:
+        return None
+    return _fetch(f"{_ESPN_NCAA_LOGO}/{int(espn_id)}.png",
+                  Path(cache_dir) / f"logo_ncaa_{int(espn_id)}.png")
+
+
+def league_logo_path(league: str, cache_dir: Path | str | None) -> Path | None:
+    """Cached ESPN-CDN league mark, or None.
+
+    Only the NFL shield exists at the leagues path (the NCAA slugs 404 —
+    probed 2026-09); college grids simply lead with the title text.
+    """
+    slug = {"nfl": "nfl"}.get(league)
+    if slug is None or cache_dir is None:
+        return None
+    return _fetch(f"{_ESPN_LEAGUE_LOGO}/{slug}.png",
+                  Path(cache_dir) / f"logo_league_{slug}.png")
 
 
 def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
@@ -191,10 +218,15 @@ def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
         if not school:
             continue
         abbrev = str(row.get("abbreviation") or school).upper()
+        try:
+            espn_id = int(row["id"]) if row.get("id") is not None else None
+        except (TypeError, ValueError):
+            espn_id = None
         out[str(school)] = SchoolMeta(
             abbreviation=abbrev,
             color=_hex(row.get("color")),
             alt_color=_hex(row.get("altColor") or row.get("alt_color")),
+            espn_id=espn_id,
         )
     return out
 
