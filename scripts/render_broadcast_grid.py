@@ -22,7 +22,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.report.assets import TEAM_META, ncaaf_team_index
+from velocity.report.assets import (
+    TEAM_META,
+    league_logo_path,
+    logo_path,
+    ncaaf_logo_path,
+    ncaaf_team_index,
+)
 from velocity.report.broadcast_grid import (
     GridGame,
     consensus_line_text,
@@ -84,16 +90,18 @@ def build_games(  # noqa: PLR0912 - one assembly seam, league branches inline
     day: pd.DataFrame,
     consensus: dict[str, dict[str, float]],
     media: dict[tuple[str, str], str],
+    asset_dir: Path | None = None,
 ) -> list[GridGame]:
-    """The grid blocks: identity, network row (or window), and the fact strip."""
+    """The grid blocks: identity, marks, network row (or window), fact strip."""
     if league == "nfl":
         codes = dict(NFL_TEAM_ALIASES.items())
         colors = {code: meta.color for code, meta in TEAM_META.items()}
         to_code = lambda name: codes.get(str(name), str(name)[:3].upper())  # noqa: E731
+        to_logo = lambda name: logo_path(to_code(name), asset_dir)  # noqa: E731
         to_school = {str(n): str(n) for n in
                      set(day["home_team"]) | set(day["away_team"])}
     else:
-        index = ncaaf_team_index(os.environ.get("CFBD_API_KEY"), cache_dir=None)
+        index = ncaaf_team_index(os.environ.get("CFBD_API_KEY"), cache_dir=asset_dir)
         aliases = nickname_aliases(
             set(day["home_team"]) | set(day["away_team"]), index.keys())
         to_school = {name: aliases.get(name, name) for name in
@@ -102,6 +110,9 @@ def build_games(  # noqa: PLR0912 - one assembly seam, league branches inline
         colors = {meta.abbreviation: meta.color or "" for meta in index.values()}
         to_code = lambda name: codes.get(  # noqa: E731
             to_school.get(str(name), str(name)), str(name)[:3].upper())
+        to_logo = lambda name: ncaaf_logo_path(  # noqa: E731
+            getattr(index.get(to_school.get(str(name), "")), "espn_id", None),
+            asset_dir)
 
     blocks: list[GridGame] = []
     for rec in day.to_dict("records"):
@@ -117,6 +128,8 @@ def build_games(  # noqa: PLR0912 - one assembly seam, league branches inline
             home_color=colors.get(home) or None,
             line_text=consensus_line_text(
                 away, home, numbers.get("spread_home"), numbers.get("total")),
+            away_logo=to_logo(rec["away_team"]),
+            home_logo=to_logo(rec["home_team"]),
         ))
     return blocks
 
@@ -128,6 +141,9 @@ def main() -> None:
     parser.add_argument("--odds-dir", default="artifacts/odds")
     parser.add_argument("--out", default="artifacts/slate")
     parser.add_argument("--date", help="ET date YYYY-MM-DD (default: next Sat/Sun)")
+    parser.add_argument("--asset-dir",
+                        help="logo/identity cache (default: <out>/.assets, "
+                             "the runner's convention)")
     args = parser.parse_args()
 
     slate_dir, odds_dir = Path(args.slate_dir), Path(args.odds_dir)
@@ -159,7 +175,9 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 - networks are a nicety
             print(f"media listing skipped ({exc}) — kickoff-window rows instead")
 
-    blocks = build_games(args.league, day, consensus, media)
+    asset_dir = Path(args.asset_dir) if args.asset_dir else Path(args.out) / ".assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    blocks = build_games(args.league, day, consensus, media, asset_dir)
     n_lined = sum(1 for b in blocks if b.line_text)
     day_name = day_date.strftime("%A").upper()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -169,6 +187,7 @@ def main() -> None:
         title=f"{args.league.upper()} {day_name} — {day_date.strftime('%b %-d').upper()}",
         subtitle="All times Eastern · consensus spread & total per game",
         duration_hours=_DURATION[args.league],
+        league_logo=league_logo_path(args.league, asset_dir),
     )
     print(f"grid: {len(blocks)} games ({n_lined} with lines, "
           f"{len({b.row for b in blocks})} rows) → {dest}")

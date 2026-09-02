@@ -47,7 +47,7 @@ EASTERN = "America/New_York"
 
 @dataclass(frozen=True)
 class GridGame:
-    """One block on the grid — display codes, colors, and the fact strip."""
+    """One block on the grid — display codes, colors, marks, the fact strip."""
 
     row: str  # network name, or a kickoff-window label
     away: str
@@ -56,6 +56,10 @@ class GridGame:
     away_color: str | None = None
     home_color: str | None = None
     line_text: str = ""  # "UGA -13.5 · 51.5"; "" renders nothing
+    # Cached logo PNGs (ESPN CDN via report/assets.py); None degrades to the
+    # abbreviation chip alone — a mark is a nicety, never a requirement.
+    away_logo: Path | str | None = None
+    home_logo: Path | str | None = None
 
 
 def eastern(kickoff_utc: pd.Timestamp | str) -> pd.Timestamp:
@@ -183,6 +187,7 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     subtitle: str = "",
     footer: str = "Consensus lines at render time · schedule and lines move · not betting advice",
     duration_hours: float = 3.5,
+    league_logo: Path | str | None = None,
 ) -> Path:
     """Draw the grid to ``dest`` (PNG, 1600px wide, height fits the slate)."""
     display, body = register_fonts()
@@ -208,6 +213,39 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     def x_of(ts: pd.Timestamp) -> float:
         return (ts - start).total_seconds() / 3600.0
 
+    axes_top = 1 - header_h / fig_h
+    axes_bottom = footer_h / fig_h
+    lane_frac = (axes_top - axes_bottom) / n_lanes
+
+    def place_logo(path: Path | str | None, x_hour: float, y_lane: float,
+                   h_lanes: float) -> float:
+        """Draw a cached mark at data coords; return its width in hour units
+        (0.0 when absent/corrupt — the chip alone carries identity)."""
+        if not path:
+            return 0.0
+        try:
+            img = plt.imread(str(path))
+        except Exception:  # noqa: BLE001 - a corrupt cache entry is cosmetic
+            return 0.0
+        fx, fy = fig.transFigure.inverted().transform(
+            ax.transData.transform((x_hour, y_lane)))
+        h_frac = h_lanes * lane_frac
+        w_frac = h_frac * fig_h / 16.0  # square despite the wide figure
+        box = fig.add_axes((fx, fy - h_frac / 2, w_frac, h_frac))
+        box.imshow(img)
+        # A light holding chip with a little inset, so a mark the same color
+        # as its brand band never sinks into it.
+        box.set_xlim(-img.shape[1] * 0.12, img.shape[1] * 1.12)
+        box.set_ylim(img.shape[0] * 1.12, -img.shape[0] * 0.12)
+        box.patch.set_facecolor("#eef1f5")
+        box.patch.set_alpha(0.92)
+        box.set_xticks([])
+        box.set_yticks([])
+        for spine in box.spines.values():
+            spine.set_visible(False)
+        box.set_zorder(6)
+        return w_frac / 0.99 * (gutter + hours)
+
     # Hour grid + labels.
     for hour_i in range(int(hours) + 1):
         x = float(hour_i)
@@ -231,10 +269,17 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 ax.add_patch(Rectangle((x0, y + 0.04 + band * 0.5), width,
                                        band * 0.5, fc=home_c, ec=EDGE, lw=0.6,
                                        zorder=3))
-                ax.text(x0 + 0.09, y + 0.04 + band * 0.25, game.away,
+                logo_h = band * 0.44
+                away_w = place_logo(game.away_logo, x0 + 0.05,
+                                    y + 0.04 + band * 0.25, logo_h)
+                home_w = place_logo(game.home_logo, x0 + 0.05,
+                                    y + 0.04 + band * 0.75, logo_h)
+                pad = max(away_w, home_w)
+                text_x = x0 + 0.09 + (pad + 0.06 if pad else 0.0)
+                ax.text(text_x, y + 0.04 + band * 0.25, game.away,
                         color=_ink_for(away_c), fontsize=11, family=display,
                         weight="bold", ha="left", va="center", zorder=4)
-                ax.text(x0 + 0.09, y + 0.04 + band * 0.75, f"@ {game.home}",
+                ax.text(text_x, y + 0.04 + band * 0.75, f"@ {game.home}",
                         color=_ink_for(home_c), fontsize=11, family=display,
                         weight="bold", ha="left", va="center", zorder=4)
                 strip = game.kickoff_et.strftime("%I:%M").lstrip("0")
@@ -250,10 +295,21 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 ha="left", va="center")
         ax.plot([-gutter, hours], [y, y], color=EDGE, lw=1.1, zorder=2)
 
-    fig.text(0.006, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
+    title_x = 0.006
+    if league_logo is not None:
+        try:
+            mark = plt.imread(str(league_logo))
+            box = fig.add_axes((0.006, 1 - 0.86 / fig_h, 0.68 / 16.0,
+                                0.68 / fig_h))
+            box.imshow(mark)
+            box.axis("off")
+            title_x = 0.006 + 0.68 / 16.0 + 0.007
+        except Exception:  # noqa: BLE001 - the league mark is a nicety
+            pass
+    fig.text(title_x, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
              family=display, weight="bold", ha="left", va="top")
     if subtitle:
-        fig.text(0.006, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
+        fig.text(title_x, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
                  family=body, ha="left", va="top")
     fig.text(0.994, 1 - 0.28 / fig_h, "VELOCITY", color=BRAND, fontsize=14,
              family=display, weight="bold", ha="right", va="top")
