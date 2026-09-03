@@ -57,13 +57,19 @@ def test_fact_strip_states_the_market_without_advice() -> None:
 
 
 def test_eastern_and_window_labels() -> None:
-    # 17:00 UTC in September = 1:00 PM EDT — the early window.
+    # 17:00 UTC in September = 1:00 PM EDT — the Sunday early window.
     kick = eastern(pd.Timestamp("2026-09-13 17:00"))
     assert kick == pd.Timestamp("2026-09-13 13:00")
-    assert window_label(kick) == "EARLY (1:00)"
-    assert window_label(pd.Timestamp("2026-09-13 09:30")) == "MORNING"
-    assert window_label(pd.Timestamp("2026-09-13 16:25")) == "LATE (4:05 / 4:25)"
-    assert window_label(pd.Timestamp("2026-09-13 20:20")) == "PRIME TIME"
+    assert window_label(kick) == "SUNDAY EARLY (1:00)"
+    assert window_label(pd.Timestamp("2026-09-13 09:30")) == "SUNDAY MORNING"
+    assert window_label(pd.Timestamp("2026-09-13 16:25")) == "SUNDAY LATE (4:05 / 4:25)"
+    assert window_label(pd.Timestamp("2026-09-13 20:20")) == "SUNDAY NIGHT"
+    # The week's own night slots and the Saturday buckets.
+    assert window_label(pd.Timestamp("2026-09-10 20:15")) == "THURSDAY NIGHT"
+    assert window_label(pd.Timestamp("2026-09-14 20:15")) == "MONDAY NIGHT"
+    assert window_label(pd.Timestamp("2026-12-19 13:00")) == "SATURDAY EARLY"
+    assert window_label(pd.Timestamp("2026-12-19 16:30")) == "SATURDAY AFTERNOON"
+    assert window_label(pd.Timestamp("2026-12-19 20:15")) == "SATURDAY NIGHT"
 
 
 def test_normalize_media_prefers_tv_and_drops_partials() -> None:
@@ -148,3 +154,61 @@ def test_school_meta_carries_the_espn_id() -> None:
     ])
     assert index["Alabama"].espn_id == 333  # the ESPN CDN logo key
     assert index["Mystery U"].espn_id is None  # unparseable id, never a guess
+
+
+def test_window_sections_order_and_grouping() -> None:
+    from velocity.report.broadcast_grid import window_sections
+
+    sections = window_sections([
+        _game("PRIME TIME", 20.33), _game("EARLY (1:00)", 13.0, "A1"),
+        _game("EARLY (1:00)", 13.0, "A2"), _game("MORNING", 9.5),
+    ])
+    assert [label for label, _ in sections] == \
+        ["MORNING", "EARLY (1:00)", "PRIME TIME"]
+    assert len(dict(sections)["EARLY (1:00)"]) == 2
+
+
+def test_render_window_board_writes_a_png(tmp_path: Path) -> None:
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from velocity.report.broadcast_grid import render_window_board
+
+    mark = tmp_path / "mark.png"
+    plt.imsave(mark, np.ones((32, 32, 3)) * 0.5)
+    games = [
+        GridGame("EARLY (1:00)", "CIN", "CLE", pd.Timestamp("2026-09-13 13:00"),
+                 "#FB4F14", "#311D00", line_text="CIN -5.5 · O/U 43.5",
+                 away_logo=mark, home_logo=mark)
+        for _ in range(5)  # wraps past one row of four
+    ] + [
+        GridGame("PRIME TIME", "BAL", "KC", pd.Timestamp("2026-09-13 20:20"),
+                 "#241773", "#E31837", line_text="KC -1.5 · O/U 49.5"),
+    ]
+    dest = render_window_board(games, tmp_path / "board.png",
+                               title="NFL SUNDAY", league_logo=mark)
+    assert dest.exists() and dest.stat().st_size > 20_000
+
+
+def test_layout_policy_defaults_windows_for_nfl() -> None:
+    assert rbg.resolve_layout("auto", "nfl") == "windows"
+    assert rbg.resolve_layout("auto", "ncaaf") == "timeline"
+    assert rbg.resolve_layout("timeline", "nfl") == "timeline"  # explicit wins
+
+
+def test_week_title_helpers(tmp_path: Path) -> None:
+    assert rbg.date_span_text(pd.Timestamp("2026-09-10"),
+                              pd.Timestamp("2026-09-14")) == "SEP 10–14"
+    assert rbg.date_span_text(pd.Timestamp("2026-09-30"),
+                              pd.Timestamp("2026-10-04")) == "SEP 30 – OCT 4"
+
+    pd.DataFrame({
+        "kickoff": [pd.Timestamp("2026-09-10 20:15"),
+                    pd.Timestamp("2026-09-13 17:00"),
+                    pd.Timestamp("2026-09-20 17:00")],  # next week — not modal
+        "week": [1, 1, 2],
+    }).to_parquet(tmp_path / "games.parquet", index=False)
+    week = rbg.infer_week(tmp_path, pd.Timestamp("2026-09-10"),
+                          pd.Timestamp("2026-09-14"))
+    assert week == 1
+    assert rbg.infer_week(tmp_path / "absent", pd.Timestamp("2026-09-10"),
+                          pd.Timestamp("2026-09-14")) is None

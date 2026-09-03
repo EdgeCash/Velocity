@@ -22,6 +22,7 @@ matplotlib/Agg token palette as the social cards.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,9 @@ INK_DIM = "#8b96a3"
 BRAND = "#3ddad0"
 
 EASTERN = "America/New_York"
+
+DEFAULT_FOOTER = ("Consensus lines at render time · schedule and lines move · "
+                  "not betting advice")
 
 
 @dataclass(frozen=True)
@@ -71,15 +75,32 @@ def eastern(kickoff_utc: pd.Timestamp | str) -> pd.Timestamp:
 
 
 def window_label(kickoff_et: pd.Timestamp) -> str:
-    """The NFL fallback rows: the Sunday windows everyone already thinks in."""
+    """Kickoff-window sections, day-aware so a whole-week board reads itself.
+
+    Thursday/Monday are their own night slots; Sunday buckets into the
+    windows everyone already thinks in; Saturday (the college fallback when
+    no media listing is available, and December NFL Saturdays) buckets by
+    time of day. Oddball weekdays just wear their day name.
+    """
+    day = kickoff_et.weekday()
+    fixed = {0: "MONDAY NIGHT", 1: "TUESDAY", 2: "WEDNESDAY",
+             3: "THURSDAY NIGHT", 4: "FRIDAY"}
+    if day in fixed:
+        return fixed[day]
     hour = kickoff_et.hour + kickoff_et.minute / 60.0
-    if hour < 12.0:
-        return "MORNING"
+    if day == 6:
+        if hour < 12.0:
+            return "SUNDAY MORNING"
+        if hour < 15.0:
+            return "SUNDAY EARLY (1:00)"
+        if hour < 18.5:
+            return "SUNDAY LATE (4:05 / 4:25)"
+        return "SUNDAY NIGHT"
     if hour < 15.0:
-        return "EARLY (1:00)"
+        return "SATURDAY EARLY"
     if hour < 18.5:
-        return "LATE (4:05 / 4:25)"
-    return "PRIME TIME"
+        return "SATURDAY AFTERNOON"
+    return "SATURDAY NIGHT"
 
 
 def consensus_line_text(
@@ -179,13 +200,84 @@ def _chip_color(color: str | None) -> str:
     return lighten_for_dark(color, floor=0.30)
 
 
+def _mark(fig: plt.Figure, ax: plt.Axes, path: Path | str | None,
+          x: float, y: float, height_y: float) -> float:
+    """Draw a cached mark on a light holding chip at data coords.
+
+    ``(x, y)`` is the mark's left edge and vertical center; ``height_y`` its
+    height in y-data units. Returns the width consumed in x-data units —
+    0.0 when the file is absent or corrupt, so the code chip alone carries
+    identity and the caller's text never shifts for a mark that isn't there.
+    """
+    if not path:
+        return 0.0
+    try:
+        img = plt.imread(str(path))
+    except Exception:  # noqa: BLE001 - a corrupt cache entry is cosmetic
+        return 0.0
+    origin = ax.transData.transform((x, y))
+    h_px = abs(ax.transData.transform((0.0, 0.0))[1]
+               - ax.transData.transform((0.0, height_y))[1])
+    box = fig.add_axes((origin[0] / fig.bbox.width,
+                        origin[1] / fig.bbox.height - h_px / fig.bbox.height / 2,
+                        h_px / fig.bbox.width, h_px / fig.bbox.height))
+    box.imshow(img)
+    # The chip: a light inset ground, so a mark the same color as its brand
+    # band never sinks into it.
+    box.set_xlim(-img.shape[1] * 0.12, img.shape[1] * 1.12)
+    box.set_ylim(img.shape[0] * 1.12, -img.shape[0] * 0.12)
+    box.patch.set_facecolor("#eef1f5")
+    box.patch.set_alpha(0.92)
+    box.set_xticks([])
+    box.set_yticks([])
+    for spine in box.spines.values():
+        spine.set_visible(False)
+    box.set_zorder(6)
+    return float(ax.transData.inverted().transform(
+        (origin[0] + h_px, origin[1]))[0] - x)
+
+
+def _chrome(fig: plt.Figure, fig_h: float, *, title: str, subtitle: str,
+            footer: str, league_logo: Path | str | None,
+            display: str, body: str) -> None:
+    """Header (league mark, title, wordmark) and footer, shared by layouts."""
+    title_x = 0.006
+    if league_logo is not None:
+        try:
+            mark = plt.imread(str(league_logo))
+            box = fig.add_axes((0.006, 1 - 0.86 / fig_h, 0.68 / 16.0,
+                                0.68 / fig_h))
+            box.imshow(mark)
+            box.axis("off")
+            title_x = 0.006 + 0.68 / 16.0 + 0.007
+        except Exception:  # noqa: BLE001 - the league mark is a nicety
+            pass
+    fig.text(title_x, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
+             family=display, weight="bold", ha="left", va="top")
+    if subtitle:
+        fig.text(title_x, 1 - 0.62 / fig_h, subtitle, color=INK_DIM,
+                 fontsize=11, family=body, ha="left", va="top")
+    fig.text(0.994, 1 - 0.28 / fig_h, "MATCHUP LABS", color=BRAND, fontsize=14,
+             family=display, weight="bold", ha="right", va="top")
+    fig.text(0.006, 0.12 / fig_h, footer, color=INK_DIM, fontsize=9,
+             family=body, ha="left", va="bottom")
+
+
+def window_sections(games: list[GridGame]) -> list[tuple[str, list[GridGame]]]:
+    """Rows grouped and ordered by first kickoff — the board's sections."""
+    by_row: dict[str, list[GridGame]] = {}
+    for game in sorted(games, key=lambda g: (g.kickoff_et, g.away, g.home)):
+        by_row.setdefault(game.row, []).append(game)
+    return sorted(by_row.items(), key=lambda kv: kv[1][0].kickoff_et)
+
+
 def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
     games: list[GridGame],
     dest: Path | str,
     *,
     title: str,
     subtitle: str = "",
-    footer: str = "Consensus lines at render time · schedule and lines move · not betting advice",
+    footer: str = DEFAULT_FOOTER,
     duration_hours: float = 3.5,
     league_logo: Path | str | None = None,
 ) -> Path:
@@ -212,39 +304,6 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
 
     def x_of(ts: pd.Timestamp) -> float:
         return (ts - start).total_seconds() / 3600.0
-
-    axes_top = 1 - header_h / fig_h
-    axes_bottom = footer_h / fig_h
-    lane_frac = (axes_top - axes_bottom) / n_lanes
-
-    def place_logo(path: Path | str | None, x_hour: float, y_lane: float,
-                   h_lanes: float) -> float:
-        """Draw a cached mark at data coords; return its width in hour units
-        (0.0 when absent/corrupt — the chip alone carries identity)."""
-        if not path:
-            return 0.0
-        try:
-            img = plt.imread(str(path))
-        except Exception:  # noqa: BLE001 - a corrupt cache entry is cosmetic
-            return 0.0
-        fx, fy = fig.transFigure.inverted().transform(
-            ax.transData.transform((x_hour, y_lane)))
-        h_frac = h_lanes * lane_frac
-        w_frac = h_frac * fig_h / 16.0  # square despite the wide figure
-        box = fig.add_axes((fx, fy - h_frac / 2, w_frac, h_frac))
-        box.imshow(img)
-        # A light holding chip with a little inset, so a mark the same color
-        # as its brand band never sinks into it.
-        box.set_xlim(-img.shape[1] * 0.12, img.shape[1] * 1.12)
-        box.set_ylim(img.shape[0] * 1.12, -img.shape[0] * 0.12)
-        box.patch.set_facecolor("#eef1f5")
-        box.patch.set_alpha(0.92)
-        box.set_xticks([])
-        box.set_yticks([])
-        for spine in box.spines.values():
-            spine.set_visible(False)
-        box.set_zorder(6)
-        return w_frac / 0.99 * (gutter + hours)
 
     # Hour grid + labels.
     for hour_i in range(int(hours) + 1):
@@ -274,10 +333,10 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                                        band * 0.5, fc=home_c, ec=EDGE, lw=0.6,
                                        zorder=3))
                 logo_h = band * 0.46
-                away_w = place_logo(game.away_logo, x0 + 0.05,
-                                    y + 0.04 + band * 0.25, logo_h)
-                home_w = place_logo(game.home_logo, x0 + 0.05,
-                                    y + 0.04 + band * 0.75, logo_h)
+                away_w = _mark(fig, ax, game.away_logo, x0 + 0.05,
+                               y + 0.04 + band * 0.25, logo_h)
+                home_w = _mark(fig, ax, game.home_logo, x0 + 0.05,
+                               y + 0.04 + band * 0.75, logo_h)
                 pad = max(away_w, home_w)
                 text_x = x0 + 0.09 + (pad + 0.06 if pad else 0.0)
                 ax.text(text_x, y + 0.04 + band * 0.25, game.away,
@@ -309,27 +368,101 @@ def render_grid(  # noqa: PLR0915 - one deliberate drawing pass
                 ha="left", va="center")
         ax.plot([-gutter, hours], [y, y], color=EDGE, lw=1.1, zorder=2)
 
-    title_x = 0.006
-    if league_logo is not None:
-        try:
-            mark = plt.imread(str(league_logo))
-            box = fig.add_axes((0.006, 1 - 0.86 / fig_h, 0.68 / 16.0,
-                                0.68 / fig_h))
-            box.imshow(mark)
-            box.axis("off")
-            title_x = 0.006 + 0.68 / 16.0 + 0.007
-        except Exception:  # noqa: BLE001 - the league mark is a nicety
-            pass
-    fig.text(title_x, 1 - 0.28 / fig_h, title, color=INK, fontsize=21,
-             family=display, weight="bold", ha="left", va="top")
-    if subtitle:
-        fig.text(title_x, 1 - 0.62 / fig_h, subtitle, color=INK_DIM, fontsize=11,
-                 family=body, ha="left", va="top")
-    fig.text(0.994, 1 - 0.28 / fig_h, "MATCHUP LABS", color=BRAND, fontsize=14,
-             family=display, weight="bold", ha="right", va="top")
-    fig.text(0.006, 0.12 / fig_h, footer, color=INK_DIM, fontsize=9,
-             family=body, ha="left", va="bottom")
+    _chrome(fig, fig_h, title=title, subtitle=subtitle, footer=footer,
+            league_logo=league_logo, display=display, body=body)
 
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(dest, facecolor=BG)
+    plt.close(fig)
+    return dest
+
+
+def _card(fig: plt.Figure, ax: plt.Axes, game: GridGame, x: float, y: float,
+          display: str, body: str) -> None:
+    """One compact card in a window section — the timeline block, off the clock."""
+    pad = 0.05
+    x0, w = x + pad, 1.0 - 2 * pad
+    top, band_h, strip_h = 0.10, 0.26, 0.24
+    away_c = _chip_color(game.away_color)
+    home_c = _chip_color(game.home_color)
+    ax.add_patch(Rectangle((x0, y + top), w, band_h, fc=away_c, ec=EDGE,
+                           lw=0.6, zorder=3))
+    ax.add_patch(Rectangle((x0, y + top + band_h), w, band_h, fc=home_c,
+                           ec=EDGE, lw=0.6, zorder=3))
+    ax.add_patch(Rectangle((x0, y + top + 2 * band_h), w, strip_h, fc=SURFACE,
+                           ec=EDGE, lw=0.6, zorder=3))
+    away_w = _mark(fig, ax, game.away_logo, x0 + 0.02,
+                   y + top + band_h * 0.5, band_h * 0.80)
+    home_w = _mark(fig, ax, game.home_logo, x0 + 0.02,
+                   y + top + band_h * 1.5, band_h * 0.80)
+    pad_x = max(away_w, home_w)
+    text_x = x0 + 0.045 + (pad_x + 0.02 if pad_x else 0.0)
+    ax.text(text_x, y + top + band_h * 0.5, game.away, color=_ink_for(away_c),
+            fontsize=12, family=display, weight="bold", ha="left",
+            va="center", zorder=4)
+    ax.text(text_x, y + top + band_h * 1.5, f"@ {game.home}",
+            color=_ink_for(home_c), fontsize=12, family=display,
+            weight="bold", ha="left", va="center", zorder=4)
+    strip_y = y + top + 2 * band_h + strip_h / 2
+    ax.text(x0 + 0.04, strip_y, game.kickoff_et.strftime("%I:%M").lstrip("0"),
+            color=INK_DIM, fontsize=9.5, family=body, ha="left", va="center",
+            zorder=4)
+    if game.line_text:
+        ax.text(x0 + w - 0.04, strip_y, game.line_text, color=INK,
+                fontsize=10.5, family=display, weight="bold", ha="right",
+                va="center", zorder=4)
+
+
+def render_window_board(
+    games: list[GridGame],
+    dest: Path | str,
+    *,
+    title: str,
+    subtitle: str = "",
+    footer: str = DEFAULT_FOOTER,
+    columns: int = 4,
+    league_logo: Path | str | None = None,
+) -> Path:
+    """The NFL Sunday layout: kickoff-window sections of compact cards.
+
+    A timeline earns its width when kickoffs spread across twelve hours; an
+    NFL Sunday is four discrete windows, so the axis would be mostly dead
+    air. Here each window is a labeled section and its games flow side by
+    side — same identity bands, same fact strips, no axis pretending to be
+    information it isn't.
+    """
+    display, body = register_fonts()
+    sections = window_sections(games)
+    header_u = 0.42
+    total_u = sum(header_u + math.ceil(len(sec) / columns)
+                  for _label, sec in sections) or 1.0
+    unit_in, header_h, footer_h = 1.16, 1.05, 0.42
+    fig_h = header_h + total_u * unit_in + footer_h
+    fig, ax = plt.subplots(figsize=(16, fig_h), dpi=100)
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
+    ax.set_xlim(0, columns)
+    ax.set_ylim(0, total_u)
+    ax.invert_yaxis()
+    ax.axis("off")
+    fig.subplots_adjust(left=0.012, right=0.988,
+                        top=1 - header_h / fig_h, bottom=footer_h / fig_h)
+
+    y = 0.0
+    for label, sec in sections:
+        ax.text(0.05, y + header_u * 0.48, label, color=INK, fontsize=15,
+                family=display, weight="bold", ha="left", va="center")
+        ax.plot([0.05, columns - 0.05], [y + header_u - 0.08] * 2, color=EDGE,
+                lw=1.1, zorder=1)
+        y += header_u
+        for i, game in enumerate(sec):
+            _card(fig, ax, game, float(i % columns), y + i // columns,
+                  display, body)
+        y += math.ceil(len(sec) / columns)
+
+    _chrome(fig, fig_h, title=title, subtitle=subtitle, footer=footer,
+            league_logo=league_logo, display=display, body=body)
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(dest, facecolor=BG)
