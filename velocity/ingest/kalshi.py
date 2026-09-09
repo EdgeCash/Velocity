@@ -66,7 +66,6 @@ GAME_MARKET_BY_SERIES = {
     "KXNFLTOTAL": "total",
     "KXNCAAFTOTAL": "total",
     "KXNFLTEAMTOTAL": "team_total",
-    # NCAAF team-total series ticker is unverified; the entry is inert if absent.
     "KXNCAAFTEAMTOTAL": "team_total",
 }
 
@@ -79,8 +78,7 @@ PROP_MARKET_BY_SERIES = {
     "KXNFLPASSTDS": "pass_tds",
     "KXNFLRECYDS": "receiving_yards",
     "KXNFLREC": "receptions",
-    # Rushing-yards series ticker is unverified; the entry is inert if absent.
-    "KXNFLRUSHYDS": "rush_yards",
+    "KXNFLRSHYDS": "rush_yards",
 }
 
 _BOOK = "kalshi"
@@ -212,10 +210,14 @@ def _markets_of(payload: Any) -> list[dict]:
     return list(payload or [])
 
 
-def _finish_lines(rows: list[dict[str, object]], timestamp: Any) -> pd.DataFrame:
-    stamp = pd.to_datetime(timestamp, utc=True).tz_localize(None)
+def _finish_lines(rows: list[dict[str, object]], timestamp: Any = None) -> pd.DataFrame:
     df = pd.DataFrame(rows)
-    df["timestamp"] = stamp
+    if timestamp is not None:
+        # A board snapshot: one pull time stamps every row.
+        df["timestamp"] = pd.to_datetime(timestamp, utc=True).tz_localize(None)
+    else:
+        # A time series (candles): rows carry their own timestamps.
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
     point_key = df["point"].map(lambda v: "" if v is None else f"{float(v):g}")
     df["line_id"] = (
         df["game_id"]
@@ -225,8 +227,116 @@ def _finish_lines(rows: list[dict[str, object]], timestamp: Any) -> pd.DataFrame
         + "|" + point_key
     )
     df["point"] = pd.to_numeric(df["point"], errors="coerce")
-    df = df.drop_duplicates("line_id").reset_index(drop=True)
+    # One contract keeps one row per observation time (a candle series shares
+    # the line_id across timestamps; a single snapshot dedupes as before).
+    df = df.drop_duplicates(["line_id", "timestamp"]).reset_index(drop=True)
     return df
+
+
+def _market_rows(
+    parsed: ParsedTicker,
+    canonical: str,
+    yes_price: int | None,
+    no_price: int | None,
+    floor_strike: Any,
+    is_closing: bool,
+) -> list[dict[str, object]]:
+    """Rows for one market's economic sides, per the module conventions above."""
+    rows: list[dict[str, object]] = []
+    game_id = parsed.event_ticker
+
+    if canonical == "moneyline":
+        # One market per team; its yes-ask prices that team. The no-ask is a
+        # near-duplicate quote of the other team's market — not emitted.
+        side = parsed.suffix if parsed.suffix.isalpha() else None
+        if side is None or yes_price is None:
+            return rows
+        rows.append(
+            {
+                "game_id": game_id,
+                "book": _BOOK,
+                "market": canonical,
+                "side": side,
+                "price": yes_price,
+                "point": None,
+                "is_closing": is_closing,
+            }
+        )
+        return rows
+
+    strike = _half_strike(floor_strike)
+    if strike is None:
+        return rows
+
+    if canonical == "spread":
+        team = _suffix_team(parsed.suffix)
+        if team is None or yes_price is None:
+            return rows
+        rows.append(
+            {
+                "game_id": game_id,
+                "book": _BOOK,
+                "market": canonical,
+                "side": team,
+                "price": yes_price,
+                "point": -strike,
+                "is_closing": is_closing,
+            }
+        )
+        opponent = _other_team(parsed.teams, team)
+        if opponent is not None and no_price is not None:
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "book": _BOOK,
+                    "market": canonical,
+                    "side": opponent,
+                    "price": no_price,
+                    "point": strike,
+                    "is_closing": is_closing,
+                }
+            )
+        return rows
+
+    if canonical == "total":
+        for side, price in (("Over", yes_price), ("Under", no_price)):
+            if price is None:
+                continue
+            rows.append(
+                {
+                    "game_id": game_id,
+                    "book": _BOOK,
+                    "market": canonical,
+                    "side": side,
+                    "price": price,
+                    "point": strike,
+                    "is_closing": is_closing,
+                }
+            )
+        return rows
+
+    # team_total: which team's total lives in the suffix; home/away comes from
+    # the ticker blob. Unresolvable teams are skipped, never guessed.
+    team = _suffix_team(parsed.suffix)
+    home = None if team is None else _is_home(parsed.teams, team)
+    if home is None:
+        return rows
+    market_name = "team_total_home" if home else "team_total_away"
+    for side, price in (("Over", yes_price), ("Under", no_price)):
+        if price is None:
+            continue
+        rows.append(
+            {
+                "game_id": game_id,
+                "book": _BOOK,
+                "market": market_name,
+                "side": side,
+                "price": price,
+                "point": strike,
+                "is_closing": is_closing,
+            }
+        )
+    return rows
 
 
 def normalize_kalshi_markets(
@@ -244,8 +354,7 @@ def normalize_kalshi_markets(
     """
     rows: list[dict[str, object]] = []
     for market in _markets_of(payload):
-        ticker = str(market.get("ticker", ""))
-        parsed = parse_market_ticker(ticker)
+        parsed = parse_market_ticker(str(market.get("ticker", "")))
         if parsed is None:
             continue
         canonical = GAME_MARKET_BY_SERIES.get(parsed.series)
@@ -253,105 +362,77 @@ def normalize_kalshi_markets(
             continue
         if str(market.get("status", "active")) != "active":
             continue
-        yes_price = _ask_to_american(market.get("yes_ask_dollars"))
-        no_price = _ask_to_american(market.get("no_ask_dollars"))
-        game_id = parsed.event_ticker
-
-        if canonical == "moneyline":
-            # One market per team; its yes-ask prices that team. The no-ask is
-            # a near-duplicate quote of the other team's market — not emitted.
-            side = parsed.suffix if parsed.suffix.isalpha() else None
-            if side is None or yes_price is None:
-                continue
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "book": _BOOK,
-                    "market": canonical,
-                    "side": side,
-                    "price": yes_price,
-                    "point": None,
-                    "is_closing": is_closing,
-                }
+        rows.extend(
+            _market_rows(
+                parsed,
+                canonical,
+                _ask_to_american(market.get("yes_ask_dollars")),
+                _ask_to_american(market.get("no_ask_dollars")),
+                market.get("floor_strike"),
+                is_closing,
             )
-            continue
-
-        strike = _half_strike(market.get("floor_strike"))
-        if strike is None:
-            continue
-
-        if canonical == "spread":
-            team = _suffix_team(parsed.suffix)
-            if team is None or yes_price is None:
-                continue
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "book": _BOOK,
-                    "market": canonical,
-                    "side": team,
-                    "price": yes_price,
-                    "point": -strike,
-                    "is_closing": is_closing,
-                }
-            )
-            opponent = _other_team(parsed.teams, team)
-            if opponent is not None and no_price is not None:
-                rows.append(
-                    {
-                        "game_id": game_id,
-                        "book": _BOOK,
-                        "market": canonical,
-                        "side": opponent,
-                        "price": no_price,
-                        "point": strike,
-                        "is_closing": is_closing,
-                    }
-                )
-            continue
-
-        if canonical == "total":
-            for side, price in (("Over", yes_price), ("Under", no_price)):
-                if price is None:
-                    continue
-                rows.append(
-                    {
-                        "game_id": game_id,
-                        "book": _BOOK,
-                        "market": canonical,
-                        "side": side,
-                        "price": price,
-                        "point": strike,
-                        "is_closing": is_closing,
-                    }
-                )
-            continue
-
-        # team_total: which team's total lives in the suffix; home/away comes
-        # from the ticker blob. Unresolvable teams are skipped, never guessed.
-        team = _suffix_team(parsed.suffix)
-        home = None if team is None else _is_home(parsed.teams, team)
-        if home is None:
-            continue
-        market_name = "team_total_home" if home else "team_total_away"
-        for side, price in (("Over", yes_price), ("Under", no_price)):
-            if price is None:
-                continue
-            rows.append(
-                {
-                    "game_id": game_id,
-                    "book": _BOOK,
-                    "market": market_name,
-                    "side": side,
-                    "price": price,
-                    "point": strike,
-                    "is_closing": is_closing,
-                }
-            )
+        )
 
     if not rows:
         return Lines.validate(_empty_frame(_LINES_COLUMNS))
     df = _finish_lines(rows, timestamp)
+    return Lines.validate(df[_LINES_COLUMNS])
+
+
+def _candle_close(candle: Mapping[str, Any], side: str) -> Any:
+    """A candle's closing quote for one side — live or historical field names."""
+    quote = candle.get(side) or {}
+    close = quote.get("close_dollars")
+    # The /historical archive drops the ``_dollars`` suffix (probe 2026-09-09).
+    return close if close is not None else quote.get("close")
+
+
+def normalize_kalshi_candles(
+    market: Mapping[str, Any],
+    candles: Any,
+    is_closing: bool = True,
+) -> pd.DataFrame:
+    """One market's candlesticks → a time series of canonical ``Lines`` rows.
+
+    ``market`` is the market object (it supplies the ticker and
+    ``floor_strike`` — candles carry neither); ``candles`` is a candlesticks
+    response (live or ``/historical`` shape). Each candle contributes the
+    market's sides at that bucket's closing quotes: the yes-ask close prices
+    the named outcome, and the no-ask is reconstructed as ``1 − yes-bid``
+    close (a resting NO ask *is* a YES bid at the complement — verified on
+    live boards). In-game certainty quotes (ask $1.00 / bid $0.00) drop via
+    the executable guard. The output feeds ``pit.closing_line``, which keeps
+    the last pre-kickoff row per contract.
+    """
+    parsed = parse_market_ticker(str(market.get("ticker", "")))
+    canonical = None if parsed is None else GAME_MARKET_BY_SERIES.get(parsed.series)
+    if parsed is None or canonical is None:
+        return Lines.validate(_empty_frame(_LINES_COLUMNS))
+
+    entries = candles.get("candlesticks") if isinstance(candles, Mapping) else candles
+    rows: list[dict[str, object]] = []
+    for candle in entries or []:
+        end_ts = candle.get("end_period_ts")
+        if end_ts is None:
+            continue
+        yes_price = _ask_to_american(_candle_close(candle, "yes_ask"))
+        no_price: int | None = None
+        bid_close = _candle_close(candle, "yes_bid")
+        if bid_close is not None:
+            try:
+                no_price = _ask_to_american(1.0 - float(bid_close))
+            except (TypeError, ValueError):
+                no_price = None
+        stamp = pd.Timestamp(int(end_ts), unit="s")
+        for row in _market_rows(
+            parsed, canonical, yes_price, no_price, market.get("floor_strike"), is_closing
+        ):
+            row["timestamp"] = stamp
+            rows.append(row)
+
+    if not rows:
+        return Lines.validate(_empty_frame(_LINES_COLUMNS))
+    df = _finish_lines(rows)
     return Lines.validate(df[_LINES_COLUMNS])
 
 
@@ -495,18 +576,29 @@ class KalshiClient:
             except urllib.error.HTTPError as exc:
                 if exc.code not in (429, 500, 502, 503) or attempt == 2:
                     raise
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
+                # Sustained pulls occasionally hit a connection reset / TLS
+                # EOF (observed live 2026-09-09); transient — back off, retry.
+                if attempt == 2:
+                    raise
         raise RuntimeError("unreachable")
 
     def markets(  # pragma: no cover - network
-        self, series_ticker: str, status: str = "open"
+        self, series_ticker: str, status: str = "open", min_close_ts: int | None = None
     ) -> dict[str, list[dict]]:
-        """All markets of one series, cursor pages merged to ``{"markets": […]}``."""
+        """All markets of one series, cursor pages merged to ``{"markets": […]}``.
+
+        ``min_close_ts`` narrows to markets closing at/after that unix time —
+        how the candle collector finds recently settled markets.
+        """
         merged: list[dict] = []
         cursor: str | None = None
         for _ in range(self.max_pages):
             params: dict[str, Any] = {"series_ticker": series_ticker, "limit": 1000}
             if status:
                 params["status"] = status
+            if min_close_ts is not None:
+                params["min_close_ts"] = min_close_ts
             if cursor:
                 params["cursor"] = cursor
             payload = self._get("/markets", params)

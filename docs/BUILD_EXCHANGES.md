@@ -1,6 +1,7 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: plan (E0). Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1 done; E2 landed, awaiting in-CI `workflow_dispatch`
+verification; E3 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -41,7 +42,7 @@ rounded-normal sim smooths over.
 | Base URL | `api.elections.kalshi.com/trade-api/v2` (alt: `external-api.kalshi.com`) | `gamma-api.polymarket.com` + `clob.polymarket.com` + `data-api.polymarket.com` |
 | Football | NFL + NCAAF: winners, spread/total ladders, team totals, halves/quarters, player props | NFL + CFB: moneyline, ~22 alt spreads + ~22 alt totals per big game, quarters, team totals, props (136 markets on one week-1 NFL game) |
 | Price | binary contract, $0.01 tick, price = probability; API returns fixed-point dollar **strings** (`yes_ask_dollars: "0.1900"`) | outcome tokens in [0,1] = probability, decimal strings, tick 0.01 (0.001 on some) |
-| History | candlesticks (1min/1hr/1day; separate trade/bid/ask OHLC + volume + OI), ~3-month live window, archive endpoint beyond (backfill **unproven** — see §5) | `prices-history` per token, minute fidelity, survives resolution; **no historical order books** |
+| History | candlesticks (1min/1hr/1day; separate trade/bid/ask OHLC + volume + OI), ~3-month live window; `/historical` archive beyond, **verified dense** back through Sep 2025 at hourly resolution (probe 2026-09-09 — see §5) | `prices-history` per token, minute fidelity, survives resolution; **no historical order books** |
 | Trading fee | `fee_multiplier · 0.07·P·(1−P)`/contract, rounded up to $0.000001 (≈1.75¢ max at 50¢); football series run `fee_type: quadratic_with_maker_fees` — **makers pay too**. Authority: `fee_type`/`fee_multiplier` on `GET /series/{ticker}`; scheduled changes at `GET /series/fee_changes` | sports taker `0.05·p·(1−p)`/share — 1.25¢ max at 50¢; makers $0 (`takerOnly` confirmed) |
 | Rate limits | keyless works but undocumented; free key ≈ 20 GET/s (Basic tier); batch candles = 100 tickers/call | Gamma 4,000 req/10s, CLOB 9,000/10s; 500-token batch endpoints |
 | Legal (trading, not data) | CFTC DCM, nationwide with a live circuit split (3rd Cir. for, 9th Cir. against, SCOTUS cert pending) | global exchange is US **close-only**; "Polymarket US" (QCX) is a separate KYC venue with separate liquidity |
@@ -72,7 +73,15 @@ rounded-normal sim smooths over.
   batch `GET /markets/candlesticks` (≤100 tickers, ≤10k candles). Quiet
   buckets omit trade OHLC and carry only bid/ask OHLC + `previous` —
   closing lines are recoverable from quotes even at zero volume.
-  Live retention ~3 months; `GET /historical/cutoff` marks the boundary.
+  Live retention ~3 months; `GET /historical/cutoff` marks the boundary,
+  and the `/historical` archive beyond it is real (probe 2026-09-09):
+  hourly candles + trades verified dense for NFL/NCAAF from Sep 2025
+  through the Jan 2026 playoffs. Archive quirks: the listing's
+  `status`/`min_close_ts` filters are **silently ignored** (paginate
+  and filter client-side), `start_ts` is mandatory on candlesticks,
+  field names drop the `_dollars`/`_fp` suffixes, and zero-volume
+  voided duplicate markets (rescheduled games) return empty candles —
+  filter `volume_fp == 0` up front.
 - **WebSocket** exists but requires a (free) API key + request signing —
   not needed for this build; REST polling suffices.
 
@@ -190,12 +199,23 @@ rounded-normal sim smooths over.
   W2/W5 family** — neither phase contains them today (W2 is per-game/
   aggregate portfolio caps, W5 is execution polish) — and are a
   prerequisite for trading, not for this build.
-- **D7 — Storage follows the paid-provider discipline.** The data is
-  free but the repo is public: snapshots go to private Actions artifacts
-  like every other odds feed (raw JSON verbatim + normalized parquet),
-  and nothing is committed until each venue's API terms are read and say
-  redistribution is fine (an E1/E3 exit item). Secrets (the optional
-  `KALSHI_API_KEY` for rate headroom) live only in Actions secrets.
+- **D7 — Storage follows the paid-provider discipline, and the terms
+  make it mandatory.** Terms read 2026-09-09 (primary documents; not
+  legal advice). **Kalshi**: the Developer Agreement (§3.1) permits
+  collecting/storing API data only "for purposes of facilitating your
+  own trading on Kalshi" and bars sharing it with third parties "in any
+  manner" without written authorization; the Data Terms bar archived
+  datasets to others and ML/AI-training use. Operating posture: private
+  Actions artifacts only, **never** committed or redistributed; the
+  archive's justification is this system's own trading of these
+  markets (de-vig/CLV analytics of quotes, not model training on
+  Kalshi data); a written research/data license is the route to
+  anything more. **Polymarket**: storage isn't specifically restricted
+  and redistribution is restricted only toward "Capital Market
+  Clients"/market-data distributors — but the same private-artifact
+  posture applies anyway (public repo discipline). Secrets (the
+  optional `KALSHI_API_KEY` for rate headroom) live only in Actions
+  secrets.
 
 ## 3. The phased build
 
@@ -204,7 +224,7 @@ first against frozen fixtures, offline suite green, live client verified
 via `workflow_dispatch` only. Each phase's **Exit** is its definition of
 done and mints a tag (`v*-e1` … `v*-e8`, the WAGERING.md convention).
 
-### Phase E1 — Kalshi ingest adapter
+### Phase E1 — Kalshi ingest adapter (done)
 
 `velocity/ingest/kalshi.py`, two layers per the house pattern:
 
@@ -253,8 +273,14 @@ tests cloning `test_ingest_theoddsapi.py` (validate, market filtering,
 ladder point mapping, dollar-string parsing, line_id stability,
 half-integer assertion, empty-in → valid-empty-out) and the
 `OddsAdapter` protocol checks. Exit: suite green offline; ToS read (D7).
+**Done:** `velocity/ingest/kalshi.py` (16 offline tests, live-verified
+board pull: 11,695 game lines + 3,957 prop lines in one snapshot); raw
+day-one collector live in `collect-exchanges.yml`; terms read and
+ratified into D7. Series-map correction from the live run: rush yards
+is `KXNFLRSHYDS` (no U), and `KXNCAAFTEAMTOTAL` is real (1,148 open
+markets).
 
-### Phase E2 — Kalshi collectors
+### Phase E2 — Kalshi collectors (landed; in-CI verification pending)
 
 - `scripts/collect_kalshi.py` on the existing hourly cron
   (`collect-odds.yml` pattern, own workflow file): snapshot the open
@@ -263,11 +289,15 @@ half-integer assertion, empty-in → valid-empty-out) and the
   `collect_historical_odds.py` (the column `archive.select_boards`
   splits on) plus `collected_at`/`league` per `collect_theoddsapi.py`.
 - `scripts/collect_kalshi_candles.py` (daily): for markets settled since
-  the last run, pull 1-minute candlesticks via the batch endpoint (≤100
-  tickers/call) and bank them — this is the CLV archive. The ~3-month
-  live window means **bank-forward from day one**; a one-off spot job
-  probes `/historical/*` backfill quality (empty on a Jan-2026 spot
-  check) and records the verdict here.
+  the last run, pull 1-minute candles for the pre-close day plus hourly
+  candles for the market's life, and bank them — this is the CLV
+  archive. **Probe verdict (2026-09-09): the `/historical` archive is
+  dense** — hourly candles and trades verified for Sep 2025 → Jan 2026
+  playoffs, both leagues; the earlier "empty" result was a zero-volume
+  voided duplicate market, not an archive gap. So multi-season hourly
+  backtests are backfillable later; bank-forward remains primary
+  because pre-cutoff **minute** resolution is unverified and the honest
+  close wants minute granularity.
 - **Archive durability is an exit criterion, not a default.** Unlike
   The Odds API, expired exchange data cannot be re-pulled, and Actions
   artifacts expire (30-day retention on `collect-odds.yml`, 90 on
@@ -281,6 +311,17 @@ Exit: two workflow_dispatch runs verified; candle → `Lines` close rows
 feeding `pit.closing_line` proven on one settled game; the consolidation
 job demonstrated on real artifacts; the new collectors documented in
 DATA_PROVIDERS.md.
+**Landed:** `collect_kalshi.py` + `collect_polymarket_raw.py` (hourly,
+`collect-exchanges.yml`), `collect_kalshi_candles.py` (daily,
+`collect-kalshi-candles.yml`), `consolidate_exchanges.py` (weekly,
+`consolidate-exchanges.yml`, rolls the newest previous archive
+forward). Board + raw collectors verified end-to-end from the sandbox
+(keyless, so no dispatch needed for the client — the dispatch runs
+still verify the Actions plumbing); the close path is proven offline:
+`normalize_kalshi_candles` on a real settled game's frozen candles
+feeds `pit.closing_line` and picks the last pre-kickoff minute.
+Remaining for the exit: the dispatch runs and the first consolidation
+over real artifacts.
 
 ### Phase E3 — Polymarket ingest adapter
 
@@ -437,10 +478,18 @@ they were priced credibly before this build.
 
 ## 5. Risks & open questions
 
-- **Kalshi deep history is unproven.** Archived pre-cutoff markets
-  returned empty candle arrays on a spot check. Posture: bank-forward
-  from E2 day one; treat multi-season Kalshi backtests as unavailable
-  until the archive probe says otherwise.
+- **Kalshi deep history: available at hourly resolution.** The
+  2026-09-09 probe verified dense `/historical` candles and trades back
+  through Sep 2025 (the earlier empty spot-check was a zero-volume
+  voided duplicate market). Minute resolution pre-cutoff is unverified,
+  so bank-forward stays primary for honest closes; a backfill script
+  against `/historical` is unblocked for hourly-resolution backtests.
+- **Kalshi's terms bind the archive to our own trading.** Storage is
+  permitted only as trading facilitation (D7); no dataset built on
+  Kalshi data can ever be published from this repo, and Kalshi data
+  must not be used to train models — quotes are inputs to de-vig, EV,
+  and CLV accounting only. A written license is the path to anything
+  broader.
 - **Fee schedule authority.** The official fee PDF is bot-walled; the
   formula is corroborated by three secondary sources and the per-series
   override endpoint is authoritative programmatically — E5 reads

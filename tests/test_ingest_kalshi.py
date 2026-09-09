@@ -16,11 +16,13 @@ from pathlib import Path
 import pandas as pd
 from velocity.ingest.kalshi import (
     extract_kalshi_events,
+    normalize_kalshi_candles,
     normalize_kalshi_markets,
     normalize_kalshi_props,
     parse_market_ticker,
 )
 from velocity.ingest.odds import LiveOddsAdapter, OddsAdapter
+from velocity.store.pit import closing_line
 from velocity.store.schema import Lines, PropLines
 
 REPO = Path(__file__).resolve().parents[1]
@@ -165,3 +167,89 @@ def test_normalized_frame_satisfies_adapter_contract() -> None:
     adapter = LiveOddsAdapter(fetch=lambda game_ids: lines)
     assert isinstance(adapter, OddsAdapter)
     Lines.validate(adapter.current_lines())
+
+
+# --- Candles → Lines (the CLV archive path, frozen from a real settled game) --
+
+CANDLE_FIXTURE = json.loads(
+    (REPO / "tests" / "fixtures" / "kalshi_candles_settled.json").read_text()
+)
+
+
+def test_candles_normalize_to_a_time_series() -> None:
+    lines = normalize_kalshi_candles(CANDLE_FIXTURE["market"], CANDLE_FIXTURE["candles"])
+    Lines.validate(lines)
+    # 6 candles; the final in-game candle's yes-ask is $1.0000 (certainty — no
+    # executable offer) and drops. A winner market emits its yes side only.
+    assert len(lines) == 5
+    assert set(lines["market"]) == {"moneyline"}
+    assert set(lines["side"]) == {"CHI"}
+    assert lines["is_closing"].all()
+    assert lines["line_id"].nunique() == 1  # one contract, many observations
+    assert lines["timestamp"].nunique() == 5
+    by_ts = lines.set_index("timestamp")["price"]
+    assert by_ts[pd.Timestamp("2026-08-29 22:00:00")] == -113  # yes-ask $0.53
+    assert by_ts[pd.Timestamp("2026-08-29 23:59:00")] == -809  # yes-ask $0.89
+
+
+def test_candle_closes_feed_pit_closing_line() -> None:
+    lines = normalize_kalshi_candles(CANDLE_FIXTURE["market"], CANDLE_FIXTURE["candles"])
+    games = pd.DataFrame(
+        {
+            "game_id": ["KXNFLGAME-26AUG29CHITEN"],
+            "kickoff": [pd.Timestamp("2026-08-30 00:00:00")],
+        }
+    )
+    close = closing_line(lines, games)
+    # The honest close is the last candle strictly before kickoff (23:59) —
+    # the 00:00:00 candle stamps AT kickoff and is excluded.
+    assert len(close) == 1
+    assert close.loc[0, "timestamp"] == pd.Timestamp("2026-08-29 23:59:00")
+    assert close.loc[0, "price"] == -809
+
+
+def test_ladder_candles_emit_both_sides_with_derived_no_ask() -> None:
+    market = {
+        "ticker": "KXNFLSPREAD-26SEP14DENKC-KC7",
+        "status": "settled",
+        "floor_strike": 6.5,
+    }
+    candles = {
+        "candlesticks": [
+            {
+                "end_period_ts": 1788040800,
+                "yes_ask": {"close_dollars": "0.3600"},
+                "yes_bid": {"close_dollars": "0.3400"},
+            },
+            {
+                "end_period_ts": 1788040860,
+                "yes_ask": {"close_dollars": "0.3700"},
+                "yes_bid": {"close_dollars": "0.3500"},
+            },
+        ]
+    }
+    lines = normalize_kalshi_candles(market, candles)
+    Lines.validate(lines)
+    assert len(lines) == 4  # 2 candles x 2 sides
+    rows = {(r.side, r.point, r.timestamp): r.price for r in lines.itertuples()}
+    t0 = pd.Timestamp("2026-08-29 22:00:00")
+    assert rows[("KC", -6.5, t0)] == 178  # yes-ask $0.36
+    # NO ask reconstructed as 1 − yes-bid: $0.66 → −194.
+    assert rows[("DEN", 6.5, t0)] == -194
+
+
+def test_historical_candle_field_names_also_parse() -> None:
+    # The /historical archive drops the ``_dollars`` suffix (probe 2026-09-09).
+    market = {"ticker": "KXNFLGAME-25SEP29CINDEN-DEN", "floor_strike": None}
+    candles = {
+        "candlesticks": [
+            {
+                "end_period_ts": 1759190400,
+                "yes_ask": {"close": "0.4700"},
+                "yes_bid": {"close": "0.4500"},
+            }
+        ]
+    }
+    lines = normalize_kalshi_candles(market, candles)
+    assert len(lines) == 1
+    assert lines.loc[0, "price"] == 113  # yes-ask $0.47 → +112.8 → +113

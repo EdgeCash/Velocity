@@ -179,3 +179,21 @@ snapshot from the archive.
 - The repo is public: **no paid odds/props data in git, ever** (ToS + edge leak).
   Snapshots live only in private Actions artifacts.
 - If a key is ever exposed (e.g. pasted into a chat), rotate it with the provider.
+
+## Exchange collectors (Kalshi + Polymarket — free, keyless)
+
+The prediction-exchange feeds (docs/BUILD_EXCHANGES.md) need no secrets — market
+data on both venues is unauthenticated — but the storage policy is *stricter*
+than the paid feeds', not looser: Kalshi's Developer Agreement permits storing
+API data only to facilitate your own trading and bars sharing it in any manner,
+so exchange data lives **only** in private Actions artifacts, is never
+committed, and is never redistributed (BUILD_EXCHANGES.md D7). Unlike The Odds
+API there is no vendor archive to re-pull everything from, so the artifacts
+*are* the record:
+
+| Collector | Workflow | Cadence | Banks |
+|---|---|---|---|
+| `scripts/collect_kalshi.py` | `collect-exchanges.yml` | hourly (:10) | Kalshi board: raw `/markets` JSON + normalized `Lines`/`PropLines` parquet, tagged `snapshot`/`collected_at`/`league` |
+| `scripts/collect_polymarket_raw.py` | `collect-exchanges.yml` | hourly (:10) | Raw Polymarket events + CLOB order books (no history exists upstream — every missed hour is spread history lost) |
+| `scripts/collect_kalshi_candles.py` | `collect-kalshi-candles.yml` | daily 12:00 UTC | Settled-market candles (1-min pre-close + hourly life) raw, plus normalized close rows |
+| `scripts/consolidate_exchanges.py` | `consolidate-exchanges.yml` | weekly Mon | Rolls all exchange parquet into one long-lived archive artifact before the 90-day per-run retention expires |
