@@ -15,7 +15,9 @@ rows meet anyone else's:
    (:func:`~velocity.wagering.live.exchange_aliases`), rewriting sides and the
    events frame together,
 3. re-key its games onto the sportsbook board's ids by team pair and kickoff
-   (:func:`~velocity.wagering.live.align_game_ids`).
+   (:func:`~velocity.wagering.live.align_game_ids`), matching against a
+   canonicalized *copy* of that board (:func:`canonical_base_events`) — the
+   slate itself keeps the sportsbook's own team names.
 
 Afterwards every row speaks the same team and game language, so the boards
 concatenate and ``shop_best_prices`` compares a sportsbook and an exchange on
@@ -64,16 +66,17 @@ def kalshi_board(
     if winner is None:
         return _empty_lines(), {"games": 0, "lines": 0}
 
+    known = list(known_teams)
     frames = [
         kalshi_ingest.normalize_kalshi_markets(payload, timestamp) for payload in payloads.values()
     ]
     lines = pd.concat(frames, ignore_index=True) if frames else _empty_lines()
     events = kalshi_ingest.extract_kalshi_events(winner)
     aliases = exchange_aliases(
-        kalshi_ingest.team_names_by_code(winner), known_teams, kalshi_ingest.NFL_CODE_FIXUPS
+        kalshi_ingest.team_names_by_code(winner), known, kalshi_ingest.NFL_CODE_FIXUPS
     )
     lines, events = apply_team_aliases(lines, events, aliases)
-    lines, events = align_game_ids(lines, events, base_events)
+    lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
     return lines, {"games": len(events), "lines": len(lines)}
 
 
@@ -85,12 +88,47 @@ def polymarket_board(
     timestamp: Any,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Polymarket's events + books → lines re-keyed onto ``base_events``' game ids."""
+    known = list(known_teams)
     lines = pm_ingest.normalize_polymarket_events(events_payload, books, timestamp)
     events = pm_ingest.extract_polymarket_events(events_payload)
-    aliases = exchange_aliases(pm_ingest.team_names_by_code(events_payload), known_teams)
+    aliases = exchange_aliases(pm_ingest.team_names_by_code(events_payload), known)
     lines, events = apply_team_aliases(lines, events, aliases)
-    lines, events = align_game_ids(lines, events, base_events)
+    lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
     return lines, {"games": len(events), "lines": len(lines)}
+
+
+def canonical_base_events(
+    base_events: pd.DataFrame, known_teams: Iterable[str]
+) -> pd.DataFrame:
+    """The sportsbook board's teams in rating keys — a copy, for matching only.
+
+    The Odds API writes teams out in full ("Kansas City Chiefs", "Georgia
+    Bulldogs") and the slate deliberately leaves them that way: projection
+    resolves provider names through its own alias map rather than rewriting
+    the board. By the time an exchange board reaches
+    :func:`~velocity.wagering.live.align_game_ids` it has already been
+    canonicalized to the model's rating keys, so the two sides of that merge
+    speak different languages — ``"KC"`` against ``"Kansas City Chiefs"``
+    matches nothing, every exchange row is dropped, and the venue reports an
+    empty board with no error to show for it. That is a silent failure, which
+    is the worst kind: the slate still prints, just without a single exchange
+    price on it.
+
+    So the base frame is canonicalized the same way here, on a private copy
+    that never leaves this module. A board already keyed by rating keys passes
+    through unchanged, and a name that resolves to nothing is dropped — it can
+    only ever have matched by accident.
+    """
+    if base_events.empty:
+        return base_events
+    names = set(base_events["home_team"].astype(str)) | set(
+        base_events["away_team"].astype(str)
+    )
+    aliases = exchange_aliases({name: name for name in names}, known_teams)
+    out = base_events.copy()
+    for column in ("home_team", "away_team"):
+        out[column] = out[column].astype(str).map(aliases)
+    return out.dropna(subset=["home_team", "away_team"]).reset_index(drop=True)
 
 
 def combine(base_lines: pd.DataFrame, *venue_lines: pd.DataFrame) -> pd.DataFrame:

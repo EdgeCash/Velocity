@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from velocity.eval.ladders import (
+    DEFAULT_TOLERANCE,
     OFFSET_ERROR,
     offset_error,
     offset_is_honest,
@@ -65,7 +66,7 @@ def test_nfl_spreads_fail_the_gate_where_ncaaf_spreads_pass() -> None:
     # NCAAF spreads are comfortably inside tolerance at the same distance.
     assert offset_error("ncaaf", "spread", 4.5) < 0.02
     assert offset_is_honest("ncaaf", "spread", 4.5)
-    # Deep out, a normal's own mass is small and it recovers.
+    # Deep out, a normal's own mass is small and the absolute miss recovers.
     assert offset_is_honest("nfl", "spread", 17.5)
 
 
@@ -74,10 +75,31 @@ def test_markets_without_a_number_are_never_gated() -> None:
     assert offset_is_honest("nfl", "moneyline", 0.0)
     # Team totals borrow the game total's shape.
     assert offset_error("nfl", "team_total_home", 3.5) == offset_error("nfl", "total", 3.5)
-    # An unmeasured league says so rather than guessing, and the caller decides.
+    # An unmeasured league says so rather than guessing, and unknown is not
+    # safe: nothing has ever checked this shape, so the rung is refused.
     assert offset_error("mlb", "spread", 3.5) is None
-    assert offset_is_honest("mlb", "spread", 3.5)
-    assert not offset_is_honest("mlb", "spread", 3.5, unmeasured_is_honest=False)
+    assert not offset_is_honest("mlb", "spread", 3.5)
+    assert offset_is_honest("mlb", "spread", 3.5, unmeasured_is_honest=True)
+
+
+def test_the_deep_tail_is_measured_rather_than_assumed_innocent() -> None:
+    # The gate's original table stopped at 20.5 and waved everything past it
+    # through, on the argument that the error out there was small and
+    # shrinking. It is not shrinking: NFL totals plateau around a point of
+    # probability all the way out, more than half the tolerance, and the sign
+    # has flipped by then — the real tail is FATTER than the fitted normal, so
+    # the miss is no longer in the direction the shoulders taught us to expect.
+    deep = [OFFSET_ERROR[("nfl", "total")][off] for off in (20.5, 22.5, 24.5, 26.5, 28.5)]
+    assert min(deep) > 0.006
+    assert max(deep) < DEFAULT_TOLERANCE
+    # NCAAF totals actually get WORSE past the old table's end.
+    table = OFFSET_ERROR[("ncaaf", "total")]
+    assert table[25.5] > table[15.5]
+    # And past the end of the measurement there is no opinion to have, so the
+    # rung is refused — an EV maximizer finds an ungated region precisely
+    # because it is ungated.
+    assert offset_error("nfl", "total", 40.5) is None
+    assert not offset_is_honest("nfl", "total", 40.5)
 
 
 def test_offset_is_measured_from_the_fair_line_on_either_side(projection) -> None:

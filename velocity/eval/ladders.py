@@ -13,12 +13,24 @@ the same standard deviation therefore *overstates* the chance of landing past
 any threshold, on both sides at once. For NFL spreads that overstatement is
 2.0–3.7 points of probability from half a point out to thirteen.
 
-That is the dangerous direction. The sim thinks every rung away from the fair
-line is likelier than it is, so it wants to buy them — and an error of three
-points swamps the two-point edge the slate bets on. What the plan expected
-(trouble concentrated at the key numbers 3 and 7) is not what the data shows:
-the bias is broad and one-signed, worst in the shoulders and fading only in
-the deep tail where a normal's own mass is small.
+That is the dangerous direction near the line. The sim thinks a rung in the
+shoulders is likelier than it is, so it wants to buy it — and an error of
+three points swamps the two-point edge the slate bets on. What the plan
+expected (trouble concentrated at the key numbers 3 and 7) is not what the
+data shows: the bias is broad, worst in the shoulders.
+
+It does **not** stay one-signed, and it does not fade away. Past roughly
+fifteen points the sign flips — the real tail is *fatter* than the fitted
+normal, not thinner — and the absolute error then plateaus rather than
+shrinking: NFL totals sit at 1.0-1.3 points from 20.5 out to 28.5, and NCAAF
+totals climb from 0.8 at 15.5 to 1.5 at 25.5. An earlier version of this
+module stopped measuring at 20.5 and let anything past it through on the
+argument that the error out there "was already small and shrinking". The
+measurement above says otherwise, and the first live exchange board bet
+straight into that unexamined region — every qualifying rung on it was 15 to
+22 points out, because the gate had blocked everything nearer the line. So
+the tables now run to 28.5 and a rung past their end is refused rather than
+assumed innocent.
 
 So the gate is empirical rather than a key-number rule. :data:`OFFSET_ERROR`
 records, per league and market, the worst probability error a normal makes at
@@ -60,32 +72,37 @@ OFFSET_ERROR: Mapping[tuple[str, str], Mapping[float, float]] = {
         5.5: 0.0335, 6.5: 0.0326, 7.5: 0.0313, 8.5: 0.0245, 9.5: 0.0219,
         10.5: 0.0235, 11.5: 0.0245, 12.5: 0.0202, 13.5: 0.0201, 14.5: 0.0161,
         15.5: 0.0117, 16.5: 0.0095, 17.5: 0.0059, 18.5: 0.0065, 19.5: 0.0068,
-        20.5: 0.0060,
+        20.5: 0.0060, 21.5: 0.0067, 22.5: 0.0081, 23.5: 0.0075, 24.5: 0.0064,
+        25.5: 0.0049, 26.5: 0.0055, 27.5: 0.0052, 28.5: 0.0046,
     },
-    # n=4096, residual sd 13.20
+    # n=4096 completed games, residual sd 13.20
     ("nfl", "total"): {
         0.5: 0.0299, 1.5: 0.0297, 2.5: 0.0288, 3.5: 0.0335, 4.5: 0.0317,
         5.5: 0.0303, 6.5: 0.0302, 7.5: 0.0267, 8.5: 0.0206, 9.5: 0.0165,
         10.5: 0.0109, 11.5: 0.0087, 12.5: 0.0093, 13.5: 0.0109, 14.5: 0.0148,
         15.5: 0.0147, 16.5: 0.0164, 17.5: 0.0162, 18.5: 0.0151, 19.5: 0.0147,
-        20.5: 0.0134,
+        20.5: 0.0134, 21.5: 0.0129, 22.5: 0.0109, 23.5: 0.0106, 24.5: 0.0102,
+        25.5: 0.0099, 26.5: 0.0092, 27.5: 0.0084, 28.5: 0.0065,
     },
-    # n=11683, residual sd 15.52 (the sim uses 17.0 — over-dispersed, and a
-    # separate finding from this gate's)
+    # n=11972 completed games, residual sd 15.54 (the sim uses 18.2 — deliberately wider than the
+    # residual around the market close, which is a sharper expectation than
+    # the model's own)
     ("ncaaf", "spread"): {
-        0.5: 0.0193, 1.5: 0.0191, 2.5: 0.0160, 3.5: 0.0144, 4.5: 0.0159,
-        5.5: 0.0142, 6.5: 0.0150, 7.5: 0.0134, 8.5: 0.0113, 9.5: 0.0109,
-        10.5: 0.0137, 11.5: 0.0113, 12.5: 0.0088, 13.5: 0.0076, 14.5: 0.0093,
-        15.5: 0.0077, 16.5: 0.0056, 17.5: 0.0061, 18.5: 0.0048, 19.5: 0.0027,
-        20.5: 0.0026,
+        0.5: 0.0191, 1.5: 0.0188, 2.5: 0.0155, 3.5: 0.0143, 4.5: 0.0160,
+        5.5: 0.0137, 6.5: 0.0148, 7.5: 0.0131, 8.5: 0.0109, 9.5: 0.0103,
+        10.5: 0.0132, 11.5: 0.0111, 12.5: 0.0087, 13.5: 0.0074, 14.5: 0.0094,
+        15.5: 0.0077, 16.5: 0.0062, 17.5: 0.0063, 18.5: 0.0052, 19.5: 0.0031,
+        20.5: 0.0028, 21.5: 0.0033, 22.5: 0.0027, 23.5: 0.0026, 24.5: 0.0034,
+        25.5: 0.0032, 26.5: 0.0027, 27.5: 0.0014, 28.5: 0.0012,
     },
-    # n=11683, residual sd 16.23
+    # n=11684 completed games, residual sd 16.24
     ("ncaaf", "total"): {
-        0.5: 0.0282, 1.5: 0.0258, 2.5: 0.0244, 3.5: 0.0241, 4.5: 0.0250,
-        5.5: 0.0269, 6.5: 0.0248, 7.5: 0.0235, 8.5: 0.0236, 9.5: 0.0220,
+        0.5: 0.0282, 1.5: 0.0258, 2.5: 0.0243, 3.5: 0.0241, 4.5: 0.0249,
+        5.5: 0.0269, 6.5: 0.0247, 7.5: 0.0235, 8.5: 0.0236, 9.5: 0.0220,
         10.5: 0.0182, 11.5: 0.0155, 12.5: 0.0110, 13.5: 0.0090, 14.5: 0.0074,
         15.5: 0.0079, 16.5: 0.0080, 17.5: 0.0075, 18.5: 0.0094, 19.5: 0.0102,
-        20.5: 0.0109,
+        20.5: 0.0109, 21.5: 0.0119, 22.5: 0.0119, 23.5: 0.0132, 24.5: 0.0142,
+        25.5: 0.0146, 26.5: 0.0140, 27.5: 0.0126, 28.5: 0.0116,
     },
 }
 
@@ -184,15 +201,18 @@ def offset_is_honest(
     offset: float,
     *,
     tolerance: float = DEFAULT_TOLERANCE,
-    unmeasured_is_honest: bool = True,
+    unmeasured_is_honest: bool = False,
 ) -> bool:
     """Whether the sim's shape is trustworthy this far from the fair line.
 
     ``unmeasured_is_honest`` decides what an offset beyond the measured table
-    means. It defaults to ``True`` because the table runs out where a normal's
-    own mass does — deep tails, where the measured error was already small and
-    shrinking — and refusing everything past it would silently drop the whole
-    far ladder.
+    means. It defaults to ``False``, matching what :func:`offset_error` says a
+    ``None`` is: unknown, not safe. The tables reach 28.5 points, well past
+    where a football game realistically lands, and the error there is not
+    small enough to extrapolate to zero — so a rung beyond the end is one
+    nothing has ever checked, and an EV maximizer will find it precisely
+    because nothing has. Pass ``True`` to measure how much the end of the
+    table is costing rather than to bet past it.
     """
     error = offset_error(league, market, offset)
     if error is None:
