@@ -206,8 +206,8 @@ def _build_projection(
         # failed forecast fetch just leaves totals unadjusted.
         model: object = rest_model
         try:
-            if args.snapshot_file:  # offline runs (tests/CI) skip the network
-                raise RuntimeError("offline snapshot run")
+            if args.offline:  # a true no-network run (tests/CI)
+                raise RuntimeError("offline run")
             from velocity.backtest.lab import WeatherAdjustedModel
             from velocity.features.weather import forecast_frame
 
@@ -483,6 +483,10 @@ def build_parser() -> argparse.ArgumentParser:
     # implied totals) but no >52.4% over-rate on *derived* numbers, so the
     # disagreement gate defaults to off — the EV gate still applies, and the
     # threshold gets calibrated once banked team-total closes accumulate.
+    parser.add_argument("--offline", action="store_true",
+                        help="make no network calls at all (test and CI runs). Distinct from "
+                             "--snapshot-file, which only means the sportsbook board comes "
+                             "from a banked payload rather than a fresh, credit-spending pull.")
     parser.add_argument("--exchanges", action=argparse.BooleanOptionalAction, default=False,
                         help="also price the Kalshi and Polymarket boards alongside the "
                              "sportsbooks (free, keyless; docs/BUILD_EXCHANGES.md E6). "
@@ -677,7 +681,10 @@ def main() -> None:
     # game ids so every venue's price for a game is shopped together
     # (docs/BUILD_EXCHANGES.md E6). Best-effort: a venue that fails is
     # reported and skipped, exactly like the team-totals fetch above.
-    if args.exchanges and not args.snapshot_file and args.league in ("nfl", "ncaaf"):
+    # A banked sportsbook board does not imply an offline run: both exchanges
+    # are free and keyless, so they are pulled even when --snapshot-file
+    # supplies the book side. --offline is the switch that means "no network".
+    if args.exchanges and not args.offline and args.league in ("nfl", "ncaaf"):
         from velocity.ingest.exchanges import fetch_exchange_board
 
         exchange_lines, venue_notes = fetch_exchange_board(
@@ -688,7 +695,7 @@ def main() -> None:
         if not exchange_lines.empty:
             lines = pd.concat([lines, exchange_lines], ignore_index=True)
     elif args.exchanges:
-        print("exchanges: skipped (offline snapshot run, or league without an exchange board)")
+        print("exchanges: skipped (--offline, or a league with no exchange board)")
 
     n_board = len(events)
     if args.max_days > 0 and not events.empty:

@@ -79,7 +79,7 @@ def test_prop_slate_end_to_end(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--league", "nfl", "--data", "datasets/nfl",
-         "--snapshot-file", str(SNAPSHOT), "--fp-projections", str(fp_path),
+         "--offline", "--snapshot-file", str(SNAPSHOT), "--fp-projections", str(fp_path),
          "--prop-lines-file", str(lines_path), "--bp-props-file", str(bp_path),
          "--n-sims", "2000", "--max-days", "0",
          "--min-edge", "0.0", "--out", str(out)],
