@@ -38,6 +38,10 @@ on:
         description: "Stamp matchup cards with n/total slide badges (post as one thread)"
         required: false
         default: "false"
+      exchanges:
+        description: "Also price the Kalshi and Polymarket boards (football only, paper)"
+        required: false
+        default: "false"
 
 concurrency:
   group: live-slate
@@ -201,6 +205,13 @@ jobs:
             fi
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"
+            fi
+            # Exchange boards ride alongside the sportsbooks for football only
+            # (docs/BUILD_EXCHANGES.md E6). Off by default: the pull adds a
+            # couple of minutes a league and the ladder gate is new.
+            if [ "${{ github.event.inputs.exchanges || 'false' }}" = "true" ] \
+               && { [ "${league}" = "nfl" ] || [ "${league}" = "ncaaf" ]; }; then
+              EXTRA="$EXTRA --exchanges"
             fi
             python scripts/run_live_slate.py \
               --league "${league}" \
