@@ -53,6 +53,14 @@ so they describe outcome shape given a sharp expectation. The sim's own
 residual is around *its* projection, which is at best as sharp; if it is less
 sharp its residuals are wider and this leptokurtosis is diluted. That makes
 the gate conservative, not permissive — the right way to be wrong.
+
+The fix at the source was tried (docs/MODEL_LAB.md, the sim-shape round): the
+sim can draw from the model's own banked residual pairs instead of a normal
+(:mod:`velocity.models.residuals`). Measured around the model's μ it trims
+the spread shoulder error by a tenth and costs moneyline calibration, so it
+is not the default and this gate stays. What that round did remove was a
+level bias worth two-thirds of the totals error — which no shape gate could
+have seen.
 """
 
 from __future__ import annotations

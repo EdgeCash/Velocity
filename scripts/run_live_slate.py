@@ -36,7 +36,14 @@ from velocity.intel.publish import (
 )
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
-from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL, SimConfig
+from velocity.models.simulate import (
+    DEFAULT_SD_MARGIN,
+    DEFAULT_SD_TOTAL,
+    FOOTBALL_SD_SLOPES,
+    NCAAF_SD_MARGIN,
+    NCAAF_SD_TOTAL,
+    SimConfig,
+)
 from velocity.report.slate_xlsx import (
     export_slate_workbook,
     plays_display,
@@ -265,7 +272,25 @@ def _build_projection(
                   f"{len(changes)} changed from the fit's own detection")
             for line in changes + notes:
                 print(f"  {line}")
-        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))  # type: ignore[arg-type]
+        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=football_sim_config("nfl", args)))  # type: ignore[arg-type]
+        # The scoring level, fitted through the model (velocity.models.level):
+        # the QB decomposition prices each team with its starter's passer
+        # effect, and starters throw above the play-weighted intercept the
+        # deviations were centered on — every projected total ran ~2.3 pts
+        # high over fifteen walk-forward seasons. Shift base_points so the
+        # training window's mean projected total matches what it scored.
+        if resolve_nfl_level(args.nfl_level) == "fit":
+            from velocity.models.level import calibrate_level, level_shift
+
+            # The trailing two seasons (docs/MODEL_LAB.md, the sim-shape
+            # round): the whole four-season window lagged the era by +0.7.
+            window = load_games(_find_games(folder), league="nfl")
+            window = window[window["season"] >= cutoff]
+            shift = level_shift(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
+            nfl_model = calibrate_level(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
+            kind += f", level {nfl_model.config.base_points:.2f} ({shift:+.2f} vs 22.5)"
+            print(f"NFL level: base {nfl_model.config.base_points:.2f} pts/team "
+                  f"(the fit ran {shift:+.2f} vs the constant on {len(window)} games)")
 
         # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
         # top of the fit — small, consistent across every tested grid.
@@ -314,7 +339,7 @@ def _build_projection(
     # historical margin/total sigmas — content-surface defaults, honest but
     # not yet lab-tuned (their datasets carry no closing lines to tune on).
     sims = {
-        "ncaaf": SimConfig(sd_margin=NCAAF_SD_MARGIN, sd_total=NCAAF_SD_TOTAL, n_sims=args.n_sims),
+        "ncaaf": football_sim_config("ncaaf", args),
         "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
@@ -323,7 +348,7 @@ def _build_projection(
         # (docs/BUILD_NHL.md) — goals are MLB-like low-scoring counts.
         "nhl": SimConfig(sd_margin=2.6, sd_total=2.3, n_sims=args.n_sims),
     }
-    sim = sims.get(args.league, SimConfig(n_sims=args.n_sims))
+    sim = sims.get(args.league, football_sim_config("nfl", args))
     # NCAAF: λ=10 promoted by the college lab; MLB: λ=100 promoted by the
     # summer lab (docs/MODEL_LAB.md MLB Round 1 — heavy shrinkage wins in a
     # league whose true team spread is small). WNBA: recency half-life 8
@@ -500,6 +525,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
+    parser.add_argument("--nfl-level", choices=["fit", "constant"], default=None,
+                        help="NFL scoring level: fitted through the model on the training "
+                             "window, or the 22.5 constant (default: fit)")
+    parser.add_argument("--sim-shape", choices=["normal", "empirical"], default=None,
+                        help="football sim draw: bivariate normal, or the banked "
+                             "walk-forward residual pool (default: the gate's pick per league)")
+    parser.add_argument("--sim-dispersion", choices=["constant", "sloped"], default=None,
+                        help="football sim sd: one per league, or moving with the "
+                             "expected total (default: the gate's pick per league)")
     parser.add_argument("--min-edge", type=float, default=0.02)
     # Market anchoring (docs/MODEL_LAB.md Round 3): the NFL close's Brier beats
     # every pure model in this family, so the belief used for gating and Kelly
@@ -761,6 +795,9 @@ def live_config_rows(
     paper = resolve_paper_markets(args)
     rows.append(("Paper", "every market — content + CLV posture" if "__all__" in paper
                  else ("team totals" if paper else "none")))
+    if args.league in FOOTBALL_SDS:
+        rows.append(("Simulation", describe_sim(football_sim_config(args.league, args),
+                                                args.league)))
     rows.append(("De-vig", f"{args.devig_anchor} anchor, multiplicative"))
     rows.append(("Staking", "¼-Kelly, 5% per bet, 10% per game, 25% per slate, "
                             "one market class ≤ half the slate"))
@@ -768,6 +805,78 @@ def live_config_rows(
         rows.append(("Exchange rungs", f"E8 shape gate at {cfg.ladder_tolerance:g} "  # type: ignore[attr-defined]
                                        "probability error; taker fees charged"))
     return rows
+
+
+# The sim's shape and dispersion per football league (docs/SYSTEM_REVIEW.md
+# §2, M1). "normal" is the bivariate normal the sim always drew; "empirical"
+# draws residual pairs from the banked walk-forward pool
+# (datasets/{league}/sim_residuals.parquet). "constant" holds one sd per
+# league; "sloped" moves it with the expected total. Both measured through
+# the sim-shape gate (scripts/sim_lab.py, docs/MODEL_LAB.md) and neither
+# promoted: the empirical draw trades a little spread shape for moneyline
+# calibration (NFL) or totals shape (NCAAF), and the slope hurts totals in
+# aggregate. The switches stay for the next round; the defaults are the
+# gated sim.
+DEFAULT_SIM_SHAPE_BY_LEAGUE = {"nfl": "normal", "ncaaf": "normal"}
+DEFAULT_SIM_DISPERSION_BY_LEAGUE = {"nfl": "constant", "ncaaf": "constant"}
+FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
+                "ncaaf": (NCAAF_SD_MARGIN, NCAAF_SD_TOTAL)}
+
+
+# The NFL scoring level: "fit" shifts base_points through the model on the
+# training window (velocity.models.level); "constant" is the 22.5 the model
+# always assumed. Moves to "fit" only with the lab table (docs/MODEL_LAB.md).
+DEFAULT_NFL_LEVEL = "fit"
+NFL_LEVEL_SEASONS = 2
+
+
+def resolve_nfl_level(explicit: str | None) -> str:
+    return explicit or DEFAULT_NFL_LEVEL
+
+
+def resolve_sim_shape(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_SIM_SHAPE_BY_LEAGUE.get(league, "normal")
+
+
+def resolve_sim_dispersion(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_SIM_DISPERSION_BY_LEAGUE.get(league, "constant")
+
+
+def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
+    """The football sim for this run: league sds, shape, dispersion, size.
+
+    An empirical shape with no committed pool falls back to the normal and
+    says so — a missing bank is a build gap, never a silent change of sim.
+    """
+    from velocity.models.residuals import load_residual_pool
+
+    sd_margin, sd_total = FOOTBALL_SDS.get(league, (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL))
+    kwargs: dict[str, object] = {
+        "n_sims": args.n_sims, "sd_margin": sd_margin, "sd_total": sd_total,
+    }
+    if resolve_sim_dispersion(getattr(args, "sim_dispersion", None), league) == "sloped":
+        slope_m, slope_t, anchor = FOOTBALL_SD_SLOPES.get(league, (0.0, 0.0, 0.0))
+        if anchor > 0:
+            kwargs.update(sd_margin_slope=slope_m, sd_total_slope=slope_t,
+                          sd_anchor_total=anchor)
+    if resolve_sim_shape(getattr(args, "sim_shape", None), league) == "empirical":
+        pool = load_residual_pool(league)
+        if pool is None:
+            print(f"no residual pool banked for {league}; simulating with the normal")
+        else:
+            kwargs["residuals"] = pool
+    return SimConfig(**kwargs)  # type: ignore[arg-type]
+
+
+def describe_sim(config: SimConfig, league: str) -> str:
+    """The Methods row: what shape and width this run simulated with."""
+    shape = ("normal" if config.residuals is None
+             else f"empirical ({len(config.residuals)} banked residual pairs)")
+    width = f"σ {config.sd_margin:g} margin / {config.sd_total:g} total"
+    if config.sd_total_slope or config.sd_margin_slope:
+        width += (f", {config.sd_total_slope:+.3f}/pt of expected total "
+                  f"around {config.sd_anchor_total:.0f}")
+    return f"{shape} · {width} · {config.n_sims:,} sims"
 
 
 def resolve_paper(explicit: bool | None, league: str) -> bool:
@@ -803,7 +912,7 @@ def resolve_model_weight(explicit: float | None, league: str) -> float:
 
 def ncaaf_base_points(games: pd.DataFrame, seasons: int = 2) -> float:
     """The NCAAF blend's per-team scoring level: half the trailing-two-season
-    mean total.
+    mean total (:func:`velocity.models.level.mean_points_per_team`).
 
     Replaces the hardcoded 28.5, a level constant from the pre-2023-clock-rules
     regime: college totals dropped ~4 points per game after the rule change
@@ -812,11 +921,9 @@ def ncaaf_base_points(games: pd.DataFrame, seasons: int = 2) -> float:
     totals filter to 22 overs of 25 fired. The blend's *ratings* (offense/defense
     deviations) are unaffected; only the level they hang from tracks the data.
     """
-    recent = games[games["season"] >= int(games["season"].max()) - (seasons - 1)]
-    played = recent.dropna(subset=["home_score", "away_score"])
-    if played.empty:  # degenerate frame — fall back to the historic constant
-        return 28.5
-    return float((played["home_score"] + played["away_score"]).mean()) / 2.0
+    from velocity.models.level import mean_points_per_team
+
+    return mean_points_per_team(games, seasons, fallback=28.5)
 
 
 def resolve_prop_min_edge(explicit: float | None, min_edge: float) -> float:

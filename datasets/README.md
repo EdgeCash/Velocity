@@ -62,6 +62,13 @@ evaluation.
   (`scripts/pull_cfbd_lines.py`), the primary NCAAF backtest input.
 - `ncaaf/boxscores_2002_2025.parquet` — 2002–2025 box scores (no lines), longer
   projection-only history. See `docs/BACKTEST_NCAAF.md`.
+- `nfl/sim_residuals.parquet`, `ncaaf/sim_residuals.parquet` — the shipped
+  model's walk-forward residuals (actual − projected margin and total, one
+  row per out-of-sample game), the pool the live sim's empirical draw
+  samples from (`velocity/models/residuals.py`). Rebuilt by
+  `scripts/build_sim_residuals.py` from a `scripts/model_lab.py` projections
+  frame; derived from final scores and our own projections, so no odds data.
+  See `docs/MODEL_LAB.md` (the sim-shape round) and `docs/SYSTEM_REVIEW.md` §2.
 
 ## Adding your files
 

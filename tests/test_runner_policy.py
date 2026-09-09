@@ -142,3 +142,34 @@ def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
     nhl = runner.build_parser().parse_args(["--league", "nhl"])
     nhl_rows = dict(runner.live_config_rows(nhl, "goalie decomposition", None))
     assert "every market" in nhl_rows["Paper"]
+
+
+def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
+    """The M1 round's promotions (docs/MODEL_LAB.md): flags override, defaults pin."""
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl"])
+    assert args.nfl_level is None and args.sim_shape is None and args.sim_dispersion is None
+    assert runner.resolve_nfl_level(None) == runner.DEFAULT_NFL_LEVEL == "fit"
+    assert runner.NFL_LEVEL_SEASONS == 2
+    assert runner.resolve_nfl_level("constant") == "constant"
+    for league in ("nfl", "ncaaf"):
+        assert runner.resolve_sim_shape(None, league) == runner.DEFAULT_SIM_SHAPE_BY_LEAGUE[league]
+        assert (runner.resolve_sim_dispersion(None, league)
+                == runner.DEFAULT_SIM_DISPERSION_BY_LEAGUE[league])
+    assert runner.resolve_sim_shape("empirical", "nfl") == "empirical"
+    assert runner.resolve_sim_shape(None, "mlb") == "normal"
+    # The Methods row says what the sim did, in the run's own words.
+    rows = dict(runner.live_config_rows(args, "QB-adjusted recency EPA", None))
+    assert "Simulation" in rows and "sims" in rows["Simulation"]
+    assert "σ 13 margin / 13.6 total" in rows["Simulation"]
+
+
+def test_an_empirical_sim_without_a_bank_falls_back_to_the_normal(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from velocity.models import residuals
+
+    monkeypatch.setattr(residuals, "DATASETS", tmp_path)
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "ncaaf", "--sim-shape", "empirical"])
+    cfg = runner.football_sim_config("ncaaf", args)
+    assert cfg.residuals is None and cfg.sd_margin == 18.2
+    assert runner.describe_sim(cfg, "ncaaf").startswith("normal")

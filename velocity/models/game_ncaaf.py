@@ -31,7 +31,7 @@ import pandas as pd
 from velocity.features.priors import shrink_to_prior
 from velocity.features.team import TeamRatings, matchup_pace
 from velocity.models.game_nfl import GameProjection
-from velocity.models.simulate import SimConfig, simulate_game
+from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL, SimConfig, simulate_game
 from velocity.util.seed import make_rng
 
 DEFAULT_NCAAF_BASE_POINTS = 27.0
@@ -48,7 +48,7 @@ class NCAAFModelConfig:
     league_pace: float = DEFAULT_NCAAF_LEAGUE_PACE
     prior_strength: float = 6.0
     sim: SimConfig = field(
-        default_factory=lambda: SimConfig(sd_margin=16.0, sd_total=12.0)
+        default_factory=lambda: SimConfig(sd_margin=NCAAF_SD_MARGIN, sd_total=NCAAF_SD_TOTAL)
     )
 
 
