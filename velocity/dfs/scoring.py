@@ -14,6 +14,10 @@ Pure functions of frames; offline-testable.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
+import numpy as np
 import pandas as pd
 
 # FantasyPros stat key → DK classic points per unit.
@@ -26,6 +30,7 @@ DK_POINTS_PER_STAT = {
     "rush_tds": 6.0,
     "rec": 1.0,  # full PPR
     "receptions": 1.0,
+    "rec_rec": 1.0,  # the live feed's spelling — a receiver's PPR points hung on it
     "rec_yds": 0.1,
     "rec_tds": 6.0,
     "fumbles": -1.0,
@@ -252,3 +257,100 @@ def dk_expected_points_mlb_contextual(
                          "team": str(row.get("team") or ""), "position": "P",
                          "points": round(points, 2)})
     return pd.DataFrame(rows, columns=[*_ID_COLUMNS, "points"])
+
+
+# --- NFL, scored per simulation ---------------------------------------------
+# The linear pass above cannot price a milestone bonus (+3 at 300 pass / 100
+# rush / 100 rec yards): at the mean it overstates every player. On the
+# correlated prop sim's sample arrays the bonus is a probability read off
+# the samples, and the mean of the per-sim score is the bonus-inclusive
+# projection (docs/SYSTEM_REVIEW.md §6.2–6.3). Interceptions and fumbles are
+# not simulated and enter at their FantasyPros means.
+NFL_BONUS = 3.0
+
+
+def nfl_dk_points_from_samples(
+    samples: Mapping[tuple[str, str], np.ndarray],
+    player_key: str,
+    *,
+    interceptions: float = 0.0,
+    fumbles: float = 0.0,
+) -> np.ndarray | None:
+    """Per-sim DK classic points for one player from the prop sim's arrays.
+
+    ``samples`` is :func:`velocity.models.props_football.simulate_team_props`
+    output — ``(player_key, market) → array``. ``None`` when the player has
+    no simulated market at all.
+    """
+    markets = {m: samples.get((player_key, m)) for m in
+               ("pass_yards", "pass_tds", "rush_yards", "receptions",
+                "receiving_yards", "anytime_td")}
+    present = [v for v in markets.values() if v is not None]
+    if not present:
+        return None
+    n = len(present[0])
+    zero = np.zeros(n)
+    pass_yds = markets["pass_yards"] if markets["pass_yards"] is not None else zero
+    rush_yds = markets["rush_yards"] if markets["rush_yards"] is not None else zero
+    rec_yds = markets["receiving_yards"] if markets["receiving_yards"] is not None else zero
+    total = (
+        0.04 * pass_yds + NFL_BONUS * (pass_yds >= 300.0)
+        + 4.0 * (markets["pass_tds"] if markets["pass_tds"] is not None else zero)
+        + 0.1 * rush_yds + NFL_BONUS * (rush_yds >= 100.0)
+        + 1.0 * (markets["receptions"] if markets["receptions"] is not None else zero)
+        + 0.1 * rec_yds + NFL_BONUS * (rec_yds >= 100.0)
+        + 6.0 * (markets["anytime_td"] if markets["anytime_td"] is not None else zero)
+        - 1.0 * interceptions - 1.0 * fumbles
+    )
+    return np.asarray(total, dtype=float)
+
+
+def nfl_sim_points(
+    fp: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    rng: np.random.Generator,
+    config: object | None = None,
+) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+    """Bonus-inclusive expected DK points AND per-sim arrays for one game.
+
+    Returns the scorer-shaped frame (``player_id, player_name, team,
+    position, points``) for every simulated player, and ``name → per-sim
+    points`` for the GPP builder. Players the sim skips (below its volume
+    floors) fall back to the linear scorer in the caller.
+    """
+    from velocity.models.props_football import simulate_team_props, team_player_means
+
+    wide = _wide(fp)
+
+    def _mean(row: Mapping[Any, Any], *keys: str) -> float:
+        for key in keys:
+            value = row.get(key)
+            if value is None:
+                continue
+            number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            if pd.notna(number):
+                return float(number)
+        return 0.0
+
+    means_by_name = {
+        str(r["player_name"]): (_mean(r, "pass_int", "pass_ints"),
+                                _mean(r, "fumbles", "fumbles_lost"))
+        for r in wide.to_dict("records")
+    }
+    rows: list[dict[str, object]] = []
+    arrays: dict[str, np.ndarray] = {}
+    for team in (home_team, away_team):
+        players = team_player_means(fp, team)
+        samples = simulate_team_props(players, rng, config)  # type: ignore[arg-type]
+        for p in players:
+            ints, fum = means_by_name.get(p.name, (0.0, 0.0))
+            pts = nfl_dk_points_from_samples(samples, p.key, interceptions=ints, fumbles=fum)
+            if pts is None:
+                continue
+            arrays[p.name] = pts
+            rows.append({"player_id": p.key, "player_name": p.name, "team": team,
+                         "position": p.position, "points": round(float(pts.mean()), 2)})
+    frame = (pd.DataFrame(rows)[[*_ID_COLUMNS, "points"]] if rows
+             else pd.DataFrame(columns=[*_ID_COLUMNS, "points"]))
+    return frame, arrays

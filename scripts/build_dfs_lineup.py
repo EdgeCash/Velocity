@@ -22,6 +22,7 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -120,6 +121,108 @@ def _contextual_mlb_points() -> pd.DataFrame:
         batters, starters, games, opposing_starter=facing,
         venue_of_team=venue_of_team, lineup_slot=slot_of,
         eligible_batters=eligible, season=season)
+
+
+_DK_TO_FP_TEAM = {"JAX": "JAC", "WAS": "WSH", "LA": "LAR"}
+
+
+def _fp_team(code: str, fp_teams: set[str]) -> str | None:
+    """A DK team code as the FantasyPros frame spells it, or None if absent."""
+    code = str(code).upper()
+    for candidate in (code, _DK_TO_FP_TEAM.get(code, code),
+                      *[k for k, v in _DK_TO_FP_TEAM.items() if v == code]):
+        if candidate in fp_teams:
+            return candidate
+    return None
+
+
+def board_games(board: pd.DataFrame) -> list[tuple[str, str]]:
+    """``(away, home)`` DK codes for every competition on a board ("BUF @ KC")."""
+    games: list[tuple[str, str]] = []
+    for name in board["competition"].dropna().astype(str).unique():
+        parts = [p.strip() for p in name.replace(" vs ", " @ ").split("@")]
+        if len(parts) == 2 and all(parts):
+            games.append((parts[0], parts[1]))
+    return games
+
+
+def latest_run_frame(folder: Path | None, prefix: str) -> pd.DataFrame:
+    """The newest ``{prefix}_*.parquet`` under ``folder`` (recursive), else empty."""
+    if folder is None or not folder.exists():
+        return pd.DataFrame()
+    files = sorted(folder.rglob(f"{prefix}_*.parquet"), key=lambda p: p.name)
+    return pd.read_parquet(files[-1]) if files else pd.DataFrame()
+
+
+def nfl_sim_projections(
+    fp: pd.DataFrame,
+    board: pd.DataFrame,
+    *,
+    projections_dir: Path | None = None,
+    n_sims: int = 10_000,
+) -> tuple[pd.DataFrame, dict[str, np.ndarray]]:
+    """NFL DK points from the correlated prop sim, plus DST, plus per-sim arrays.
+
+    Every player the sim prices gets a bonus-inclusive expectation (the mean
+    of his per-sim DK points; docs/SYSTEM_REVIEW.md §6.2–6.3) and a sample
+    array for the GPP builder; players below the sim's volume floors keep
+    the linear scorer's number. Defenses price from the FantasyPros DST
+    projection plus DK's points-allowed bracket on the opponent's simulated
+    score when the live run's projections are on hand (§6.1).
+    """
+    from velocity.dfs.dst import (
+        dst_expected_points,
+        dst_samples,
+        opponent_scores_from_projections,
+        project_dst,
+    )
+    from velocity.dfs.scoring import dk_expected_points, nfl_sim_points
+    from velocity.models.props_football import FootballPropConfig
+    from velocity.util.seed import make_rng
+
+    rng = make_rng()
+    config = FootballPropConfig(n_sims=n_sims)
+    fp_teams = set(fp["team"].astype(str))
+    frames: list[pd.DataFrame] = []
+    samples: dict[str, np.ndarray] = {}
+    simulated = 0
+    for away, home in board_games(board):
+        fp_home, fp_away = _fp_team(home, fp_teams), _fp_team(away, fp_teams)
+        if fp_home is None or fp_away is None:
+            continue
+        frame, arrays = nfl_sim_points(fp, fp_home, fp_away, rng, config)
+        frames.append(frame)
+        samples.update(arrays)
+        simulated += 1
+    linear = dk_expected_points(fp)
+    if frames:
+        sim_frame = pd.concat(frames, ignore_index=True)
+        rest = linear[~linear["player_name"].isin(set(sim_frame["player_name"]))]
+        points = pd.concat([sim_frame, rest], ignore_index=True)
+    else:
+        points = linear
+
+    opponent_scores: dict[str, np.ndarray] = {}
+    projections = latest_run_frame(projections_dir, "projections_nfl")
+    if not projections.empty:
+        opponent_scores = opponent_scores_from_projections(projections, n_sims, rng)
+    # The projections frame keys teams as the ratings do; DST rows as FP does.
+    keyed = {}
+    for team, scores in opponent_scores.items():
+        fp_code = _fp_team(team, fp_teams)
+        if fp_code is not None:
+            keyed[fp_code] = scores
+    dst_proj = project_dst(fp, keyed)
+    dst_points = dst_expected_points(fp, keyed)
+    if not dst_points.empty:
+        points = pd.concat([points[points["position"].astype(str).str.upper() != "DST"],
+                            dst_points], ignore_index=True)
+        samples.update(dst_samples(dst_proj, keyed, rng, n_sims))
+    sources = {p.pa_source for p in dst_proj}
+    print(f"NFL sim projections: {simulated} games simulated, "
+          f"{len(samples)} players with sample arrays, {len(dst_points)} defenses "
+          f"(points allowed from {', '.join(sorted(sources)) or 'nothing'})")
+    return points, samples
 
 
 def build_showdown_boards(
@@ -222,6 +325,10 @@ def main() -> None:
     parser.add_argument("--gpp-secondary", type=int, default=2,
                         help="MLB GPP: hitters required from a second club "
                              "(the mini-stack; 0 = off)")
+    parser.add_argument("--projections-dir", default=None,
+                        help="a live-slate artifact folder (projections_nfl_*.parquet) "
+                             "for the DST points-allowed bracket")
+    parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--no-showdown", dest="showdown", action="store_false",
                         help="skip the single-game Showdown Captain Mode boards")
     args = parser.parse_args()
@@ -269,12 +376,27 @@ def main() -> None:
     # box scores plus today's probables, park and lineup slot. Best-effort —
     # if a bank or the probables feed is missing, the flat scorer still runs.
     points = None
+    samples: dict[str, np.ndarray] = {}
     if args.league == "mlb":
         try:
             points = _contextual_mlb_points()
             print(f"contextual MLB projections: {len(points)} players")
         except Exception as exc:  # noqa: BLE001 - falls back to the flat scorer
             print(f"contextual projections unavailable ({exc}); using flat rates")
+    elif args.league == "nfl":
+        # The correlated prop sim scores every player per simulation: bonus-
+        # inclusive means for the cash lineup, sample arrays for the GPP
+        # tail, and a defense that is no longer 0.0. Best-effort — the
+        # linear scorer still runs if the sim cannot.
+        try:
+            points, samples = nfl_sim_projections(
+                fp, salaries,
+                projections_dir=Path(args.projections_dir) if args.projections_dir else None,
+                n_sims=args.n_sims,
+            )
+        except Exception as exc:  # noqa: BLE001 - falls back to the linear scorer
+            print(f"NFL sim projections unavailable ({exc}); using the linear scorer")
+            points, samples = None, {}
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -345,14 +467,17 @@ def main() -> None:
             pool = lineup_pool(board, points if points is not None
                                else dk_expected_points(fp))
             portfolio = build_gpp_portfolio(
-                pool, spec=spec, rng=make_rng(),
+                pool, spec=spec, rng=make_rng(), samples=samples or None,
                 config=GppConfig(n_lineups=args.gpp, max_overlap=args.gpp_overlap,
                                  max_exposure=args.gpp_exposure,
                                  mlb_stack=args.gpp_stack,
                                  mlb_secondary=args.gpp_secondary),
             )
+            scored_on = (f"tail-scored on {len(samples)} sample arrays" if samples
+                         else "scored on projected points")
             print(f"GPP portfolio: {len(portfolio.lineups)}/{args.gpp} lineups "
-                  f"({portfolio.n_stacked} stacked of {portfolio.n_candidates} candidates)")
+                  f"({portfolio.n_stacked} stacked of {portfolio.n_candidates} candidates; "
+                  f"{scored_on})")
             if portfolio.lineups:
                 gpp_dest = out / f"dfs_gpp_{args.league}_{stamp}.parquet"
                 portfolio_frame(portfolio).to_parquet(gpp_dest, index=False)
@@ -370,7 +495,8 @@ def main() -> None:
     if lock:
         label = f"{label} · {lock.upper()}"
     source = ("statsapi season rates scored as DK points" if args.league == "mlb"
-              else "FantasyPros consensus scored as DK points")
+              else "FantasyPros consensus, simulated and scored as DK points"
+              if samples else "FantasyPros consensus scored as DK points")
     when = datetime.now(UTC).strftime("%A, %b %-d").upper()
     card_dest = out / f"dfs_{args.league}_{stamp}.png"
     render_dfs_card(run.lineup, card_dest, when=when, slate_label=label,

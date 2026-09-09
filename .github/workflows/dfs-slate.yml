@@ -70,6 +70,18 @@ jobs:
 
       # Football prices from the FantasyPros consensus; MLB from the free
       # statsapi season stats (the FP public tier serves no MLB players).
+      # The live run's game projections (mu_home / mu_away) — the DST
+      # points-allowed bracket prices off the same sim the board did.
+      - name: Fetch the latest live-slate projections
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/previous
+          id=$(gh run list --workflow live-slate.yml --status success \
+              --limit 1 --json databaseId --jq '.[0].databaseId')
+          [ -n "$id" ] && gh run download "$id" --dir "artifacts/previous/$id" || true
+
       - name: Fetch FantasyPros projections
         continue-on-error: true
         env:
@@ -98,6 +110,7 @@ jobs:
               # cash-optimal roster (docs/EDGE_RESEARCH.md §5).
               python scripts/build_dfs_lineup.py \
                 --salaries "$DK_FILE" --fp "$PROJ_FILE" --gpp 20 \
+                --projections-dir artifacts/previous \
                 --out artifacts/slate --league "${league}" || true
             else
               echo "${league}: missing DK salaries or projections; skipping"

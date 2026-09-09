@@ -234,3 +234,29 @@ def test_batting_order_stacks_read_out_for_the_card() -> None:
     ), 50_000, 100.0)
     # A lone bat is a player, not a stack, so TOR and SF do not appear.
     assert lineup.stacks() == ["CIN x4 + STL x2"]
+
+
+def test_stack_seeds_force_a_qb_his_catchers_and_a_bring_back() -> None:
+    from velocity.dfs.gpp import _stack_seeds, opponent_map
+
+    pool = _pool()
+    seeds = _stack_seeds(pool, opponent_map(pool), GppConfig(seed_qbs=2))
+    assert len(seeds) == 2
+    # The top QB (KC) with his two best catchers and the best BUF catcher.
+    assert seeds[0] == frozenset({"QB A", "WR KC2", "WR KC1", "WR BUF2"})
+    assert seeds[1] == frozenset({"QB B", "WR BUF2", "WR BUF1", "WR KC2"})
+    assert _stack_seeds(pool, {}, GppConfig(seed_qbs=0)) == []
+
+
+def test_seeding_builds_the_stacks_the_rule_asks_for() -> None:
+    pool = _pool()
+    seeded = build_gpp_portfolio(pool, rng=np.random.default_rng(3),
+                                 config=GppConfig(n_lineups=6, candidate_factor=4))
+    unseeded = build_gpp_portfolio(pool, rng=np.random.default_rng(3),
+                                   config=GppConfig(n_lineups=6, candidate_factor=4,
+                                                    seed_stacks=False))
+    assert seeded.n_stacked >= unseeded.n_stacked
+    assert seeded.n_stacked > 0
+    opponents = {"KC": "BUF", "BUF": "KC", "DET": "CHI", "CHI": "DET"}
+    for lineup in seeded.lineups:
+        assert stack_ok(lineup, opponents, GppConfig())

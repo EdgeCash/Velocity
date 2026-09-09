@@ -134,3 +134,78 @@ def test_normalizer_collapses_nflverse_bands_into_dks_three() -> None:
     assert row["fg_made_40_49"] == 2.0
     assert row["fg_made_50_plus"] == 2.0  # 50-59 and 60+ are one DK tier
     assert nfl_dk_points(weeks).iloc[0] == pytest.approx(9 + 8 + 10 + 3)
+
+
+def test_per_sim_scoring_prices_the_bonus_as_a_probability() -> None:
+    import numpy as np
+    from velocity.dfs.scoring import NFL_BONUS, nfl_dk_points_from_samples
+
+    n = 4
+    samples = {
+        ("wr1", "receptions"): np.array([5.0, 6.0, 7.0, 4.0]),
+        ("wr1", "receiving_yards"): np.array([80.0, 120.0, 99.0, 100.0]),
+        ("wr1", "anytime_td"): np.array([0.0, 1.0, 0.0, 2.0]),
+    }
+    pts = nfl_dk_points_from_samples(samples, "wr1", fumbles=0.1)
+    assert pts is not None and len(pts) == n
+    expected = (np.array([5.0, 6.0, 7.0, 4.0]) + 0.1 * np.array([80.0, 120.0, 99.0, 100.0])
+                + NFL_BONUS * np.array([0.0, 1.0, 0.0, 1.0]) + 6.0 * np.array([0.0, 1.0, 0.0, 2.0])
+                - 0.1)
+    assert pts.tolist() == expected.tolist()
+    assert nfl_dk_points_from_samples(samples, "nobody") is None
+
+
+def test_sim_points_are_bonus_inclusive_and_carry_samples() -> None:
+    import numpy as np
+    from velocity.dfs.scoring import dk_expected_points, nfl_sim_points
+    from velocity.models.props_football import FootballPropConfig
+
+    fp = pd.DataFrame([
+        {"player_id": "qb", "player_name": "Star QB", "team": "KC", "position": "QB",
+         "stat": "pass_yds", "value": 290.0},
+        {"player_id": "qb", "player_name": "Star QB", "team": "KC", "position": "QB",
+         "stat": "pass_tds", "value": 2.1},
+        {"player_id": "qb", "player_name": "Star QB", "team": "KC", "position": "QB",
+         "stat": "pass_int", "value": 0.7},
+        {"player_id": "wr", "player_name": "Star WR", "team": "KC", "position": "WR",
+         "stat": "rec", "value": 6.5},
+        {"player_id": "wr", "player_name": "Star WR", "team": "KC", "position": "WR",
+         "stat": "rec_yds", "value": 92.0},
+        {"player_id": "wr", "player_name": "Star WR", "team": "KC", "position": "WR",
+         "stat": "rec_tds", "value": 0.6},
+        {"player_id": "rb", "player_name": "Away RB", "team": "BUF", "position": "RB",
+         "stat": "rush_yds", "value": 85.0},
+        {"player_id": "rb", "player_name": "Away RB", "team": "BUF", "position": "RB",
+         "stat": "rush_tds", "value": 0.5},
+    ])
+    frame, arrays = nfl_sim_points(fp, "KC", "BUF", np.random.default_rng(4),
+                                   FootballPropConfig(n_sims=20_000, rush_pool={}))
+    assert set(frame["player_name"]) == {"Star QB", "Star WR", "Away RB"}
+    assert set(arrays) == {"Star QB", "Star WR", "Away RB"}
+    linear = dk_expected_points(fp).set_index("player_name")["points"]
+    sim = frame.set_index("player_name")["points"]
+    # A 92-yard receiver crosses 100 often: the bonus lifts him above the
+    # linear pass; the 290-yard passer crosses 300 too.
+    assert sim["Star WR"] > linear["Star WR"] + 0.5
+    assert sim["Star QB"] > linear["Star QB"] + 0.5
+    # The mean of the samples IS the projection.
+    assert arrays["Star WR"].mean() == pytest.approx(sim["Star WR"], abs=0.01)
+
+
+def test_the_live_feeds_receptions_key_is_scored() -> None:
+    # FantasyPros spells receptions ``rec_rec`` on the live NFL feed. Every
+    # receiver's PPR points hung on that key being known.
+    from velocity.dfs.scoring import dk_expected_points
+    from velocity.models.props_football import FP_STAT_TO_MARKET, team_player_means
+
+    fp = pd.DataFrame([
+        {"player_id": "wr", "player_name": "Live WR", "team": "CIN", "position": "WR",
+         "stat": "rec_rec", "value": 7.2},
+        {"player_id": "wr", "player_name": "Live WR", "team": "CIN", "position": "WR",
+         "stat": "rec_yds", "value": 88.6},
+    ])
+    scored = dk_expected_points(fp).set_index("player_name").loc["Live WR", "points"]
+    assert scored == pytest.approx(7.2 + 8.86)
+    assert FP_STAT_TO_MARKET["rec_rec"] == "receptions"
+    means = team_player_means(fp, "CIN")[0].means
+    assert means["receptions"] == 7.2 and means["receiving_yards"] == 88.6

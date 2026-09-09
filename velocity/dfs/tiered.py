@@ -59,11 +59,17 @@ MLB_SINGLE_STAT_HR = TierSpec("mlb_single_stat_hr", 3, False, "home_runs",
                               min_teams=2)
 CFB_SINGLE_STAT_TD = TierSpec("cfb_single_stat_td", 3, False, "touchdowns",
                               min_teams=2)
+# NFL "Single Stat - Total Yards": pick three; passing + rushing + receiving
+# yards is the score. The prop sim's yardage means rank it
+# (docs/SYSTEM_REVIEW.md §6.7).
+NFL_SINGLE_STAT_YARDS = TierSpec("nfl_single_stat_total_yards", 3, False, "total_yards",
+                                 min_teams=2)
 
 TIER_SPECS = {
     "Tiers": MLB_TIERS,
     "Single Stat - Home Runs": MLB_SINGLE_STAT_HR,
     "Single Stat - Touchdowns": CFB_SINGLE_STAT_TD,
+    "Single Stat - Total Yards": NFL_SINGLE_STAT_YARDS,
 }
 
 _COLUMNS = ["draft_group_id", "player_id", "player_name", "position", "team",

@@ -31,6 +31,7 @@ _SUPPORTED = {
     "Tiers": "mlb_tiers",
     "Single Stat - Home Runs": "mlb_single_stat_hr",
     "Single Stat - Touchdowns": "cfb_single_stat_td",
+    "Single Stat - Total Yards": "nfl_single_stat_total_yards",
 }
 
 
@@ -125,6 +126,24 @@ def _football_touchdowns(fp: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _football_total_yards(fp: pd.DataFrame) -> pd.DataFrame:
+    """Expected passing + rushing + receiving yards per player, from the FP frame."""
+    if fp.empty:
+        return pd.DataFrame(columns=["player_name", "team", "position", "points"])
+    df = fp.copy()
+    df["stat"] = df["stat"].astype(str).str.lower()
+    df = df[df["stat"].isin(["pass_yds", "rush_yds", "rec_yds"])]
+    if df.empty:
+        return pd.DataFrame(columns=["player_name", "team", "position", "points"])
+    df["value"] = pd.to_numeric(df["value"], errors="coerce").fillna(0.0)
+    return (
+        df.groupby("player_name", dropna=True)
+        .agg(player_id=("player_id", "first"), team=("team", "first"),
+             position=("position", "first"), points=("value", "sum"))
+        .reset_index()[["player_id", "player_name", "team", "position", "points"]]
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build DK Tiers / Single Stat entries")
     parser.add_argument("--tiered", required=True,
@@ -164,6 +183,8 @@ def main() -> None:
                 points_cache[game_type] = _mlb_dk_points()
             elif game_type == "Single Stat - Home Runs":
                 points_cache[game_type] = _mlb_home_runs()
+            elif game_type == "Single Stat - Total Yards":
+                points_cache[game_type] = _football_total_yards(fp)
             else:
                 points_cache[game_type] = _football_touchdowns(fp)
         return points_cache[game_type]

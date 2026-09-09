@@ -324,6 +324,48 @@ model exists, the 242,050-entry NFL classic pool ships on plumbing
 confidence — the solver is verified on live boards, the projections are
 validated per player-week, and the roster as a whole is not.
 
+## The football pool, simulated (2026-09)
+
+Three of `docs/SYSTEM_REVIEW.md` §6's gaps closed at once, because they were
+one mechanism. The correlated prop sim (`game_props`) already produced every
+skill player's per-sim stat lines; scoring each simulation with DK's rules
+(`velocity/dfs/scoring.py::nfl_sim_points`) gives:
+
+- **Bonus-inclusive projections (6.3).** The +3 at 300 pass / 100 rush /
+  100 receiving yards is a probability read off the samples, not a tail
+  event added at the mean. A 92-yard receiver crosses 100 often enough to
+  be worth about a point more than the linear pass said.
+- **A tail-scored GPP (6.2).** `build_gpp_portfolio(samples=…)` finally runs
+  the machinery it was built for: candidates are scored on the mean of
+  their simulated totals above the 85th percentile, with teammate
+  correlation flowing through the shared game — though the fitted prop
+  dispersion (`docs/PROPS.md`) says that correlation is small between
+  receivers and structural only between a passer and his targets. The
+  candidate set is now **seeded with stacks**: for each of the top six
+  passers, solves that force him, his two best pass catchers and a
+  bring-back into the roster, alternating with plain jittered solves. A
+  jittered knapsack rarely lands on a QB stack by itself — the first
+  live-shaped board produced 34 candidates and not one — and a rule that
+  only filters never builds what it asks for.
+- **A DST that is not 0.0 (6.1).** `velocity/dfs/dst.py` prices a defense
+  from the FantasyPros weekly DST projection at DK's weights (sacks,
+  interceptions, fumble recoveries, defensive and return touchdowns,
+  safeties) plus DK's points-allowed bracket on the *opponent's simulated
+  score* — the DFS workflow fetches the live run's projections
+  (`mu_home` / `mu_away`) and re-simulates each game, so the bracket comes
+  off the same distribution the board was priced from. Without a game sim
+  it falls back to FantasyPros' bracket probabilities, then the league's
+  points-allowed distribution. A defense's per-sim points ride the same
+  opponent-score draw, so it is correlated with the game it plays in.
+
+Also on the board: **Single Stat – Total Yards** (6.7) — DK's NFL
+salary-free pick-three, ranked by expected passing + rushing + receiving
+yards (`build_dfs_tiered.py`), the same shape as the home-run contest.
+
+Not yet: the projection head-to-head on the harvested 2025 boards (6.4)
+and a CFB projection (6.6). The cash lineup's source line on the card now
+says "simulated and scored as DK points" when the sim priced it.
+
 ## Where the money actually is
 
 Format coverage should follow entries, not novelty. Counted off DK's own

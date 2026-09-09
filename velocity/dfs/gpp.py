@@ -84,6 +84,14 @@ class GppConfig:
     # Tail objective: mean lineup score across the sims at or above this
     # quantile of the lineup's own distribution.
     tail_q: float = 0.85
+    # Seed the candidate set with deliberate stacks: for each of the top
+    # ``seed_qbs`` passers, solves that force him, his best pass catchers
+    # and a bring-back into the roster. A jittered knapsack rarely lands on
+    # a QB stack by itself (the first live-shaped board produced 34
+    # candidates and not one stack), and a rule that only filters never
+    # builds what it asks for. Half the candidate budget goes to seeds.
+    seed_stacks: bool = True
+    seed_qbs: int = 6
 
 
 def opponent_map(pool: pd.DataFrame) -> dict[str, str]:
@@ -165,6 +173,40 @@ def stack_ok(lineup: Lineup, opponents: Mapping[str, str], config: GppConfig) ->
             if backs < config.bring_backs:
                 return False
     return True
+
+
+# Added to a forced player's points so the knapsack cannot leave him out.
+_FORCE_BONUS = 1_000.0
+
+
+def _stack_seeds(
+    pool: pd.DataFrame, opponents: Mapping[str, str], config: GppConfig
+) -> list[frozenset[str]]:
+    """Forced-roster seeds: each top QB with his best pass catchers and a bring-back."""
+    if "team" not in pool.columns or "position" not in pool.columns:
+        return []
+    qbs = (pool[pool["position"].astype(str) == "QB"]
+           .dropna(subset=["team"])
+           .sort_values("points", ascending=False)
+           .head(max(0, config.seed_qbs)))
+    seeds: list[frozenset[str]] = []
+    catchers = pool[pool["position"].astype(str).isin(_STACK_POSITIONS)]
+    for qb in qbs.to_dict("records"):
+        team = str(qb["team"])
+        mates = (catchers[catchers["team"].astype(str) == team]
+                 .sort_values("points", ascending=False)
+                 .head(config.stack_teammates)["player_name"].tolist())
+        if len(mates) < config.stack_teammates:
+            continue
+        forced = {str(qb["player_name"]), *mates}
+        opponent = opponents.get(team)
+        if opponent is not None and config.bring_backs > 0:
+            backs = (catchers[catchers["team"].astype(str) == str(opponent)]
+                     .sort_values("points", ascending=False)
+                     .head(config.bring_backs)["player_name"].tolist())
+            forced.update(backs)
+        seeds.append(frozenset(forced))
+    return seeds
 
 
 def _players(lineup: Lineup) -> frozenset[str]:
@@ -265,10 +307,18 @@ def build_gpp_portfolio(
     seen: set[frozenset[str]] = set()
     candidates: list[Lineup] = []
     n_stacked = 0
-    for _ in range(max(1, config.candidate_factor) * config.n_lineups):
+    n_rounds = max(1, config.candidate_factor) * config.n_lineups
+    seeds = (_stack_seeds(pool, opponents, config)
+             if config.seed_stacks and config.require_stack else [])
+    for i in range(n_rounds):
         jittered = pool.copy()
         noise = rng.normal(1.0, config.jitter, len(jittered))
         jittered["points"] = (jittered["points"].astype(float) * np.clip(noise, 0.0, None))
+        if seeds and i % 2 == 0:
+            # A forced stack: the seed's players dominate the knapsack, the
+            # jitter still decides the rest of the roster.
+            forced = seeds[(i // 2) % len(seeds)]
+            jittered.loc[jittered["player_name"].isin(forced), "points"] += _FORCE_BONUS
         lineup = _solve(jittered, cap=cap, spec=spec)
         if lineup is None:
             continue
