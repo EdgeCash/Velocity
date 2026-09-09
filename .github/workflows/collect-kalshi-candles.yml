@@ -1,0 +1,59 @@
+name: Collect Kalshi candles (settled markets)
+
+# The exchange CLV archive (docs/BUILD_EXCHANGES.md E2): for markets settled in
+# the trailing window, bank 1-minute candles for the final pre-close day (the
+# honest close) and hourly candles for the market's life. Kalshi's live
+# endpoints keep ~3 months, so this runs daily — bank-forward is the primary
+# posture even though the /historical archive carries pre-cutoff seasons.
+# Free and keyless; private artifact only; nothing is committed.
+
+on:
+  schedule:
+    # Daily 12:00 UTC — after the previous night's games (incl. MNF) settle.
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      since_hours:
+        description: "Settled-market lookback window (hours)"
+        required: false
+        default: "36"
+
+concurrency:
+  group: collect-kalshi-candles
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  candles:
+    name: bank settled-market candles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Bank candles
+        run: |
+          python scripts/collect_kalshi_candles.py \
+            --out artifacts/exchanges \
+            --since-hours ${{ github.event.inputs.since_hours || '36' }}
+
+      - name: Upload candles (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: kalshi-candles-${{ github.run_id }}
+          path: artifacts/exchanges/
+          if-no-files-found: warn
+          retention-days: 90

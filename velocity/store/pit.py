@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import pandas as pd
 
+from velocity.store.schema import LADDER_BOOKS
+
+# Sentinel standing in for a null point when grouping (pandas drops NaN keys).
+_NO_POINT = -9999.0
+
 
 def available_as_of(
     df: pd.DataFrame,
@@ -43,10 +48,31 @@ def closing_line(lines: pd.DataFrame, games: pd.DataFrame) -> pd.DataFrame:
     This is the honest closing line — the final pre-game price we could
     actually have bet — rather than trusting a possibly-stale ``is_closing``
     flag.
+
+    Rows from a :data:`~velocity.store.schema.LADDER_BOOKS` venue additionally
+    key on ``point``, because there every number is its own contract quoted at
+    the same moment: without it, one snapshot's ~25 rungs collapse to a single
+    arbitrary survivor and 24 real closes are silently discarded. A
+    sportsbook's rows are grouped exactly as before, so its close still tracks
+    the main line wherever it moved to.
     """
     pre = lines_before_kickoff(lines, games)
     if pre.empty:
         return pre
     pre = pre.sort_values("timestamp")
     keys = ["game_id", "market", "side", "book"]
-    return pre.groupby(keys, as_index=False).tail(1).reset_index(drop=True)
+    is_ladder = pre["book"].astype(str).str.lower().isin(LADDER_BOOKS)
+    parts = []
+    if (~is_ladder).any():
+        parts.append(pre[~is_ladder].groupby(keys, as_index=False).tail(1))
+    if is_ladder.any():
+        ladder = pre[is_ladder]
+        # ``point`` is nullable (moneyline), and pandas drops NaN group keys —
+        # fill so moneyline rungs are grouped rather than discarded.
+        filled = ladder.assign(_point=ladder["point"].fillna(_NO_POINT))
+        parts.append(
+            filled.groupby([*keys, "_point"], as_index=False).tail(1).drop(columns="_point")
+        )
+    if not parts:
+        return pre.iloc[0:0]
+    return pd.concat(parts, ignore_index=True).reset_index(drop=True)

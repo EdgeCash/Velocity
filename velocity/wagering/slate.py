@@ -29,9 +29,11 @@ import pandas as pd
 
 from velocity.models.game_nfl import GameProjection
 from velocity.store import pit
+from velocity.store.schema import LADDER_BOOKS, contract_key
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
+from velocity.wagering.fees import venue_for_book
 from velocity.wagering.staking import StakingConfig, apply_group_cap, stake_amount
 
 _MARKET_SIDES = {
@@ -63,6 +65,11 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
+    # Charge an exchange's per-contract taker fee against EV and stake sizing
+    # (docs/BUILD_EXCHANGES.md D3). Sportsbook rows are unaffected either way:
+    # their margin is already inside the price. Turn off only to model a
+    # maker fill, which pays no fee on Polymarket.
+    charge_exchange_fees: bool = True
     # Market anchoring (docs/MODEL_LAB.md Round 3): the close's Brier beats
     # every pure model, so the *belief* probability used for staking may be
     # regressed toward the market's devigged probability:
@@ -217,8 +224,13 @@ def build_slate(
         # For de-vig we need both sides at the same (book, timestamp); index them.
         snapshots: dict[tuple, dict[str, tuple[float, float | None]]] = {}
         for row in game_lines.to_dict("records"):
-            key = (row["market"], row["book"], row["timestamp"])
             point = None if pd.isna(row["point"]) else float(row["point"])
+            key = (
+                row["market"],
+                row["book"],
+                row["timestamp"],
+                contract_key(row["market"], row["side"], point),
+            )
             snapshots.setdefault(key, {})[row["side"]] = (float(row["price"]), point)
 
         game_stakes: dict[str, float] = {}
@@ -238,6 +250,7 @@ def build_slate(
                     best["p_model"],
                     best["price"],
                     config.staking,
+                    venue_for_book(best["book"]) if config.charge_exchange_fees else None,
                 )
                 if stake <= 0.0:
                     continue
@@ -254,7 +267,14 @@ def build_slate(
             stake = capped[bet_key]
             if stake <= 0.0:
                 continue
-            close = _closing_for(closing, game_id, info["market"], info["side"], info["book"])
+            close = _closing_for(
+                closing,
+                game_id,
+                info["market"],
+                info["side"],
+                info["book"],
+                info.get("point"),
+            )
             log.add(
                 Bet(
                     game_id=game_id,
@@ -288,7 +308,9 @@ def _best_opportunity(
     best: dict | None = None
     for row in candidates.to_dict("records"):
         point = None if pd.isna(row["point"]) else float(row["point"])
-        bucket = snapshots.get((market, row["book"], row["timestamp"]), {})
+        bucket = snapshots.get(
+            (market, row["book"], row["timestamp"], contract_key(market, side, point)), {}
+        )
         p_fair = _fair_probability(bucket, side, config.devig_method)
         if p_fair is None:
             continue
@@ -310,6 +332,7 @@ def _best_opportunity(
             < config.min_team_total_disagreement
         ):
             continue
+        venue = venue_for_book(row["book"]) if config.charge_exchange_fees else None
         p_model = model_probability(proj, market, side, point)
         if p_model is None:  # projection can't price this market (no segment sim)
             continue
@@ -319,7 +342,11 @@ def _best_opportunity(
             # staking belief toward this line's own devigged probability.
             p_model = p_fair + config.model_weight * (p_model - p_fair)
         signal = evaluate(
-            p_model, float(row["price"]), p_fair, min_edge=config.min_edge_for(market)
+            p_model,
+            float(row["price"]),
+            p_fair,
+            min_edge=config.min_edge_for(market),
+            venue=venue,
         )
         if not signal.qualifies:
             continue
@@ -340,17 +367,35 @@ def _best_opportunity(
 
 
 def _closing_for(
-    closing: pd.DataFrame, game_id: str, market: str, side: str, book: str
+    closing: pd.DataFrame,
+    game_id: str,
+    market: str,
+    side: str,
+    book: str,
+    point: float | None = None,
 ) -> tuple[float, float | None] | None:
-    """The closing price/point for a market side, preferring the same book."""
+    """The closing price/point for a market side, preferring the same book.
+
+    A bet struck on a :data:`~velocity.store.schema.LADDER_BOOKS` venue is
+    closed out against **its own rung**: there every number is a separate
+    contract, so the loose match a sportsbook needs would hand a −20.5 bet the
+    −1.5 rung's price and report ~19 points of CLV that never existed. A
+    sportsbook bet keeps the loose match, because its close is the same market
+    wherever the number moved to — which is what ``line_clv`` exists to measure.
+    """
     match = closing[
         (closing["game_id"] == game_id)
         & (closing["market"] == market)
         & (closing["side"] == side)
     ]
+    if str(book).lower() in LADDER_BOOKS:
+        match = match[match["book"].astype(str).str.lower().isin(LADDER_BOOKS)]
+        match = (
+            match[match["point"].isna()] if point is None else match[match["point"] == point]
+        )
     if match.empty:
         return None
     same_book = match[match["book"] == book]
     row = (same_book if not same_book.empty else match).iloc[-1]
-    point = None if pd.isna(row["point"]) else float(row["point"])
-    return float(row["price"]), point
+    close_point = None if pd.isna(row["point"]) else float(row["point"])
+    return float(row["price"]), close_point

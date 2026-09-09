@@ -25,18 +25,35 @@ from dataclasses import dataclass
 from velocity.wagering.odds import american_to_decimal, net_payout
 
 
-def expected_value(p_model: float, price: float) -> float:
+def _payout(price: float, venue: str | None) -> float:
+    """Profit per unit staked, net of an exchange's per-contract fee.
+
+    ``venue`` names an exchange whose fee is charged on top of the price
+    (docs/BUILD_EXCHANGES.md D3). ``None`` — every sportsbook — is the plain
+    payout, so existing callers are unaffected.
+    """
+    if venue is None:
+        return net_payout(price)
+    from velocity.wagering.fees import net_payout_after_fees
+
+    return net_payout_after_fees(price, venue)
+
+
+def expected_value(p_model: float, price: float, venue: str | None = None) -> float:
     """EV per unit staked at American ``price`` given model probability ``p_model``.
 
-    ``+0.05`` means a nickel of expected profit per unit risked.
+    ``+0.05`` means a nickel of expected profit per unit risked. On an exchange,
+    pass ``venue`` so the taker fee is charged against the payout.
     """
-    b = net_payout(price)
+    b = _payout(price, venue)
     return p_model * b - (1.0 - p_model)
 
 
-def kelly_fraction(p_model: float, price: float) -> float:
+def kelly_fraction(p_model: float, price: float, venue: str | None = None) -> float:
     """Growth-optimal bankroll fraction for this edge (may be ≤ 0 → no bet)."""
-    b = net_payout(price)
+    b = _payout(price, venue)
+    if b <= 0.0:  # fees swallow the payout — no size is growth-optimal
+        return 0.0
     return (p_model * b - (1.0 - p_model)) / b
 
 
@@ -71,16 +88,19 @@ def evaluate(
     p_fair: float,
     *,
     min_edge: float = 0.02,
+    venue: str | None = None,
 ) -> BetSignal:
     """Score one opportunity and decide whether it clears the edge threshold.
 
     ``price`` should already be the best shopped number. A bet ``qualifies``
     only when the probability edge meets ``min_edge`` *and* the expected value
     is strictly positive — both, so we never chase a thin edge on a bad price.
+    On an exchange, ``venue`` charges its taker fee against the payout, so a
+    thin edge that the fee eats no longer qualifies.
     """
     edge = probability_edge(p_model, p_fair)
-    ev = expected_value(p_model, price)
-    kelly = kelly_fraction(p_model, price)
+    ev = expected_value(p_model, price, venue)
+    kelly = kelly_fraction(p_model, price, venue)
     qualifies = edge >= min_edge and ev > 0.0
     return BetSignal(
         p_model=p_model,

@@ -1,0 +1,67 @@
+name: Collect exchange boards (Kalshi + Polymarket)
+
+# The exchange half of the line archive (docs/BUILD_EXCHANGES.md E1/E2).
+# Hourly: Kalshi board snapshots (raw JSON + normalized parquet) and raw
+# Polymarket events + order books. Everything lands in a PRIVATE Actions
+# artifact — the repo is public and no odds data is ever committed
+# (docs/DATA_PROVIDERS.md). Unlike The Odds API there is no vendor archive to
+# re-pull from: Polymarket keeps no historical books at all, so every hour
+# this doesn't run is spread history lost. Both APIs are free and keyless —
+# no secret needed; workflow_dispatch doubles as the live-client check.
+
+on:
+  schedule:
+    # Hourly at :10, offset from collect-odds.yml's :30.
+    - cron: "10 * * * *"
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Kalshi leagues to snapshot (space-separated)"
+        required: false
+        default: "nfl ncaaf"
+
+concurrency:
+  group: collect-exchanges
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    name: snapshot exchange boards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Snapshot Kalshi board
+        run: |
+          python scripts/collect_kalshi.py \
+            --out artifacts/exchanges \
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
+
+      - name: Snapshot Polymarket board (raw + normalized)
+        run: python scripts/collect_polymarket.py --out artifacts/exchanges
+
+      - name: Upload snapshot (private artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: exchanges-${{ github.run_id }}
+          path: artifacts/exchanges/
+          if-no-files-found: warn
+          # Exchange data can't be re-pulled once expired; 90 days is the
+          # re-normalization window, and the weekly consolidation workflow
+          # rolls the parquet forward past it (BUILD_EXCHANGES.md E2).
+          retention-days: 90

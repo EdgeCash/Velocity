@@ -28,13 +28,16 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from velocity.wagering.odds import american_to_decimal, net_payout
+from velocity.store.schema import LADDER_BOOKS
+from velocity.wagering.odds import american_to_decimal, american_to_prob, net_payout
 
 # Point-based markets and the sign of "a higher stored number helps this side".
 # Stored ``point`` is always from the side's own perspective (added to its
 # score for spreads; the over/under threshold for totals).
 _SPREAD_SIDES = {"home", "away"}
 _TOTAL_SIDES = {"over", "under"}
+# A tied game settles an exchange winner contract at 50c rather than pushing.
+_TIE_SETTLEMENT = 0.50
 
 @dataclass(frozen=True)
 class Bet:
@@ -121,7 +124,23 @@ class Bet:
             return "win", self.stake * self.net_payout
         if edge < 0:
             return "loss", -self.stake
-        return "push", 0.0
+        return self._tie_result()
+
+    def _tie_result(self) -> tuple[str, float]:
+        """What a dead-heat pays. A sportsbook pushes; an exchange settles.
+
+        A binary exchange contract has no push: Kalshi's rules settle a tied
+        game's winner market at $0.50 a contract, so a ticket bought cheap
+        profits and one bought rich loses (docs/BUILD_EXCHANGES.md D5). Pricing
+        is unaffected either way — the sim splits ties 0.5, which is exactly
+        the contract's expected payout — but grading a tie as a push would
+        book the wrong P&L on the games where it matters.
+        """
+        if str(self.book).lower() not in LADDER_BOOKS:
+            return "push", 0.0
+        cost = american_to_prob(self.price)
+        profit = self.stake * (_TIE_SETTLEMENT - cost) / cost
+        return "tie", profit
 
 
 class BetLog:

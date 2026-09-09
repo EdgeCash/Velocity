@@ -3,8 +3,10 @@
 **Status:** Plan (v0.1), grounded in the repo as of 2026-07-26
 **Companion to:** [`docs/DESIGN.md`](DESIGN.md) §6 (the de-vig → edge → stake →
 log philosophy), [`docs/BUILD.md`](BUILD.md) (the branch → tests → verify → PR
-loop and gate discipline every phase below inherits), and
-[`docs/BUILD_MLB.md`](BUILD_MLB.md) (the MLB vertical this plan builds on).
+loop and gate discipline every phase below inherits),
+[`docs/BUILD_MLB.md`](BUILD_MLB.md) (the MLB vertical this plan builds on), and
+[`docs/BUILD_EXCHANGES.md`](BUILD_EXCHANGES.md) (the Kalshi/Polymarket venue
+build — its E5 fee-aware EV and per-venue caps touch this plan's seams).
 **Principle:** the wagering layer is the most testable part of the system —
 every function has a closed-form correct answer — so every phase here ships
 with exact-value tests and lands only behind a green gate.

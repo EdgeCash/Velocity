@@ -114,6 +114,17 @@ def closing_for_slate(
     per_book = closing_line(lines, games_map)
     if per_book.empty:
         return None
+    # Exchange rows are a different price basis — an executable ask on one
+    # rung of a ladder, not a two-way sportsbook quote on a main line — so
+    # folding them into this cross-book median would silently shift the
+    # sportsbook CLV benchmark and median a point across a whole ladder
+    # (docs/BUILD_EXCHANGES.md E7). They are graded on their own contract via
+    # the slate's stored closing price instead.
+    from velocity.store.schema import LADDER_BOOKS
+
+    per_book = per_book[~per_book["book"].astype(str).str.lower().isin(LADDER_BOOKS)]
+    if per_book.empty:
+        return None
     # Points are linear (plain median); prices are NOT — American odds are
     # discontinuous across ±100, so the price consensus is taken in decimal
     # space (the first live run crashed on a median of -2.0).

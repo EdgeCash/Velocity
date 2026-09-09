@@ -1,0 +1,181 @@
+[
+ {
+  "slug": "nfl-den-kc-2026-09-15",
+  "title": "Broncos vs. Chiefs",
+  "gameId": 19456,
+  "eventDate": "2026-09-14",
+  "eventWeek": 1,
+  "startDate": "2026-08-04T12:00:32Z",
+  "closed": false,
+  "markets": [
+   {
+    "slug": "nfl-den-kc-2026-09-15",
+    "question": "Broncos vs. Chiefs",
+    "outcomes": "[\"Broncos\", \"Chiefs\"]",
+    "outcomePrices": "[\"0.435\", \"0.565\"]",
+    "clobTokenIds": "[\"31653956477830165372337334687889690366058437085864298395551634809453963934221\", \"19745572778352048315530441756290548673735014169551809727672053046873626878761\"]",
+    "sportsMarketType": "moneyline",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.43,
+    "bestAsk": 0.44
+   },
+   {
+    "slug": "nfl-den-kc-2026-09-15-spread-home-1pt5",
+    "question": "Spread: Chiefs (-1.5)",
+    "line": -1.5,
+    "outcomes": "[\"Chiefs\", \"Broncos\"]",
+    "outcomePrices": "[\"0.555\", \"0.445\"]",
+    "clobTokenIds": "[\"109593781676717387606740931328538522422896290760014199602529083391836140541174\", \"36882298852209881666968491505208389584801799729212770523546962230452322023597\"]",
+    "sportsMarketType": "spreads",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.55,
+    "bestAsk": 0.56
+   },
+   {
+    "slug": "nfl-den-kc-2026-09-15-total-41pt5",
+    "question": "Broncos vs. Chiefs: O/U 41.5",
+    "line": 41.5,
+    "outcomes": "[\"Over\", \"Under\"]",
+    "outcomePrices": "[\"0.56\", \"0.44\"]",
+    "clobTokenIds": "[\"105198762409261945126631203488271463174736806507425951277673849397864519368629\", \"89147365354903541548998341607898022049057688726823165190767919871257192594\"]",
+    "sportsMarketType": "totals",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.54,
+    "bestAsk": 0.58
+   },
+   {
+    "slug": "nfl-den-kc-2026-09-15-team-total-kc-16pt5",
+    "question": "Chiefs Team Total: O/U 16.5",
+    "line": 16.5,
+    "outcomes": "[\"Over\", \"Under\"]",
+    "outcomePrices": "[\"0.795\", \"0.205\"]",
+    "clobTokenIds": "[\"62226737899908770082240974842647009496524463800724181276962129265084766755767\", \"40101122516470660640034301228782264894423503815807636276357952525356387659835\"]",
+    "sportsMarketType": "team_totals",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.65,
+    "bestAsk": 0.94
+   },
+   {
+    "slug": "nfl-den-kc-2026-09-15-1q-moneyline",
+    "question": "Broncos vs. Chiefs: 1Q Moneyline",
+    "outcomes": "[\"Broncos\", \"Chiefs\"]",
+    "outcomePrices": "[\"0.5\", \"0.5\"]",
+    "clobTokenIds": "[\"106426672367125521525171420923235825242886313220695675132567905472017226757652\", \"44763323686059080101364171465871760569927050095455952390269861460606770268651\"]",
+    "sportsMarketType": "q1_moneyline",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.02,
+    "bestAsk": 0.98
+   },
+   {
+    "slug": "nfl-den-kc-2026-09-15-exact-margin-long-25-plus",
+    "question": "Exact Margin: Broncos by 25+",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.5\", \"0.5\"]",
+    "clobTokenIds": "[\"85638232773673341787812175394421129238441229960040775721600895019046253253131\", \"103907452122218434263036795876411121006387860704525494214168286495068385620646\"]",
+    "sportsMarketType": "exact_margin",
+    "gameStartTime": "2026-09-15 00:15:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.02,
+    "bestAsk": 0.98
+   }
+  ]
+ },
+ {
+  "slug": "nfl-buf-hou-2026-09-13",
+  "title": "Bills vs. Texans",
+  "gameId": 19461,
+  "eventDate": "2026-09-13",
+  "eventWeek": 1,
+  "startDate": "2026-08-04T12:00:33Z",
+  "closed": false,
+  "markets": [
+   {
+    "slug": "nfl-buf-hou-2026-09-13",
+    "question": "Bills vs. Texans",
+    "outcomes": "[\"Bills\", \"Texans\"]",
+    "outcomePrices": "[\"0.505\", \"0.495\"]",
+    "clobTokenIds": "[\"89358319039313921492670628903991570527624425066499637305123227265745381753821\", \"85983273725650458182679003873751104933525333440340527445343292403915061696135\"]",
+    "sportsMarketType": "moneyline",
+    "gameStartTime": "2026-09-13 17:00:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.5,
+    "bestAsk": 0.51
+   },
+   {
+    "slug": "nfl-buf-hou-2026-09-13-spread-away-1pt5",
+    "question": "Spread: Bills (-1.5)",
+    "line": -1.5,
+    "outcomes": "[\"Bills\", \"Texans\"]",
+    "outcomePrices": "[\"0.485\", \"0.515\"]",
+    "clobTokenIds": "[\"38063038722032894248129048312919808952616336503589787503820179596123706119669\", \"61422840989676971659809613601438523179818207821582729748019589805786292678666\"]",
+    "sportsMarketType": "spreads",
+    "gameStartTime": "2026-09-13 17:00:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.48,
+    "bestAsk": 0.49
+   }
+  ]
+ },
+ {
+  "slug": "nfl-was-phi-2026-09-13-player-props",
+  "title": "Commanders vs. Eagles - Player Props",
+  "startDate": "2026-09-01T21:51:15Z",
+  "closed": false,
+  "markets": [
+   {
+    "slug": "nfl-was-phi-2026-09-13-pyd-jalen-hurts-149pt5",
+    "question": "Jalen Hurts: Passing Yards O/U 149.5",
+    "line": 149.5,
+    "outcomes": "[\"Over\", \"Under\"]",
+    "outcomePrices": "[\"0.5\", \"0.5\"]",
+    "clobTokenIds": "[\"39389991115116475492239986161926209433377967885684668066819676369849881781646\", \"87864906713362449585339276220139229870824433846056262572055818441234294689884\"]",
+    "sportsMarketType": "passing_yards",
+    "gameStartTime": "2026-09-13 20:25:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.03,
+    "bestAsk": 0.97
+   },
+   {
+    "slug": "nfl-was-phi-2026-09-13-rec-dallas-goedert-1pt5",
+    "question": "Dallas Goedert: Receptions O/U 1.5",
+    "line": 1.5,
+    "outcomes": "[\"Over\", \"Under\"]",
+    "outcomePrices": "[\"0.5\", \"0.5\"]",
+    "clobTokenIds": "[\"27748535969330440486953758088930573264071414474694976577150064331276907134048\", \"67876536502326748818797842304255641350591201784268483712519720904070408551085\"]",
+    "sportsMarketType": "receptions",
+    "gameStartTime": "2026-09-13 20:25:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.03,
+    "bestAsk": 0.97
+   },
+   {
+    "slug": "nfl-was-phi-2026-09-13-anytime-td-antonio-williams",
+    "question": "Antonio Williams: Anytime Touchdown",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.495\", \"0.505\"]",
+    "clobTokenIds": "[\"24721515249182025050533137103127846658906451196014845266281372399442348061210\", \"37303726864346060198509137201947706477821379805503092245108200494094143062802\"]",
+    "sportsMarketType": "anytime_touchdowns",
+    "gameStartTime": "2026-09-13 20:25:00+00",
+    "closed": false,
+    "active": true,
+    "bestBid": 0.03,
+    "bestAsk": 0.96
+   }
+  ]
+ }
+]

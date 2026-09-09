@@ -1,0 +1,36 @@
+{
+ "markets": [
+  {
+   "ticker": "KXNFLPASSYDS-26SEP13ATLPIT-ATLTTAGOVAILOA1-300",
+   "event_ticker": "KXNFLPASSYDS-26SEP13ATLPIT",
+   "title": "Tua Tagovailoa: 300+ passing yards",
+   "yes_sub_title": "Tua Tagovailoa: 300+",
+   "market_type": "binary",
+   "status": "active",
+   "strike_type": "greater",
+   "floor_strike": 299.5,
+   "yes_bid_dollars": "0.0600",
+   "yes_ask_dollars": "0.1000",
+   "no_bid_dollars": "0.9000",
+   "no_ask_dollars": "0.9400",
+   "close_time": "2026-09-15T17:00:00Z",
+   "updated_time": "2026-09-08T02:41:00.682573Z"
+  },
+  {
+   "ticker": "KXNFLPASSYDS-26SEP13ATLPIT-ATLTTAGOVAILOA1-275",
+   "event_ticker": "KXNFLPASSYDS-26SEP13ATLPIT",
+   "title": "Tua Tagovailoa: 275+ passing yards",
+   "yes_sub_title": "Tua Tagovailoa: 275+",
+   "market_type": "binary",
+   "status": "active",
+   "strike_type": "greater",
+   "floor_strike": 274.5,
+   "yes_bid_dollars": "0.1300",
+   "yes_ask_dollars": "0.2000",
+   "no_bid_dollars": "0.8000",
+   "no_ask_dollars": "0.8700",
+   "close_time": "2026-09-15T17:00:00Z",
+   "updated_time": "2026-09-08T02:41:00.682573Z"
+  }
+ ]
+}
