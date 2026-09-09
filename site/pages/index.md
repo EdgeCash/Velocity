@@ -44,6 +44,39 @@ from ${tiles}
 <BigValue data={exposure_tile} value=of_cap title="Exposure (sized / slate cap)" fmt='pct0' />
 <BigValue data={tiles} value=season_units title="Season units (sized)" fmt='+#,##0.0"U"' />
 
+```sql bankroll_tile
+select current, seed, peak, drawdown, open_exposure, open_bets, halted,
+  round(drawdown * 100) as drawdown_pct,
+  round(halt_threshold * 100) as halt_pct,
+  case mode
+    when 'auto' then 'booked automatically at the recommended terms'
+    when 'manual' then 'as placed by the operator'
+    else 'none placed yet' end as mode_label
+from velocity.bankroll
+where league != '__none__'
+```
+
+{#if bankroll_tile.length > 0}
+
+<BigValue data={bankroll_tile} value=current title="Bankroll (ledger)" fmt='#,##0.00"u"' />
+<BigValue data={bankroll_tile} value=drawdown title="Drawdown from peak" fmt='pct1' />
+<BigValue data={bankroll_tile} value=open_exposure title="Open exposure" fmt='#,##0.00"u"' />
+<BigValue data={bankroll_tile} value=open_bets title="Open bets" />
+
+{#if bankroll_tile[0]?.halted}
+
+<Alert status=danger>
+<b>Kill-switch tripped.</b> The bankroll is {bankroll_tile[0]?.drawdown_pct}% below its peak, past the {bankroll_tile[0]?.halt_pct}% halt. Every stake on today's card is zeroed until the ledger is adjusted.
+</Alert>
+
+{/if}
+
+_The bankroll is the ledger's: seeded at {bankroll_tile[0]?.seed}u and moved by
+every settled bet ({bankroll_tile[0]?.mode_label}). Stakes are sized off it,
+and money already on the table counts against the slate cap._
+
+{/if}
+
 ```sql exposure_rows
 select upper(league) as lg, bets, games, stake_sized, cap_units,
   exposure, stake_solo

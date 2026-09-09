@@ -31,9 +31,16 @@ order by league
 - **Tier** — the intelligence layer's conviction grade (A/B/C); X marks a
   veto. Conviction = 0.4·edge + 0.6·context.
 - **Stake** — the portfolio-sized number: quarter-Kelly, then the per-bet,
-  per-game, per-class and slate caps, in units of a 100-unit bankroll. The
-  solo-Kelly stake the slate keeps for backtest comparability is shown
-  alongside where it matters.
+  per-game, per-class and slate caps, in units of the ledger's bankroll
+  (100 units until a ledger exists). The solo-Kelly stake the slate keeps
+  for backtest comparability is shown alongside where it matters.
+- **Bankroll** — the ledger's: seeded once, moved only by settled bets and
+  recorded adjustments, never reset per run. Money already on the table
+  counts against the slate cap, a bet already on the books is held rather
+  than re-placed, and a drawdown of 30% from the peak halts the whole card
+  (the kill-switch — explicit on the Today page when it trips). Bets reach
+  the ledger either automatically at the recommended terms or as the
+  operator records them; the Performance page says which.
 - **Paper** — a priced row with no stake: a market the record has not yet
   earned (team totals; every market in a league still proving out), or an
   edge past a ceiling. Paper rows are graded and carry CLV; they never

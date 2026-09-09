@@ -19,10 +19,12 @@ site/
   sources/velocity/       DuckDB source; one .sql per table over data/*.parquet
     data/                 assembled per-run by scripts/build_site_data.py (gitignored)
   pages/
-    index.md              Today board (market · model · edge · tier) + live ticker
+    index.md              Today board (market · model · edge · tier) + live ticker,
+                          the ledger's bankroll / drawdown / open-exposure tiles
     picks.md              "Plays": the publish gate's calls + the held-back
                           audit with reasons (the full board stays on index)
-    performance.md        units, win rate, CLV block, cumulative chart, graded slate
+    performance.md        units, win rate, the bankroll (ledger curve, open bets),
+                          CLV block, cumulative chart, graded slate
     matchup/[game_id].md  the game dossier: line movement, markets, sims,
                           weather, injury report, the game's own cards
     ratings.md            per-league power ratings with movement
@@ -38,7 +40,9 @@ site/
 
 `scripts/build_site_data.py` finds the **latest stamp per league** for each
 artifact family in `--slate-dir`, joins what the pages need (slate ×
-games × projections × intel tiers), derives the running-units table, and
+games × projections × intel tiers), derives the running-units table, reads
+the bankroll ledger when `--ledger` names one (`bankroll`, `bankroll_curve`,
+`ledger_open` — docs/WAGERING.md §7), and
 writes stable-named parquets into `site/sources/velocity/data/`. An absent
 family writes a typed **one-row sentinel** (`league = '__none__'`) rather
 than an empty frame — Evidence's source runner writes no parquet at all

@@ -335,19 +335,26 @@ family predates, so an old chain or card still renders.
 - **DoD:** a run's exposure summary, sized stakes and venue are visible on the
   site without opening the log; Methods matches `build_parser` defaults.
 
-### S5 — The ledger (WAGERING W1, unchanged)
+### S5 — The ledger (WAGERING W1) — **landed 2026-09-09**
 
-The single largest structural gap remains exactly what `WAGERING.md` §1.4
-says: no bankroll state, so no real units, no open-exposure awareness, no
-kill-switch. Build as specified there (`recommended` / `placed` / `settled`,
-append-only, private). S1's R2 store is the natural home. Nothing in S1–S4
-depends on it; everything after it does.
+The single largest structural gap was exactly what `WAGERING.md` §1.4
+said: no bankroll state, so no real units, no open-exposure awareness, no
+kill-switch. Built as specified there — `recommended` / `placed` /
+`settled` (plus `seed` and `adjust`), append-only, private, parked in S1's
+R2 store beside the season chain — and wired end to end: the runner stakes
+off the ledger's bankroll, holds bets already on the books, counts open
+exposure against the slate cap and **halts the card explicitly** past the
+30% drawdown; the grader settles placed bets from the day's grade with
+their CLV; the site carries the bankroll, the drawdown, the open bets and
+the curve. `WAGERING.md` §7 has the record layout, the two placement modes
+(`auto` books the card at its own terms; `manual` books what the operator
+records through `scripts/ledger.py`) and the operator's loop.
 
 ### S6 — The monitor (WAGERING W3, unchanged)
 
 Per-market trailing CLV/ROI over 7/30 days with flags — a "market health"
-page on the site. Needs S1 (a durable chain) and S5 (real stakes). The
-`clv_by_market` and `benjamini_hochberg` helpers already exist.
+page on the site. Needs S1 (a durable chain) and S5 (real stakes), both
+landed. The `clv_by_market` and `benjamini_hochberg` helpers already exist.
 
 ---
 

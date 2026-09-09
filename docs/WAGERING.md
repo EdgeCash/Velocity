@@ -1,6 +1,8 @@
 # Velocity — Wagering System: Current State & Build Plan
 
-**Status:** Plan (v0.1), grounded in the repo as of 2026-07-26
+**Status:** Plan (v0.1), grounded in the repo as of 2026-07-26; **W1 (the
+ledger) landed 2026-09-09** — see §7. W2's sizing half shipped earlier (§6);
+its kill-switch half is wired by W1. W3 is next.
 **Companion to:** [`docs/DESIGN.md`](DESIGN.md) §6 (the de-vig → edge → stake →
 log philosophy), [`docs/BUILD.md`](BUILD.md) (the branch → tests → verify → PR
 loop and gate discipline every phase below inherits),
@@ -55,7 +57,7 @@ slate before football arrives in September.
 | Piece | File | Gap |
 |---|---|---|
 | Portfolio sizing | `wagering/portfolio.py` | `size_portfolio` (correlation de-scaling `1/(1+(m−1)ρ)`, per-group cap, aggregate slate cap) is referenced **only by its own unit tests**. The live path uses per-game `apply_group_cap` only — there is no slate-wide cap, and a game's game-market bets and its prop bets are sized in two independent passes that never see each other. |
-| Drawdown kill-switch | `wagering/portfolio.py` | `should_halt` exists and is tested, but nothing supplies `current_bankroll` / `peak_bankroll` — there is no bankroll state anywhere to feed it. |
+| Drawdown kill-switch | `wagering/portfolio.py` | ~~`should_halt` exists and is tested, but nothing supplies `current_bankroll` / `peak_bankroll`~~ **Wired 2026-09-09:** the ledger (§7) supplies both; the runner halts the card explicitly past 30% from the peak. |
 
 ### 1.3 What the evidence says (the edges we act on today)
 
@@ -82,17 +84,16 @@ slate before football arrives in September.
 
 ### 1.4 The honest gap list
 
-1. **No bankroll.** `starting_bankroll` is a CLI constant (default 100). Every
-   slate stakes off that fresh notional amount; nothing records which
-   recommendations were actually placed, at what price, or what they returned.
-   Kelly's whole premise is compounding a *real* bankroll — today we emit
-   stake *percentages* attached to a fiction.
+1. **No bankroll.** ~~`starting_bankroll` is a CLI constant (default 100).~~
+   *Closed 2026-09-09 (§7):* the ledger holds the seed, every recommendation,
+   every placed bet and every settlement; the runner stakes off its bankroll
+   and `--bankroll` only seeds an empty one.
 2. **No portfolio view.** Per-game caps only. Fifteen MLB games × game markets
    × props can stack far past any sane aggregate exposure, and correlated
    same-game exposure (a team total, the game total, the opposing pitcher's Ks)
    is capped only within each pass, not across them.
-3. **No kill-switch in practice.** The circuit breaker exists but is
-   unreachable without bankroll state (gap 1).
+3. **No kill-switch in practice.** ~~The circuit breaker exists but is
+   unreachable without bankroll state (gap 1).~~ *Closed with gap 1.*
 4. **Game-market CLV is automated; props are not.** The daily grader now
    attaches consensus closes from the hourly odds archive to every game
    bet (`closing_for_slate` in scripts/grade_yesterday.py — all five
@@ -264,11 +265,9 @@ number.
 
 ## 4. Immediate next step
 
-Land **Phase W1** (the ledger). It is small, purely additive, offline-testable,
-and every other phase depends on its state. The very next MLB slate after it
-merges becomes the first Velocity run staked against a real, compounding
-bankroll — and starts accumulating exactly the placed-vs-recommended history
-that W3's monitor and W4's re-tunes need.
+~~Land **Phase W1** (the ledger).~~ Landed 2026-09-09 (§7). Next is **W3**,
+the monitor: per-market trailing CLV and ROI over 7/30-day windows with flags,
+off the season chain the grader already carries and the ledger's settled P&L.
 
 ## 5. Pick'em slips (`velocity/wagering/pickem.py`)
 
@@ -328,3 +327,70 @@ edge research (docs/EDGE_RESEARCH.md):
   `eval.metrics.benjamini_hochberg` bounds the false-discovery rate across a
   sweep family; the standing budget is ~45 variants per 5 years of data
   before overfit is near-certain (Bailey/López de Prado).
+
+## 7. Addendum (2026-09): W1 landed — the ledger
+
+`velocity/wagering/ledger.py`, `scripts/ledger.py`, and the wiring in the
+runner, the grader, the workflow and the site (docs/STRATEGY_REVIEW.md S5).
+
+**The record.** One private parquet, append-only, five record types:
+`seed` (the opening bankroll, written once), `adjust` (a deposit, withdrawal
+or correction — corrections are new records), `recommended` (every row of a
+run's sized card at the stake the portfolio rules gave it; paper rows at
+zero with their reason), `placed` (a bet actually taken — price, stake,
+book, number — or a `skip` at stake zero), and `settled` (a placed bet
+graded: `+stake·b` / `−stake` / 0 / the exchange's 50c tie rule, summed over
+the bet's placements; one row per bet, so re-grading settles nothing twice).
+A bet's identity is `league|game|market|side|player` — no stamp, so a bet
+recommended Wednesday, placed Thursday and settled Monday is one bet.
+Records merge by identity, so every copy of the ledger unions into the same
+ledger; nothing can overwrite anything.
+
+**The views.** Current bankroll (seed + adjustments + settlements), peak,
+drawdown, open exposure (placed money with no settlement), P&L by league and
+market, and the operator's to-do (the newest card with each row's status:
+open / placed / skipped / settled / paper).
+
+**The runner.** `--ledger PATH` makes the bankroll the ledger's; `--bankroll`
+seeds an empty one and is otherwise ignored. The sized card goes through
+`size_portfolio` with the ledger's current and peak bankroll, so
+`should_halt` finally trips — and trips *explicitly*: the log says
+`KILL-SWITCH — halted: drawdown 35% ≥ 30%`, every stake on the card is zero,
+the card carries `halted` and the reason as its note, and the site shows a
+red banner. Open bets on games off today's card count against the slate
+cap; a bet already on the books from an earlier card this week is *held*,
+not doubled. Two modes: `manual` (the spec's — only what the operator
+records is placed) and `auto` (every staked row is booked at its
+recommended terms, so the bankroll compounds off the card while nobody is
+placing by hand; the workflow's default, labeled as such on the site). The
+modes are exclusive by design — switch to manual the day you start placing.
+
+**The grader.** `--ledger PATH` settles open bets from the day's grade by
+bet identity, carrying the close and CLV it was graded against; any open
+game bet the graded slate no longer lists settles straight from the finals
+(`Bet.grade`). Props wait for box scores. Re-runs are no-ops.
+
+**Durability.** The durable copy sits beside the season chain in R2
+(`velocity-wasm/ledger/ledger.parquet`), fetched before the grade and parked
+after the slates; every slate artifact carries a copy, and the run merges
+every copy it can see. `scripts/ledger.py pull / push` give the operator the
+same round trip (`push` merges the remote in first). Skipped without the
+Cloudflare token: the runner then stakes against `--bankroll` as before.
+
+**The operator's loop** (docs/LAUNCH.md): `pull` → `todo` → `place` /
+`skip` → `push`. `settle --result` and `adjust --amount` are the manual
+corrections.
+
+**Tests.** `tests/test_ledger.py` (the W1 list: exact-value round trip,
+idempotent re-settlement, pending leaves the bankroll alone, the peak
+through win–loss–win, a clean seed; plus finals settlement, ties, merges),
+`tests/test_ledger_cli.py`, the runner's held/halt/exposure-room tests in
+`tests/test_portfolio_slate.py`, the grader's settlement in
+`tests/test_grade_chain.py`, and the site tables in
+`tests/test_build_site_data.py`.
+
+**Still W2/W3.** The sizing half of W2 shipped in §6; with the kill-switch
+and open exposure wired here, W2's remaining ask is the exposure-summary
+block's drawdown state, which the runner's ledger line now prints. W3 (the
+monitor) is next and reads the season chain plus the ledger's settled rows.
+

@@ -142,9 +142,30 @@ class Bet:
         """
         if str(self.book).lower() not in LADDER_BOOKS:
             return "push", 0.0
-        cost = american_to_prob(self.price)
-        profit = self.stake * (_TIE_SETTLEMENT - cost) / cost
-        return "tie", profit
+        return "tie", settle_profit("tie", self.stake, self.price, self.book)
+
+
+def settle_profit(result: str, stake: float, price: float, book: str | None = None) -> float:
+    """Signed profit of ``stake`` at ``price`` for a graded ``result``.
+
+    The one payout rule every settlement shares — the ticket's grade and the
+    ledger's placed bets (:mod:`velocity.wagering.ledger`) both book
+    ``+stake·b`` on a win, ``−stake`` on a loss, nothing on a push, and the
+    exchange's 50c dead-heat rule on a tie (a sportsbook's tie is a push and
+    arrives here as one).
+    """
+    if result == "win":
+        return stake * net_payout(price)
+    if result == "loss":
+        return -stake
+    if result == "push":
+        return 0.0
+    if result == "tie":
+        if str(book or "").lower() not in LADDER_BOOKS:
+            return 0.0
+        cost = american_to_prob(price)
+        return stake * (_TIE_SETTLEMENT - cost) / cost
+    raise ValueError(f"unknown result {result!r}")
 
 
 class BetLog:

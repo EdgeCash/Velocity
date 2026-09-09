@@ -181,6 +181,55 @@ def build_clv_by_market(record: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def build_bankroll(ledger_path: Path | None) -> dict[str, pd.DataFrame]:
+    """The ledger's three site tables: the bankroll now, its curve, the open bets.
+
+    ``bankroll`` is one row — seed, current, peak, drawdown, open exposure,
+    whether the kill-switch would halt the next card (30% from the peak,
+    the constitutional threshold) and how the bets got on the books
+    (``mode``: auto-booked at the recommended terms, or placed by hand).
+    Every table is empty without a ledger; the pages then say so.
+    """
+    empty = {"bankroll": pd.DataFrame(), "bankroll_curve": pd.DataFrame(),
+             "ledger_open": pd.DataFrame()}
+    if ledger_path is None or not Path(ledger_path).exists():
+        return empty
+    from velocity.wagering.ledger import PLACED, Ledger
+    from velocity.wagering.portfolio import PortfolioConfig, should_halt
+
+    ledger = Ledger.load(ledger_path)
+    if not ledger.seeded:
+        return empty
+    state = ledger.state()
+    threshold = PortfolioConfig().max_drawdown_fraction
+    placed = ledger.frame[ledger.frame["record_type"] == PLACED]
+    notes = placed["note"].astype(str)
+    mode = ("auto" if len(placed) and notes.str.startswith("auto").all()
+            else "manual" if len(placed) else "none")
+    settled = ledger.pnl(("league",))
+    bankroll = pd.DataFrame([{
+        "seed": state.seed, "current": state.current, "peak": state.peak,
+        "drawdown": state.drawdown, "open_exposure": state.open_exposure,
+        "open_bets": int(state.n_open), "settled_bets": int(state.n_settled),
+        "halted": bool(should_halt(state.current, state.peak, threshold)),
+        "halt_threshold": threshold, "mode": mode,
+        "staked": float(settled["staked"].sum()) if not settled.empty else 0.0,
+        "profit": float(settled["profit"].sum()) if not settled.empty else 0.0,
+        "as_of": (None if state.last_settled_at is None
+                  else pd.Timestamp(state.last_settled_at)),
+        "league": "all",
+    }])
+    # Seed and adjustment rows belong to no league; "all" keeps them on the
+    # curve through the pages' sentinel filter.
+    curve = ledger.curve()
+    if not curve.empty:
+        curve["league"] = curve["league"].where(curve["league"].notna(), "all")
+    open_ = ledger.open_bets()
+    if not open_.empty:
+        open_ = open_.drop(columns=["settled"])
+    return {"bankroll": bankroll, "bankroll_curve": curve, "ledger_open": open_}
+
+
 def build_exposure(portfolio: pd.DataFrame) -> pd.DataFrame:
     """One row per league: what the sized card puts at risk against its cap.
 
@@ -539,6 +588,8 @@ def main() -> None:
                         help="FantasyPros artifacts (injuries panel)")
     parser.add_argument("--no-weather", action="store_true",
                         help="skip the Open-Meteo forecast fetch")
+    parser.add_argument("--ledger", default=None,
+                        help="the bankroll ledger parquet (docs/WAGERING.md W1)")
     args = parser.parse_args()
 
     slate_dir = Path(args.slate_dir)
@@ -573,6 +624,7 @@ def main() -> None:
               else tables["record"])
     tables["units"] = build_units(season)
     tables["clv_by_market"] = build_clv_by_market(season)
+    tables.update(build_bankroll(None if args.ledger is None else Path(args.ledger)))
 
     # An absent family still writes a typed one-row sentinel frame so every
     # page's SQL parses AND every source query returns a row (see
@@ -671,6 +723,18 @@ def main() -> None:
         "units": {"league": str, "slate_date": "datetime64[ns]",
                   "profit": float, "profit_sized": float, "bets": int,
                   "units": float, "units_sized": float},
+        "bankroll": {"seed": float, "current": float, "peak": float,
+                     "drawdown": float, "open_exposure": float, "open_bets": int,
+                     "settled_bets": int, "halted": bool, "halt_threshold": float,
+                     "mode": str, "staked": float, "profit": float,
+                     "as_of": "datetime64[ns]", "league": str},
+        "bankroll_curve": {"recorded_at": "datetime64[ns]", "record_type": str,
+                           "league": str, "bet_id": str, "market": str,
+                           "result": str, "amount": float, "bankroll": float},
+        "ledger_open": {"bet_id": str, "league": str, "kind": str, "game_id": str,
+                        "market": str, "side": str, "player": str, "point": float,
+                        "book": str, "price": float, "stake": float,
+                        "placed_at": "datetime64[ns]"},
     }
     for name, frame in tables.items():
         if frame.empty:

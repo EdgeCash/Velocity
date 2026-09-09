@@ -245,3 +245,57 @@ def test_build_units_coerces_object_profit(tmp_path: Path) -> None:
         assert len(frame) == 1 and frame.iloc[0]["league"] == "__none__", name
     clv = pd.read_parquet(tmp_path / "data" / "clv_by_market.parquet")
     assert clv.iloc[0]["market"] == "total" and bool(clv.iloc[0]["clv_trusted"])
+
+
+def test_ledger_tables_ride_into_the_site(tmp_path: Path) -> None:
+    from velocity.wagering.ledger import Ledger
+
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    _slate_frames(slate_dir)
+    book = Ledger(path=tmp_path / "ledger.parquet")
+    at = pd.Timestamp("2026-01-01 12:00")
+    book.seed(100.0, at=at)
+    book.recommend(pd.DataFrame([
+        {"game_id": "g1", "market": "total", "side": "under", "point": 8.5, "book": "dk",
+         "price": -110.0, "stake": 2.0, "p_model": 0.568, "kind": "game"},
+        {"game_id": "g2", "market": "spread", "side": "home", "point": -1.5, "book": "fd",
+         "price": 100.0, "stake": 1.0, "p_model": 0.55, "kind": "game"},
+    ]), league="mlb", stamp="20260101T120000Z", at=at)
+    book.place("mlb|g1|total|under|", 2.0, at=at, note="auto: booked at the recommended terms")
+    book.place("mlb|g2|spread|home|", 1.0, at=at, note="auto: booked at the recommended terms")
+    book.settle(pd.DataFrame([{"bet_id": "mlb|g1|total|under|", "result": "win"}]),
+                at=at + pd.Timedelta(days=1))
+    book.save()
+
+    out = tmp_path / "data"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir), "--out", str(out),
+         "--cards-out", str(tmp_path / "cards"), "--ledger", str(book.path)],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    bankroll = pd.read_parquet(out / "bankroll.parquet")
+    assert len(bankroll) == 1
+    row = bankroll.iloc[0]
+    assert row["seed"] == 100.0
+    assert row["current"] == pytest.approx(100.0 + 2.0 * 100 / 110)
+    assert row["open_exposure"] == 1.0 and row["open_bets"] == 1
+    assert row["mode"] == "auto" and not bool(row["halted"])
+    assert row["league"] == "all"
+    curve = pd.read_parquet(out / "bankroll_curve.parquet")
+    assert curve["record_type"].tolist() == ["seed", "settled"]
+    assert curve["league"].tolist() == ["all", "mlb"]  # the seed rides through the filter
+    open_ = pd.read_parquet(out / "ledger_open.parquet")
+    assert open_["bet_id"].tolist() == ["mlb|g2|spread|home|"]
+
+    # Without a ledger the tables are typed sentinels, so the pages parse.
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir), "--out", str(out),
+         "--cards-out", str(tmp_path / "cards")],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    for name in ("bankroll", "bankroll_curve", "ledger_open"):
+        frame = pd.read_parquet(out / f"{name}.parquet")
+        assert len(frame) == 1 and frame.iloc[0]["league"] == "__none__"

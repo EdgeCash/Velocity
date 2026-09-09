@@ -30,6 +30,11 @@ on:
         description: "Bankroll for stake sizing"
         required: false
         default: "100"
+      ledger_mode:
+        description: "Ledger: auto books every staked row at its recommended terms; manual books only what the operator records (scripts/ledger.py)"
+        type: choice
+        options: [auto, manual]
+        default: auto
       demo:
         description: "Render demo cards from a historical week instead of the live board"
         required: false
@@ -142,16 +147,41 @@ jobs:
               --remote 2>/dev/null || echo "no stored chain for ${league}"
           done
 
+      # The bankroll ledger (docs/WAGERING.md W1): one private parquet — the
+      # seed, every recommendation, every placed bet, every settlement. The
+      # durable copy lives beside the season chain in R2; every slate
+      # artifact carries a copy too, and the union of every copy on hand is
+      # the ledger (append-only records merge by identity, so no copy can
+      # overwrite another). Skipped without the token: the runner then
+      # stakes against --bankroll as before.
+      - name: Fetch the bankroll ledger
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p artifacts/ledger
+          npx --yes wrangler@4 r2 object get "velocity-wasm/ledger/ledger.parquet" \
+            --file artifacts/ledger/ledger_r2.parquet --remote 2>/dev/null \
+            || echo "no stored ledger yet"
+          python scripts/ledger.py merge --into artifacts/ledger/ledger.parquet \
+            artifacts/ledger/ledger_r2.parquet artifacts/previous/*/*/ledger.parquet
+          rm -f artifacts/ledger/ledger_r2.parquet
+
       - name: Grade yesterday's slates
         continue-on-error: true
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
+          LEDGER=""
+          if [ -f artifacts/ledger/ledger.parquet ]; then
+            LEDGER="--ledger artifacts/ledger/ledger.parquet"
+          fi
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --props-dir artifacts/props \
-              --league "${league}" || true
+              --league "${league}" $LEDGER || true
           done
 
       - name: Park the season chain (R2)
@@ -288,6 +318,12 @@ jobs:
                && { [ "${league}" = "nfl" ] || [ "${league}" = "ncaaf" ]; }; then
               EXTRA="$EXTRA --exchanges"
             fi
+            # The ledger, when the R2 round trip is configured: the bankroll
+            # comes from it and --bankroll only seeds an empty one.
+            if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+              EXTRA="$EXTRA --ledger artifacts/ledger/ledger.parquet"
+              EXTRA="$EXTRA --ledger-mode ${{ github.event.inputs.ledger_mode || 'auto' }}"
+            fi
             python scripts/run_live_slate.py \
               --league "${league}" \
               --data "datasets/${league}" \
@@ -296,6 +332,21 @@ jobs:
               --out artifacts/slate $EXTRA
             echo "::endgroup::"
           done
+
+      # The ledger's durable copy, refreshed after the grade settled
+      # yesterday and the slates appended today; a copy rides in this run's
+      # artifact as the fallback the next run merges in.
+      - name: Park the bankroll ledger
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -f artifacts/ledger/ledger.parquet ]; then
+            cp artifacts/ledger/ledger.parquet artifacts/slate/ledger.parquet
+            npx --yes wrangler@4 r2 object put "velocity-wasm/ledger/ledger.parquet" \
+              --file artifacts/ledger/ledger.parquet --remote && echo "parked the ledger"
+          fi
 
       # ---- the optimal DK lineup (DFS surface) --------------------------------
       # Needs both a DK salary snapshot and an FP projections snapshot; missing
@@ -423,7 +474,7 @@ jobs:
         run: |
           python scripts/build_site_data.py --slate-dir artifacts/slate \
             --prev-dir artifacts/previous --odds-dir artifacts/odds \
-            --fp-dir artifacts/fp
+            --fp-dir artifacts/fp --ledger artifacts/ledger/ledger.parquet
           cd site
           npm ci
           npm run sources
