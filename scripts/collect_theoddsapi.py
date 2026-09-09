@@ -20,6 +20,7 @@ Credits are finite (100k/month) — this prints the remaining count each run.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +32,8 @@ LEAGUES = ("nfl", "ncaaf")
 
 
 def collect(
-    leagues: tuple[str, ...], collected_at: pd.Timestamp, out_raw: Path | None = None
+    leagues: tuple[str, ...], collected_at: pd.Timestamp, out_raw: Path | None = None,
+    *, regions: str = "us",
 ) -> tuple[pd.DataFrame, str | None]:
     """Return a canonical ``Lines`` frame for ``leagues`` plus the remaining-credit count.
 
@@ -43,7 +45,10 @@ def collect(
     (docs/DATA_PROVIDERS.md). The raw form is what carries event metadata
     (teams, kickoff), which the normalized Lines frame drops.
     """
-    client = TheOddsAPIClient.from_env()
+    # ``regions`` is The Odds API's region list: "us", or "us,eu" for
+    # Pinnacle — the sharp close the grader prefers (docs/SYSTEM_REVIEW.md
+    # §4.3). Every extra region is one more credit per market per pull.
+    client = dataclasses.replace(TheOddsAPIClient.from_env(), regions=regions)
     tag = collected_at.strftime("%Y%m%dT%H%M%SZ")
     frames: list[pd.DataFrame] = []
     remaining: str | None = None
@@ -67,6 +72,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot The Odds API game lines")
     parser.add_argument("--out", default="artifacts/odds", help="output folder (private, not git)")
     parser.add_argument("--leagues", nargs="+", default=list(LEAGUES), help="leagues to snapshot")
+    parser.add_argument("--regions", default="us",
+                        help="The Odds API regions: 'us', or 'us,eu' for Pinnacle (each "
+                             "region is one more credit per market per pull)")
     args = parser.parse_args()
 
     now = datetime.now(UTC)
@@ -75,7 +83,7 @@ def main() -> None:
     out = Path(args.out)
     raw = out / "raw"
     raw.mkdir(parents=True, exist_ok=True)
-    df, remaining = collect(tuple(args.leagues), stamp, raw)
+    df, remaining = collect(tuple(args.leagues), stamp, raw, regions=args.regions)
 
     dest = out / f"odds_lines_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
     df.to_parquet(dest, index=False)

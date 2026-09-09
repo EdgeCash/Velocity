@@ -96,6 +96,16 @@ markets is ≈6 credits/run → ~4.3k/month, well under 100k; true historical ba
 uses the pricier `/historical` endpoint on demand. Same rules as the BP collector:
 never commits, `artifacts/` gitignored, empty boards succeed.
 
+**Regions and the sharp close (2026-09).** The collector takes `--regions`
+(workflow input `regions`, default `us`). `us,eu` adds Pinnacle, whose close
+the grader now prefers as the CLV yardstick when it is on the board
+(`close_source = "sharp"`, else the cross-book `"consensus"`;
+`docs/SYSTEM_REVIEW.md` §4.3) — and doubles the credits per pull (one per
+market per region). At the current cadence that is ~9k/month for two
+leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
+switch is a dispatch input rather than the default. Flip it when the CLV
+record is worth grading against the sharpest number.
+
 ## The FantasyPros collector (`scripts/collect_fantasypros.py` + workflow)
 
 `.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).

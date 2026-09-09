@@ -29,7 +29,7 @@ def test_model_weight_resolves_per_league() -> None:
     # NCAAF joined the anchor: the ≥6-point totals filter claims ~0.14 of
     # edge at sd 16.7 while the backtest realizes ~0.03; 0.2 maps one onto
     # the other and the points filter stays the selector.
-    assert runner.resolve_model_weight(None, "ncaaf") == 0.2
+    assert runner.resolve_model_weight(None, "ncaaf") == 0.13  # the S3 staking sweep
     for league in ("mlb", "wnba", "ncaab", "nhl"):
         assert runner.resolve_model_weight(None, league) == 1.0
     # An explicit flag always wins, 1.0 (raw) included.
@@ -135,7 +135,7 @@ def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
     args = runner.build_parser().parse_args(["--league", "ncaaf"])
     rows = dict(runner.live_config_rows(args, "EPA×scores blend", None))
     assert rows["Ratings"] == "EPA×scores blend"
-    assert "0.2" in rows["Market anchoring"]
+    assert "0.13" in rows["Market anchoring"]  # the S3 staking sweep's weight
     assert "≥ 6" in rows["Selectivity"] and "moneylines sitting out" in rows["Selectivity"]
     assert "0.12 absolute" in rows["Edge ceilings"] and "50%" in rows["Edge ceilings"]
     assert rows["Paper"] == "team totals"

@@ -147,3 +147,40 @@ def test_prop_closes_are_the_last_pre_kickoff_quote_reduced_across_books(tmp_pat
         (1 + 100 / 110) / (1 + 100 / 115) - 1.0)
     assert pd.isna(graded["line_clv"].iloc[1]) and pd.isna(graded["price_clv"].iloc[1])
     assert _MOD.prop_closing_for_slate(tmp_path / "empty", props, games, "nfl") is None
+
+
+def test_the_close_prefers_a_sharp_book_and_says_so(tmp_path: Path) -> None:
+    kickoff = pd.Timestamp("2026-09-14 17:00")
+    games = pd.DataFrame([{"game_id": "g1", "home_team": "KC", "away_team": "BUF",
+                           "kickoff": kickoff},
+                          {"game_id": "g2", "home_team": "DET", "away_team": "CHI",
+                           "kickoff": kickoff}])
+    rows = []
+    stamp = pd.Timestamp("2026-09-14 15:00")
+    # g1 has a Pinnacle quote beside two soft books; g2 has soft books only.
+    for gid, books in (("g1", (("dk", 46.5, -110), ("fd", 47.0, -110), ("pinnacle", 47.5, -105))),
+                       ("g2", (("dk", 44.5, -110), ("fd", 45.5, -112)))):
+        for book, point, price in books:
+            for side in ("over", "under"):
+                rows.append({"line_id": f"{gid}{book}{side}", "game_id": gid, "book": book,
+                             "market": "total", "side": side, "price": price,
+                             "point": point, "timestamp": stamp, "is_closing": False,
+                             "league": "nfl"})
+    pd.DataFrame(rows).to_parquet(tmp_path / "odds_lines_20260914T150000Z.parquet", index=False)
+    slate = pd.DataFrame([
+        {"game_id": "g1", "market": "total", "side": "over", "point": 46.0, "price": -110.0,
+         "stake": 1.0, "p_model": 0.56},
+        {"game_id": "g2", "market": "total", "side": "under", "point": 45.0, "price": -110.0,
+         "stake": 1.0, "p_model": 0.55},
+    ])
+    closing = _MOD.closing_for_slate(tmp_path, slate, games, "nfl")
+    assert closing is not None
+    by = closing.set_index(["game_id", "side"])
+    assert by.loc[("g1", "over"), "close_source"] == "sharp"
+    assert by.loc[("g1", "over"), "point"] == 47.5 and by.loc[("g1", "over"), "price"] == -105
+    assert by.loc[("g2", "under"), "close_source"] == "consensus"
+    assert by.loc[("g2", "under"), "point"] == 45.0  # the median of 44.5 / 45.5
+    graded = _MOD.attach_close_source(slate.assign(result="win", profit=0.9), closing)
+    assert graded["close_source"].tolist() == ["sharp", "consensus"]
+    bare = _MOD.attach_close_source(slate.assign(result="win", profit=0.9), None)
+    assert bare["close_source"].isna().all()

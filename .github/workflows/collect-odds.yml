@@ -23,6 +23,10 @@ on:
         description: "Leagues to snapshot (space-separated), e.g. 'nfl ncaaf'"
         required: false
         default: "nfl ncaaf mlb wnba ncaab nhl"
+      regions:
+        description: "The Odds API regions: 'us', or 'us,eu' to add Pinnacle (doubles the credits per pull)"
+        required: false
+        default: "us"
 
 concurrency:
   group: collect-odds
@@ -56,6 +60,7 @@ jobs:
         run: |
           python scripts/collect_theoddsapi.py \
             --out artifacts/odds \
+            --regions "${{ github.event.inputs.regions || 'us' }}" \
             --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}
 
       - name: Upload snapshot (private artifact)

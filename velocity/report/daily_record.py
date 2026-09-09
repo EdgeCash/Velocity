@@ -35,6 +35,10 @@ RECORD_COLUMNS = [
     # actually recommended (docs/WAGERING.md §6). Null on rows graded before
     # sizing was attached; the site coalesces to the solo stake and says so.
     "stake_sized", "profit_sized",
+    # Which yardstick the CLV was measured against: "sharp" (a SHARP_BOOKS
+    # close was on the board) or "consensus" (the cross-book median); null
+    # with no close or on rows graded before the column existed.
+    "close_source",
 ]
 
 def empty_record() -> pd.DataFrame:
@@ -168,6 +172,7 @@ def build_daily_record(
             "line_clv": row.get("line_clv"),
             "stake_sized": row.get("stake_sized"),
             "profit_sized": row.get("profit_sized"),
+            "close_source": row.get("close_source"),
         }
 
     if games_graded is not None:

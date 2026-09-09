@@ -574,7 +574,9 @@ def build_parser() -> argparse.ArgumentParser:
     # until the backtest says otherwise; --ncaaf-moneylines re-enables.
     parser.add_argument("--ncaaf-moneylines", action=argparse.BooleanOptionalAction,
                         default=False,
-                        help="bet NCAAF moneylines (never backtested; off by default)")
+                        help="stake NCAAF moneylines (default off — walk-forward tested "
+                             "2021–2025 and negative in every price bucket, "
+                             "docs/BACKTEST_NCAAF.md S3)")
     # Paper posture — priced, logged and graded for CLV, never staked. Team
     # totals stay paper until banked posted closes calibrate their gate; the
     # content-posture leagues (NCAAB, NHL, WNBA — no promoted edge) run paper
@@ -748,7 +750,12 @@ def build_parser() -> argparse.ArgumentParser:
 # 3–5× too large; anchored at 0.2 the claimed edge lands on the realized one
 # and the points filter stays the selector (it reads fair_total, not the
 # probability). Provisional until the S3 staking sweep fits the weight.
-DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.2}
+# NCAAF at 0.13: the S3 staking sweep on 3,733 out-of-sample totals at the
+# ≥6-point filter (2018–2026, the levelled blend) — realized edge +0.026
+# against +0.218 raw, so the claim matches the realization at w ≈ 0.12–0.13
+# at every threshold from 6 to 10; the live 0.2 claimed 1.7× what it earned
+# (docs/BACKTEST_NCAAF.md, the staking sweep).
+DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.13}
 
 
 # Leagues in the content + CLV posture: their labs found no promoted edge

@@ -356,8 +356,9 @@ totals on the live card sat above the ceiling, and Kelly had been staking
 them 3–5× too large all along. NCAAF now anchors at w = 0.2 like the NFL:
 the points filter stays the selector, the claimed edge lands on the
 realized one (median 0.039 on the re-run, stakes ~1u instead of 3–5u), and
-the class cap holds the totals class to half the slate. Provisional until
-the S3 staking sweep fits the weight. The Methods page correction is S4's.
+the class cap holds the totals class to half the slate. The S3 staking
+sweep then fitted the weight at 0.13 (`docs/BACKTEST_NCAAF.md`, the S3
+round). The Methods page correction is S4's.
 
 ### M3 — Props (one PR) — **landed 2026-09**
 Dispersion fitted from `player_weeks` (5.2) into `FootballPropConfig` —
@@ -385,9 +386,13 @@ PPR points were missing from DFS. Fixed with the live spelling under test.
 Pace into the EPA half (3.3); one HFA across the blend (3.4); garbage-time
 rebuild and variant (1.3, 3.5). Promote what wins.
 
-### M6 — The shop (one PR, after a credit-cost check)
-Pinnacle via the `eu` region (1.6); sharp-close CLV with `close_source`
-(4.3).
+### M6 — The shop (one PR, after a credit-cost check) — **mechanism landed 2026-09, the switch left to the budget**
+Sharp-close CLV (4.3): the grader prefers a Pinnacle close when one is on
+the board and the record carries `close_source` (sharp / consensus). The
+`eu` region (1.6) is a collector flag and a workflow input rather than the
+default: it doubles the odds credits per pull (~9k/month for two leagues,
+~25k for six, inside the 100k budget), and no Pinnacle row exists until it
+is flipped — `docs/DATA_PROVIDERS.md`.
 
 ---
 

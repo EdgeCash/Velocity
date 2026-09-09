@@ -60,6 +60,8 @@ evaluation.
   `scripts/refresh_datasets.py`. See `docs/INTEL.md`.
 - `ncaaf/games.parquet` — 2015–2024 CFBD games **with closing betting lines**
   (`scripts/pull_cfbd_lines.py`), the primary NCAAF backtest input.
+- `ncaaf/games_lines.parquet` — 2015–2025 CFBD games with the consensus closing
+  spread, total and (from 2021) moneylines; the S3 moneyline test's input.
 - `ncaaf/boxscores_2002_2025.parquet` — 2002–2025 box scores (no lines), longer
   projection-only history. See `docs/BACKTEST_NCAAF.md`.
 - `nfl/sim_residuals.parquet`, `ncaaf/sim_residuals.parquet` — the shipped

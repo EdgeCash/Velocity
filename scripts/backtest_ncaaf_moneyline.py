@@ -29,6 +29,19 @@ BUCKETS = [(-10_000, -300, "fav ≤ −300"), (-300, -150, "fav −300..−150")
            (300, 1000, "dog +300..+1000"), (1000, 100_000, "dog ≥ +1000")]
 
 
+def valid_price(price: object) -> bool:
+    """A real American price: finite and outside (−100, 100).
+
+    A median across providers can land inside that band when the books'
+    signs disagree on a near pick'em; those rows carry no usable close.
+    """
+    try:
+        value = float(price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return np.isfinite(value) and not (-100.0 < value < 100.0)
+
+
 def devig_pair(home_ml: float, away_ml: float) -> tuple[float, float]:
     """Multiplicative de-vig of a two-way moneyline → (p_home, p_away)."""
     ih, ia = 1.0 / american_to_decimal(home_ml), 1.0 / american_to_decimal(away_ml)
@@ -51,6 +64,7 @@ def build_ledger(
         .rename(columns={"season": "line_season"}),
         on="game_id", how="inner",
     ).dropna(subset=["home_ml", "away_ml", "p_home_win", "home_score", "away_score"])
+    frame = frame[frame["home_ml"].map(valid_price) & frame["away_ml"].map(valid_price)]
     rows = []
     for r in frame.to_dict("records"):
         fair_home, fair_away = devig_pair(float(r["home_ml"]), float(r["away_ml"]))
@@ -107,6 +121,7 @@ def main() -> None:
 
     merged = projections.merge(lines[["game_id", "home_ml", "away_ml"]], on="game_id",
                                how="inner").dropna(subset=["home_ml", "away_ml"])
+    merged = merged[merged["home_ml"].map(valid_price) & merged["away_ml"].map(valid_price)]
     fair = np.array([devig_pair(h, a)[0]
                      for h, a in zip(merged["home_ml"], merged["away_ml"], strict=True)])
     y = merged["home_win"].to_numpy(dtype=float)
