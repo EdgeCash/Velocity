@@ -176,6 +176,21 @@ def nfl_variants(
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
 
+    def levelled(inner: VariantFactory, seasons: int | None = None) -> VariantFactory:
+        """``inner`` with its scoring level fitted through the model on the
+        training window's own games (velocity.models.level) — the totals
+        bias the residual bank found, corrected where it arises."""
+        def factory(train: pd.DataFrame) -> NFLGameModel:
+            from velocity.models.level import calibrate_level
+
+            model = inner(train)
+            if schedule is None:
+                return model  # type: ignore[return-value]
+            window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
+            return calibrate_level(model, window, seasons=seasons)  # type: ignore[arg-type]
+
+        return factory
+
     variants: dict[str, tuple[str, VariantFactory]] = {
         "baseline": ("plays", baseline),
         "scores": ("games", scores),
@@ -197,6 +212,12 @@ def nfl_variants(
     }
 
     if schedule is not None:
+        variants.update({
+            # The promoted fit with its level calibrated on the training
+            # window (all of it, and the trailing two seasons).
+            "qb-recency-17-q300-level": ("plays", levelled(qb_recency(17.0, 300.0))),
+            "qb-recency-17-q300-level2": ("plays", levelled(qb_recency(17.0, 300.0), 2)),
+        })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)
 
@@ -441,12 +462,21 @@ def ncaaf_variants(
 
         def blend(epa_weight: float) -> VariantFactory:
             def factory(train_games: pd.DataFrame) -> BlendedGameModel:
+                from dataclasses import replace as _replace
+
+                from velocity.models.level import mean_points_per_team
+
                 sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
                 cells = compress_plays(sub)
+                # The scoring level fitted per training window exactly as
+                # the live runner fits it (velocity.models.level): a fixed
+                # 28.5 kept the lab projecting the pre-2023 era while the
+                # live blend had moved, so the lab's residuals were not the
+                # live model's.
                 epa_model = NFLGameModel(
                     fit_ratings(cells, ridge_lambda=50.0,
                                 weights=cells["n"].astype(float)),
-                    cfg,
+                    _replace(cfg, base_points=mean_points_per_team(train_games)),
                 )
                 scores_model = _model(fit_scores_ratings(train_games, ridge_lambda=10.0))
                 return BlendedGameModel(epa_model, scores_model, epa_weight, sim)

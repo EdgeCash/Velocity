@@ -22,9 +22,11 @@ refinement).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+
+from velocity.models.residuals import ResidualPool
 
 # Calibrated to real NFL residuals — the standard deviation of (actual − model)
 # margin and total from a 2022–2023 walk-forward (n≈570): margin ≈ 12.8, total
@@ -52,6 +54,16 @@ DEFAULT_SD_TOTAL = 13.6
 NCAAF_SD_MARGIN = 18.2
 NCAAF_SD_TOTAL = 16.7
 
+# Heteroscedastic dispersion per league: (sd_margin_slope, sd_total_slope,
+# sd_anchor_total) — how the sds above move per point of expected total away
+# from a typical game. Fitted by scripts/build_sim_residuals.py on the banked
+# walk-forward residuals and promoted through scripts/sim_lab.py; zeros mean
+# the homoscedastic sim (docs/SYSTEM_REVIEW.md §2.1).
+FOOTBALL_SD_SLOPES: dict[str, tuple[float, float, float]] = {
+    "nfl": (0.0, 0.0, 0.0),
+    "ncaaf": (0.0, 0.0, 0.0),
+}
+
 
 @dataclass(frozen=True)
 class SimConfig:
@@ -67,6 +79,20 @@ class SimConfig:
     sd_total: float = DEFAULT_SD_TOTAL
     margin_total_corr: float = 0.0
     round_scores: bool = True
+    # Heteroscedastic dispersion (docs/SYSTEM_REVIEW.md §2.1): the sds above
+    # hold at an expected total of ``sd_anchor_total`` and move by the slopes
+    # per point of expected total away from it — a 66-point college game is
+    # ~19% noisier than a 44-point one, and one constant priced them alike.
+    # Slopes of zero (the default) are the homoscedastic sim exactly.
+    sd_margin_slope: float = 0.0
+    sd_total_slope: float = 0.0
+    sd_anchor_total: float = 0.0
+    # The empirical shape (docs/SYSTEM_REVIEW.md §2.2): when set, residual
+    # pairs are drawn from this pool instead of a bivariate normal, scaled
+    # by the (effective) sds. ``compare=False`` keeps configs comparable —
+    # two configs with the same numbers are the same config; the pool is
+    # data, not a knob.
+    residuals: ResidualPool | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -75,6 +101,21 @@ class SimConfig:
             raise ValueError("standard deviations must be positive")
         if not -1.0 <= self.margin_total_corr <= 1.0:
             raise ValueError("margin_total_corr must be in [-1, 1]")
+        if (self.sd_margin_slope or self.sd_total_slope) and self.sd_anchor_total <= 0:
+            raise ValueError("a dispersion slope needs a positive sd_anchor_total")
+
+    def effective_sds(self, mu_total: float) -> tuple[float, float]:
+        """The (sd_margin, sd_total) this game is simulated at.
+
+        Linear in the expected total around the anchor, floored at half the
+        constant so an extreme μ can never collapse or invert the noise.
+        """
+        if not self.sd_margin_slope and not self.sd_total_slope:
+            return self.sd_margin, self.sd_total
+        delta = float(mu_total) - self.sd_anchor_total
+        sd_m = max(self.sd_margin + self.sd_margin_slope * delta, 0.5 * self.sd_margin)
+        sd_t = max(self.sd_total + self.sd_total_slope * delta, 0.5 * self.sd_total)
+        return sd_m, sd_t
 
 
 @dataclass(frozen=True)
@@ -144,22 +185,33 @@ def simulate_game(
 
     ``mu_margin`` is expected home-minus-away points; ``mu_total`` is expected
     combined points. Draws are taken from a bivariate normal over (margin,
-    total) with the config's standard deviations and correlation, then split
-    into home/away scores, floored at zero, and (by default) rounded to
-    integers.
+    total) with the config's standard deviations and correlation — or, when
+    the config carries a residual pool, from the league's own banked
+    residual pairs scaled to those sds — then split into home/away scores,
+    floored at zero, and (by default) rounded to integers.
     """
     config = config or SimConfig()
+    sd_margin, sd_total = config.effective_sds(mu_total)
 
-    cov_mt = config.margin_total_corr * config.sd_margin * config.sd_total
-    cov = np.array(
-        [
-            [config.sd_margin**2, cov_mt],
-            [cov_mt, config.sd_total**2],
-        ]
-    )
-    draws = rng.multivariate_normal([mu_margin, mu_total], cov, size=config.n_sims)
-    margin = draws[:, 0]
-    total = draws[:, 1]
+    if config.residuals is None:
+        cov_mt = config.margin_total_corr * sd_margin * sd_total
+        cov = np.array(
+            [
+                [sd_margin**2, cov_mt],
+                [cov_mt, sd_total**2],
+            ]
+        )
+        draws = rng.multivariate_normal([mu_margin, mu_total], cov, size=config.n_sims)
+        margin = draws[:, 0]
+        total = draws[:, 1]
+    else:
+        # The empirical shape: standardized residual pairs from the banked
+        # walk-forward pool, drawn jointly (so margin/total dependence is the
+        # league's own) and scaled to this game's dispersion. Deterministic
+        # under the caller's generator like the normal path.
+        z_margin, z_total = config.residuals.draw(rng, config.n_sims)
+        margin = mu_margin + sd_margin * z_margin
+        total = mu_total + sd_total * z_total
 
     home = (total + margin) / 2.0
     away = (total - margin) / 2.0
