@@ -52,8 +52,8 @@ jobs:
             --out artifacts/exchanges \
             --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
 
-      - name: Snapshot Polymarket raw (events + books)
-        run: python scripts/collect_polymarket_raw.py --out artifacts/exchanges
+      - name: Snapshot Polymarket board (raw + normalized)
+        run: python scripts/collect_polymarket.py --out artifacts/exchanges
 
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4

@@ -194,6 +194,6 @@ API there is no vendor archive to re-pull everything from, so the artifacts
 | Collector | Workflow | Cadence | Banks |
 |---|---|---|---|
 | `scripts/collect_kalshi.py` | `collect-exchanges.yml` | hourly (:10) | Kalshi board: raw `/markets` JSON + normalized `Lines`/`PropLines` parquet, tagged `snapshot`/`collected_at`/`league` |
-| `scripts/collect_polymarket_raw.py` | `collect-exchanges.yml` | hourly (:10) | Raw Polymarket events + CLOB order books (no history exists upstream — every missed hour is spread history lost) |
+| `scripts/collect_polymarket.py` | `collect-exchanges.yml` | hourly (:10) | Polymarket board: raw Gamma events + CLOB books, plus normalized `Lines`/`PropLines` parquet (no history exists upstream — every missed hour is spread history lost) |
 | `scripts/collect_kalshi_candles.py` | `collect-kalshi-candles.yml` | daily 12:00 UTC | Settled-market candles (1-min pre-close + hourly life) raw, plus normalized close rows |
 | `scripts/consolidate_exchanges.py` | `consolidate-exchanges.yml` | weekly Mon | Rolls all exchange parquet into one long-lived archive artifact before the 90-day per-run retention expires |

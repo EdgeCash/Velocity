@@ -1,7 +1,7 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: E1 done; E2 landed, awaiting in-CI `workflow_dispatch`
-verification; E3 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1-E3 done; E2/E4 landed, awaiting in-CI `workflow_dispatch`
+verification; E5 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -102,8 +102,9 @@ rounded-normal sim smooths over.
   `outcomePrices` (a midpoint).
 - **Slug dates are UTC**: `nfl-ind-kc-2026-09-21` is the Sunday-night
   Sep 20 ET game (kickoff 00:20Z) — the opposite convention from
-  Kalshi's ET ticker dates. Joins match on teams within ±1 day and
-  disambiguate by kickoff.
+  Kalshi's ET ticker dates. But no date join is needed: every market
+  carries `gameStartTime`, the exact UTC kickoff, so the slug date is
+  only part of the identifier (E3 takes kickoff from the market).
 - **History**: `GET /prices-history?market={token_id}` with
   `interval=1h|6h|1d|1w|max` or `startTs/endTs` + `fidelity` (minutes).
   Three verified quirks: `startTs/endTs` windows much over a week are
@@ -323,7 +324,7 @@ feeds `pit.closing_line` and picks the last pre-kickoff minute.
 Remaining for the exit: the dispatch runs and the first consolidation
 over real artifacts.
 
-### Phase E3 — Polymarket ingest adapter
+### Phase E3 — Polymarket ingest adapter (done)
 
 `velocity/ingest/polymarket.py`, same two layers:
 
@@ -341,10 +342,28 @@ over real artifacts.
   pulls don't re-resolve it.
 - Props normalizer where `sportsMarketType` matches `PROP_MARKETS`.
 
-Fixtures: one frozen Gamma event (the 136-market NFL game) + a books
-payload; tests as E1. Exit: suite green; ToS read.
+Fixtures: frozen Gamma events + a books payload; tests as E1. Exit:
+suite green; ToS read.
+**Done:** `velocity/ingest/polymarket.py` (15 offline tests; live board
+pull normalized 17,425 game lines + 4,936 prop lines across 353 games).
+Findings from the live data that shaped the code:
+- Spread `line` is always signed from `outcomes[0]`'s perspective
+  (2,735/2,735 markets agree with the question text), and the slug's
+  `-spread-home-`/`-spread-away-` token says which team that is.
+- **Every** line is a half-integer (8,422/8,422) — D5 holds here too.
+- Sides are the slug's **team codes**, not display nicknames:
+  Polymarket's own labels are not internally consistent (one live event
+  quotes `Texans` on the moneyline and `HOU` on the spread), and
+  `canonicalize_sides` matches exactly, so nicknames would silently drop
+  rows. Frozen as a regression fixture.
+- Kickoff comes from each market's `gameStartTime`, so no ET/UTC date
+  join is needed after all — the slug date is only an identifier.
+- Book levels arrive **worst-first**: the best ask is `min(asks)`, not
+  `asks[0]`. Gamma's `bestAsk` field covers only `outcomes[0]`.
+- CFB carries no yardage/reception player props (only anytime- and
+  team-touchdown markets, both unmapped for want of a line).
 
-### Phase E4 — Polymarket collectors
+### Phase E4 — Polymarket collectors (board half landed; closes pending)
 
 - Board snapshots on the hourly cron (events + batch books →
   raw + parquet, private artifacts) — this **is** the spread/liquidity
@@ -358,6 +377,11 @@ payload; tests as E1. Exit: suite green; ToS read.
 
 Exit: workflow verified; one game's close recovered both ways and
 agreeing within tolerance; collectors documented in DATA_PROVIDERS.md.
+**Landed (board half):** `scripts/collect_polymarket.py` now banks raw
+Gamma events + CLOB books *and* normalized `Lines`/`PropLines` parquet
+on the hourly `collect-exchanges.yml` cron, tagged like the Kalshi
+board. Still pending: the `prices-history` fallback close and the
+two-ways agreement check.
 
 ### Phase E5 — Fee-aware EV & point-aware fair pairing
 
