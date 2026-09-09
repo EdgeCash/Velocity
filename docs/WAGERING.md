@@ -248,6 +248,15 @@ number.
 - **Caps are constitutional.** ¼-Kelly, 5% per bet, 10% per game, 25% per
   slate, 30% drawdown halt. Loosening any of them requires a backtest PR
   showing the drawdown cost, never a config tweak in passing.
+- **Ceilings on selection, paper below them (2026-09).** The staked slate
+  refuses to stake an edge above 0.12 absolute or 50% of the fair
+  probability — the adverse-selection guard the publish gate already
+  applied (`PUBLISH_GATE.md` §2), moved to where the money is. A row past a
+  ceiling, or on a market without a promoted edge (team totals; every
+  market in NCAAB/NHL/WNBA), is *paper*: priced, logged and graded for CLV at
+  stake zero with the reason on the ticket (`Bet.note`). Paper rows never
+  become parlay legs and never post. The reasoning and the numbers are in
+  `STRATEGY_REVIEW.md` §1–§4.
 - **The ledger is append-only.** Corrections are new records, so every
   bankroll number remains reproducible from history.
 

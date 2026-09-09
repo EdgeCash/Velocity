@@ -33,9 +33,17 @@ class PortfolioConfig:
     group_cap_fraction: float = 0.10
     group_correlation: float = 0.5
     max_drawdown_fraction: float = 0.30
+    # The share of the slate cap any one *market class* may hold. Correlation
+    # groups are games; model risk is not — sixty-six moneyline dogs from one
+    # sim's tail are sixty-six "independent" bets to the game grouping and
+    # took 60% of a card (docs/STRATEGY_REVIEW.md §2). A class is whatever
+    # the caller labels (a market, "prop:receptions"); candidates without a
+    # label are uncapped. 1.0 disables.
+    max_class_fraction: float = 0.5
 
     def __post_init__(self) -> None:
-        for name in ("max_portfolio_fraction", "group_cap_fraction", "max_drawdown_fraction"):
+        for name in ("max_portfolio_fraction", "group_cap_fraction", "max_drawdown_fraction",
+                     "max_class_fraction"):
             value = getattr(self, name)
             if not 0.0 < value <= 1.0:
                 raise ValueError(f"{name} must be in (0, 1]")
@@ -54,6 +62,7 @@ class BetCandidate:
     key: str
     stake_fraction: float
     group: str
+    market_class: str | None = None
 
 
 def drawdown(current_bankroll: float, peak_bankroll: float) -> float:
@@ -112,9 +121,26 @@ def size_portfolio(
         group_stakes = apply_group_cap(group_stakes, config.group_cap_fraction, bankroll)
         stakes.update(group_stakes)
 
+    cap = config.max_portfolio_fraction * bankroll
+
+    # Cap each market class at its share of the slate cap, so one model
+    # assumption cannot be most of the card.
+    if config.max_class_fraction < 1.0:
+        by_class: dict[str, list[str]] = defaultdict(list)
+        for cand in candidates:
+            if cand.market_class is not None:
+                by_class[cand.market_class].append(cand.key)
+        class_cap = config.max_class_fraction * cap
+        for keys in by_class.values():
+            held = sum(stakes.get(key, 0.0) for key in keys)
+            if held > class_cap and held > 0:
+                scale = class_cap / held
+                for key in keys:
+                    if key in stakes:
+                        stakes[key] *= scale
+
     # Enforce the aggregate portfolio cap across every group.
     total = sum(stakes.values())
-    cap = config.max_portfolio_fraction * bankroll
     if total > cap and total > 0:
         scale = cap / total
         stakes = {key: amount * scale for key, amount in stakes.items()}

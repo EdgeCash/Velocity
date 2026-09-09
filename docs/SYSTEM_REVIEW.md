@@ -331,11 +331,22 @@ lab variant gated on calibration error and Brier exactly as 18.2/16.7 was.
 DoD: E8's offset-error table re-measured on the new draw shows the
 shoulders inside tolerance without the gate.
 
-### M2 — Pricing seams (one PR)
-`min_ev` + relative edge for singles (4.1); consensus de-vig and the Methods
-correction (4.2); drift vs the previous snapshot (4.4); a market-class group
-in `PortfolioConfig` (4.5). Tests pin each default; the NCAAF card re-run
-concentrates in totals.
+### M2 — Pricing seams (one PR) — **landed 2026-09-09**
+Consensus de-vig (4.2), drift against the previous archived snapshot (4.4),
+and a market-class cap in `PortfolioConfig` (4.5) shipped with S2. Two
+corrections to §4 on the way. First, 4.1 asked for a relative-edge *floor*;
+floors bind favorites (a 0.02 edge is 2.7% EV at −300 and 22% at +1000) —
+the longshot problem needs a relative **ceiling**, which is what shipped
+(edge ≤ 50% of the fair probability, beside the 0.12 absolute one). Second,
+the ceilings exposed a contradiction the review missed: the NCAAF ≥6-point
+totals filter *inherently* claims ~0.14 of edge (a 6-point gap is 0.36σ at
+sd 16.7) while the backtest realizes 53.0%, ~0.03 — so every one of the 27
+totals on the live card sat above the ceiling, and Kelly had been staking
+them 3–5× too large all along. NCAAF now anchors at w = 0.2 like the NFL:
+the points filter stays the selector, the claimed edge lands on the
+realized one (median 0.039 on the re-run, stakes ~1u instead of 3–5u), and
+the class cap holds the totals class to half the slate. Provisional until
+the S3 staking sweep fits the weight. The Methods page correction is S4's.
 
 ### M3 — Props (one PR)
 Dispersion fit from `player_weeks` (5.2) → `FootballPropConfig` values with

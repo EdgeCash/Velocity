@@ -230,7 +230,19 @@ the site, then the ledger and the monitor `WAGERING.md` already scheduled.
 - **DoD:** the next NCAAF game day grades non-zero rows in CI; a simulated
   7-day artifact gap leaves the season line intact.
 
-### S2 — Stop staking what has no evidence (policy; flags and defaults only)
+### S2 — Stop staking what has no evidence (policy; flags and defaults only) — **landed 2026-09-09**
+
+Shipped as designed, with one correction to the design: the review asked
+for a *floor* on relative edge or EV, but floors bind favorites (a 0.02 edge
+at −300 is 2.7% EV; at +1000 it is 22%) — the longshot problem needs a
+relative **ceiling**. So the staked slate now carries the publish gate's
+absolute ceiling (0.12) and a relative one (edge ≤ 50% of the fair
+probability); a row past either is logged as paper with the reason, so its
+CLV grades the ceiling itself. NCAAF moneylines sit out by default; team
+totals are paper on every league; NCAAB, NHL and WNBA run in an explicit
+paper posture; parlay legs come only from staked sportsbook rows; the
+publish gate refuses paper rows first.
+
 
 - **Build:** in `run_live_slate.py` defaults — NCAAF `moneyline` joins
   `spread` in `exclude_markets` (re-enable flag, like `--ncaaf-spreads`);

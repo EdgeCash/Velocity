@@ -469,9 +469,10 @@ def slate_to_frame(log: BetLog) -> pd.DataFrame:
             "p_fair": None if bet.p_fair is None else round(bet.p_fair, 4),
             "edge": None if bet.p_fair is None else round(bet.p_model - bet.p_fair, 4),
             "stake": round(bet.stake, 4),
+            "note": bet.note,
         }
         for bet in log
     ]
     cols = ["game_id", "market", "side", "point", "book", "price", "p_model",
-            "p_fair", "edge", "stake"]
+            "p_fair", "edge", "stake", "note"]
     return pd.DataFrame(rows, columns=cols)

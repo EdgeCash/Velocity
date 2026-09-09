@@ -533,6 +533,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ncaaf-spreads", action=argparse.BooleanOptionalAction,
                         default=False,
                         help="bet NCAAF spreads (backtest found no edge; off by default)")
+    # NCAAF moneylines have never been backtested (the committed closes carry
+    # no moneyline column), and on the first live card they took 60% of the
+    # solo-Kelly exposure — 66 bets, 28 at +1000 or longer, the model's median
+    # win probability 2.3× the market's (docs/STRATEGY_REVIEW.md §1.2). Off
+    # until the backtest says otherwise; --ncaaf-moneylines re-enables.
+    parser.add_argument("--ncaaf-moneylines", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="bet NCAAF moneylines (never backtested; off by default)")
+    # Paper posture — priced, logged and graded for CLV, never staked. Team
+    # totals stay paper until banked posted closes calibrate their gate; the
+    # content-posture leagues (NCAAB, NHL, WNBA — no promoted edge) run paper
+    # end to end. --team-totals-paper/--paper flip either per run.
+    parser.add_argument("--team-totals-paper", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="price team totals but stake them at zero (default on)")
+    parser.add_argument("--paper", action=argparse.BooleanOptionalAction, default=None,
+                        help="stake nothing — every market paper (default: on for "
+                             "ncaab/nhl/wnba, off for nfl/ncaaf)")
+    # The adverse-selection guard, applied where the money is
+    # (docs/PUBLISH_GATE.md §2 measured our biggest edges as our worst CLV).
+    # A row past either ceiling is logged as paper with the reason.
+    # The fair-probability anchor (docs/SYSTEM_REVIEW.md §4.2): the cross-book
+    # consensus of both sides, not the best-priced book's own pair — which is
+    # by construction the pair most generous to our side.
+    parser.add_argument("--devig-anchor", choices=["consensus", "book"], default="consensus",
+                        help="de-vig against the cross-book consensus (default) or the "
+                             "shopped book's own opposite side")
+    parser.add_argument("--odds-dir", default="artifacts/odds",
+                        help="hourly odds archive — the previous snapshot is the publish "
+                             "gate's 'then' for the adverse-drift rule")
+    parser.add_argument("--max-edge", type=float, default=0.12,
+                        help="absolute edge ceiling; a bigger edge is paper (0 = off)")
+    parser.add_argument("--max-relative-edge", type=float, default=0.50,
+                        help="edge / fair probability ceiling; bites on longshots (0 = off)")
     parser.add_argument("--bankroll", type=float, default=100.0)
     # The August board carries the whole season's games at stale opening
     # numbers (the first live run priced 272 NFL events and "staked" 20x the
@@ -672,7 +706,47 @@ def build_parser() -> argparse.ArgumentParser:
 # itself). Every other league keeps the raw model: the anchoring evidence is
 # NFL-specific, and the NCAAF totals cut was backtested on the raw model's
 # disagreement, which a global anchor would silently re-gate.
-DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2}
+# NCAAF joined the anchor on 2026-09-09. The ≥6-point totals filter selects
+# games where the raw sim claims P(over) ≈ 0.64 (a 6-point gap is 0.36σ at
+# sd 16.7) — a 0.14 edge — while the backtest says those bets win 53.0%
+# (docs/BACKTEST_NCAAF.md): a realized edge of ~0.03. Staked raw, every one
+# of them sat above the 0.12 adverse-selection ceiling and Kelly sized them
+# 3–5× too large; anchored at 0.2 the claimed edge lands on the realized one
+# and the points filter stays the selector (it reads fair_total, not the
+# probability). Provisional until the S3 staking sweep fits the weight.
+DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.2}
+
+
+# Leagues in the content + CLV posture: their labs found no promoted edge
+# (NCAAB null after FDR, NHL no closes backtest yet, WNBA tracked not staked —
+# docs/STRATEGY_REVIEW.md §1.3), so every market prices and grades as paper.
+DEFAULT_PAPER_BY_LEAGUE = {"ncaab": True, "nhl": True, "wnba": True}
+GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_away")
+_TEAM_TOTALS = ("team_total_home", "team_total_away")
+
+
+def resolve_paper(explicit: bool | None, league: str) -> bool:
+    """Whether this run stakes nothing — the flag, else the league posture."""
+    if explicit is not None:
+        return explicit
+    return DEFAULT_PAPER_BY_LEAGUE.get(league, False)
+
+
+def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
+    """The markets this run prices but never stakes (docs/STRATEGY_REVIEW.md S2)."""
+    if resolve_paper(args.paper, args.league):
+        return frozenset(GAME_MARKETS) | frozenset({"__all__"})
+    return frozenset(_TEAM_TOTALS) if args.team_totals_paper else frozenset()
+
+
+def _prop_paper_markets(args: argparse.Namespace) -> frozenset[str]:
+    """Prop markets this run prices but never stakes — the league's paper posture.
+
+    Props have no market list of their own, so a paper league marks every
+    prop market it prices by intercepting the config at stake time: the slate
+    treats a market set containing ``"__all__"`` as "all of them".
+    """
+    return frozenset({"__all__"}) if resolve_paper(args.paper, args.league) else frozenset()
 
 
 def resolve_model_weight(explicit: float | None, league: str) -> float:
@@ -794,12 +868,29 @@ def main() -> None:
         # leaves it off and gates on probability edge alone.
         total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
         model_weight = resolve_model_weight(args.model_weight, args.league)
-        game_excludes = frozenset()
+        game_excludes: frozenset[str] = frozenset()
         if args.league == "ncaaf" and not args.ncaaf_spreads:
-            game_excludes = frozenset({"spread"})
+            game_excludes |= {"spread"}
             print("NCAAF spreads: sitting out (50.1% ATS flat, no edge at any "
                   "disagreement threshold — docs/BACKTEST_NCAAF.md); "
                   "--ncaaf-spreads re-enables")
+        if args.league == "ncaaf" and not args.ncaaf_moneylines:
+            game_excludes |= {"moneyline"}
+            print("NCAAF moneylines: sitting out (never backtested; 60% of the first "
+                  "live card's exposure — docs/STRATEGY_REVIEW.md §1.2); "
+                  "--ncaaf-moneylines re-enables")
+        paper_markets = resolve_paper_markets(args)
+        if "__all__" in paper_markets:
+            print(f"{args.league.upper()}: paper posture — every market priced and "
+                  "graded, nothing staked (--no-paper to stake)")
+        elif paper_markets:
+            print("team totals: paper — priced and graded, staked at zero until "
+                  "posted closes calibrate the gate (--no-team-totals-paper to stake)")
+        max_edge = args.max_edge if args.max_edge > 0 else None
+        max_rel = args.max_relative_edge if args.max_relative_edge > 0 else None
+        if max_edge is not None or max_rel is not None:
+            print(f"edge ceilings: absolute {max_edge} · relative {max_rel} — a bigger "
+                  "edge is logged as paper (adverse-selection guard)")
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
             ladder_tolerance=args.ladder_tolerance if args.ladder_tolerance > 0 else None,
@@ -809,6 +900,10 @@ def main() -> None:
             exclude_markets=game_excludes,
             min_total_disagreement=total_edge,
             min_team_total_disagreement=args.team_total_edge,
+            paper_markets=paper_markets,
+            max_edge=max_edge,
+            max_relative_edge=max_rel,
+            devig_anchor=args.devig_anchor,
         )
         if model_weight != 1.0:
             print(f"market anchoring: belief = market + {model_weight:g} × "
@@ -853,11 +948,16 @@ def main() -> None:
         if frame.empty:
             print("no bets cleared the edge threshold.")
         else:
-            shown = frame.assign(stake_pct=(frame["stake"] / args.bankroll * 100).round(2))
+            staked = frame[frame["stake"] > 0]
+            paper = frame[frame["stake"] <= 0]
+            shown = staked.assign(stake_pct=(staked["stake"] / args.bankroll * 100).round(2))
             with pd.option_context("display.width", 160, "display.max_columns", None):
                 print(f"\n{len(shown)} recommended bets (stake as % of {args.bankroll:.0f}):")
-                print(shown.to_string(index=False))
-            print(f"\ntotal staked: {frame['stake'].sum():.2f}")
+                print(shown.drop(columns=["note"]).to_string(index=False))
+                if not paper.empty:
+                    print(f"\n{len(paper)} paper rows — priced and graded, not staked:")
+                    print(paper.drop(columns=["stake"]).to_string(index=False))
+            print(f"\ntotal staked: {staked['stake'].sum():.2f}")
 
         if unresolved:
             print(f"\n{len(unresolved)} game(s) skipped — teams not in the model's universe:")
@@ -923,8 +1023,12 @@ def main() -> None:
         try:
             from velocity.intel.publish import gate_summary, publish_slate
 
+            reference = _previous_board(args, events)
+            if reference is not None:
+                print(f"publish gate: drift measured against the previous archived "
+                      f"snapshot ({len(reference)} rows)")
             published, audit = publish_slate(
-                convictions, canonical,
+                convictions, canonical, reference,
                 min_conviction=args.publish_min_conviction,
                 min_context=args.publish_min_context,
                 max_plays=args.publish_max_plays,
@@ -993,6 +1097,37 @@ def main() -> None:
             )
 
 
+def _previous_board(args: argparse.Namespace, events: pd.DataFrame) -> pd.DataFrame | None:
+    """The newest archived odds snapshot older than this run, for the drift rule.
+
+    The hourly collector's parquets under ``--odds-dir`` are the only record
+    of where the market *was*; on a single board the publish gate's
+    adverse-drift rule had nothing to compare and never fired
+    (docs/SYSTEM_REVIEW.md §4.4). Canonicalized against this run's events so
+    the keys match. Best-effort: no archive, no reference, no rejection.
+    """
+    try:
+        odds_dir = Path(args.odds_dir)
+        if args.offline or not odds_dir.exists() or events.empty:
+            return None
+        snapshots = sorted(odds_dir.rglob("odds_lines_*.parquet"))
+        if not snapshots:
+            return None
+        game_ids = set(events["game_id"].astype(str))
+        for path in reversed(snapshots):
+            snap = pd.read_parquet(path)
+            if "league" in snap.columns:
+                snap = snap[snap["league"].astype(str) == args.league]
+            snap = snap[snap["game_id"].astype(str).isin(game_ids)]
+            if snap.empty:
+                continue
+            return canonicalize_sides(snap, events)
+        return None
+    except Exception as exc:  # noqa: BLE001 - a gate input, never the slate
+        print(f"previous board unavailable ({exc}); drift rule stands down")
+        return None
+
+
 def _portfolio_card(
     args: argparse.Namespace,
     frame: pd.DataFrame,
@@ -1016,11 +1151,21 @@ def _portfolio_card(
         if props_frame is not None and not props_frame.empty:
             parts.append(props_frame.assign(kind="prop"))
         card = pd.concat(parts, ignore_index=True, sort=False)
+        # Paper rows (stake 0 — a market not yet trusted, or an edge past the
+        # ceiling) are graded, not sized: they take no share of the card.
+        card = card[card["stake"] > 0].reset_index(drop=True)
+        if card.empty:
+            print("\n=== Portfolio-sized card — nothing staked (paper posture) ===")
+            return
         candidates = [
             BetCandidate(
                 key=str(i),
                 stake_fraction=float(row["stake"]) / args.bankroll,
                 group=str(row["game_id"]),
+                # One model assumption per class: a market for game bets, the
+                # prop market for props. Capped at half the slate.
+                market_class=(f"prop:{row['market']}" if row.get("kind") == "prop"
+                              else str(row["market"])),
             )
             for i, row in enumerate(card.to_dict("records"))
         ]
@@ -1338,6 +1483,10 @@ def _prop_slate(
                 exclude_markets=frozenset(
                     m.strip() for m in args.exclude_props.split(",") if m.strip()
                 ),
+                paper_markets=_prop_paper_markets(args),
+                max_edge=args.max_edge if args.max_edge > 0 else None,
+                max_relative_edge=args.max_relative_edge if args.max_relative_edge > 0 else None,
+                devig_anchor=args.devig_anchor,
             ),
         )
         frame = prop_slate_to_frame(log)
@@ -1444,6 +1593,10 @@ def _mlb_k_slate(
                 min_edge_by_market=parse_market_edges(args.min_edge_market),
                 starting_bankroll=args.bankroll,
                 prob_shrink=args.prop_shrink,
+                paper_markets=_prop_paper_markets(args),
+                max_edge=args.max_edge if args.max_edge > 0 else None,
+                max_relative_edge=args.max_relative_edge if args.max_relative_edge > 0 else None,
+                devig_anchor=args.devig_anchor,
             ),
         )
         frame = prop_slate_to_frame(log)
