@@ -303,7 +303,18 @@ tiered builder.
 Numbered M0–M6 so they do not collide with `STRATEGY_REVIEW.md`'s S1–S6.
 M0 is the set that should land before Week 1 kicks off.
 
-### M0 — Before kickoff (four small PRs, all plumbing)
+### M0 — Before kickoff (four small PRs, all plumbing) — **landed 2026-09-09**
+
+Shipped as one PR the afternoon before Week 1. What the live run showed once
+the pieces were in: the starter map re-priced **12 of 32 teams** — the eight
+Week-18 rest cases plus offseason moves the leading-passer proxy could not
+know (Tagovailoa → ATL, Murray → MIN, Geno Smith → NYJ, Watson at CLE); the
+nflverse schedule resolved Week 1 and flagged the Melbourne SF–LA game as
+neutral; NCAAF 2025 plays are on file (125,315 plays, 934 games). One lesson
+banked on the way: the one-off pbp backfill script *overwrote* the plays
+file with the seasons it fetched, taking 2015–2024 with it; the file was
+restored from a pre-backfill checkout and the script now merges by season.
+
 - **Starter map** (3.1): FP QB1 → nflverse id → `qb_id`; injuries Out →
   next name. Test: KC projects with Mahomes' effect; a fixture Out demotes.
 - **Current-season schedule** (1.1): `current_week` reads the nflverse

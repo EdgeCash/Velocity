@@ -319,23 +319,90 @@ def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFram
     return out[out["side"].notna()].reset_index(drop=True)
 
 
+def neutral_site_map(
+    events: pd.DataFrame,
+    schedule: pd.DataFrame | None,
+    known_teams: Iterable[str],
+    aliases: dict[str, str] | None = None,
+    *,
+    max_hours: float = 48.0,
+) -> dict[str, bool]:
+    """``game_id`` → whether the league schedule marks that game neutral-site.
+
+    The odds board never says where a game is played, but the league schedule
+    does (nflverse ``location``, CFBD ``neutral_site``), and every model wrapper
+    already takes ``neutral_site`` — the flag simply never reached them live.
+    Priced with home-field nobody has, the international NFL slate and the
+    neutral-site college openers are each a few points wrong before a rating is
+    consulted (docs/SYSTEM_REVIEW.md §3.2).
+
+    Matching is on the resolved team pair in either orientation (providers
+    disagree about which side is "home" at a neutral site) plus kickoff
+    proximity. A board game the schedule does not carry is simply absent from
+    the map — the caller prices it as it did before, never guesses.
+    """
+    if schedule is None or schedule.empty or events.empty:
+        return {}
+    if "neutral_site" not in schedule.columns:
+        return {}
+    known = list(known_teams)
+    rows = schedule.dropna(subset=["home_team", "away_team", "kickoff"])
+    index: dict[tuple[str, str], list[tuple[pd.Timestamp, bool]]] = {}
+    for rec in rows.to_dict("records"):
+        home = resolve_team(str(rec["home_team"]), known, aliases)
+        away = resolve_team(str(rec["away_team"]), known, aliases)
+        if home is None or away is None:
+            continue
+        when = pd.to_datetime(rec["kickoff"], errors="coerce")
+        if pd.isna(when):
+            continue
+        flag = bool(rec["neutral_site"]) if pd.notna(rec["neutral_site"]) else False
+        index.setdefault((home, away), []).append((when, flag))
+
+    tolerance = pd.Timedelta(hours=max_hours)
+    out: dict[str, bool] = {}
+    for event in events.to_dict("records"):
+        home = resolve_team(str(event["home_team"]), known, aliases)
+        away = resolve_team(str(event["away_team"]), known, aliases)
+        if home is None or away is None:
+            continue
+        when = pd.to_datetime(event.get("kickoff"), errors="coerce")
+        candidates = index.get((home, away), []) + index.get((away, home), [])
+        if not candidates:
+            continue
+        if pd.isna(when):
+            nearest = candidates[0]
+        else:
+            nearest = min(candidates, key=lambda pair: abs(pair[0] - when))
+            if abs(nearest[0] - when) > tolerance:
+                continue
+        out[str(event["game_id"])] = nearest[1]
+    return out
+
+
 def project_board(
     events: pd.DataFrame,
     project: Callable[[str, str], GameProjection],
     known_teams: Iterable[str],
     aliases: dict[str, str] | None = None,
+    neutral_by_game: Mapping[str, bool] | None = None,
 ) -> tuple[dict[str, GameProjection], list[dict[str, str]]]:
     """Resolve each event's teams and project it; return ``{game_id: proj}`` + skips.
 
     Factored out of :func:`build_live_slate` so a caller can reuse the very same
     projections (e.g. for a report) without simulating twice. A game whose teams
-    don't resolve is skipped and reported.
+    don't resolve is skipped and reported. ``neutral_by_game`` (from
+    :func:`neutral_site_map`) reaches projectors that accept ``neutral_site``;
+    a game absent from it prices with home field, as before.
     """
     import inspect
 
     known = list(known_teams)
+    params = inspect.signature(project).parameters
     # Schedule-aware projectors (rest spots) take the event's kickoff too.
-    accepts_kickoff = "kickoff" in inspect.signature(project).parameters
+    accepts_kickoff = "kickoff" in params
+    accepts_neutral = "neutral_site" in params
+    neutral = neutral_by_game or {}
     projections: dict[str, GameProjection] = {}
     unresolved: list[dict[str, str]] = []
     for event in events.to_dict("records"):
@@ -352,10 +419,12 @@ def project_board(
                 }
             )
             continue
+        kwargs: dict[str, object] = {}
         if accepts_kickoff:
-            projections[gid] = project(home, away, kickoff=event.get("kickoff"))  # type: ignore[call-arg]
-        else:
-            projections[gid] = project(home, away)
+            kwargs["kickoff"] = event.get("kickoff")
+        if accepts_neutral and neutral.get(gid, False):
+            kwargs["neutral_site"] = True
+        projections[gid] = project(home, away, **kwargs)  # type: ignore[call-arg]
     return projections, unresolved
 
 

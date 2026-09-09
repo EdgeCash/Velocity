@@ -78,7 +78,7 @@ jobs:
       - name: Install (runtime only)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e '.[ingest]'
 
       # ---- yesterday's record, Sim Check cards, and the season chain ----------
       # Runs BEFORE the slate build so today's model cards can carry the season

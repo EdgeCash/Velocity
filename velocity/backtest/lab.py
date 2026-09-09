@@ -1090,6 +1090,14 @@ class RestAdjustedModel:
     bye (rest ≥ ``bye_days``) gets ``bye_points``; a team on a short week
     (rest ≤ ``short_days``) gets ``-short_points``. Teams with no prior game
     (week 1) get no adjustment.
+
+    Two guards keep "prior game" honest. A gap longer than ``max_rest_days``
+    is an offseason, not a bye — without the cap every Week-1 team collected
+    the bye bonus off last season's finale, +2 points on every opening-week
+    total. And a schedule row inside ``same_game_hours`` of the kickoff is the
+    game itself, not a prior one: the league schedule lists kickoffs in local
+    time while the board lists them in UTC, so the same game can sit a few
+    hours "earlier" in the frame and read as a short week.
     """
 
     def __init__(
@@ -1101,12 +1109,16 @@ class RestAdjustedModel:
         short_points: float = 1.0,
         bye_days: int = 12,
         short_days: int = 5,
+        max_rest_days: int = 30,
+        same_game_hours: float = 24.0,
     ) -> None:
         self.inner = inner
         self.bye_points = bye_points
         self.short_points = short_points
         self.bye_days = bye_days
         self.short_days = short_days
+        self.max_rest_days = max_rest_days
+        self.same_game_hours = same_game_hours
         sched = schedule.dropna(subset=["kickoff"]).copy()
         sched["kickoff"] = pd.to_datetime(sched["kickoff"])
         long = pd.concat([
@@ -1125,10 +1137,13 @@ class RestAdjustedModel:
         if played is None:
             return 0.0
         when = pd.Timestamp(kickoff).to_datetime64()  # type: ignore[arg-type]
-        prior = played[played < when]
+        cutoff = when - np.timedelta64(int(self.same_game_hours * 3600), "s")
+        prior = played[played < cutoff]
         if len(prior) == 0:
             return 0.0
         rest = (when - prior[-1]) / np.timedelta64(1, "D")
+        if rest > self.max_rest_days:  # an offseason is not a bye
+            return 0.0
         if rest >= self.bye_days:
             return self.bye_points
         if rest <= self.short_days:

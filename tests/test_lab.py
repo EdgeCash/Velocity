@@ -795,3 +795,33 @@ def test_ncaab_segment_study_cuts_and_gates() -> None:
     # p-values are valid inputs for the FDR gate.
     assert ((study["p_value"] >= 0) & (study["p_value"] <= 1)).all()
     assert len(benjamini_hochberg(study["p_value"])) == len(study)
+
+
+def test_rest_model_ignores_the_offseason_and_the_game_itself() -> None:
+    # Two pre-existing leaks, both found on the 2026 Week-1 board
+    # (docs/SYSTEM_REVIEW.md M0): last season's finale is not a bye, and the
+    # game's own schedule row — listed in local time, a few hours "before" the
+    # board's UTC kickoff — is not a prior game.
+    from velocity.backtest.lab import RestAdjustedModel
+
+    class _Inner:
+        def project(self, home, away, *, neutral_site=False, rng=None,
+                    home_bonus=0.0, away_bonus=0.0):
+            return (home_bonus, away_bonus)
+
+    schedule = pd.DataFrame({
+        "home_team": ["KC", "KC", "BUF"],
+        "away_team": ["BUF", "BUF", "KC"],
+        "kickoff": pd.to_datetime([
+            "2026-01-04 13:00",  # last season's finale for both
+            "2026-09-13 13:00",  # Week 1, listed in local time
+            "2026-09-20 13:00",  # Week 2
+        ]),
+    })
+    model = RestAdjustedModel(_Inner(), schedule)
+    # Week 1 priced off the board's UTC kickoff, four hours after the schedule's
+    # local-time row for the same game: no short-week penalty, and no bye bonus
+    # for the eight months since January.
+    assert model.project("KC", "BUF", kickoff=pd.Timestamp("2026-09-13 17:00")) == (0.0, 0.0)
+    # Week 2, seven days on: a normal week, no adjustment either way.
+    assert model.project("BUF", "KC", kickoff=pd.Timestamp("2026-09-20 17:00")) == (0.0, 0.0)

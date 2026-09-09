@@ -73,6 +73,47 @@ def _find_plays(folder: Path) -> Path | None:
     return None
 
 
+def _league_schedule(args: argparse.Namespace, folder: Path, now: pd.Timestamp) -> pd.DataFrame:
+    """The committed games frame plus, online, the league's *current* schedule.
+
+    The committed frame holds played games only (``refresh_datasets.py`` keeps
+    it that way on purpose), so on its own it cannot say where an upcoming
+    game is played. The neutral-site flag (docs/SYSTEM_REVIEW.md §3.2) and the
+    rest-spot wrapper both want the games that have not happened yet: nflverse
+    publishes the full NFL schedule keyless, and CFBD serves the college one
+    when a key is present. Best-effort — a failed fetch leaves the committed
+    frame, and every upcoming game then prices with home field as before.
+    """
+    games = load_games(_find_games(folder), league=args.league)
+    if args.offline:
+        return games
+    try:
+        if args.league == "nfl":
+            from velocity.ingest.nfl import NFLVERSE_SCHEDULE_URL, normalize_schedules
+
+            fetched = normalize_schedules(pd.read_csv(NFLVERSE_SCHEDULE_URL, low_memory=False))
+        elif args.league == "ncaaf":
+            key = os.environ.get("CFBD_API_KEY", "")
+            if not key:
+                return games
+            from velocity.ingest.ncaaf import load_games as cfbd_games
+
+            season = now.year if now.month >= 7 else now.year - 1
+            fetched = cfbd_games([season], key)
+        else:
+            return games
+    except Exception as exc:  # noqa: BLE001 - the schedule is a nicety live
+        print(f"schedule fetch skipped ({exc}); neutral sites price as home games")
+        return games
+    kick = pd.to_datetime(fetched["kickoff"], errors="coerce")
+    window = fetched[(kick >= now - pd.Timedelta(days=60)) & (kick <= now + pd.Timedelta(days=60))]
+    fresh = window[~window["game_id"].astype(str).isin(games["game_id"].astype(str))]
+    neutral = int(window["neutral_site"].fillna(False).astype(bool).sum())
+    print(f"schedule: {len(window)} current {args.league.upper()} games fetched "
+          f"({neutral} neutral-site)")
+    return pd.concat([games, fresh], ignore_index=True, sort=False)
+
+
 def _epa_ratings_rows(ratings: object, plays_per_game: float) -> list[dict]:
     """Per-team rows from an EPA fit, converted to points per game."""
     rows = []
@@ -156,6 +197,7 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
 
 def _build_projection(
     args: argparse.Namespace,
+    schedule: pd.DataFrame | None = None,
 ) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame]:
     """Fit the league's promoted ratings from the committed data → ``(project, teams)``.
 
@@ -191,15 +233,46 @@ def _build_projection(
         else:  # plays without passer identity (older datasets, fixtures)
             ratings = fit_ratings(plays, weights=weights)
             kind = "recency-weighted EPA"
-        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))  # type: ignore[arg-type]
         print(f"NFL ratings: {kind} fit on {len(plays)} plays "
               f"(seasons {cutoff}+, half-life {DEFAULT_RECENCY_HALF_LIFE:g} wks)")
+
+        # The starter map (docs/SYSTEM_REVIEW.md §3.1). The fit detects each
+        # team's passer from its latest training game — after a Week-18 rest
+        # game that is the backup, and KC priced 5.6 pts/game low with
+        # Oladokun at quarterback. FantasyPros' projected depth names the
+        # real QB1 and the injuries snapshot demotes an Out; applied to the
+        # ratings object itself, so every wrapper, prop and DFS projection on
+        # the team follows. A name that resolves to nothing leaves the fit's
+        # detection in place.
+        weeks_path = folder / "player_weeks.parquet"
+        if args.fp_projections and weeks_path.exists() and hasattr(ratings, "starters"):
+            from dataclasses import replace
+
+            from velocity.features.starters import describe_changes, starter_map
+
+            fp_frame = pd.read_parquet(args.fp_projections)
+            if "league" in fp_frame.columns:
+                fp_frame = fp_frame[fp_frame["league"].astype(str) == "nfl"]
+            weeks = pd.read_parquet(weeks_path)
+            injuries = pd.read_parquet(args.injuries_file) if args.injuries_file else None
+            overrides, notes = starter_map(fp_frame, weeks, injuries)
+            # Only clubs the fit knows: FantasyPros lists free agents under "FA".
+            overrides = {t: q for t, q in overrides.items() if t in ratings.teams}  # type: ignore[attr-defined]
+            changes = describe_changes(overrides, ratings.starters, weeks)  # type: ignore[attr-defined]
+            if overrides:
+                ratings = replace(ratings, starters={**ratings.starters, **overrides})  # type: ignore[attr-defined,type-var]
+            print(f"starter map: {len(overrides)} teams from the FantasyPros depth, "
+                  f"{len(changes)} changed from the fit's own detection")
+            for line in changes + notes:
+                print(f"  {line}")
+        nfl_model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=args.n_sims)))  # type: ignore[arg-type]
 
         # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
         # top of the fit — small, consistent across every tested grid.
         from velocity.backtest.lab import RestAdjustedModel
 
-        schedule = load_games(_find_games(folder), league="nfl")
+        if schedule is None:
+            schedule = load_games(_find_games(folder), league="nfl")
         rest_model = RestAdjustedModel(nfl_model, schedule)
 
         # Wind on totals (Round 5 constants, live forecast): best-effort — a
@@ -220,10 +293,10 @@ def _build_projection(
             print(f"wind forecast skipped ({exc})")
 
         def project_epa(
-            home: str, away: str, kickoff: object = None
+            home: str, away: str, kickoff: object = None, neutral_site: bool = False
         ) -> GameProjection:
             return model.project(  # type: ignore[attr-defined,return-value]
-                home, away, rng=make_rng(), kickoff=kickoff
+                home, away, rng=make_rng(), kickoff=kickoff, neutral_site=neutral_site
             )
 
         nfl_ratings = pd.DataFrame(_epa_ratings_rows(ratings, plays_per_game=63.0))
@@ -410,8 +483,10 @@ def _build_projection(
 
     print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
 
-    def project(home: str, away: str) -> GameProjection:
-        return model.project(home, away, rng=make_rng())  # type: ignore[attr-defined,return-value]
+    def project(home: str, away: str, neutral_site: bool = False) -> GameProjection:
+        return model.project(  # type: ignore[attr-defined,return-value]
+            home, away, rng=make_rng(), neutral_site=neutral_site
+        )
 
     return project, list(scores_model.ratings.teams), _ratings_frame(
         args.league, model, scores_model)
@@ -659,7 +734,8 @@ def main() -> None:
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
-    project, known_teams, ratings_frame = _build_projection(args)
+    schedule = _league_schedule(args, Path(args.data), generated_at) if args.data else None
+    project, known_teams, ratings_frame = _build_projection(args, schedule)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
@@ -756,7 +832,17 @@ def main() -> None:
             from velocity.ingest.hockey import NHL_TEAM_ALIASES
 
             aliases = dict(NHL_TEAM_ALIASES)
-        projections, unresolved = project_board(events, project, known_teams, aliases)
+        # Neutral sites (docs/SYSTEM_REVIEW.md §3.2): the board never says where
+        # a game is played; the schedule does, and every model takes the flag.
+        from velocity.wagering.live import neutral_site_map
+
+        neutral = neutral_site_map(events, schedule, known_teams, aliases)
+        flagged = sorted(gid for gid, flag in neutral.items() if flag)
+        if flagged:
+            print(f"neutral sites: {len(flagged)} board game(s) priced without home field")
+        projections, unresolved = project_board(
+            events, project, known_teams, aliases, neutral_by_game=neutral
+        )
         canonical = canonicalize_sides(lines, events)
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
         games_min = events[["game_id", "kickoff"]].copy()
