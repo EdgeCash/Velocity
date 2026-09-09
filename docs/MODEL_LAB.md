@@ -566,3 +566,123 @@ closing line**, which is far sharper than our model. Calibrating a model's own
 outcome noise to the market's residuals would have shrunk these constants by
 about 15% and made the sim badly overconfident — the exact opposite of the
 right change. A sim's dispersion must be measured against its own projections.
+
+## The sim-shape round (2026-09) — an empirical draw, a dispersion slope, and the level
+
+`docs/SYSTEM_REVIEW.md` §2 named two things wrong with the engine that prices
+every derivative: one `sd` per league whatever the matchup (2.1), and a normal
+where E8 had measured football residuals leptokurtic in the shoulders and fat
+in the tail (2.2). Both are now switches on `SimConfig` — `sd_total_slope` /
+`sd_margin_slope` around `sd_anchor_total`, and a `ResidualPool` of the
+shipped model's own walk-forward residuals to draw `(margin, total)` pairs
+from instead of the normal — and both went through one gate
+(`scripts/sim_lab.py`): every 2022+ game re-priced from the model's own μ
+under normal / sloped / empirical / both, each test season's pool and slopes
+fitted on the seasons before it, scored on moneyline calibration error and
+Brier and on E8's yardstick — the worst |sim − real| probability at any
+half-point offset from the fair line, on spreads and totals, shoulders
+(≤ 13.5) and tail (14.5–28.5) apart. 10,000 sims, seeds 7 / 101 / 2027.
+
+**What the bank found first.** Building the pool
+(`scripts/build_sim_residuals.py`, `datasets/{league}/sim_residuals.parquet`)
+means measuring actual − projected for every out-of-sample game, and the NFL
+mean was not zero:
+
+| season | actual total | model total | close total |
+|---|---|---|---|
+| 2011–2021 (mean) | 45.7 | 48.2 | 45.6 |
+| 2022 | 44.0 | 47.4 | 44.2 |
+| 2023 | 43.8 | 46.8 | 43.1 |
+| 2024 | 46.0 | 47.2 | 44.5 |
+| 2025 | 46.0 | 46.7 | 44.9 |
+
+**The shipped NFL model projected totals 2.3 points high, in fourteen of
+fifteen seasons.** The fit without the QB decomposition (`recency-17`) does
+not: 45.1 against 44–46 actual. The QB fit prices each team with its
+*starter's* passer effect, and starters throw above the play-weighted
+intercept the offense/defense deviations were centered on — a level the
+constant `base_points = 22.5` cannot see, because it is introduced by the
+decomposition, not by the era. The college lab had the mirror problem: its
+blend still hung from a constant 28.5 while the live runner had already moved
+to the trailing two-season mean total (college scoring fell four points a
+game after the 2023 clock rules), so the lab's residuals were not the live
+model's. `velocity/models/level.py` fits the level *through* the model —
+shift `base_points` so the training window's mean projected total is what
+those games scored; margins untouched — and the lab's blend now takes the
+live runner's level.
+
+Level variants, walk-forward 2011–2025 (4,064 games, trailing-4-season
+training, 4,000 sims):
+
+| variant | Brier | calibration error | ATS vs close | O/U vs close | model − actual total | 2022+ | model − close 2022+ |
+|---|---|---|---|---|---|---|---|
+| `qb-recency-17-q300` (was) | 0.21955 | 0.01322 | 49.5% | 50.4% | **+2.28** | +2.06 | +2.84 |
+| level on the whole window | 0.21957 | 0.01294 | 49.4% | 50.4% | +0.07 | +0.71 | +1.49 |
+| **level on the trailing two seasons (promoted)** | 0.21955 | **0.01209** | 49.5% | 49.9% | +0.10 | **+0.05** | +0.83 |
+
+The whole-window level lags the era (+0.71 in 2022+); two seasons track it.
+Brier and ATS are flat, calibration error improves by a tenth, the totals
+bias is gone. **Promoted: `--nfl-level fit` on the trailing two seasons**
+(`NFL_LEVEL_SEASONS = 2`), and the lab's college blend on the live level.
+On the banked Week-2 board the live NFL model's level came in at 21.83
+points a team, 0.67 below the constant it had assumed, and the board's mean
+projected total moved from 47.4 to 46.2.
+
+**The gate, on the levelled models** (2022+ out-of-sample; NFL 1,139 games,
+NCAAF 6,484; offset errors are the worst absolute probability error at any
+half-point offset):
+
+NFL:
+
+| variant | calibration error | Brier | spread shoulder | spread tail | spread mean | total shoulder | total tail | total mean |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0512 | 0.2248 | 0.0362 | 0.0311 | 0.0210 | 0.0659 | 0.0322 | 0.0285 |
+| normal, sloped sd | 0.0513 | 0.2247 | 0.0362 | 0.0311 | 0.0210 | 0.0661 | 0.0326 | 0.0288 |
+| empirical draw | 0.0553 | 0.2254 | **0.0347** | **0.0300** | **0.0187** | 0.0676 | 0.0314 | 0.0281 |
+| empirical, sloped | 0.0544 | 0.2256 | 0.0348 | 0.0301 | 0.0189 | 0.0676 | 0.0318 | 0.0284 |
+
+NCAAF:
+
+| variant | calibration error | Brier | spread shoulder | spread tail | spread mean | total shoulder | total tail | total mean |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0346 | 0.2048 | 0.0417 | 0.0377 | 0.0315 | **0.0606** | **0.0408** | **0.0370** |
+| normal, sloped sd | 0.0345 | 0.2048 | 0.0415 | 0.0379 | 0.0315 | 0.0623 | 0.0449 | 0.0399 |
+| empirical draw | **0.0335** | 0.2048 | **0.0396** | 0.0385 | **0.0299** | 0.0643 | 0.0439 | 0.0386 |
+| empirical, sloped | 0.0338 | 0.2049 | 0.0399 | 0.0387 | 0.0302 | 0.0661 | 0.0480 | 0.0415 |
+
+For scale, the same NFL totals shoulder error on the *unlevelled* model was
+0.1024 and NCAAF's 0.0964: the level was two-thirds of the totals shape error
+the review attributed to the distribution. What remains splits by league and
+market:
+
+- **The empirical draw** improves spread shape everywhere (NFL shoulders
+  −0.0015, tail −0.0011; NCAAF shoulders −0.0021) and NCAAF moneyline
+  calibration (−0.0011), but costs NFL moneyline calibration +0.004 on every
+  seed (0.0517→0.0564, 0.0489→0.0537, 0.0531→0.0558) and Brier +0.0006, and
+  costs NCAAF totals shape (+0.004 shoulder, +0.003 tail). NCAAF stakes only
+  totals ≥ 6; the NFL stakes all three. **Not promoted** in either league: on
+  the markets each league actually stakes it is a wash or a small loss.
+- **The dispersion slope** measured cleanly in the bank (NFL `sd_total`
+  13.1 at a 37-point expected total → 14.6 at 55; NCAAF 16.4 at 48 → 19.0 at
+  66, +0.14 a point) and did nothing in the NFL gate and hurt NCAAF totals
+  at every band (+0.002 shoulder, +0.004 tail). The aggregate offset test
+  cannot reward a per-game width that is right on average; a conditional
+  gate (offset error *within* expected-total buckets) is the next
+  measurement, not a reason to ship it. **Not promoted.**
+- **E8's definition of done** — shoulders inside the 0.02 tolerance without
+  the gate — is not reached by shape alone and was not reachable: measured
+  around the model's own μ rather than the market close, the shoulder error
+  carries the model's aim, and the floor from that is ~0.035 on NFL spreads
+  whatever the draw. The ladder gate stays.
+
+Both switches ship (`--sim-shape empirical`, `--sim-dispersion sloped`, the
+banks, the gate) so the next round re-measures instead of re-building; the
+defaults are the gated sim. The residual banks are symmetric by construction
+(each pair mirrored) because a raw pool's skew shifted every moneyline by a
+point in the first gate for no gain in shape.
+
+**Carried forward.** The NCAAF bank on the live level still runs 1.0 point
+high on totals and 1.1 points low on home margin (actual home margin +6.8
+non-neutral, model +5.75): the blend's home-field advantage is under by a
+point. That is M5's "one HFA across the blend" (`docs/SYSTEM_REVIEW.md`),
+with the number now attached.

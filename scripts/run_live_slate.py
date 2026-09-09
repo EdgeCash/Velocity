@@ -282,10 +282,12 @@ def _build_projection(
         if resolve_nfl_level(args.nfl_level) == "fit":
             from velocity.models.level import calibrate_level, level_shift
 
+            # The trailing two seasons (docs/MODEL_LAB.md, the sim-shape
+            # round): the whole four-season window lagged the era by +0.7.
             window = load_games(_find_games(folder), league="nfl")
             window = window[window["season"] >= cutoff]
-            shift = level_shift(nfl_model, window)
-            nfl_model = calibrate_level(nfl_model, window)
+            shift = level_shift(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
+            nfl_model = calibrate_level(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
             kind += f", level {nfl_model.config.base_points:.2f} ({shift:+.2f} vs 22.5)"
             print(f"NFL level: base {nfl_model.config.base_points:.2f} pts/team "
                   f"(the fit ran {shift:+.2f} vs the constant on {len(window)} games)")
@@ -809,8 +811,12 @@ def live_config_rows(
 # §2, M1). "normal" is the bivariate normal the sim always drew; "empirical"
 # draws residual pairs from the banked walk-forward pool
 # (datasets/{league}/sim_residuals.parquet). "constant" holds one sd per
-# league; "sloped" moves it with the expected total. Defaults follow the
-# sim-shape gate (scripts/sim_lab.py, docs/MODEL_LAB.md).
+# league; "sloped" moves it with the expected total. Both measured through
+# the sim-shape gate (scripts/sim_lab.py, docs/MODEL_LAB.md) and neither
+# promoted: the empirical draw trades a little spread shape for moneyline
+# calibration (NFL) or totals shape (NCAAF), and the slope hurts totals in
+# aggregate. The switches stay for the next round; the defaults are the
+# gated sim.
 DEFAULT_SIM_SHAPE_BY_LEAGUE = {"nfl": "normal", "ncaaf": "normal"}
 DEFAULT_SIM_DISPERSION_BY_LEAGUE = {"nfl": "constant", "ncaaf": "constant"}
 FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
@@ -820,7 +826,8 @@ FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
 # The NFL scoring level: "fit" shifts base_points through the model on the
 # training window (velocity.models.level); "constant" is the 22.5 the model
 # always assumed. Moves to "fit" only with the lab table (docs/MODEL_LAB.md).
-DEFAULT_NFL_LEVEL = "constant"
+DEFAULT_NFL_LEVEL = "fit"
+NFL_LEVEL_SEASONS = 2
 
 
 def resolve_nfl_level(explicit: str | None) -> str:

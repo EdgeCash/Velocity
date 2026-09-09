@@ -285,7 +285,11 @@ publish gate refuses paper rows first.
    Kalshi candle closes as they accumulate (E7's graded week); set
    `--ladder-tolerance` from that, not from the round number it is now.
 4. **NFL totals cold-start** — track the +2.4 model−market gap week over week;
-   if it persists past Week 4 it is a level bias, not noise.
+   if it persists past Week 4 it is a level bias, not noise. *Resolved
+   2026-09 without waiting:* the residual bank showed it was a level bias
+   over fifteen seasons (the QB decomposition, +2.3 a game against actuals,
+   +2.8 against the close), and the level is now fitted through the model
+   (`docs/MODEL_LAB.md`, the sim-shape round).
 
 - **DoD:** each item ends in a promote/exclude decision recorded in its
   `BACKTEST_*.md`, with the sweep table; defaults move only through those PRs.

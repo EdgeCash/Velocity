@@ -325,11 +325,22 @@ restored from a pre-backfill checkout and the script now merges by season.
 - **Neutral flag** (3.2): join at slate time; pass through every closure.
   Test: a neutral fixture game projects with zero HFA.
 
-### M1 — The sim (lab-gated, one PR)
-Heteroscedastic sd (2.1) and the nonparametric residual draw (2.2), each a
-lab variant gated on calibration error and Brier exactly as 18.2/16.7 was.
-DoD: E8's offset-error table re-measured on the new draw shows the
-shoulders inside tolerance without the gate.
+### M1 — The sim (lab-gated, one PR) — **measured 2026-09; the level promoted, the shape not**
+Both mechanisms shipped as switches (`SimConfig.residuals`, the slope
+fields; `--sim-shape`, `--sim-dispersion`), with the residual banks and the
+gate (`scripts/sim_lab.py`). Neither cleared the bar on the markets each
+league stakes (docs/MODEL_LAB.md, the sim-shape round): the empirical draw
+buys spread shape at the cost of NFL moneyline calibration and NCAAF totals
+shape; the slope hurts NCAAF totals in aggregate. What the bank found
+instead was the dominant totals error §2 had attributed to the
+distribution: **the NFL QB decomposition projected every total 2.3 points
+high** for fifteen seasons, and the lab's college blend hung from a stale
+constant. `velocity/models/level.py` fits the level through the model and
+is promoted (calibration error 0.0132 → 0.0121, Brier flat, bias gone);
+the levelled models cut the totals shoulder error by two-thirds in both
+leagues. The DoD as written was unreachable — measured around the model's
+own μ the shoulder error carries the model's aim — and the ladder gate
+stays. 2.3 (the one-sided clip) is unchanged.
 
 ### M2 — Pricing seams (one PR) — **landed 2026-09-09**
 Consensus de-vig (4.2), drift against the previous archived snapshot (4.4),
