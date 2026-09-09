@@ -252,3 +252,84 @@ results-only fit lacks (returning production, recruiting, transfers) —
 worth points of early-season calibration. It is **not** an edge source:
 its own public record tracks the closing line (~53% ATS), and blending
 toward it moves us toward the market, not past it.
+
+
+## The S3 round (2026-09) — the moneyline verdict and the staking sweep
+
+Two research items from `docs/STRATEGY_REVIEW.md` S3, both on the levelled
+EPA×scores blend's walk-forward projections (12,212 games, 2015–2026; the
+sim-shape round in `docs/MODEL_LAB.md`).
+
+### The NCAAF moneyline, tested at last
+
+CFBD's `/lines` carries `homeMoneyline` / `awayMoneyline` per provider from
+2021; the puller now keeps their consensus (`datasets/ncaaf/games_lines.parquet`,
+3,963 games with a moneyline, 2021–2025; 3,045 with a projection and a valid
+two-way price). `scripts/backtest_ncaaf_moneyline.py` de-vigs the close
+multiplicatively and grades the model's side at one unit flat wherever its
+edge clears 0.02.
+
+| | Brier |
+|---|---|
+| market (de-vigged close) | **0.1830** |
+| anchored belief, w = 0.2 | 0.1841 |
+| anchored belief, w = 0.5 | 0.1910 |
+| raw model | 0.2169 |
+
+The model is not competitive at the moneyline, and mixing in a fifth of it
+already scores worse than the market alone. Graded:
+
+| bets | n | hit | ROI | claimed EV |
+|---|---|---|---|---|
+| raw model, all | 2,807 | 30.5% | **−4.8%** | +79% |
+| raw, dogs +300..+1000 | 865 | 15.3% | −11.6% | +121% |
+| raw, dogs ≥ +1000 | 209 | 4.8% | −36.1% | +263% |
+| anchored w = 0.2, all | 1,827 | 27.8% | **−5.5%** | +18.5% |
+| anchored, dogs +300..+1000 | 660 | 15.9% | −8.6% | +26% |
+
+No bucket is positive beyond noise (the best, dogs +150..+300 anchored, is
++0.1% at t = 0.02); three of four full seasons lose. The longshot problem
+the ceilings were built for is exactly what the raw model does: at ≥ +1000
+it claims 2.6 units of EV a bet and returns −0.36. **Verdict: the S2
+exclusion of NCAAF moneylines is permanent.** The flag stays for the next
+model, not this one.
+
+### The staking sweep — what the ≥ 6 totals filter is worth
+
+At the promoted filter selection does not depend on the anchoring weight;
+the weight sets the *claimed* probability Kelly stakes on
+(`scripts/sweep_ncaaf_anchoring.py`, closes from `games.parquet`, seasons
+2018–2026, out of sample by construction):
+
+| weight | n | claimed edge | realized edge | hit | ROI at −110 |
+|---|---|---|---|---|---|
+| 0.1 | 3,733 | 0.022 | 0.026 | 52.6% | +0.3% |
+| **0.2 (was live)** | 3,733 | **0.044** | 0.026 | 52.6% | +0.3% |
+| 0.5 | 3,733 | 0.109 | 0.026 | 52.6% | +0.3% |
+| 1.0 | 3,733 | 0.218 | 0.026 | 52.6% | +0.3% |
+
+The claim matches the realization at **w ≈ 0.12–0.13** — the same ratio at
+every threshold from 6 to 10 points (0.118 at ≥ 6, 0.133 at ≥ 8, 0.134 at
+≥ 10). The live 0.2 claimed 1.7× what it earned. By threshold at w = 0.2:
+
+| disagreement | n | hit | ROI at −110 |
+|---|---|---|---|
+| ≥ 4 | 5,450 | 52.1% | −0.5% |
+| ≥ 5 | 4,569 | 52.8% | +0.8% |
+| ≥ 6 (promoted) | 3,733 | 52.6% | +0.3% |
+| ≥ 7 | 3,040 | 53.2% | +1.5% |
+| ≥ 8 | 2,432 | 53.3% | +1.8% |
+| ≥ 10 | 1,498 | 53.7% | +2.6% |
+| ≥ 12 | 860 | 52.6% | +0.3% |
+
+The edge is real and thin, and it grows with the disagreement up to about
+ten points (the differences are inside one standard error of each other;
+the direction is consistent). By season at w = 0.2 the realized edge runs
+from −0.9% (2018) to +7.6% (2024): 2025 was +0.6%.
+
+**Promoted: NCAAF anchoring w = 0.13** (`DEFAULT_MODEL_WEIGHT_BY_LEAGUE`).
+Stakes shrink by about 40%, and with the claim calibrated the 0.02 edge
+gate does the rest of the selection: a six-point disagreement now claims
+~0.018 and sits below the gate, an eight-point one ~0.023 and clears it, so
+the live card concentrates where the sweep says the edge is. The filter's
+own threshold stays at 6 — the gate, not the filter, moved.

@@ -61,7 +61,11 @@ def pull(years: range, key: str) -> pd.DataFrame:
                 continue
             spread = _consensus(provider_lines, "spread")
             total = _consensus(provider_lines, "overUnder")
-            if spread is None and total is None:
+            # The moneylines were always in the payload and never kept — the
+            # NCAAF moneyline backtest (docs/STRATEGY_REVIEW.md S3) needs them.
+            home_ml = _consensus(provider_lines, "homeMoneyline")
+            away_ml = _consensus(provider_lines, "awayMoneyline")
+            if spread is None and total is None and home_ml is None:
                 continue
             n_lines += 1
             rows.append(
@@ -82,6 +86,8 @@ def pull(years: range, key: str) -> pd.DataFrame:
                     # Flip CFBD (negative = home favored) → nflverse (positive = home favored).
                     "spread_line": -spread if spread is not None else None,
                     "total_line": total,
+                    "home_ml": home_ml,
+                    "away_ml": away_ml,
                 }
             )
         print(f"  {year}: {len(games)} games, {n_lines} with lines")

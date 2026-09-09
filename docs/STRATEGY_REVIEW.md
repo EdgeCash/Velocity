@@ -272,15 +272,17 @@ publish gate refuses paper rows first.
 
 ### S3 — The evidence the money needs (research; one lab PR per item)
 
-1. **NCAAF moneyline backtest.** CFBD `/lines` carries `homeMoneyline` /
-   `awayMoneyline`; `pull_cfbd_lines.py` drops them. Add the columns, re-pull
-   2015–2025, and run the walk-forward ML test by price bucket (dogs at
-   +300/+1000+ especially) with the current sim sd. Promotion bar: >break-even
-   at the bucket's price across seasons, FDR-controlled. If it fails, the S2
-   exclusion becomes permanent and documented in `BACKTEST_NCAAF.md`.
-2. **NCAAF staking sweep** — shrink × anchoring grid on the wagering path
-   (`backtest/engine.py` + `SlateConfig`), the MLB sweep pattern. NCAAF has
-   never had one and carries the most exposure.
+1. **NCAAF moneyline backtest.** *Done 2026-09, and it failed:* the columns
+   are kept, 2021–2025 banked (CFBD has no earlier moneylines), and the
+   walk-forward test loses at every bucket — raw −4.8% over 2,807 bets,
+   −36% at ≥ +1000; the model's Brier 0.217 against the market's 0.183, and
+   a fifth of the model already scores worse than the market alone. **The
+   S2 exclusion is permanent** (`BACKTEST_NCAAF.md`, the S3 round).
+2. **NCAAF staking sweep** — *done 2026-09:* at the ≥6 filter the claim
+   matches the realization at w ≈ 0.13, not 0.2 (the live weight claimed
+   1.7× what it earned); the edge is +0.3% ROI at ≥6 and grows to +2.6% at
+   ≥10. **w = 0.13 promoted**; the 0.02 gate then admits eight-point
+   disagreements and refuses six-point ones.
 3. **Ladder tolerance** — measure claimed-edge-vs-shape-error on the banked
    Kalshi candle closes as they accumulate (E7's graded week); set
    `--ladder-tolerance` from that, not from the round number it is now.

@@ -33,6 +33,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 _STAMP = r"(\d{8}T\d{6}Z)"
+# Books whose close is a sharp yardstick when it is on the board.
+SHARP_BOOKS = frozenset({"pinnacle"})
 _OPERATOR_TZ = ZoneInfo("America/Chicago")
 
 
@@ -129,6 +131,21 @@ def sized_profit(graded: pd.DataFrame | None) -> pd.DataFrame | None:
     ratio = (profit / stake).where(stake > 0, 0.0)
     out["profit_sized"] = (ratio * sized).where(sized.notna())
     return out
+
+
+def attach_close_source(
+    graded: pd.DataFrame | None, closing: pd.DataFrame | None
+) -> pd.DataFrame | None:
+    """Ride ``close_source`` (sharp / consensus) onto the graded game rows."""
+    if graded is None or graded.empty:
+        return graded
+    out = graded.drop(columns=["close_source"], errors="ignore")
+    if closing is None or closing.empty or "close_source" not in closing.columns:
+        out["close_source"] = None
+        return out
+    keys = ["game_id", "market", "side"]
+    src = closing.drop_duplicates(subset=keys)[[*keys, "close_source"]]
+    return out.merge(src, on=keys, how="left")
 
 
 def _carry_sized(
@@ -264,14 +281,22 @@ def closing_for_slate(
     # space (the first live run crashed on a median of -2.0).
     from velocity.wagering.odds import consensus_american
 
+    # The yardstick prefers a sharp close (docs/SYSTEM_REVIEW.md §4.3): when
+    # a SHARP_BOOKS quote is on the board for the key, that is the close and
+    # ``close_source`` says so; otherwise the cross-book consensus. Pinnacle
+    # rides the ``eu`` region, which the collector takes as a flag — the
+    # column is what lets the site say which yardstick a CLV number is.
     rows = []
     for (gid, market, side), group in per_book.groupby(
             ["game_id", "market", "side"]):
-        price = consensus_american(group["price"])
+        sharp = group[group["book"].astype(str).str.lower().isin(SHARP_BOOKS)]
+        chosen = sharp if not sharp.empty else group
+        price = consensus_american(chosen["price"])
         if price is None:
             continue
         rows.append({"game_id": gid, "market": market, "side": side,
-                     "price": price, "point": group["point"].median()})
+                     "price": price, "point": chosen["point"].median(),
+                     "close_source": "sharp" if not sharp.empty else "consensus"})
     return pd.DataFrame(rows) if rows else None
 
 
@@ -577,6 +602,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             games_graded = (None if slate is None or slate.empty
                             else grade_slate(slate, finals, closing))
             games_graded = sized_profit(_carry_sized(games_graded, slate))
+            games_graded = attach_close_source(games_graded, closing)
             # Prop closes from the props collector's archive — attached
             # before grading so the ledger carries prop CLV (docs/PROPS.md).
             if props is not None and not props.empty:

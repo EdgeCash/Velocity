@@ -64,3 +64,29 @@ def test_level_shift_honours_the_window_and_the_empty_case() -> None:
     assert level_shift(model, games, seasons=1) != level_shift(model, games)
     assert level_shift(model, games.iloc[:0]) == 0.0
     assert calibrate_level(model, games.iloc[:0]) is model
+
+
+def test_the_scores_half_levels_through_its_intercept() -> None:
+    from velocity.features.scores import fit_scores_ratings
+    from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
+    from velocity.models.level import calibrate_scores_level
+
+    rows = []
+    # Two eras: a high-scoring 2023 and a low-scoring 2024–2025, so an
+    # unweighted intercept sits above the trailing two seasons' level.
+    for season, level in ((2023, 34), (2024, 24), (2025, 24)):
+        for week in range(1, 7):
+            for home, away in (("A", "B"), ("C", "D"), ("A", "C"), ("B", "D")):
+                rows.append({"season": season, "week": week, "home_team": home,
+                             "away_team": away, "home_score": level + 3,
+                             "away_score": level - 3, "neutral_site": False})
+    games = pd.DataFrame(rows)
+    model = ScoresGameModel(fit_scores_ratings(games, ridge_lambda=1.0), ScoresModelConfig())
+    before = level_shift(model, games, seasons=2)
+    assert before > 2.0  # the intercept carries the 2023 era into 2025
+    levelled = calibrate_scores_level(model, games, seasons=2)
+    assert level_shift(levelled, games, seasons=2) == pytest.approx(0.0, abs=1e-9)
+    # Ratings and the home edge are untouched; only the level moved.
+    assert levelled.ratings.offense == model.ratings.offense
+    assert levelled.ratings.home_edge == model.ratings.home_edge
+    assert levelled.ratings.base_points == pytest.approx(model.ratings.base_points - before)
