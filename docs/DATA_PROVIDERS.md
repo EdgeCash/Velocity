@@ -180,6 +180,31 @@ snapshot from the archive.
   Snapshots live only in private Actions artifacts.
 - If a key is ever exposed (e.g. pasted into a chat), rotate it with the provider.
 
+## Spending the odds budget once
+
+The hourly collector and the live slate used to buy the same board twice: the
+collector snapshotted it, and the slate then made its own `/odds` call for a
+board that was already sitting in an artifact. `client.odds()` is only
+`normalize_odds_events` over `client.odds_payload()`, so banking the raw
+payload alongside the parquet costs **nothing extra** — and the raw form is
+the one that carries the event metadata (teams, kickoff) a board needs.
+
+`collect_theoddsapi.py` therefore writes `raw/odds_{league}_{stamp}.json` next
+to its parquet, and `live-slate.yml` prefers the freshest banked payload over a
+fresh pull. Two runs a day across six leagues stop paying for data bought an
+hour earlier.
+
+**With a freshness bound, deliberately.** Only a payload younger than
+`board_max_age_min` (default 75, an hour's cron plus slack) is reused;
+anything older falls through to a live pull. Prices move, and betting a line
+that has already gone manufactures edge that was never available — the credits
+saved are worth far less than one phantom bet.
+
+Note the distinction the runner now draws: `--snapshot-file` means only that
+the *sportsbook board* comes from a banked payload, while `--offline` means no
+network calls at all. Exchange boards are free and keyless, so they are still
+pulled on a banked-board run; the offline test suite passes `--offline`.
+
 ## Exchange collectors (Kalshi + Polymarket — free, keyless)
 
 The prediction-exchange feeds (docs/BUILD_EXCHANGES.md) need no secrets — market

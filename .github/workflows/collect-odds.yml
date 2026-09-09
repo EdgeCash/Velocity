@@ -62,6 +62,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: odds-lines-${{ github.run_id }}
-          path: artifacts/odds/*.parquet
+          # The raw /odds payloads ride along with the parquet: they cost no
+          # extra credits (the parquet is normalized from them) and they carry
+          # the event metadata the live slate needs to build a board without
+          # spending its own call on data this run already bought.
+          path: artifacts/odds/
           if-no-files-found: warn
           retention-days: 30

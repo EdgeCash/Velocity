@@ -20,25 +20,39 @@ Credits are finite (100k/month) — this prints the remaining count each run.
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.theoddsapi import TheOddsAPIClient
+from velocity.ingest.theoddsapi import TheOddsAPIClient, normalize_odds_events, unwrap
 
 LEAGUES = ("nfl", "ncaaf")
 
 
 def collect(
-    leagues: tuple[str, ...], collected_at: pd.Timestamp
+    leagues: tuple[str, ...], collected_at: pd.Timestamp, out_raw: Path | None = None
 ) -> tuple[pd.DataFrame, str | None]:
-    """Return a canonical ``Lines`` frame for ``leagues`` plus the remaining-credit count."""
+    """Return a canonical ``Lines`` frame for ``leagues`` plus the remaining-credit count.
+
+    The raw ``/odds`` payload is banked verbatim alongside the parquet when
+    ``out_raw`` is given. That costs **nothing extra** — ``client.odds`` is only
+    ``normalize_odds_events`` over this same payload — and it lets the live
+    slate build its board from a banked snapshot instead of spending its own
+    credits on a second call for data this collector already bought
+    (docs/DATA_PROVIDERS.md). The raw form is what carries event metadata
+    (teams, kickoff), which the normalized Lines frame drops.
+    """
     client = TheOddsAPIClient.from_env()
+    tag = collected_at.strftime("%Y%m%dT%H%M%SZ")
     frames: list[pd.DataFrame] = []
     remaining: str | None = None
     for league in leagues:
-        lines = client.odds(league)
+        payload = client.odds_payload(league)
         remaining = client.remaining or remaining
+        if out_raw is not None:
+            (out_raw / f"odds_{league}_{tag}.json").write_text(json.dumps(payload))
+        lines = normalize_odds_events(unwrap(payload), is_closing=False)
         lines = lines.assign(league=league, collected_at=collected_at)
         frames.append(lines)
         print(
@@ -58,10 +72,11 @@ def main() -> None:
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
     print(f"The Odds API snapshot @ {now.isoformat()}")
-    df, remaining = collect(tuple(args.leagues), stamp)
-
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    raw = out / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    df, remaining = collect(tuple(args.leagues), stamp, raw)
+
     dest = out / f"odds_lines_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
     df.to_parquet(dest, index=False)
     print(f"wrote {len(df)} rows to {dest}")

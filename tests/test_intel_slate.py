@@ -79,7 +79,7 @@ def test_intel_layer_end_to_end(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--league", "nfl", "--data", "datasets/nfl",
-         "--snapshot-file", str(SNAPSHOT), "--fp-projections", str(fp_path),
+         "--offline", "--snapshot-file", str(SNAPSHOT), "--fp-projections", str(fp_path),
          "--prop-lines-file", str(lines_path), "--injuries-file", str(injuries_path),
          "--n-sims", "2000", "--max-days", "0", "--min-edge", "0.0",
          "--out", str(out)],
@@ -120,7 +120,7 @@ def test_intel_layer_can_be_disabled(tmp_path: Path) -> None:
     out = tmp_path / "slate"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--league", "nfl", "--data", "datasets/nfl",
-         "--snapshot-file", str(SNAPSHOT), "--n-sims", "1000", "--max-days", "0",
+         "--offline", "--snapshot-file", str(SNAPSHOT), "--n-sims", "1000", "--max-days", "0",
          "--min-edge", "0.0", "--no-intel", "--out", str(out)],
         capture_output=True, text=True, cwd=REPO,
     )

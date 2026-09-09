@@ -64,7 +64,7 @@ def test_ncaab_slate_end_to_end(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--league", "ncaab", "--data", str(data),
-         "--snapshot-file", str(SNAPSHOT), "--n-sims", "2000", "--max-days", "0",
+         "--offline", "--snapshot-file", str(SNAPSHOT), "--n-sims", "2000", "--max-days", "0",
          "--min-edge", "0.0", "--out", str(out)],
         capture_output=True, text=True, cwd=REPO,
     )
