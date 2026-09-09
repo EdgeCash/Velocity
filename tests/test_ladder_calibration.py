@@ -125,3 +125,22 @@ def test_calibration_reports_relative_error_too() -> None:
     # ...while relative error says its EV is at least as exposed.
     assert far["relative_error"] > 0.05
     assert far["relative_error"] >= near["relative_error"]
+
+
+def test_ncaaf_sim_dispersion_matches_its_measured_residual() -> None:
+    """The college sim's noise constants are walk-forward measured, not guessed.
+
+    They must stay wider than the market-anchored residual (15.5) that first
+    drew attention to them: a sim's dispersion answers to its *own* residuals,
+    and the market is far sharper than the model. Calibrating to the market
+    would shrink these ~15% and make the sim overconfident
+    (docs/MODEL_LAB.md "NCAAF Round 3").
+    """
+    from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL
+
+    assert pytest.approx(18.2) == NCAAF_SD_MARGIN
+    assert pytest.approx(16.7) == NCAAF_SD_TOTAL
+    # Comfortably above the market-residual figure, and above the 17.0/16.0
+    # the sim shipped with, which every measured season exceeded.
+    assert NCAAF_SD_MARGIN > 17.0
+    assert NCAAF_SD_TOTAL > 16.0

@@ -27,7 +27,7 @@ from velocity.ingest.local import load_games, load_plays
 from velocity.models.game_ncaaf import NCAAFGameModel, NCAAFModelConfig
 from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
-from velocity.models.simulate import SimConfig
+from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL, SimConfig
 
 BREAK_EVEN = 0.5238  # win rate that returns zero at −110
 
@@ -60,7 +60,7 @@ def _ncaaf_factory(n_sims: int):
 
 def _scores_factory(n_sims: int, league: str):
     sim = (
-        SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
+        SimConfig(sd_margin=NCAAF_SD_MARGIN, sd_total=NCAAF_SD_TOTAL, n_sims=n_sims)
         if league == "ncaaf"
         else SimConfig(n_sims=n_sims)
     )
