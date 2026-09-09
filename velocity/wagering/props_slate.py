@@ -90,6 +90,9 @@ def build_prop_slate(
                 float(row["point"]),
             )
             snapshots.setdefault(key, {})[row["side"]] = float(row["price"])
+        consensus = (
+            _consensus_prop_snapshots(snapshots) if config.devig_anchor == "consensus" else {}
+        )
 
         stakes: dict[str, float] = {}
         pending: dict[str, dict] = {}
@@ -109,9 +112,11 @@ def build_prop_slate(
                 # mismatch). Unpriceable — skip rather than crash.
                 continue
             for side in ("over", "under"):
-                best = _best_prop(game_lines, snapshots, props, pid, market, player, side, config)
+                best = _best_prop(game_lines, snapshots, props, pid, market, player, side,
+                                  config, consensus)
                 if best is None:
                     continue
+                paper = config.paper_reason(market, best["edge"], best.get("p_fair"))
                 stake = stake_amount(
                     config.starting_bankroll,
                     best["p_model"],
@@ -119,20 +124,21 @@ def build_prop_slate(
                     config.staking,
                     venue_for_book(best["book"]) if config.charge_exchange_fees else None,
                 )
-                if stake <= 0.0:
+                if stake <= 0.0 and paper is None:
                     continue
                 bet_key = f"{market}:{player}:{side}"
-                stakes[bet_key] = stake
-                pending[bet_key] = best
+                if paper is None:
+                    stakes[bet_key] = stake
+                pending[bet_key] = {**best, "note": paper}
 
-        if not stakes:
+        if not pending:
             continue
         # A player's over and under (and their markets) are correlated — group-cap
-        # per game, as with the game slate.
+        # per game, as with the game slate. Paper rows take no share of it.
         capped = apply_group_cap(stakes, config.group_cap_fraction, config.starting_bankroll)
         for bet_key, info in pending.items():
-            stake = capped[bet_key]
-            if stake <= 0.0:
+            stake = capped.get(bet_key, 0.0)
+            if stake <= 0.0 and info.get("note") is None:
                 continue
             log.add(
                 Bet(
@@ -147,6 +153,7 @@ def build_prop_slate(
                     timestamp=info["timestamp"],
                     player=info["player"],
                     p_fair=info.get("p_fair"),
+                    note=info.get("note"),
                 )
             )
     return log, unresolved
@@ -161,8 +168,14 @@ def _best_prop(
     player: str,
     side: str,
     config: SlateConfig,
+    consensus: Mapping[tuple, Mapping[str, float]] | None = None,
 ) -> dict | None:
-    """Highest-EV qualifying opportunity for one (player, market, side)."""
+    """Highest-EV qualifying opportunity for one (player, market, side).
+
+    ``consensus`` (see :func:`_consensus_prop_snapshots`) anchors the fair
+    probability to the cross-book pair when two or more books quote the
+    contract; the book's own pair is the fallback.
+    """
     candidates = game_lines[
         (game_lines["market"] == market)
         & (game_lines["player"] == player)
@@ -174,7 +187,12 @@ def _best_prop(
         bucket = snapshots.get((market, player, row["book"], row["timestamp"], point), {})
         if side not in bucket or _OPPOSITE[side] not in bucket:
             continue
-        fair = devig([bucket["over"], bucket["under"]], method=config.devig_method)
+        anchor: Mapping[str, float] = bucket
+        if consensus:
+            wide = consensus.get((market, player, row["timestamp"], point))
+            if wide is not None and "over" in wide and "under" in wide:
+                anchor = wide
+        fair = devig([anchor["over"], anchor["under"]], method=config.devig_method)
         p_fair = fair[0] if side == "over" else fair[1]
         p_model = (
             props.prob_over(player_id, market, point)
@@ -208,9 +226,40 @@ def _best_prop(
                 "timestamp": row["timestamp"],
                 "p_model": p_model,
                 "p_fair": p_fair,
+                "edge": signal.edge,
                 "ev": signal.ev,
             }
     return best
+
+
+def _consensus_prop_snapshots(
+    snapshots: Mapping[tuple, Mapping[str, float]], min_books: int = 2
+) -> dict[tuple, dict[str, float]]:
+    """Cross-book consensus per ``(market, player, timestamp, point)`` side.
+
+    The prop-board twin of :func:`velocity.wagering.slate.consensus_snapshots`:
+    a side quoted by fewer than ``min_books`` books has no consensus and the
+    caller keeps that book's own pair.
+    """
+    from velocity.wagering.odds import consensus_american
+
+    grouped: dict[tuple, dict[str, list[float]]] = {}
+    for (market, player, _book, stamp, point), sides in snapshots.items():
+        target = grouped.setdefault((market, player, stamp, point), {})
+        for side, price in sides.items():
+            target.setdefault(side, []).append(price)
+    out: dict[tuple, dict[str, float]] = {}
+    for key, by_side in grouped.items():
+        bucket: dict[str, float] = {}
+        for side, prices in by_side.items():
+            if len(prices) < min_books:
+                continue
+            consensus = consensus_american(prices)
+            if consensus is not None:
+                bucket[side] = float(consensus)
+        if bucket:
+            out[key] = bucket
+    return out
 
 
 def prop_slate_to_frame(log: BetLog) -> pd.DataFrame:
@@ -228,9 +277,10 @@ def prop_slate_to_frame(log: BetLog) -> pd.DataFrame:
             "p_fair": None if bet.p_fair is None else round(bet.p_fair, 4),
             "edge": None if bet.p_fair is None else round(bet.p_model - bet.p_fair, 4),
             "stake": round(bet.stake, 4),
+            "note": bet.note,
         }
         for bet in log
     ]
     cols = ["game_id", "player", "market", "side", "point", "book", "price",
-            "p_model", "p_fair", "edge", "stake"]
+            "p_model", "p_fair", "edge", "stake", "note"]
     return pd.DataFrame(rows, columns=cols)

@@ -56,6 +56,10 @@ class Bet:
     closing_point: float | None = None
     player: str | None = None  # set for player props; None for game markets
     p_fair: float | None = None  # de-vigged market probability at entry (edge = p_model - p_fair)
+    # Why a priced bet carries no stake: a paper market (priced, logged and
+    # graded for CLV, never staked) or an edge past a ceiling. ``None`` for an
+    # ordinary staked bet.
+    note: str | None = None
 
     @property
     def net_payout(self) -> float:

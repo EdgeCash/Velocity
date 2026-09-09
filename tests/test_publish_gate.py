@@ -75,10 +75,15 @@ def test_adverse_drift_math_and_direction() -> None:
 
 
 def test_a_play_the_market_ran_away_from_is_withdrawn() -> None:
-    moved = gate_bet(_conv(), current_price=200.0)  # our side got much longer
+    # Then vs now: the market had our side at −110 an hour ago and +200 now —
+    # our side got much longer, the disagreement was probably ours to lose.
+    moved = gate_bet(_conv(), current_price=200.0, reference_price=-110.0)
     assert not moved.published and "moved" in moved.reason
     # A small drift is noise, not a message.
-    assert gate_bet(_conv(), current_price=-108.0).published
+    assert gate_bet(_conv(), current_price=-108.0, reference_price=-110.0).published
+    # With no earlier snapshot there is no "then": the rule stands down
+    # rather than comparing the shopped price to an arbitrary book.
+    assert gate_bet(_conv(), current_price=200.0).published
 
 
 def test_publish_slate_splits_and_audits_every_candidate() -> None:

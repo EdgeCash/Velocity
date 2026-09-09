@@ -252,6 +252,7 @@ def legs_from_bets(
     a cross-game parlay reads unambiguously; prop legs keep the player's name.
     Returns ``(leg, single_ev)`` pairs; the EV ranks the pool.
     """
+    from velocity.store.schema import LADDER_BOOKS
     from velocity.wagering.props_slate import resolve_player  # local: avoids cycle
 
     labels = game_labels or {}
@@ -259,6 +260,14 @@ def legs_from_bets(
     for bet in bets:
         game_id = str(bet.game_id)
         if game_id not in results_by_game:
+            continue
+        # A paper bet (stake 0: a market not yet trusted, or an edge past the
+        # ceiling) is not a leg — a parlay combines edges, never launders one.
+        if bet.stake <= 0.0:
+            continue
+        # An exchange sells single contracts; there is no parlay to buy there,
+        # and a ladder rung's price is not a sportsbook leg's price.
+        if str(bet.book).lower() in LADDER_BOOKS:
             continue
         player_id: str | None = None
         if bet.player is not None:

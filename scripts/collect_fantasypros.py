@@ -72,6 +72,28 @@ def current_week(games: pd.DataFrame, today: pd.Timestamp) -> int:
     return int(ahead.index.min()) if len(ahead) else 0
 
 
+def resolve_schedule(path: str, *, fetch: bool = True) -> tuple[pd.DataFrame, str]:
+    """The schedule ``current_week`` reads — the live nflverse one when it can.
+
+    The committed games frame carries **played** games only, so before the
+    opener it holds last season and ``current_week`` sees no kickoff ahead:
+    on 2026-09-08 it answered 0 and the whole weekly surface (props, DFS,
+    pick'em) refused the season-long snapshot it got instead
+    (docs/SYSTEM_REVIEW.md §1.1). nflverse publishes the full schedule,
+    unplayed games included, keyless — so that is the source, with the
+    committed frame as the offline fallback. Returns ``(frame, source)``.
+    """
+    if fetch:
+        try:
+            from velocity.ingest.nfl import NFLVERSE_SCHEDULE_URL, normalize_schedules
+
+            raw = pd.read_csv(NFLVERSE_SCHEDULE_URL, low_memory=False)
+            return normalize_schedules(raw), "nflverse schedule"
+        except Exception as exc:  # noqa: BLE001 - fall back to the committed frame
+            print(f"nflverse schedule fetch failed ({exc}); using {path}")
+    return pd.read_parquet(path), path
+
+
 def fetch_league_frame(
     client: FantasyProsClient, league: str, season: int, week: int
 ) -> tuple[pd.DataFrame, list[str]]:
@@ -148,7 +170,10 @@ def main() -> None:
                              "schedule (0 outside the season); an integer pins it "
                              "(0 = full-season projections)")
     parser.add_argument("--schedule", default="datasets/nfl/games.parquet",
-                        help="games parquet used by --week auto")
+                        help="games parquet used by --week auto when the nflverse "
+                             "schedule cannot be fetched")
+    parser.add_argument("--no-fetch-schedule", action="store_true",
+                        help="resolve --week auto from the committed games parquet only")
     parser.add_argument("--leagues", nargs="+", default=list(LEAGUES))
     parser.add_argument("--out", default="artifacts/fp", help="output folder (private, not git)")
     parser.add_argument(
@@ -167,9 +192,9 @@ def main() -> None:
     stamp = pd.Timestamp(now).tz_localize(None)
     if str(args.week) == "auto":
         try:
-            schedule = pd.read_parquet(args.schedule)
+            schedule, source = resolve_schedule(args.schedule, fetch=not args.no_fetch_schedule)
             week = current_week(schedule, pd.Timestamp(now).tz_localize(None))
-            print(f"auto week from {args.schedule}: {week}"
+            print(f"auto week from {source}: {week}"
                   + (" (outside the season window)" if week == 0 else ""))
         except Exception as exc:  # noqa: BLE001 - a broken schedule falls back to 0
             print(f"auto week failed ({exc}); using 0")

@@ -188,3 +188,76 @@ def test_exclude_closing_flag_live_vs_backtest() -> None:
     backtest = build_slate(projections, canon, games, bt_cfg)
     assert len(backtest) == 0  # sole observation excluded as "closing"
     assert len(live) >= len(backtest)
+
+
+# --- neutral sites -----------------------------------------------------------
+# The board never says where a game is played; the league schedule does, and
+# every model wrapper takes the flag — it simply never reached them live
+# (docs/SYSTEM_REVIEW.md §3.2).
+
+
+def _neutral_events() -> pd.DataFrame:
+    return pd.DataFrame({
+        "game_id": ["melb", "ordinary", "unknown"],
+        "home_team": ["Los Angeles Rams", "Kansas City Chiefs", "Buffalo Bills"],
+        "away_team": ["San Francisco 49ers", "Denver Broncos", "Miami Dolphins"],
+        "kickoff": pd.to_datetime(["2026-09-11 00:35", "2026-09-14 20:20", "2026-09-13 17:00"]),
+    })
+
+
+def _neutral_schedule() -> pd.DataFrame:
+    # The schedule lists the Melbourne game with the sides swapped relative to
+    # the board and its kickoff in local time — a day and an orientation away
+    # from the board's UTC row, both of which the matcher must absorb.
+    return pd.DataFrame({
+        "game_id": ["2026_01_SF_LA", "2026_02_DEN_KC"],
+        "home_team": ["SF", "KC"],
+        "away_team": ["LA", "DEN"],
+        "kickoff": pd.to_datetime(["2026-09-10 20:35", "2026-09-14 20:20"]),
+        "neutral_site": [True, False],
+    })
+
+
+def _projection(home: str, away: str) -> object:
+    # project_board never inspects the projection — any object stands in.
+    return (home, away)
+
+
+def test_neutral_site_map_matches_either_orientation_within_the_window() -> None:
+    from velocity.wagering.live import neutral_site_map
+
+    known = ["LA", "SF", "KC", "DEN", "BUF", "MIA"]
+    flags = neutral_site_map(_neutral_events(), _neutral_schedule(), known)
+    assert flags == {"melb": True, "ordinary": False}
+    # A board game the schedule does not carry is absent — never guessed.
+    assert "unknown" not in flags
+    # No schedule, no opinion.
+    assert neutral_site_map(_neutral_events(), None, known) == {}
+    assert neutral_site_map(_neutral_events(), pd.DataFrame(), known) == {}
+
+
+def test_project_board_hands_the_flag_only_to_projectors_that_take_it() -> None:
+    from velocity.wagering.live import project_board
+
+    seen: list[tuple[str, str, bool]] = []
+
+    def aware(home: str, away: str, neutral_site: bool = False):  # noqa: ANN202
+        seen.append((home, away, neutral_site))
+        return _projection(home, away)
+
+    known = ["LA", "SF", "KC", "DEN", "BUF", "MIA"]
+    projections, _ = project_board(
+        _neutral_events(), aware, known, neutral_by_game={"melb": True, "ordinary": False}
+    )
+    assert set(projections) == {"melb", "ordinary", "unknown"}
+    assert ("LA", "SF", True) in seen
+    assert ("KC", "DEN", False) in seen
+    assert ("BUF", "MIA", False) in seen  # absent from the map → home field as before
+
+    def blind(home: str, away: str):  # noqa: ANN202
+        return _projection(home, away)
+
+    projections, _ = project_board(
+        _neutral_events(), blind, known, neutral_by_game={"melb": True}
+    )
+    assert len(projections) == 3  # a projector without the parameter is untouched

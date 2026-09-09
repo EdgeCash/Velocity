@@ -26,7 +26,11 @@ def test_model_weight_resolves_per_league() -> None:
     runner = _runner()
     # Unset → the league policy: NFL anchors at 0.2, everyone else raw.
     assert runner.resolve_model_weight(None, "nfl") == 0.2
-    for league in ("ncaaf", "mlb", "wnba", "ncaab", "nhl"):
+    # NCAAF joined the anchor: the ≥6-point totals filter claims ~0.14 of
+    # edge at sd 16.7 while the backtest realizes ~0.03; 0.2 maps one onto
+    # the other and the points filter stays the selector.
+    assert runner.resolve_model_weight(None, "ncaaf") == 0.2
+    for league in ("mlb", "wnba", "ncaab", "nhl"):
         assert runner.resolve_model_weight(None, league) == 1.0
     # An explicit flag always wins, 1.0 (raw) included.
     assert runner.resolve_model_weight(0.5, "nfl") == 0.5
@@ -88,3 +92,53 @@ def test_ncaaf_spreads_sit_out_by_default() -> None:
     assert args.ncaaf_spreads is False
     on = _runner().build_parser().parse_args(["--league", "ncaaf", "--ncaaf-spreads"])
     assert on.ncaaf_spreads is True
+
+
+def test_ncaaf_moneylines_sit_out_by_default() -> None:
+    # Never backtested, and 60% of the first live card's solo-Kelly exposure
+    # (docs/STRATEGY_REVIEW.md §1.2). Off until the backtest says otherwise.
+    args = _runner().build_parser().parse_args(["--league", "ncaaf"])
+    assert args.ncaaf_moneylines is False
+    on = _runner().build_parser().parse_args(["--league", "ncaaf", "--ncaaf-moneylines"])
+    assert on.ncaaf_moneylines is True
+
+
+def test_paper_posture_resolves_per_league() -> None:
+    runner = _runner()
+    # The content + CLV leagues stake nothing; football stakes.
+    for league in ("ncaab", "nhl", "wnba"):
+        assert runner.resolve_paper(None, league) is True
+    for league in ("nfl", "ncaaf", "mlb"):
+        assert runner.resolve_paper(None, league) is False
+    # The flag wins either way.
+    assert runner.resolve_paper(True, "nfl") is True
+    assert runner.resolve_paper(False, "nhl") is False
+    # Team totals are paper on a staking league until their gate is calibrated.
+    args = runner.build_parser().parse_args(["--league", "nfl"])
+    assert runner.resolve_paper_markets(args) == frozenset({"team_total_home", "team_total_away"})
+    args = runner.build_parser().parse_args(["--league", "nfl", "--no-team-totals-paper"])
+    assert runner.resolve_paper_markets(args) == frozenset()
+    args = runner.build_parser().parse_args(["--league", "nhl"])
+    assert "__all__" in runner.resolve_paper_markets(args)
+
+
+def test_edge_ceilings_ship_on() -> None:
+    # The adverse-selection guard where the money is: 0.12 absolute (the
+    # publish gate's ceiling) and 50% of the fair probability.
+    args = _runner().build_parser().parse_args(["--league", "nfl"])
+    assert args.max_edge == 0.12
+    assert args.max_relative_edge == 0.50
+
+
+def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "ncaaf"])
+    rows = dict(runner.live_config_rows(args, "EPA×scores blend", None))
+    assert rows["Ratings"] == "EPA×scores blend"
+    assert "0.2" in rows["Market anchoring"]
+    assert "≥ 6" in rows["Selectivity"] and "moneylines sitting out" in rows["Selectivity"]
+    assert "0.12 absolute" in rows["Edge ceilings"] and "50%" in rows["Edge ceilings"]
+    assert rows["Paper"] == "team totals"
+    nhl = runner.build_parser().parse_args(["--league", "nhl"])
+    nhl_rows = dict(runner.live_config_rows(nhl, "goalie decomposition", None))
+    assert "every market" in nhl_rows["Paper"]

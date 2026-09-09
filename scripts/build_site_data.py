@@ -91,10 +91,34 @@ def build_board(slate_dir: Path) -> pd.DataFrame:
                          "fair_spread", "fair_total"]].drop_duplicates("game_id"),
             on="game_id", how="left",
         )
+    keys = ["game_id", "market", "side"]
     if not intel.empty and "tier" in intel.columns:
-        keys = ["game_id", "market", "side"]
-        tiers = intel.drop_duplicates(subset=keys)[[*keys, "tier", "conviction"]]
+        cols = [*keys, "tier", "conviction"]
+        if "rationale" in intel.columns:
+            cols.append("rationale")
+        game_intel = intel[intel["player"].isna()] if "player" in intel.columns else intel
+        tiers = game_intel.drop_duplicates(subset=keys)[cols]
         board = board.merge(tiers, on=keys, how="left")
+    # The number to bet is the portfolio-sized stake, not the solo-Kelly one
+    # the slate parquet keeps for backtest comparability (docs/WAGERING.md
+    # §6). Sized stakes join by bet identity; a row the portfolio never saw
+    # (paper, or a run before sizing) shows zero.
+    portfolio = collect(slate_dir, "portfolio")
+    if not portfolio.empty and "stake" in portfolio.columns:
+        game_rows = portfolio[portfolio["kind"] == "game"] if "kind" in portfolio.columns \
+            else portfolio
+        sized = (game_rows.drop_duplicates(subset=keys)[[*keys, "stake"]]
+                 .rename(columns={"stake": "stake_sized"}))
+        board = board.merge(sized, on=keys, how="left")
+    else:
+        board["stake_sized"] = float("nan")
+    board["stake_sized"] = board["stake_sized"].fillna(0.0)
+    from velocity.store.schema import LADDER_BOOKS
+
+    board["venue"] = board["book"].astype(str).str.lower().map(
+        lambda b: b if b in LADDER_BOOKS else "sportsbook")
+    if "note" not in board.columns:
+        board["note"] = None
     return board
 
 
@@ -116,7 +140,83 @@ def build_publish(slate_dir: Path) -> pd.DataFrame:
             .drop_duplicates("game_id"),
             on="game_id", how="left",
         )
+    portfolio = collect(slate_dir, "portfolio")
+    if not portfolio.empty and "stake" in portfolio.columns:
+        keys = ["game_id", "market", "side"]
+        sized = (portfolio.drop_duplicates(subset=keys)[[*keys, "stake"]]
+                 .rename(columns={"stake": "stake_sized"}))
+        audit = audit.merge(sized, on=keys, how="left")
+    else:
+        audit["stake_sized"] = float("nan")
+    audit["stake_sized"] = audit["stake_sized"].fillna(0.0)
     return audit
+
+
+def build_clv_by_market(record: pd.DataFrame) -> pd.DataFrame:
+    """Per-league, per-market CLV with the trust flag (``eval.metrics``).
+
+    The one number the doctrine says to read per market: spreads, totals
+    and moneylines close efficiently enough that beating the close is
+    skill; props and team totals do not, and their rows carry
+    ``clv_trusted = False`` so the page says "judge on P/L" instead of
+    averaging them into a headline (docs/WAGERING.md §6).
+    """
+    from velocity.eval.metrics import clv_by_market
+
+    if record.empty or "market" not in record.columns:
+        return pd.DataFrame()
+    settled = record[record["result"].isin(["win", "loss", "push"])]
+    frames = []
+    for league, part in settled.groupby("league", sort=True):
+        table = clv_by_market(part)
+        if table.empty:
+            continue
+        table["league"] = str(league)
+        table["units"] = [
+            float(pd.to_numeric(part.loc[part["market"] == m, "profit"],
+                                errors="coerce").fillna(0.0).sum())
+            for m in table["market"]
+        ]
+        frames.append(table)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def build_exposure(portfolio: pd.DataFrame) -> pd.DataFrame:
+    """One row per league: what the sized card puts at risk against its cap.
+
+    ``bankroll``/``slate_cap`` ride on the card since the runner started
+    writing them; an older card falls back to the runner's defaults (100
+    units, 25%) — the same numbers it was sized against.
+    """
+    if portfolio.empty or "stake" not in portfolio.columns:
+        return pd.DataFrame()
+    rows = []
+    for league, part in portfolio.groupby("league", sort=True):
+        stake = pd.to_numeric(part["stake"], errors="coerce").fillna(0.0)
+        solo = (pd.to_numeric(part["stake_solo"], errors="coerce").fillna(0.0)
+                if "stake_solo" in part.columns else stake)
+        bankroll = (float(pd.to_numeric(part["bankroll"], errors="coerce").dropna().iloc[0])
+                    if "bankroll" in part.columns
+                    and pd.to_numeric(part["bankroll"], errors="coerce").notna().any()
+                    else 100.0)
+        cap = (float(pd.to_numeric(part["slate_cap"], errors="coerce").dropna().iloc[0])
+               if "slate_cap" in part.columns
+               and pd.to_numeric(part["slate_cap"], errors="coerce").notna().any()
+               else 0.25)
+        games = part["game_id"].nunique() if "game_id" in part.columns else 0
+        rows.append({
+            "league": str(league),
+            "bets": int((stake > 0).sum()),
+            "games": int(games),
+            "stake_sized": float(stake.sum()),
+            "stake_solo": float(solo.sum()),
+            "bankroll": bankroll,
+            "cap_fraction": cap,
+            "cap_units": bankroll * cap,
+            "exposure": float(stake.sum()) / bankroll if bankroll else float("nan"),
+            "stamp": str(part["stamp"].iloc[0]) if "stamp" in part.columns else "",
+        })
+    return pd.DataFrame(rows)
 
 
 def build_units(record: pd.DataFrame) -> pd.DataFrame:
@@ -129,11 +229,18 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
     # Real graded frames carry profit as object dtype (pending rows mix None
     # in upstream) — coerce before any cython op.
     settled["profit"] = pd.to_numeric(settled["profit"], errors="coerce").fillna(0.0)
+    # Sized profit where the chain carries it; a row graded before sizing
+    # counts at its solo stake so the sized line stays continuous.
+    sized = (pd.to_numeric(settled["profit_sized"], errors="coerce")
+             if "profit_sized" in settled.columns else pd.Series(float("nan"), index=settled.index))
+    settled["profit_sized"] = sized.fillna(settled["profit"])
     settled["slate_date"] = pd.to_datetime(settled["slate_date"]).dt.date
     daily = (settled.groupby(["league", "slate_date"], as_index=False)
-             .agg(profit=("profit", "sum"), bets=("profit", "size")))
+             .agg(profit=("profit", "sum"), profit_sized=("profit_sized", "sum"),
+                  bets=("profit", "size")))
     daily = daily.sort_values(["league", "slate_date"])
     daily["units"] = daily.groupby("league")["profit"].cumsum()
+    daily["units_sized"] = daily.groupby("league")["profit_sized"].cumsum()
     return daily
 
 
@@ -377,7 +484,10 @@ def sentinel_frame(schema: dict[str, object]) -> pd.DataFrame:
     is inert. The ``league`` column always exists and carries the marker.
     """
     def value(col: str, dtype: object) -> object:
-        if col == "league":
+        # The game id carries the marker too: the matchup template's crawl
+        # seed (/matchup/__none__) then finds its one row and renders empty
+        # states instead of an empty-dataset error.
+        if col in ("league", "game_id"):
             return SENTINEL_LEAGUE
         if dtype is str:
             return ""
@@ -393,8 +503,18 @@ def sentinel_frame(schema: dict[str, object]) -> pd.DataFrame:
     return pd.DataFrame([row]).astype(schema)  # type: ignore[arg-type]
 
 
-def model_config_frame() -> pd.DataFrame:
-    """The per-league "what's live" block, re-exported from the plays app."""
+def model_config_frame(slate_dir: Path | None = None) -> pd.DataFrame:
+    """The per-league "what's live" block.
+
+    From each run's own ``config_{league}_{stamp}.parquet`` — the runner
+    writes what it actually did (fit, anchoring, filters, ceilings, paper
+    posture) so the page cannot drift from the code. The hand-kept table in
+    the retired plays app is the fallback for artifacts that predate it.
+    """
+    if slate_dir is not None:
+        live = collect(slate_dir, "config")
+        if not live.empty:
+            return live[["league", "label", "detail"]]
     try:
         from format_plays import MODEL_CONFIG  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001 - the site renders without the block
@@ -439,7 +559,9 @@ def main() -> None:
         "dfs_gpp": collect(slate_dir, "dfs_gpp"),
         "portfolio": collect(slate_dir, "portfolio"),
         "publish": build_publish(slate_dir),
-        "model_config": model_config_frame(),
+        "parlays": collect(slate_dir, "slate_{league}_parlays"),
+        "model_config": model_config_frame(slate_dir),
+        "exposure": build_exposure(collect(slate_dir, "portfolio")),
         "cards": collect_cards(slate_dir, Path(args.cards_out)),
         "ratings": build_ratings(slate_dir, Path(args.prev_dir)),
         "line_moves": build_line_moves(slate_dir, Path(args.odds_dir)),
@@ -447,9 +569,10 @@ def main() -> None:
         "weather": (pd.DataFrame() if args.no_weather
                     else build_weather(slate_dir)),
     }
-    tables["units"] = build_units(tables["cumulative_record"]
-                                  if not tables["cumulative_record"].empty
-                                  else tables["record"])
+    season = (tables["cumulative_record"] if not tables["cumulative_record"].empty
+              else tables["record"])
+    tables["units"] = build_units(season)
+    tables["clv_by_market"] = build_clv_by_market(season)
 
     # An absent family still writes a typed one-row sentinel frame so every
     # page's SQL parses AND every source query returns a row (see
@@ -461,7 +584,11 @@ def main() -> None:
                   "home_team": str, "away_team": str,
                   "kickoff": "datetime64[ns]", "p_home_win": float,
                   "mu_home": float, "mu_away": float, "fair_spread": float,
-                  "fair_total": float, "tier": str, "conviction": float},
+                  "fair_total": float, "tier": str, "conviction": float,
+                  "rationale": str, "stake_sized": float, "venue": str, "note": str},
+        "parlays": {"legs": str, "n_legs": int, "price": float, "decimal": float,
+                    "p_win": float, "ev": float, "same_game": bool, "stake": float,
+                    "legs_json": str, "league": str, "stamp": str},
         "games": {"game_id": str, "home_team": str, "away_team": str,
                   "kickoff": "datetime64[ns]", "league": str, "stamp": str},
         "projections": {"game_id": str, "away": str, "home": str, "n_sims": int,
@@ -473,14 +600,23 @@ def main() -> None:
         "record": {"section": str, "play": str, "market": str, "side": str,
                    "point": float, "price": float, "stake": float,
                    "result": str, "profit": float, "price_clv": float,
-                   "line_clv": float, "slate_date": "datetime64[ns]",
+                   "line_clv": float, "stake_sized": float,
+                   "profit_sized": float, "slate_date": "datetime64[ns]",
                    "league": str, "stamp": str},
         "cumulative_record": {"section": str, "play": str, "market": str,
                               "side": str, "point": float, "price": float,
                               "stake": float, "result": str, "profit": float,
                               "price_clv": float, "line_clv": float,
+                              "stake_sized": float, "profit_sized": float,
                               "slate_date": "datetime64[ns]", "league": str,
                               "stamp": str},
+        "clv_by_market": {"market": str, "n_bets": int, "mean_price_clv": float,
+                          "mean_line_clv": float, "pct_beat_close": float,
+                          "clv_trusted": bool, "league": str, "units": float},
+        "exposure": {"league": str, "bets": int, "games": int,
+                     "stake_sized": float, "stake_solo": float,
+                     "bankroll": float, "cap_fraction": float,
+                     "cap_units": float, "exposure": float, "stamp": str},
         "props": {"game_id": str, "player": str, "market": str, "side": str,
                   "point": float, "price": float, "p_model": float,
                   "p_fair": float, "edge": float, "stake": float,
@@ -507,13 +643,14 @@ def main() -> None:
                     "league": str, "stamp": str},
         "portfolio": {"game_id": str, "market": str, "side": str, "kind": str,
                       "price": float, "edge": float, "stake": float,
-                      "stake_solo": float, "league": str, "stamp": str},
+                      "stake_solo": float, "bankroll": float, "slate_cap": float,
+                      "league": str, "stamp": str},
         "publish": {"game_id": str, "market": str, "side": str, "player": str,
                     "price": float, "stake": float, "edge": float, "tier": str,
                     "drift": float, "conviction": float, "context": float,
                     "published": bool, "reason": str, "league": str,
                     "stamp": str, "home_team": str, "away_team": str,
-                    "kickoff": "datetime64[ns]"},
+                    "kickoff": "datetime64[ns]", "stake_sized": float},
         "model_config": {"league": str, "label": str, "detail": str},
         "cards": {"kind": str, "league": str, "stamp": str, "file": str,
                   "away": str, "home": str, "caption": str, "game_id": str},
@@ -531,11 +668,24 @@ def main() -> None:
         "weather": {"game_id": str, "league": str, "covered": bool,
                     "temp_f": float, "wind_mph": float, "precip_pct": float},
         "units": {"league": str, "slate_date": "datetime64[ns]",
-                  "profit": float, "bets": int, "units": float},
+                  "profit": float, "profit_sized": float, "bets": int,
+                  "units": float, "units_sized": float},
     }
     for name, frame in tables.items():
         if frame.empty:
             frame = sentinel_frame(schemas[name])
+        else:
+            # A family that predates a column (record chains before sized
+            # stakes, cards before the bankroll rode along) still needs it
+            # for the page SQL to parse.
+            for column, kind in schemas[name].items():
+                if column not in frame.columns:
+                    frame[column] = pd.Series(
+                        [None] * len(frame), dtype=(
+                            "float64" if kind is float
+                            else "datetime64[ns]" if kind == "datetime64[ns]"
+                            else "object"),
+                    )
         frame.to_parquet(out / f"{name}.parquet", index=False)
         print(f"{name}: {len(frame)} rows")
 

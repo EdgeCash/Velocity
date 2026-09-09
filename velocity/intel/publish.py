@@ -107,10 +107,14 @@ def adverse_drift(
 
 
 def current_prices(lines: pd.DataFrame | None) -> dict[tuple[str, str, str], float]:
-    """``(game_id, market, side)`` → the newest price on the board.
+    """``(game_id, market, side)`` → the board's consensus price at its newest snapshot.
 
-    Reads the canonical lines frame the slate already carries, so the gate
-    needs no extra fetch.
+    The consensus across books, not "the last row": on a single snapshot the
+    last row is whichever book happens to sort last, and comparing the
+    shopped *best* price to an arbitrary book read as the market moving
+    toward us every time — the drift rule never fired
+    (docs/SYSTEM_REVIEW.md §4.4). Prices are averaged in decimal space
+    (:func:`~velocity.wagering.odds.consensus_american`).
     """
     if lines is None or lines.empty:
         return {}
@@ -118,11 +122,15 @@ def current_prices(lines: pd.DataFrame | None) -> dict[tuple[str, str, str], flo
     if frame.empty:
         return {}
     if "timestamp" in frame.columns:
-        frame = frame.sort_values("timestamp")
+        newest = frame["timestamp"].max()
+        frame = frame[frame["timestamp"] == newest]
+    from velocity.wagering.odds import consensus_american
+
     index: dict[tuple[str, str, str], float] = {}
-    for row in frame.to_dict("records"):
-        key = (str(row["game_id"]), str(row["market"]), str(row["side"]))
-        index[key] = float(row["price"])  # later rows overwrite → newest wins
+    for (gid, market, side), group in frame.groupby(["game_id", "market", "side"]):
+        price = consensus_american(group["price"])
+        if price is not None:
+            index[(str(gid), str(market), str(side))] = float(price)
     return index
 
 
@@ -130,6 +138,7 @@ def gate_bet(
     conviction: Conviction,
     *,
     current_price: float | None = None,
+    reference_price: float | None = None,
     min_edge: float = DEFAULT_MIN_EDGE,
     max_edge: float = DEFAULT_MAX_EDGE,
     max_adverse_drift: float = DEFAULT_MAX_ADVERSE_DRIFT,
@@ -140,6 +149,11 @@ def gate_bet(
     """Decide whether one judged bet is post-worthy."""
     bet = conviction.bet
     tier = conviction.tier
+    if float(bet.stake) <= 0.0:
+        # Priced and logged for CLV but never staked — a paper market, or an
+        # edge the staking layer's own ceiling refused. Not a play.
+        why = f" ({bet.note})" if getattr(bet, "note", None) else ""
+        return GateResult(False, f"paper — priced, not staked{why}", tier=tier)
     if tier == TIER_FLAGGED or conviction.vetoed:
         return GateResult(False, "vetoed by the intel layer", tier=tier)
     if tier not in publishable_tiers:
@@ -168,7 +182,11 @@ def gate_bet(
                           f"edge {edge:.3f} above ceiling {max_edge:.3f} "
                           "(adverse-selection guard)", edge=edge, tier=tier)
 
-    drift = adverse_drift(bet.price, current_price)
+    # Then vs now: the market's consensus on our side at the earlier snapshot
+    # against its consensus now. Without an earlier snapshot there is no
+    # "then" and the rule stands down (None never rejects).
+    drift = (adverse_drift(reference_price, current_price)
+             if reference_price is not None else None)
     if drift is not None and drift > max_adverse_drift:
         return GateResult(False,
                           f"market moved {drift:.3f} against us since pricing",
@@ -179,6 +197,7 @@ def gate_bet(
 def publish_slate(
     convictions: Iterable[Conviction],
     lines: pd.DataFrame | None = None,
+    reference: pd.DataFrame | None = None,
     *,
     min_edge: float = DEFAULT_MIN_EDGE,
     max_edge: float = DEFAULT_MAX_EDGE,
@@ -194,14 +213,22 @@ def publish_slate(
     with its verdict and reason, so a quiet night is explainable rather than
     mysterious — the same discipline the vetoed-picks table already follows.
     """
+    # Drift needs two moments. ``lines`` is the board the slate priced from
+    # (now); ``reference`` is an earlier snapshot of the same board — the
+    # previous hour's odds archive — so "moved against us" compares the
+    # market then with the market now. Without a reference the rule has
+    # nothing to compare and never rejects.
     prices = current_prices(lines)
+    earlier = current_prices(reference) if reference is not None else {}
     rows: list[dict[str, object]] = []
     passed: list[tuple[int, Conviction]] = []
     for index, conviction in enumerate(convictions):
         bet = conviction.bet
         key = (str(bet.game_id), str(bet.market), str(bet.side))
         result = gate_bet(
-            conviction, current_price=prices.get(key),
+            conviction,
+            current_price=prices.get(key),
+            reference_price=earlier.get(key),
             min_edge=min_edge, max_edge=max_edge,
             max_adverse_drift=max_adverse_drift,
             publishable_tiers=publishable_tiers,

@@ -78,6 +78,26 @@ def week_plan(games: pd.DataFrame, season: int) -> list[tuple[int, str]]:
     ]
 
 
+def merge_seasons(
+    existing: pd.DataFrame | None, fetched: pd.DataFrame, first: int, last: int
+) -> pd.DataFrame:
+    """Replace seasons ``first``–``last`` of the committed file with ``fetched``.
+
+    A range backfill must only touch the seasons it fetched. The first
+    one-off run of this script for 2025 wrote the fetched frame straight over
+    ``datasets/ncaaf/plays.parquet`` and took 2015–2024 and 2026 with it — a
+    decade of the college EPA fit's training data gone in one commit, restored
+    by hand from a checkout that predated it. Everything outside the range is
+    kept exactly as it was; the result is sorted so the file is reproducible.
+    """
+    if existing is None or existing.empty:
+        out = fetched
+    else:
+        keep = existing[~existing["season"].astype(int).between(first, last)]
+        out = pd.concat([keep, fetched], ignore_index=True)
+    return out.sort_values(["season", "week", "game_id", "play_id"]).reset_index(drop=True)
+
+
 def main() -> None:  # pragma: no cover - network orchestration
     parser = argparse.ArgumentParser(description="Build datasets/ncaaf/plays.parquet from CFBD")
     parser.add_argument("--seasons", nargs=2, type=int, metavar=("FIRST", "LAST"),
@@ -117,12 +137,15 @@ def main() -> None:  # pragma: no cover - network orchestration
 
     if not frames:
         raise SystemExit("no plays fetched — nothing written")
-    out = pd.concat(frames, ignore_index=True)
+    fetched = pd.concat(frames, ignore_index=True)
     dest = Path(args.out)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    existing = pd.read_parquet(dest) if dest.exists() else None
+    out = merge_seasons(existing, fetched, first, last)
     out.to_parquet(dest, index=False)
     print(f"wrote {len(out)} plays ({out['game_id'].nunique()} games, "
-          f"seasons {first}–{last}) to {dest}")
+          f"seasons {first}–{last} refreshed; {out['season'].nunique()} seasons on file) "
+          f"to {dest}")
 
 
 if __name__ == "__main__":
