@@ -66,8 +66,26 @@ public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
    misspellings to the resolver so coverage rises (see below).
 4. **Place the bets you choose** at the referenced number or better (the edge is
    computed at that price; a worse number erodes it).
-5. **Later, measure CLV** — the collectors keep snapshotting toward close, so the
-   closing line is captured for comparison against your entry.
+5. **Book them on the ledger** (docs/WAGERING.md §7) so the bankroll compounds
+   off what you actually did and the kill-switch has real inputs:
+
+   ```
+   python scripts/ledger.py pull                 # the R2 copy, merged in
+   python scripts/ledger.py todo --league nfl    # the newest card with bet ids
+   python scripts/ledger.py place --bet-id "nfl|<game>|total|under|" --stake 2 --price -108 --book fanduel
+   python scripts/ledger.py skip --bet-id "nfl|<game>|spread|home|"
+   python scripts/ledger.py push                 # back to R2; the morning run settles it
+   ```
+
+   The workflow runs the ledger in `auto` mode by default — every staked row
+   is booked at its recommended terms, a model bankroll — so nothing is
+   waiting on you. The day you start placing by hand, dispatch the workflow
+   with `ledger_mode: manual` (the two modes double-count each other).
+   Deposits, withdrawals and corrections are `adjust --amount`; a bet the
+   grader could not settle is `settle --bet-id ... --result win|loss|push`.
+6. **Later, measure CLV** — the collectors keep snapshotting toward close, so the
+   closing line is captured for comparison against your entry; the grader
+   attaches it to the record and to the ledger's settled rows.
 
 ## Tuning knobs
 

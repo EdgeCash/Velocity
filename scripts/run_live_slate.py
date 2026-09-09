@@ -24,6 +24,7 @@ import os
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from velocity.features.scores import fit_scores_ratings
@@ -747,6 +748,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help="size the combined card through the portfolio rules")
     parser.add_argument("--max-slate-fraction", type=float, default=0.25,
                         help="aggregate cap: max fraction of bankroll staked per slate")
+    # The bankroll ledger (docs/WAGERING.md W1): one private parquet that
+    # holds the seed, every recommendation, every placed bet and every
+    # settlement. With it, --bankroll only seeds an empty ledger; the run
+    # stakes off the ledger's bankroll, open exposure counts against the
+    # slate cap, and the drawdown kill-switch finally has its inputs.
+    parser.add_argument("--ledger", default=None,
+                        help="bankroll ledger parquet (private); --bankroll seeds it when empty")
+    parser.add_argument("--ledger-mode", choices=["manual", "auto"], default="manual",
+                        help="manual: only bets the operator records (scripts/ledger.py "
+                             "place) are placed; auto: every staked row is booked at its "
+                             "recommended terms, so the bankroll compounds off the card")
     parser.add_argument("--out", help="folder to persist the slate parquet (private, not git)")
     return parser
 
@@ -994,6 +1006,8 @@ def main() -> None:
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
+    ledger = _open_ledger(args, generated_at)
+
     schedule = _league_schedule(args, Path(args.data), generated_at) if args.data else None
     project, known_teams, ratings_frame, fit_kind = _build_projection(args, schedule)
 
@@ -1189,7 +1203,7 @@ def main() -> None:
     # solo-Kelly stakes for backtest comparability.
     if args.portfolio and (not frame.empty or (props_frame is not None
                                                and not props_frame.empty)):
-        _portfolio_card(args, frame, props_frame, now, generated_at)
+        _portfolio_card(args, frame, props_frame, now, generated_at, ledger=ledger)
 
     # Intelligence layer — judge every qualifying bet against the game's
     # evidence and emit tiered, argued pick sets. Best-effort like every
@@ -1320,22 +1334,92 @@ def _previous_board(args: argparse.Namespace, events: pd.DataFrame) -> pd.DataFr
         return None
 
 
-def _portfolio_card(
+def _open_ledger(args: argparse.Namespace, generated_at: pd.Timestamp) -> Any:
+    """The bankroll ledger, when the run keeps one (docs/WAGERING.md W1).
+
+    An empty ledger is seeded with ``--bankroll``; from then on the run's
+    bankroll is the ledger's — the seed plus every adjustment and settlement
+    — and ``--bankroll`` is ignored, so stakes compound off real state
+    instead of a fresh notional every run. Best-effort: a ledger that fails
+    to load is reported and the run stakes against the CLI bankroll.
+    """
+    if not args.ledger:
+        return None
+    try:
+        from velocity.wagering.ledger import Ledger
+
+        ledger = Ledger.load(args.ledger)
+        if ledger.seed(args.bankroll, at=generated_at, note="seeded by the slate runner"):
+            ledger.save()
+            print(f"ledger: seeded {args.ledger} at {args.bankroll:.2f}")
+        state = ledger.state()
+        if state.current > 0:
+            args.bankroll = state.current
+        else:
+            print(f"ledger: bankroll is {state.current:.2f} — the kill-switch will halt "
+                  "the card; adjust the ledger (scripts/ledger.py adjust) to resume")
+        print(f"ledger ({args.ledger_mode} mode): {state.describe()}")
+        return ledger
+    except Exception as exc:  # noqa: BLE001 - the ledger never breaks the slate
+        print(f"ledger skipped ({exc}); staking against --bankroll {args.bankroll:.2f}")
+        return None
+
+
+def _record_card(
+    ledger: Any, card: pd.DataFrame, args: argparse.Namespace, stamp: str,
+    generated_at: pd.Timestamp, halted: str | None,
+) -> None:
+    """Append the sized card to the ledger as ``recommended`` rows.
+
+    In ``auto`` mode every staked row that is not already on the books —
+    placed off an earlier card this week, skipped, or settled — is placed
+    at its recommended terms, so the bankroll compounds off the card while
+    nobody is placing by hand. A halted card is recorded and placed nowhere.
+    """
+    try:
+        n_rec = ledger.recommend(card, league=args.league, stamp=stamp, at=generated_at)
+        placed = 0
+        if args.ledger_mode == "auto" and halted is None:
+            todo = ledger.latest_recommendations(args.league)
+            for row in todo[todo["status"] == "open"].to_dict("records"):
+                ledger.place(row["bet_id"], float(row["stake"]), at=generated_at,
+                             note="auto: booked at the recommended terms")
+                placed += 1
+        ledger.save()
+        held = int((card.get("held", pd.Series(dtype=bool)) == True).sum())  # noqa: E712
+        print(f"ledger: {n_rec} recommended row(s) appended"
+              + (f", {placed} placed (auto)" if args.ledger_mode == "auto" else "")
+              + (f", {held} already on the books" if held else "")
+              + f"; {ledger.state().describe()}")
+    except Exception as exc:  # noqa: BLE001 - the ledger never breaks the slate
+        print(f"ledger append skipped ({exc})")
+
+
+def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card's parts
     args: argparse.Namespace,
     frame: pd.DataFrame,
     props_frame: pd.DataFrame | None,
     now: datetime,
     generated_at: pd.Timestamp,
+    ledger: Any = None,
 ) -> None:
     """Size the combined game + prop card through the portfolio rules.
 
     One correlation group per game (a spread, its total, its team totals, and
     its props share a group), the per-game cap, and the aggregate slate cap.
-    Prints the exposure summary and persists the sized combined card; the
-    per-slate parquets keep their solo-Kelly stakes.
+    With a ledger, the kill-switch and open exposure apply: a bankroll past
+    the drawdown threshold zeroes the whole card *explicitly*, and money
+    already on the table today counts against the slate cap. Prints the
+    exposure summary and persists the sized combined card; the per-slate
+    parquets keep their solo-Kelly stakes.
     """
     try:
-        from velocity.wagering.portfolio import BetCandidate, PortfolioConfig, size_portfolio
+        from velocity.wagering.portfolio import (
+            BetCandidate,
+            PortfolioConfig,
+            should_halt,
+            size_portfolio,
+        )
 
         parts = []
         if not frame.empty:
@@ -1346,6 +1430,7 @@ def _portfolio_card(
         # Paper rows (stake 0 — a market not yet trusted, or an edge past the
         # ceiling) are graded, not sized: they take no share of the card.
         card = card[card["stake"] > 0].reset_index(drop=True)
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
         if card.empty:
             print("\n=== Portfolio-sized card — nothing staked (paper posture) ===")
             return
@@ -1362,9 +1447,48 @@ def _portfolio_card(
             for i, row in enumerate(card.to_dict("records"))
         ]
         config = PortfolioConfig(max_portfolio_fraction=args.max_slate_fraction)
-        sized = size_portfolio(candidates, args.bankroll, config)
+
+        # The ledger's say: the kill-switch, and the room left under the
+        # slate cap once today's open bets are counted. A bet already on the
+        # books (placed off an earlier card this week) is held, not doubled.
+        halted: str | None = None
+        current = peak = None
+        card["held"] = False
+        if ledger is not None:
+            from velocity.wagering.ledger import bet_id
+
+            state = ledger.state()
+            current, peak = state.current, state.peak
+            open_ids = set(ledger.open_bets()["bet_id"])
+            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"))
+                   for r in card.to_dict("records")]
+            card["held"] = [i in open_ids for i in ids]
+            on_card = ledger.open_bets()
+            elsewhere = float(on_card.loc[~on_card["bet_id"].isin(ids), "stake"].sum())
+            if should_halt(current, peak, config.max_drawdown_fraction):
+                halted = (f"drawdown {state.drawdown:.0%} ≥ "
+                          f"{config.max_drawdown_fraction:.0%} (bankroll {current:.2f} "
+                          f"from a peak of {peak:.2f})")
+            elif elsewhere > 0:
+                room = args.max_slate_fraction - elsewhere / args.bankroll
+                if room <= 0:
+                    halted = (f"open exposure {elsewhere:.2f} on other games already "
+                              f"fills the {args.max_slate_fraction:.0%} slate cap")
+                else:
+                    config = PortfolioConfig(max_portfolio_fraction=room)
+                    print(f"open exposure {elsewhere:.2f} on games off today's card "
+                          f"leaves {room:.1%} of bankroll under the slate cap")
+        if halted is not None:
+            sized = {c.key: 0.0 for c in candidates}
+            print(f"\n=== KILL-SWITCH — halted: {halted}; every stake zeroed ===")
+        else:
+            sized = size_portfolio(candidates, args.bankroll, config,
+                                   current_bankroll=current, peak_bankroll=peak)
         card["stake_solo"] = card["stake"]
         card["stake"] = [round(sized[str(i)], 4) for i in range(len(card))]
+        card["halted"] = halted is not None
+        if halted is not None:
+            card["note"] = f"halted: {halted}"
 
         solo_total = float(card["stake_solo"].sum())
         total = float(card["stake"].sum())
@@ -1377,9 +1501,11 @@ def _portfolio_card(
               f"de-scaled at ρ={config.group_correlation:g})")
         top = ", ".join(f"{gid}: {amt:.2f}" for gid, amt in per_game.head(3).items())
         print(f"largest game exposures — {top}")
+        if bool(card["held"].any()):
+            print(f"{int(card['held'].sum())} of these are already on the books from an "
+                  "earlier card — held, not re-placed")
 
         if args.out:
-            stamp = now.strftime("%Y%m%dT%H%M%SZ")
             dest = Path(args.out) / f"portfolio_{args.league}_{stamp}.parquet"
             # The bankroll and slate cap ride along so the site's exposure
             # tile reads sized total / cap from the card itself.
@@ -1389,6 +1515,8 @@ def _portfolio_card(
                 dest, index=False
             )
             print(f"wrote the sized card to {dest}")
+        if ledger is not None:
+            _record_card(ledger, card, args, stamp, generated_at, halted)
     except Exception as exc:  # noqa: BLE001 - sizing never breaks the slates
         print(f"portfolio sizing skipped: {exc}")
 

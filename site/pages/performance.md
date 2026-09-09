@@ -52,6 +52,92 @@ row(s) predate sized stakes and count at their solo stake in the sized line.
 Paper calls — priced, graded, never staked — sit outside the headline:
 {pending[0]?.paper_wins ?? 0}-{pending[0]?.paper_losses ?? 0} so far._
 
+## Bankroll
+
+The ledger's number: one bankroll, seeded once, moved only by settled bets
+and recorded adjustments (docs/WAGERING.md W1). The record above counts every
+recommendation; this counts what was actually on the books.
+
+```sql bankroll
+select current, seed, peak, drawdown, open_exposure, open_bets, settled_bets,
+  staked, profit, case when staked > 0 then profit / staked end as roi,
+  halted, halt_threshold,
+  case mode
+    when 'auto' then 'Bets are booked automatically at the recommended terms: the model''s own card, compounding.'
+    when 'manual' then 'Bets are what the operator recorded placing.'
+    else 'Nothing placed on the ledger yet.' end as mode_note,
+  case when halted then 'The kill-switch is tripped: the next card stakes nothing until the ledger is adjusted.'
+    else '' end as halt_note,
+  strftime(as_of, '%Y-%m-%d') as as_of
+from velocity.bankroll
+where league != '__none__'
+```
+
+<BigValue data={bankroll} value=current title="Bankroll" fmt='#,##0.00"u"' />
+<BigValue data={bankroll} value=peak title="Peak" fmt='#,##0.00"u"' />
+<BigValue data={bankroll} value=drawdown title="Drawdown" fmt='pct1' />
+<BigValue data={bankroll} value=roi title="ROI on settled stakes" fmt='pct1' />
+<BigValue data={bankroll} value=open_exposure title="Open exposure" fmt='#,##0.00"u"' />
+
+```sql bankroll_curve
+select recorded_at, bankroll, record_type, upper(coalesce(league, '')) as lg,
+  amount, result, market
+from velocity.bankroll_curve
+where league != '__none__'
+order by recorded_at
+```
+
+<LineChart
+  data={bankroll_curve}
+  x=recorded_at
+  y=bankroll
+  yAxisTitle="bankroll after each settlement"
+  emptySet=pass
+  emptyMessage="The curve draws once the ledger has a seed and a settled bet."
+/>
+
+```sql ledger_by_league
+select upper(league) as lg,
+  count(*) as bets,
+  count(*) filter (result = 'win') as w,
+  count(*) filter (result = 'loss') as l,
+  sum(amount) as profit
+from velocity.bankroll_curve
+where league != '__none__' and record_type = 'settled'
+group by league
+order by profit desc
+```
+
+<DataTable data={ledger_by_league} emptySet=pass emptyMessage="Settled bets by league appear as the ledger settles.">
+  <Column id=lg title="League" />
+  <Column id=bets title="Settled" />
+  <Column id=w title="W" />
+  <Column id=l title="L" />
+  <Column id=profit title="Profit" fmt='+#,##0.00;-#,##0.00' contentType=delta />
+</DataTable>
+
+```sql ledger_open
+select upper(league) as lg, market, upper(side) as side, player, point, book,
+  price, stake, strftime(placed_at, '%Y-%m-%d %H:%M') as placed_at
+from velocity.ledger_open
+where league != '__none__'
+order by placed_at desc
+```
+
+<DataTable data={ledger_open} emptySet=pass emptyMessage="No open bets on the ledger.">
+  <Column id=lg title="League" />
+  <Column id=market title="Market" />
+  <Column id=side title="Side" />
+  <Column id=player title="Player" />
+  <Column id=point title="Number" />
+  <Column id=book title="Book" />
+  <Column id=price title="Price" />
+  <Column id=stake title="Stake" fmt='#,##0.00"u"' />
+  <Column id=placed_at title="Placed" />
+</DataTable>
+
+_{bankroll[0]?.mode_note} {bankroll[0]?.halt_note}_
+
 ## Closing line value
 
 The professional's yardstick: did each bet beat the number it closed at?

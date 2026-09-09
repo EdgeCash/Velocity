@@ -184,3 +184,53 @@ def test_the_close_prefers_a_sharp_book_and_says_so(tmp_path: Path) -> None:
     assert graded["close_source"].tolist() == ["sharp", "consensus"]
     bare = _MOD.attach_close_source(slate.assign(result="win", profit=0.9), None)
     assert bare["close_source"].isna().all()
+
+
+def test_settle_ledger_settles_open_bets_once(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from velocity.wagering.ledger import Ledger
+
+    path = tmp_path / "ledger.parquet"
+    ledger = Ledger(path=path)
+    at = pd.Timestamp("2026-09-13 14:00")
+    ledger.seed(100.0, at=at)
+    ledger.recommend(pd.DataFrame([
+        {"game_id": "g1", "market": "total", "side": "under", "point": 44.5,
+         "book": "dk", "price": -110.0, "stake": 2.0, "p_model": 0.56, "kind": "game"},
+        {"game_id": "g2", "market": "spread", "side": "home", "point": -3.0,
+         "book": "fd", "price": 100.0, "stake": 1.0, "p_model": 0.55, "kind": "game"},
+        {"game_id": "g1", "market": "receptions", "side": "over", "point": 5.5,
+         "book": "dk", "price": -115.0, "stake": 0.5, "p_model": 0.58, "kind": "prop",
+         "player": "A. Brown"},
+    ]), league="nfl", stamp="20260913T140000Z", at=at)
+    for bid, stake in (("nfl|g1|total|under|", 2.0), ("nfl|g2|spread|home|", 1.0),
+                       ("nfl|g1|receptions|over|A. Brown", 0.5)):
+        ledger.place(bid, stake, at=at)
+    ledger.save()
+
+    # The graded slate carries g1 (win, with a close); g2 dropped off the
+    # graded card but has a final; the prop is pending.
+    games = pd.DataFrame([{"game_id": "g1", "market": "total", "side": "under",
+                           "result": "win", "line_clv": 0.5, "closing_point": 45.0}])
+    props = pd.DataFrame([{"game_id": "g1", "player": "A. Brown", "market": "receptions",
+                           "side": "over", "result": "pending"}])
+    finals = pd.DataFrame([{"game_id": "g1", "home_score": 20, "away_score": 17},
+                           {"game_id": "g2", "home_score": 21, "away_score": 20}])
+    now = datetime(2026, 9, 15, 12, tzinfo=UTC)
+    _MOD.settle_ledger(path, "nfl", games, props, finals, now, stamp="20260913T140000Z")
+    after = Ledger.load(path)
+    assert after.current_bankroll() == pytest.approx(100.0 + 2.0 * 100 / 110 - 1.0)
+    assert after.open_bets()["bet_id"].tolist() == ["nfl|g1|receptions|over|A. Brown"]
+    settled = after.frame[after.frame["record_type"] == "settled"].set_index("bet_id")
+    assert settled.loc["nfl|g1|total|under|", "line_clv"] == 0.5
+    assert settled.loc["nfl|g2|spread|home|", "result"] == "loss"
+
+    # The morning re-run: nothing settles twice, the bankroll holds.
+    _MOD.settle_ledger(path, "nfl", games, props, finals, now, stamp="20260913T140000Z")
+    again = Ledger.load(path)
+    assert len(again) == len(after)
+    assert again.current_bankroll() == pytest.approx(after.current_bankroll())
+    # No seed → nothing to settle, and no crash.
+    _MOD.settle_ledger(tmp_path / "none.parquet", "nfl", games, props, finals, now)
+    assert not (tmp_path / "none.parquet").exists()

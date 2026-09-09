@@ -300,6 +300,44 @@ def closing_for_slate(
     return pd.DataFrame(rows) if rows else None
 
 
+def settle_ledger(  # noqa: PLR0913 - the grade's parts
+    path: Path,
+    league: str,
+    games_graded: pd.DataFrame | None,
+    props_graded: pd.DataFrame | None,
+    finals: pd.DataFrame | None,
+    now: datetime,
+    *,
+    stamp: str | None = None,
+) -> None:
+    """Settle the ledger's open bets from the day's grade (docs/WAGERING.md W1).
+
+    Graded slate rows settle by bet identity — game, market, side, player —
+    carrying their CLV; any open game bet left (placed off an earlier card
+    the graded slate no longer lists) settles straight from the finals.
+    Re-running a grade settles nothing twice. Best-effort: the ledger never
+    blocks the record.
+    """
+    try:
+        from velocity.wagering.ledger import Ledger, results_from_graded
+
+        ledger = Ledger.load(path)
+        if not ledger.seeded:
+            print(f"ledger: {path} has no seed yet — nothing to settle")
+            return
+        before = ledger.current_bankroll()
+        results = results_from_graded(league, games_graded, props_graded)
+        settled = ledger.settle(results, at=now, stamp=stamp)
+        from_finals = ledger.settle_from_finals(finals, at=now, league=league, stamp=stamp)
+        ledger.save()
+        n = len(settled) + len(from_finals)
+        state = ledger.state()
+        print(f"ledger: settled {n} bet(s) ({len(from_finals)} from finals); bankroll "
+              f"{before:.2f} → {state.current:.2f}; {state.describe()}")
+    except Exception as exc:  # noqa: BLE001 - the ledger never blocks the record
+        print(f"ledger settlement skipped ({exc})")
+
+
 def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
     """The season record chain that reaches furthest, from every copy on hand.
 
@@ -541,6 +579,9 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                         help="the props collector's banked snapshots (prop closes)")
     parser.add_argument("--odds-dir", default="artifacts/odds",
                         help="downloaded odds-lines snapshots (the CLV close source)")
+    parser.add_argument("--ledger", default=None,
+                        help="bankroll ledger parquet: settle its open bets from the grade "
+                             "(docs/WAGERING.md W1)")
     args = parser.parse_args()
 
     from velocity.report.daily_record import (
@@ -573,6 +614,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     slate_date = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
     record = None
     finals = None
+    games_graded = props_graded = None
     if n_plays == 0 or games_map is None or games_map.empty:
         record = empty_record()
         record["slate_date"] = pd.Timestamp(slate_date)
@@ -655,6 +697,13 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         out / f"cumulative_record_{args.league}_{out_stamp}.parquet", index=False
     )
     print(f"season record: {len(cumulative)} settled row(s) accumulated")
+
+    # The bankroll ledger: every placed bet the grade can settle, settled —
+    # at the placed stakes and prices, with the close it was graded against.
+    # Open game bets the slate no longer carries settle from the finals.
+    if args.ledger:
+        settle_ledger(Path(args.ledger), args.league, games_graded, props_graded, finals,
+                      now, stamp=stamp)
 
     # Post-game graphics — the Sim Check cards (actual result on the pregame
     # distribution) and the model record card. Best-effort: rendering trouble
