@@ -369,10 +369,17 @@ are uncorrelated week to week, −0.02) recorded there. Prop closes attached
 in the grader from the props archive (5.4), prop CLV on the ledger. 5.3
 (the QB moves every receiving prop) is the starter map's job already.
 
-### M4 — DFS (two PRs)
+### M4 — DFS (two PRs) — **(a) landed 2026-09**
 (a) DST model (6.1) + sim-scored GPP and bonus-inclusive means (6.2, 6.3)
-+ Total Yards single stat (6.7). (b) The projection head-to-head on the
-harvested boards (6.4) and a decision on CFB DFS (6.6).
++ Total Yards single stat (6.7): shipped as one mechanism — the correlated
+prop sim scored per simulation with DK's rules (`docs/DFS_FORMATS.md`, "The
+football pool, simulated"); the DST prices the points-allowed bracket off
+the live run's game sim, fetched into the DFS workflow. (b) The projection
+head-to-head on the harvested boards (6.4) and a decision on CFB DFS (6.6)
+remain. Found on the way: the live FantasyPros feed spells receptions
+`rec_rec`, a key neither the prop sim nor the DK scorer knew — no
+receptions or receiving-yards prop was ever priced and every receiver's
+PPR points were missing from DFS. Fixed with the live spelling under test.
 
 ### M5 — College model lab (one PR)
 Pace into the EPA half (3.3); one HFA across the blend (3.4); garbage-time

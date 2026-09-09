@@ -47,6 +47,10 @@ FP_STAT_TO_MARKET = {
     "pass_tds": "pass_tds",
     "rush_yds": "rush_yards",
     "rec_yds": "receiving_yards",
+    # The live NFL feed spells receptions ``rec_rec``; the shorter keys are
+    # what the fixtures and older frames carried. Missing this one meant no
+    # receptions and no receiving-yards market for anyone (2026 Week 1).
+    "rec_rec": "receptions",
     "rec": "receptions",
     "receptions": "receptions",
 }
