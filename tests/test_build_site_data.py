@@ -33,11 +33,40 @@ def _slate_frames(folder: Path) -> None:
     pd.DataFrame([
         {"section": "games", "play": "CHC@MIL U8.5", "market": "total",
          "side": "under", "point": 8.5, "price": -110.0, "stake": 1.0,
-         "result": "win", "profit": 0.91, "slate_date": pd.Timestamp("2026-01-01")},
+         "result": "win", "profit": 0.91, "line_clv": 0.5,
+         "stake_sized": 0.5, "profit_sized": 0.455,
+         "slate_date": pd.Timestamp("2026-01-01")},
         {"section": "games", "play": "X@Y", "market": "spread", "side": "home",
          "point": -3.0, "price": -110.0, "stake": 1.0, "result": "loss",
-         "profit": -1.0, "slate_date": pd.Timestamp("2026-01-02")},
+         "profit": -1.0, "line_clv": -1.0, "stake_sized": None, "profit_sized": None,
+         "slate_date": pd.Timestamp("2026-01-02")},
+        # A team total: graded, but its close is not a yardstick.
+        {"section": "games", "play": "X@Y TT", "market": "team_total_home",
+         "side": "over", "point": 4.5, "price": -105.0, "stake": 0.0,
+         "result": "win", "profit": 0.0, "line_clv": 1.0, "stake_sized": 0.0,
+         "profit_sized": 0.0, "slate_date": pd.Timestamp("2026-01-02")},
     ]).to_parquet(folder / f"cumulative_record_mlb_{new}.parquet", index=False)
+    # The sized card: what the run recommended after the caps, with the
+    # bankroll and slate cap it was sized against.
+    pd.DataFrame([{
+        "game_id": "g1", "market": "total", "side": "under", "kind": "game",
+        "price": -110.0, "edge": 0.056, "stake": 0.9, "stake_solo": 1.2,
+        "bankroll": 100.0, "slate_cap": 0.25,
+    }]).to_parquet(folder / f"portfolio_mlb_{new}.parquet", index=False)
+    pd.DataFrame([{
+        "legs": "CHC@MIL U8.5 + X@Y home -3", "n_legs": 2, "price": 264.0,
+        "decimal": 3.64, "p_win": 0.31, "ev": 0.128, "same_game": False,
+        "stake": 0.3, "legs_json": "[]",
+    }]).to_parquet(folder / f"slate_mlb_parlays_{new}.parquet", index=False)
+    pd.DataFrame([
+        {"label": "Ratings", "detail": "pitcher decomposition"},
+        {"label": "Paper", "detail": "team totals"},
+    ]).to_parquet(folder / f"config_mlb_{new}.parquet", index=False)
+    pd.DataFrame([{
+        "game_id": "g1", "market": "total", "side": "under", "player": None,
+        "tier": "A", "conviction": 0.81,
+        "rationale": "Both bullpens rested; wind in at 12 mph.",
+    }]).to_parquet(folder / f"intel_mlb_{new}.parquet", index=False)
     # The publish gate's audit — one posted play, one held back with its reason.
     pd.DataFrame([
         {"game_id": "g1", "market": "total", "side": "under", "player": None,
@@ -74,8 +103,40 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     assert row["fair_total"] == 7.9
     assert row["league"] == "mlb"
 
+    # The money columns: the sized stake, the venue, the intel argument.
+    assert row["stake_sized"] == pytest.approx(0.9)
+    assert row["venue"] == "sportsbook"
+    assert row["rationale"].startswith("Both bullpens")
+
     units = pd.read_parquet(out / "units.parquet")
     assert units["units"].tolist() == pytest.approx([0.91, -0.09])
+    # Sized units: the sized profit where the chain carries it, the solo
+    # profit where it predates sizing (the spread row).
+    assert units["units_sized"].tolist() == pytest.approx([0.455, -0.545])
+
+    # Per-market CLV carries the trust flag: the team total's CLV is not a
+    # yardstick and the page says "judge on P/L" for it.
+    clv = pd.read_parquet(out / "clv_by_market.parquet").set_index("market")
+    assert bool(clv.loc["total", "clv_trusted"]) is True
+    assert bool(clv.loc["team_total_home", "clv_trusted"]) is False
+    assert clv.loc["total", "mean_line_clv"] == pytest.approx(0.5)
+    assert clv.loc["spread", "units"] == pytest.approx(-1.0)
+
+    # Exposure: the sized card against the cap it was sized under.
+    exposure = pd.read_parquet(out / "exposure.parquet")
+    assert len(exposure) == 1
+    assert exposure.iloc[0]["stake_sized"] == pytest.approx(0.9)
+    assert exposure.iloc[0]["cap_units"] == pytest.approx(25.0)
+    assert exposure.iloc[0]["bets"] == 1
+
+    parlays = pd.read_parquet(out / "parlays.parquet")
+    assert len(parlays) == 1 and parlays.iloc[0]["league"] == "mlb"
+    assert parlays.iloc[0]["n_legs"] == 2
+
+    # The Methods block comes from the run's own config export.
+    config = pd.read_parquet(out / "model_config.parquet")
+    assert set(config["label"]) == {"Ratings", "Paper"}
+    assert config["league"].unique().tolist() == ["mlb"]
 
     # The plays page's table: the gate's verdicts joined with matchup names,
     # published and held-back rows alike (the reason rides along).
@@ -83,6 +144,9 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
     assert len(publish) == 2
     posted = publish[publish["published"]].iloc[0]
     assert posted["home_team"] == "Brewers" and posted["market"] == "total"
+    assert posted["stake_sized"] == pytest.approx(0.9)
+    held = publish[~publish["published"]].iloc[0]
+    assert held["stake_sized"] == 0.0  # the card never sized it
     held = publish[~publish["published"]].iloc[0]
     assert "does not corroborate" in held["reason"]
 
@@ -103,6 +167,7 @@ def test_build_site_data_end_to_end(tmp_path: Path) -> None:
         assert column in frame.columns, name
     record = pd.read_parquet(out / "record.parquet")
     assert record.iloc[0]["league"] == "__none__"
+    assert "stake_sized" in record.columns and "profit_sized" in record.columns
     # Dates stay real datetimes (all-null date columns would get downcast
     # to Float64 by Evidence, changing the extracted column type).
     assert str(record["slate_date"].dtype).startswith("datetime64")
@@ -168,3 +233,15 @@ def test_build_units_coerces_object_profit(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     units = pd.read_parquet(tmp_path / "data" / "units.parquet")
     assert units["units"].tolist() == pytest.approx([0.91])
+    # A chain without sized columns still renders: the sized line falls
+    # back to the solo profit and the page SQL finds its columns.
+    assert units["units_sized"].tolist() == pytest.approx([0.91])
+    chain = pd.read_parquet(tmp_path / "data" / "cumulative_record.parquet")
+    assert chain["profit_sized"].isna().all()
+    # No sized card, no parlays: the money tables still carry their typed
+    # sentinel row so every page query parses.
+    for name in ("exposure", "parlays"):
+        frame = pd.read_parquet(tmp_path / "data" / f"{name}.parquet")
+        assert len(frame) == 1 and frame.iloc[0]["league"] == "__none__", name
+    clv = pd.read_parquet(tmp_path / "data" / "clv_by_market.parquet")
+    assert clv.iloc[0]["market"] == "total" and bool(clv.iloc[0]["clv_trusted"])

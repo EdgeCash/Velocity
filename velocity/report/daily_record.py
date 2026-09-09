@@ -31,6 +31,10 @@ RECORD_COLUMNS = [
     # CLV vs the archived consensus close — null when no close was matched
     # (props, parlays, games the hourly archive missed).
     "price_clv", "line_clv",
+    # The portfolio-sized stake and the profit at it — the number the card
+    # actually recommended (docs/WAGERING.md §6). Null on rows graded before
+    # sizing was attached; the site coalesces to the solo stake and says so.
+    "stake_sized", "profit_sized",
 ]
 
 def empty_record() -> pd.DataFrame:
@@ -162,6 +166,8 @@ def build_daily_record(
             "profit": row.get("profit"),
             "price_clv": row.get("price_clv"),
             "line_clv": row.get("line_clv"),
+            "stake_sized": row.get("stake_sized"),
+            "profit_sized": row.get("profit_sized"),
         }
 
     if games_graded is not None:

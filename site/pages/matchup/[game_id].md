@@ -11,6 +11,10 @@ limit 1
 select mu_away, mu_home, p_home_win, fair_spread, fair_total, n_sims
 from velocity.projections
 where game_id = '${params.game_id}'
+union all
+select null, null, null, null, null, null
+where not exists (select 1 from velocity.projections
+                  where game_id = '${params.game_id}')
 limit 1
 ```
 
@@ -63,23 +67,75 @@ select
     when 'team_total_home' then 'Team total (home)'
     when 'team_total_away' then 'Team total (away)'
     else market end as market_label,
-  upper(side) as side, point, book, price, p_model, p_fair, edge,
-  coalesce(tier, '') as tier, stake
+  upper(side) as side, point,
+  case when venue = 'sportsbook' then book else venue || ' (' || book || ')' end as venue_label,
+  price, p_model, p_fair, edge,
+  coalesce(tier, '') as tier,
+  case when stake_sized > 0 then stake_sized end as stake_sized,
+  case
+    when note is not null then 'paper — ' || note
+    when stake_sized > 0 then 'staked'
+    else 'watch' end as status,
+  rationale
 from velocity.board
 where game_id = '${params.game_id}'
-order by edge desc
+order by case when stake_sized > 0 then 0 else 1 end, edge desc
+```
+
+```sql refusals
+select
+  count(*) filter (note is not null) as paper,
+  count(*) filter (stake_sized > 0) as staked,
+  sum(stake_sized) as exposure
+from velocity.board
+where game_id = '${params.game_id}'
 ```
 
 <DataTable data={markets} emptySet=pass emptyMessage="No priced markets for this game.">
   <Column id=market_label title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' />
-  <Column id=book title="Book" />
+  <Column id=venue_label title="Venue" />
   <Column id=price title="Price" fmt='+#,##0;-#,##0' />
   <Column id=p_model title="Model %" fmt='pct1' />
   <Column id=p_fair title="Fair %" fmt='pct1' />
   <Column id=edge title="Edge" fmt='pct1' contentType=delta />
   <Column id=tier title="Tier" />
+  <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' />
+  <Column id=status title="Status" wrap=true />
+</DataTable>
+
+_{refusals[0]?.staked ?? 0} market(s) staked here for
+{(refusals[0]?.exposure ?? 0).toFixed(2)}u after the per-game cap;
+{refusals[0]?.paper ?? 0} priced on paper (a ceiling or an untrusted market —
+the status column says which)._
+
+## The argument
+
+```sql argued
+select
+  case market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'Moneyline'
+    when 'team_total_home' then 'Team total (home)'
+    when 'team_total_away' then 'Team total (away)'
+    else market end as market_label,
+  upper(side) as side, coalesce(tier, '') as tier, rationale
+from velocity.board
+where game_id = '${params.game_id}'
+  and rationale is not null and rationale != ''
+order by case when stake_sized > 0 then 0 else 1 end, edge desc
+```
+
+The intel layer's case for and against each priced side — matchup, form,
+rest, injuries, outside systems. It annotates and vetoes; it never promotes
+a bet the model did not already like.
+
+<DataTable data={argued} emptySet=pass emptyMessage="No intel annotations for this game.">
+  <Column id=market_label title="Market" />
+  <Column id=side title="Side" />
+  <Column id=tier title="Tier" />
+  <Column id=rationale title="Rationale" wrap=true />
 </DataTable>
 
 ## Simulated total

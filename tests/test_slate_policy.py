@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate import GameSim
 from velocity.wagering.bet_log import Bet

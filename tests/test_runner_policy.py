@@ -128,3 +128,17 @@ def test_edge_ceilings_ship_on() -> None:
     args = _runner().build_parser().parse_args(["--league", "nfl"])
     assert args.max_edge == 0.12
     assert args.max_relative_edge == 0.50
+
+
+def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "ncaaf"])
+    rows = dict(runner.live_config_rows(args, "EPA×scores blend", None))
+    assert rows["Ratings"] == "EPA×scores blend"
+    assert "0.2" in rows["Market anchoring"]
+    assert "≥ 6" in rows["Selectivity"] and "moneylines sitting out" in rows["Selectivity"]
+    assert "0.12 absolute" in rows["Edge ceilings"] and "50%" in rows["Edge ceilings"]
+    assert rows["Paper"] == "team totals"
+    nhl = runner.build_parser().parse_args(["--league", "nhl"])
+    nhl_rows = dict(runner.live_config_rows(nhl, "goalie decomposition", None))
+    assert "every market" in nhl_rows["Paper"]

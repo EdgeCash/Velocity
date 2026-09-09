@@ -49,6 +49,7 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
         "props": rf"slate_{lg}_props_{_STAMP}\.parquet",
         "parlays": rf"slate_{lg}_parlays_{_STAMP}\.parquet",
         "games": rf"games_{lg}_{_STAMP}\.parquet",
+        "portfolio": rf"portfolio_{lg}_{_STAMP}\.parquet",
         "projections": rf"projections_{lg}_{_STAMP}\.parquet",
         "distributions": rf"distributions_{lg}_{_STAMP}\.parquet",
     }
@@ -75,6 +76,79 @@ def _pick_prior_stamp(stamps: dict[str, dict[str, Path]], now_utc: datetime) -> 
 def _load(paths: dict[str, Path], kind: str) -> pd.DataFrame | None:
     path = paths.get(kind)
     return pd.read_parquet(path) if path is not None else None
+
+
+def attach_sized_stakes(
+    slate: pd.DataFrame | None, portfolio: pd.DataFrame | None, kind: str = "game"
+) -> pd.DataFrame | None:
+    """Join the portfolio card's sized stake onto a slate as ``stake_sized``.
+
+    The slate parquet keeps the solo-Kelly stake for backtest comparability;
+    the sized card (``portfolio_{league}_{stamp}``) is what the run actually
+    recommended after the game, class, and slate caps. Rows the card never
+    saw — paper rows, or a run before sizing existed — get 0 so the sized
+    record counts them as watched, not wagered. A missing card leaves the
+    column null: unknown, not zero.
+    """
+    if slate is None or slate.empty:
+        return slate
+    out = slate.copy()
+    if portfolio is None or portfolio.empty or "stake" not in portfolio.columns:
+        out["stake_sized"] = float("nan")
+        return out
+    card = portfolio
+    if "kind" in card.columns:
+        card = card[card["kind"].astype(str) == kind]
+    keys = ["game_id", "market", "side"]
+    if kind == "prop" and "player" in card.columns and "player" in out.columns:
+        keys.append("player")
+    sized = (card.drop_duplicates(subset=keys)[[*keys, "stake"]]
+             .rename(columns={"stake": "stake_sized"}))
+    out = out.drop(columns=["stake_sized"], errors="ignore").merge(sized, on=keys, how="left")
+    out["stake_sized"] = pd.to_numeric(out["stake_sized"], errors="coerce").fillna(0.0)
+    return out
+
+
+def sized_profit(graded: pd.DataFrame | None) -> pd.DataFrame | None:
+    """``profit_sized`` = the settled profit rescaled to the sized stake.
+
+    Profit is linear in the stake (the same price, the same outcome), so the
+    solo-stake grade converts exactly; a solo stake of zero (a paper row)
+    contributes nothing at either size. Null ``stake_sized`` stays null.
+    """
+    if graded is None or graded.empty:
+        return graded
+    out = graded.copy()
+    if "stake_sized" not in out.columns:
+        out["stake_sized"] = float("nan")
+        out["profit_sized"] = float("nan")
+        return out
+    stake = pd.to_numeric(out["stake"], errors="coerce")
+    sized = pd.to_numeric(out["stake_sized"], errors="coerce")
+    profit = pd.to_numeric(out["profit"], errors="coerce")
+    ratio = (profit / stake).where(stake > 0, 0.0)
+    out["profit_sized"] = (ratio * sized).where(sized.notna())
+    return out
+
+
+def _carry_sized(
+    graded: pd.DataFrame | None, slate: pd.DataFrame | None
+) -> pd.DataFrame | None:
+    """Re-attach ``stake_sized`` to a graded frame that dropped it.
+
+    The graders rebuild their rows from :class:`Bet` tickets, which carry no
+    sized stake; join it back by bet identity (with the player for props).
+    """
+    if graded is None or graded.empty or slate is None or "stake_sized" not in slate.columns:
+        return graded
+    if "stake_sized" in graded.columns:
+        return graded
+    keys = [k for k in ("game_id", "market", "side", "player")
+            if k in graded.columns and k in slate.columns]
+    if not keys:
+        return graded
+    sized = slate.drop_duplicates(subset=keys)[[*keys, "stake_sized"]]
+    return graded.merge(sized, on=keys, how="left")
 
 
 def closing_for_slate(
@@ -142,13 +216,47 @@ def closing_for_slate(
 
 
 def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
-    """The season record chain from the newest downloaded artifact carrying one."""
+    """The season record chain that reaches furthest, from every copy on hand.
+
+    Copies come from two places: the previous runs' artifacts (60-day
+    retention) and the durable copy the workflow parks in R2 after each
+    grading (docs/STRATEGY_REVIEW.md S1) — a workflow-failure streak or a
+    retention gap used to lose the season. The chain to carry forward is the
+    one whose newest settled day is latest, ties to the longer one; the
+    filename stamp says when a copy was *written*, which is not the same
+    thing once a copy has been round-tripped through the store.
+    """
     pattern = rf"cumulative_record_{re.escape(league)}_{_STAMP}\.parquet"
     matches = sorted(
         (p for p in prev_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name)),
         key=lambda p: p.name,
     )
-    return pd.read_parquet(matches[-1]) if matches else None
+    return newest_chain([pd.read_parquet(p) for p in matches])
+
+
+def newest_chain(chains: list[pd.DataFrame]) -> pd.DataFrame | None:
+    """The chain reaching the latest settled day (longest on a tie), or None.
+
+    ``chains`` arrive oldest-stamp first; a set of copies none of which
+    carries a settled date (a chain from before dates rode along) falls back
+    to the newest-written copy, which is all the stamp can say.
+    """
+    best: pd.DataFrame | None = None
+    best_key: tuple[pd.Timestamp, int] | None = None
+    fallback: pd.DataFrame | None = None
+    for chain in chains:
+        if chain is None or chain.empty:
+            continue
+        fallback = chain
+        if "slate_date" not in chain.columns:
+            continue
+        latest = pd.to_datetime(chain["slate_date"], errors="coerce").max()
+        if pd.isna(latest):
+            continue
+        key = (latest, len(chain))
+        if best_key is None or key > best_key:
+            best, best_key = chain, key
+    return best if best is not None else fallback
 
 
 def _load_schedule(
@@ -369,6 +477,9 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     props = _load(paths, "props")
     parlays = _load(paths, "parlays")
     games_map = _load(paths, "games")
+    portfolio = _load(paths, "portfolio")
+    slate = attach_sized_stakes(slate, portfolio, "game")
+    props = attach_sized_stakes(props, portfolio, "prop")
     n_plays = sum(0 if f is None else len(f) for f in (slate, props, parlays))
     print(f"grading slate {stamp}: {n_plays} play(s)")
 
@@ -403,7 +514,10 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                     print(f"closing lines skipped ({exc})")
             games_graded = (None if slate is None or slate.empty
                             else grade_slate(slate, finals, closing))
-            props_graded = _grade_props(args.league, props, schedule, slate_date)
+            games_graded = sized_profit(_carry_sized(games_graded, slate))
+            props_graded = sized_profit(
+                _carry_sized(_grade_props(args.league, props, schedule, slate_date), props)
+            )
             parlays_graded = (
                 None if parlays is None or parlays.empty
                 else grade_parlay_frame(parlays, finals)

@@ -80,6 +80,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[ingest]'
 
+      # Node early, for wrangler (the season chain's R2 round trip below).
+      - name: Set up Node
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
       # ---- yesterday's record, Sim Check cards, and the season chain ----------
       # Runs BEFORE the slate build so today's model cards can carry the season
       # record line, and the Sim Check cards (yesterday's results on the pregame
@@ -106,6 +115,26 @@ jobs:
             gh run download "$id" --dir "artifacts/odds/$id" || true
           done
 
+      # The durable copy of the season chain. Previous slates live in 60-day
+      # artifacts, so a failure streak or a retention gap used to lose the
+      # season; the R2 bucket the site already uses keeps one copy per
+      # league, refreshed after every grading and read back before it
+      # (docs/STRATEGY_REVIEW.md S1). The grader carries forward whichever
+      # copy reaches furthest. Best-effort, and skipped without the token.
+      - name: Fetch the season chain (R2)
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p artifacts/previous/r2
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+            npx --yes wrangler@4 r2 object get \
+              "velocity-wasm/records/cumulative_record_${league}.parquet" \
+              --file "artifacts/previous/r2/cumulative_record_${league}_00000000T000000Z.parquet" \
+              --remote 2>/dev/null || echo "no stored chain for ${league}"
+          done
+
       - name: Grade yesterday's slates
         continue-on-error: true
         env:
@@ -115,6 +144,21 @@ jobs:
             python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --league "${league}" || true
+          done
+
+      - name: Park the season chain (R2)
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+            newest=$(ls -t artifacts/slate/cumulative_record_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$newest" ]; then
+              npx --yes wrangler@4 r2 object put \
+                "velocity-wasm/records/cumulative_record_${league}.parquet" \
+                --file "$newest" --remote && echo "parked ${league} chain: $newest"
+            fi
           done
 
       # ---- the freshest FantasyPros projections, for the prop slate -----------
@@ -366,14 +410,6 @@ jobs:
       # run LAST and are allowed to fail the run: the slate artifact and email
       # are already delivered by now, and a red run is the only honest signal
       # that the site didn't publish.
-      - name: Set up Node
-        if: env.CLOUDFLARE_API_TOKEN != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: site/package-lock.json
-
       - name: Build the site
         if: env.CLOUDFLARE_API_TOKEN != ''
         run: |

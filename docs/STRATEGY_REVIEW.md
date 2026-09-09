@@ -217,7 +217,16 @@ Definition of Done. Ordering: fix the receipt first (it is a bug), then stop
 the unsupported exposure (policy), then the research the money needs, then
 the site, then the ledger and the monitor `WAGERING.md` already scheduled.
 
-### S1 — Fix the receipt (plumbing; smallest, first)
+### S1 — Fix the receipt (plumbing; smallest, first) — **landed 2026-09-09**
+
+Shipped: `.[ingest]` installs in the live workflow (the NCAAF grader has its
+client); the season chain round-trips through R2 (`records/` prefix, fetched
+before grading and parked after, the worker never serves it) and the grader
+carries forward whichever copy *reaches furthest* by settled date rather
+than whichever was written last; the graded record now carries the
+portfolio-sized stake and the profit at it beside the solo-Kelly pair.
+`record_since` is the chain's earliest settled date, computed where it is
+read (the site) rather than stored.
 
 - **Build:** install `.[ingest]` in `live-slate.yml` (or drop the client and
   read CFBD `/games` over `urllib` like the NCAAB grader reads hoopR — no
@@ -281,7 +290,20 @@ publish gate refuses paper rows first.
 - **DoD:** each item ends in a promote/exclude decision recorded in its
   `BACKTEST_*.md`, with the sweep table; defaults move only through those PRs.
 
-### S4 — Show the money correctly (site)
+### S4 — Show the money correctly (site) — **landed 2026-09-09**
+
+Shipped: Today ranks by tier → conviction → edge with the sized stake, the
+venue and a status column (staked / watch / paper with its reason), an
+exposure tile (sized total against the slate cap, per league) and a league
+filter; Performance leads with units at sized stakes beside solo, a pending
+count, the record-since line, the paper record kept outside the headline,
+and a per-market CLV table whose untrusted rows say "judge on P/L"; the
+matchup page carries the sized stake, venue, status and the intel rationale
+("the argument"); Plays shows the sized stake and a parlays section with
+the same-game caveat; Methods is written by the run itself
+(`config_{league}_{stamp}.parquet` from `live_config_rows`) with the hand
+table as fallback for older artifacts. The builder back-fills any column a
+family predates, so an old chain or card still renders.
 
 - **Today:** portfolio stake and book/venue columns; sort by conviction (tier
   first, then conviction, then edge) instead of raw edge; replace the

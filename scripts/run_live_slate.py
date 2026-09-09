@@ -198,7 +198,7 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
 def _build_projection(
     args: argparse.Namespace,
     schedule: pd.DataFrame | None = None,
-) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame]:
+) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame, str]:
     """Fit the league's promoted ratings from the committed data → ``(project, teams)``.
 
     NFL: the recency-weighted EPA fit (docs/MODEL_LAB.md — Brier 0.2234 vs
@@ -306,7 +306,7 @@ def _build_projection(
         nfl_ratings["rank"] = nfl_ratings.index + 1
         for col in ("off", "def", "net"):
             nfl_ratings[col] = nfl_ratings[col].round(2)
-        return project_epa, list(ratings.teams), nfl_ratings
+        return project_epa, list(ratings.teams), nfl_ratings, kind
 
     games = load_games(_find_games(folder), league=args.league)
     # Per-league outcome-noise calibration. Football's constants are the
@@ -489,7 +489,7 @@ def _build_projection(
         )
 
     return project, list(scores_model.ratings.teams), _ratings_frame(
-        args.league, model, scores_model)
+        args.league, model, scores_model), kind
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -725,6 +725,51 @@ GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_a
 _TEAM_TOTALS = ("team_total_home", "team_total_away")
 
 
+def live_config_rows(
+    args: argparse.Namespace, fit_kind: str, cfg: object | None
+) -> list[tuple[str, str]]:
+    """The run's own description of what it did — label/detail pairs.
+
+    Replaces the hand-maintained ``MODEL_CONFIG`` table the Methods page
+    imported from the retired plays app, which had drifted: it still
+    described the NCAAF totals cut as ≥4 points after the default moved to
+    6, and carried leagues that were dark or retired. Read from the parsed
+    args and the built config, this cannot drift.
+    """
+    rows: list[tuple[str, str]] = [("Ratings", fit_kind)]
+    weight = resolve_model_weight(args.model_weight, args.league)
+    rows.append(("Market anchoring",
+                 "raw model (w = 1.0)" if weight == 1.0
+                 else f"belief = market + {weight:g} × (model − market)"))
+    if args.league == "ncaaf":
+        cuts = []
+        if args.ncaaf_total_edge > 0:
+            cuts.append(f"totals only at ≥ {args.ncaaf_total_edge:g} pts of disagreement")
+        cuts.append("spreads " + ("on" if args.ncaaf_spreads else "sitting out"))
+        cuts.append("moneylines " + ("on" if args.ncaaf_moneylines else "sitting out"))
+        rows.append(("Selectivity", "; ".join(cuts)))
+    prop_edge = resolve_prop_min_edge(args.prop_min_edge, args.min_edge)
+    rows.append(("Edge gate", f"min edge {args.min_edge:g} (props {prop_edge:g}), "
+                              "positive EV at the shopped price"))
+    ceilings = []
+    if args.max_edge > 0:
+        ceilings.append(f"{args.max_edge:g} absolute")
+    if args.max_relative_edge > 0:
+        ceilings.append(f"{args.max_relative_edge:.0%} of the fair probability")
+    rows.append(("Edge ceilings",
+                 " · ".join(ceilings) + " — past either, paper" if ceilings else "off"))
+    paper = resolve_paper_markets(args)
+    rows.append(("Paper", "every market — content + CLV posture" if "__all__" in paper
+                 else ("team totals" if paper else "none")))
+    rows.append(("De-vig", f"{args.devig_anchor} anchor, multiplicative"))
+    rows.append(("Staking", "¼-Kelly, 5% per bet, 10% per game, 25% per slate, "
+                            "one market class ≤ half the slate"))
+    if cfg is not None and getattr(cfg, "ladder_tolerance", None):
+        rows.append(("Exchange rungs", f"E8 shape gate at {cfg.ladder_tolerance:g} "  # type: ignore[attr-defined]
+                                       "probability error; taker fees charged"))
+    return rows
+
+
 def resolve_paper(explicit: bool | None, league: str) -> bool:
     """Whether this run stakes nothing — the flag, else the league posture."""
     if explicit is not None:
@@ -809,7 +854,7 @@ def main() -> None:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
     schedule = _league_schedule(args, Path(args.data), generated_at) if args.data else None
-    project, known_teams, ratings_frame = _build_projection(args, schedule)
+    project, known_teams, ratings_frame, fit_kind = _build_projection(args, schedule)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
@@ -1060,6 +1105,12 @@ def main() -> None:
                 out_dir / f"ratings_{args.league}_{stamp}.parquet", index=False
             )
             print(f"wrote {len(ratings_frame)} team ratings")
+        # The "what's live" block, from the run itself rather than a table
+        # someone has to remember to edit (the site's Methods page).
+        config_rows = live_config_rows(args, fit_kind, cfg if not events.empty else None)
+        pd.DataFrame(config_rows, columns=["label", "detail"]).assign(
+            league=args.league, generated_at=generated_at
+        ).to_parquet(out_dir / f"config_{args.league}_{stamp}.parquet", index=False)
         # Persist the game→teams+kickoff map so a later grader can join the
         # schedule feed's finals (a different id space) back onto these Odds-API
         # game ids.
@@ -1189,7 +1240,11 @@ def _portfolio_card(
         if args.out:
             stamp = now.strftime("%Y%m%dT%H%M%SZ")
             dest = Path(args.out) / f"portfolio_{args.league}_{stamp}.parquet"
-            card.assign(league=args.league, generated_at=generated_at).to_parquet(
+            # The bankroll and slate cap ride along so the site's exposure
+            # tile reads sized total / cap from the card itself.
+            card.assign(league=args.league, generated_at=generated_at,
+                        bankroll=float(args.bankroll),
+                        slate_cap=float(args.max_slate_fraction)).to_parquet(
                 dest, index=False
             )
             print(f"wrote the sized card to {dest}")
