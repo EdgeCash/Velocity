@@ -299,3 +299,36 @@ def test_ledger_tables_ride_into_the_site(tmp_path: Path) -> None:
     for name in ("bankroll", "bankroll_curve", "ledger_open"):
         frame = pd.read_parquet(out / f"{name}.parquet")
         assert len(frame) == 1 and frame.iloc[0]["league"] == "__none__"
+
+
+def test_market_health_rides_into_the_site(tmp_path: Path) -> None:
+    from velocity.report.monitor import market_health
+
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    _slate_frames(slate_dir)
+    as_of = pd.Timestamp("2026-01-02")
+    chain = pd.DataFrame([
+        {"market": "total", "side": "under", "stake": 1.0, "result": "win" if i % 2 else "loss",
+         "profit": 0.91 if i % 2 else -1.0, "line_clv": -0.6, "price_clv": None,
+         "p_model": 0.56, "slate_date": as_of - pd.Timedelta(days=i % 5)}
+        for i in range(24)
+    ])
+    health = market_health(chain, as_of=as_of)
+    health.assign(league="mlb", as_of=as_of).to_parquet(
+        slate_dir / "monitor_mlb_20260102T120000Z.parquet", index=False)
+    out = tmp_path / "data"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir), "--out", str(out),
+         "--cards-out", str(tmp_path / "cards")],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    table = pd.read_parquet(out / "market_health.parquet")
+    assert set(table["window_days"]) == {7, 30}
+    row = table[table["window_days"] == 30].iloc[0]
+    assert row["market"] == "total" and row["league"] == "mlb" and row["n_bets"] == 24
+    assert bool(row["flag_negative_clv"]) is True and "negative CLV" in row["flags"]
+    # The record now carries what the model claimed, for the drift read.
+    record = pd.read_parquet(out / "cumulative_record.parquet")
+    assert "p_model" in record.columns and "p_fair" in record.columns

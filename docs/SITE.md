@@ -27,6 +27,8 @@ site/
                           CLV block, cumulative chart, graded slate
     matchup/[game_id].md  the game dossier: line movement, markets, sims,
                           weather, injury report, the game's own cards
+    health.md             market health: per-market trailing 7/30-day ROI,
+                          CLV and claimed-vs-realized, with the monitor's flags
     ratings.md            per-league power ratings with movement
     dfs.md                cash lineup + GPP set
     graphics/             card room section — per-league pages (left menu)
@@ -42,7 +44,8 @@ site/
 artifact family in `--slate-dir`, joins what the pages need (slate ×
 games × projections × intel tiers), derives the running-units table, reads
 the bankroll ledger when `--ledger` names one (`bankroll`, `bankroll_curve`,
-`ledger_open` — docs/WAGERING.md §7), and
+`ledger_open` — docs/WAGERING.md §7), collects the grade's monitor parquet
+(`market_health` — §8), and
 writes stable-named parquets into `site/sources/velocity/data/`. An absent
 family writes a typed **one-row sentinel** (`league = '__none__'`) rather
 than an empty frame — Evidence's source runner writes no parquet at all

@@ -285,3 +285,17 @@ def test_merge_is_a_union_by_record_identity(tmp_path: Path) -> None:
     assert int((merged["record_type"] == PLACED).sum()) == 1
     assert int((merged["record_type"] == RECOMMENDED).sum()) == 5
     assert merge_ledgers(None, pd.DataFrame()).empty
+
+
+def test_empty_ledger_round_trips_and_seeds_on_first_run(tmp_path: Path) -> None:
+    # The workflow's first run: the merge step writes an empty ledger from
+    # no copies, the runner loads it and seeds it.
+    path = tmp_path / "ledger.parquet"
+    Ledger(merge_ledgers(), path).save()
+    ledger = Ledger.load(path)
+    assert len(ledger) == 0 and not ledger.seeded
+    assert ledger.state().current == 0.0 and ledger.open_bets().empty
+    assert ledger.latest_recommendations().empty
+    assert ledger.seed(100.0, at=T0)
+    ledger.save()
+    assert Ledger.load(path).current_bankroll() == 100.0

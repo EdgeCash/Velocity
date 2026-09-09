@@ -1,8 +1,8 @@
 # Velocity — Wagering System: Current State & Build Plan
 
 **Status:** Plan (v0.1), grounded in the repo as of 2026-07-26; **W1 (the
-ledger) landed 2026-09-09** — see §7. W2's sizing half shipped earlier (§6);
-its kill-switch half is wired by W1. W3 is next.
+ledger) and W3 (the monitor) landed 2026-09-09** — see §7 and §8. W2's
+sizing half shipped earlier (§6); its kill-switch half is wired by W1.
 **Companion to:** [`docs/DESIGN.md`](DESIGN.md) §6 (the de-vig → edge → stake →
 log philosophy), [`docs/BUILD.md`](BUILD.md) (the branch → tests → verify → PR
 loop and gate discipline every phase below inherits),
@@ -265,9 +265,10 @@ number.
 
 ## 4. Immediate next step
 
-~~Land **Phase W1** (the ledger).~~ Landed 2026-09-09 (§7). Next is **W3**,
-the monitor: per-market trailing CLV and ROI over 7/30-day windows with flags,
-off the season chain the grader already carries and the ledger's settled P&L.
+~~Land **Phase W1** (the ledger).~~ Landed 2026-09-09 (§7), and **W3** the
+same day (§8). Next is **W4**'s re-tune loop, now that the monitor names the
+markets to re-tune — and the DoD clocks: two consecutive slates off the ledger
+bankroll, seven consecutive automated grades on the health page.
 
 ## 5. Pick'em slips (`velocity/wagering/pickem.py`)
 
@@ -389,8 +390,50 @@ through win–loss–win, a clean seed; plus finals settlement, ties, merges),
 `tests/test_grade_chain.py`, and the site tables in
 `tests/test_build_site_data.py`.
 
-**Still W2/W3.** The sizing half of W2 shipped in §6; with the kill-switch
+**Still W2.** The sizing half of W2 shipped in §6; with the kill-switch
 and open exposure wired here, W2's remaining ask is the exposure-summary
-block's drawdown state, which the runner's ledger line now prints. W3 (the
-monitor) is next and reads the season chain plus the ledger's settled rows.
+block's drawdown state, which the runner's ledger line now prints.
+
+## 8. Addendum (2026-09): W3 landed — the monitor
+
+`velocity/report/monitor.py`, appended to the daily grade
+(`scripts/grade_yesterday.py`), on the site as **Market health**
+(`site/pages/health.md`; docs/STRATEGY_REVIEW.md S6).
+
+**What it reads.** The season chain the grader carries (S1's durable copy),
+which now also records what the model *claimed* on every play (`p_model`,
+`p_fair` joined `RECORD_COLUMNS`). Settled rows with a stake move a
+market's money; paper rows still count toward CLV.
+
+**What it computes.** Per market, over trailing 7- and 30-day windows: bets,
+staked, profit, ROI, mean line and price CLV, the share of bets beating the
+close, the claimed probability against the realized win rate on decided
+bets, and the flags:
+
+- *negative CLV* — trusted markets (spread / total / moneyline) losing to
+  the close; a one-sided test on the mean CLV, confirmed only where it
+  survives Benjamini–Hochberg across the window's markets (§3's
+  multiple-comparisons rule made executable); a raw rejection that does
+  not survive reads *unconfirmed*.
+- *negative ROI* — the same test on per-bet return; the read for markets
+  whose close is not a yardstick.
+- *overclaims by x* — realized win rate more than 0.05 below the claimed
+  probability on ≥ 20 decided bets: the shrink or anchoring weight has
+  drifted from what the record earns.
+- *exclusion candidate* — an untrusted market with a confirmed negative
+  30-day ROI: the `total_bases` pattern. Exclusion still needs the flag
+  across two review windows (§3).
+- *thin* — under 20 bets; nothing else is said.
+
+**Where it lands.** `monitor_{league}_{stamp}.parquet` in every grading
+run's artifact (the site's `market_health` table) and the table in the
+grade's log, flagged markets first. `tests/test_monitor.py` runs the whole
+thing on a synthetic chain with a spread market that beats the close for a
+month and loses to it for a week (the 7-day window flags, the 30-day does
+not), a prop that loses while claiming 0.62 (exclusion candidate,
+overclaims), a thin market, paper and pending rows, and empty chains.
+
+**Not yet.** The DoD's retroactive `total_bases` verification needs the MLB
+archive graded back through the chain; the DoD's seven consecutive runs
+start with the next grade.
 

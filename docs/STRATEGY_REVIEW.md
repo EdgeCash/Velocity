@@ -350,11 +350,17 @@ the curve. `WAGERING.md` §7 has the record layout, the two placement modes
 (`auto` books the card at its own terms; `manual` books what the operator
 records through `scripts/ledger.py`) and the operator's loop.
 
-### S6 — The monitor (WAGERING W3, unchanged)
+### S6 — The monitor (WAGERING W3) — **landed 2026-09-09**
 
-Per-market trailing CLV/ROI over 7/30 days with flags — a "market health"
-page on the site. Needs S1 (a durable chain) and S5 (real stakes), both
-landed. The `clv_by_market` and `benjamini_hochberg` helpers already exist.
+Per-market trailing CLV/ROI over 7/30 days with flags — the "market health"
+page on the site (`velocity/report/monitor.py`, appended to the daily grade,
+`site/pages/health.md`). Negative CLV on the trusted markets is confirmed
+through Benjamini–Hochberg across the window's markets; negative ROI is the
+read on props and team totals, with a confirmed 30-day loser named an
+exclusion candidate; claimed-vs-realized drift past 0.05 flags the shrink
+or anchoring weight. The record chain now carries `p_model`/`p_fair` so the
+drift read exists. `WAGERING.md` §8 has the rules and the synthetic-chain
+test.
 
 ---
 

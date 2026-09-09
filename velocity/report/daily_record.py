@@ -39,6 +39,11 @@ RECORD_COLUMNS = [
     # close was on the board) or "consensus" (the cross-book median); null
     # with no close or on rows graded before the column existed.
     "close_source",
+    # What the model claimed at entry (the belief the stake was sized on)
+    # and the de-vigged market probability — the monitor reads claimed vs
+    # realized off these (velocity/report/monitor.py). Null on rows graded
+    # before the columns existed.
+    "p_model", "p_fair",
 ]
 
 def empty_record() -> pd.DataFrame:
@@ -173,6 +178,8 @@ def build_daily_record(
             "stake_sized": row.get("stake_sized"),
             "profit_sized": row.get("profit_sized"),
             "close_source": row.get("close_source"),
+            "p_model": row.get("p_model"),
+            "p_fair": row.get("p_fair"),
         }
 
     if games_graded is not None:
