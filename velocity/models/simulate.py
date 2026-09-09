@@ -33,6 +33,25 @@ import numpy as np
 DEFAULT_SD_MARGIN = 13.0
 DEFAULT_SD_TOTAL = 13.6
 
+# College football, measured the same way: the sd of (actual − model) from a
+# walk-forward of the shipped ridge-10 fit over 2022–2025 complete seasons
+# (n=6,030) — margin 18.2, total 16.7, essentially uncorrelated (0.08).
+#
+# These replace an earlier 17.0/16.0 that was never walk-forward measured.
+# Every season in the sample exceeded it, so the sim was **under**-dispersed:
+# it priced college games as more predictable than the model actually is.
+# Widening is confirmed rather than merely measured — expected calibration
+# error over 2022+ improves from 0.0227 to 0.0210 (mean of three seeds, and
+# better on every one), while the Brier score is flat to the fourth decimal,
+# as it should be when only the spread of the distribution moves.
+#
+# A caution for anyone re-deriving these: residuals must be taken against the
+# **model's** own projection, not the market's closing line. The market is far
+# sharper — its NCAAF residual sd is only 15.5 — so calibrating to it would
+# shrink these constants by 15% and make the sim badly overconfident.
+NCAAF_SD_MARGIN = 18.2
+NCAAF_SD_TOTAL = 16.7
+
 
 @dataclass(frozen=True)
 class SimConfig:

@@ -623,9 +623,14 @@ Two honest caveats, both recorded in the module:
   residuals are wider and this leptokurtosis is diluted. That makes the
   gate conservative rather than permissive.
 
-A side finding: NCAAF's residual sd is 15.5 while the sim uses 17.0 —
-the sim is over-dispersed there by about 9%, which is a separate
-correction from this gate's.
+A side finding, since corrected and worth reading as a caution: NCAAF's
+residual sd *against the market's close* is 15.5 while the sim used
+17.0, which looks like over-dispersion. It is not. Measured against the
+**model's own** projections — the only comparison a sim's noise
+constant answers to — the residual sd is 18.2, so the sim was
+under-dispersed. The market is simply much sharper than our model.
+Fixed in docs/MODEL_LAB.md "NCAAF Round 3"; the same caveat is why this
+gate's own table is conservative rather than permissive.
 
 ## 4. Explicitly out of scope
 

@@ -42,7 +42,7 @@ from velocity.features.team import (
 )
 from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
-from velocity.models.simulate import SimConfig
+from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL, SimConfig
 
 __all__ = [
     "ats_ou_vs_close",
@@ -378,7 +378,7 @@ def ncaaf_variants(
     """
     from velocity.features.scores import scores_recency_weights
 
-    sim = SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=n_sims)
+    sim = SimConfig(sd_margin=NCAAF_SD_MARGIN, sd_total=NCAAF_SD_TOTAL, n_sims=n_sims)
 
     def _model(ratings: object) -> ScoresGameModel:
         return ScoresGameModel(ratings, ScoresModelConfig(sim=sim))  # type: ignore[arg-type]

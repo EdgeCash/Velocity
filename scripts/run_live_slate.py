@@ -36,7 +36,7 @@ from velocity.intel.publish import (
 )
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
-from velocity.models.simulate import SimConfig
+from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL, SimConfig
 from velocity.report.slate_xlsx import (
     export_slate_workbook,
     plays_display,
@@ -241,7 +241,7 @@ def _build_projection(
     # historical margin/total sigmas — content-surface defaults, honest but
     # not yet lab-tuned (their datasets carry no closing lines to tune on).
     sims = {
-        "ncaaf": SimConfig(sd_margin=17.0, sd_total=16.0, n_sims=args.n_sims),
+        "ncaaf": SimConfig(sd_margin=NCAAF_SD_MARGIN, sd_total=NCAAF_SD_TOTAL, n_sims=args.n_sims),
         "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).

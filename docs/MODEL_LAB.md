@@ -520,3 +520,49 @@ from this replay.** No default change; the variants remain in the lab for
 re-runs as seasons accumulate. The market-blend sweep re-confirmed Round 3's
 lesson unchanged on every variant (pure market Brier 0.2109 on holdout beats
 every pure model at 0.223; select-chosen w=0.2 lands at 0.2119).
+
+## NCAAF Round 3 (2026-09) — sim dispersion, measured at last
+
+The college sim's outcome noise (`sd_margin` 17.0, `sd_total` 16.0) had never
+been walk-forward measured the way the NFL's 13.0/13.6 were. Measuring it
+against the shipped `ridge-10` fit shows it was **too narrow** — the sim priced
+college games as more predictable than the model actually is.
+
+Walk-forward residual sd of (actual − model), `ridge-10`, 10k sims:
+
+| sample | n | sd margin | sd total |
+|---|---|---|---|
+| 2015–2026 (all) | 12,212 | 19.06 | 17.26 |
+| 2022–2025 complete | 6,030 | **18.23** | **16.71** |
+| 2023–2025 complete | 4,571 | 18.11 | 16.57 |
+
+Every individual season came in above 17.0 (17.8 – 20.3), so this is not a
+sample-window artefact. Seasons improve as the training history deepens, which
+is why the recent complete-season window is the one promoted.
+
+**Promoted: `NCAAF_SD_MARGIN = 18.2`, `NCAAF_SD_TOTAL = 16.7`**, defined once in
+`velocity/models/simulate.py` — the constant previously appeared verbatim in
+four places and could drift.
+
+Confirming gate (2022+ out-of-sample, mean of seeds 7 / 101 / 2027):
+
+| sd margin / total | expected calibration error | Brier |
+|---|---|---|
+| 17.0 / 16.0 (was) | 0.02271 | 0.20040 |
+| 18.0 / 16.5 | 0.02051 | 0.20045 |
+| **18.2 / 16.7 (promoted)** | **0.02097** | 0.20062 |
+
+Both wider settings beat the shipped one on calibration error on *every* seed;
+the gap between 18.0 and 18.2 is inside seed noise, so the directly measured
+value wins rather than the marginally better-scoring one. Brier is flat to the
+fourth decimal, which is what should happen when only the spread of the
+distribution moves — it is the calibration metric, not the discrimination one,
+that this constant governs.
+
+**The trap worth recording.** This started from an observation that NCAAF
+residuals had sd 15.5 against the sim's 17.0, implying the sim was *over*
+-dispersed and should shrink. That measurement was taken against the **market's
+closing line**, which is far sharper than our model. Calibrating a model's own
+outcome noise to the market's residuals would have shrunk these constants by
+about 15% and made the sim badly overconfident — the exact opposite of the
+right change. A sim's dispersion must be measured against its own projections.
