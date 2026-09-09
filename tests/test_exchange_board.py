@@ -12,7 +12,12 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.exchanges import combine, kalshi_board, polymarket_board
+from velocity.ingest.exchanges import (
+    canonical_base_events,
+    combine,
+    kalshi_board,
+    polymarket_board,
+)
 from velocity.ingest.odds import shop_best_prices
 from velocity.wagering.live import align_game_ids
 
@@ -87,6 +92,48 @@ def test_unmatched_teams_yield_an_empty_board_not_a_guess() -> None:
         empty,
     )
     assert lines.empty and events.empty
+
+
+def test_a_provider_named_base_board_still_matches() -> None:
+    # THE live shape, and the one the fixtures above quietly skip: the slate
+    # hands over The Odds API's own board, whose teams are full display names
+    # ("Kansas City Chiefs") because projection resolves them through an alias
+    # map instead of rewriting the frame. The exchange rows arrive already
+    # canonicalized to rating keys, so an unmediated merge matches nothing and
+    # every venue reports an empty board with no error raised.
+    provider_named = BASE_EVENTS.assign(
+        home_team=["Kansas City Chiefs", "Houston Texans"],
+        away_team=["Denver Broncos", "Buffalo Bills"],
+    )
+    lines, note = polymarket_board(
+        PM_EVENTS, PM_BOOKS, NFL_TEAMS, provider_named, STAMP
+    )
+    assert note["games"] == 2
+    assert set(lines["game_id"]) == {"evt-denkc", "evt-bufhou"}
+
+
+def test_canonicalizing_the_base_board_leaves_rating_keys_alone() -> None:
+    # Idempotent, so a board that already speaks rating keys is untouched, and
+    # a team the model has never heard of is dropped rather than guessed.
+    out = canonical_base_events(
+        pd.concat(
+            [
+                BASE_EVENTS,
+                pd.DataFrame(
+                    {
+                        "game_id": ["evt-unknown"],
+                        "kickoff": [pd.Timestamp("2026-09-14 17:00:00")],
+                        "home_team": ["Sheffield Wednesday"],
+                        "away_team": ["KC"],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        ),
+        NFL_TEAMS,
+    )
+    assert list(out["home_team"]) == ["KC", "HOU"]
+    assert list(out["away_team"]) == ["DEN", "BUF"]
 
 
 def test_prices_shop_across_venues_on_one_scale() -> None:
