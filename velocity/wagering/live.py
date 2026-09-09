@@ -140,6 +140,156 @@ def nickname_aliases(
     return out
 
 
+_ST_SUFFIX = re.compile(r"\bSt\.?\b")
+
+
+def exchange_aliases(
+    names_by_code: Mapping[str, str],
+    known_teams: Iterable[str],
+    fixups: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Venue team code → the model's rating key, resolved from the venue's own names.
+
+    An exchange labels teams with opaque codes (``SJSU``, ``txst``) whose
+    meaning is venue-specific — ``sdst`` is South Dakota State on one exchange
+    and San Diego State on the other — so a table built here is valid **only**
+    for the venue whose payload produced ``names_by_code``, and tables from two
+    venues must never be merged.
+
+    Resolution tries, in order: an explicit ``fixups`` entry, the code itself
+    (NFL codes are already our rating keys), the venue's display name, and a
+    school-prefix match on that name (the college case, where the model keys by
+    school and the venue writes "San Jose St."). A code that resolves to
+    nothing is simply absent, and the caller skips and reports it rather than
+    guessing — a wrong team silently mis-prices a game.
+    """
+    known = list(known_teams)
+    fixups = fixups or {}
+    expanded = {code: _ST_SUFFIX.sub("State", str(name)) for code, name in names_by_code.items()}
+    prefix_matched = nickname_aliases(expanded.values(), known)
+
+    out: dict[str, str] = {}
+    for code, name in expanded.items():
+        fixed = fixups.get(code)
+        team = (
+            (fixed if fixed in known else None)
+            or resolve_team(code, known)
+            or resolve_team(name, known)
+            or prefix_matched.get(name)
+        )
+        if team is not None:
+            out[code] = team
+    return out
+
+
+def apply_team_aliases(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    aliases: Mapping[str, str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Rewrite one venue's team codes to rating keys in both frames.
+
+    Exchange rows carry venue-specific codes in ``side`` and in the events
+    frame's teams. Translating both here — while the venue's own alias table is
+    still in scope — lets boards from different venues be concatenated safely;
+    afterwards every row speaks the same team language, so codes can no longer
+    collide across venues. Over/under sides pass through untouched, and rows
+    naming a team that did not resolve are dropped rather than guessed.
+    """
+    if events.empty:
+        return lines.copy(), events.copy()
+
+    mapped_events = events.copy()
+    for column in ("home_team", "away_team"):
+        mapped_events[column] = mapped_events[column].map(lambda v: aliases.get(str(v)))
+    mapped_events = mapped_events.dropna(subset=["home_team", "away_team"]).reset_index(drop=True)
+
+    if lines.empty:
+        return lines.copy(), mapped_events
+
+    keep_games = set(mapped_events["game_id"].astype(str))
+    mapped_lines = lines[lines["game_id"].astype(str).isin(keep_games)].copy()
+
+    def _side(value: object) -> object:
+        raw = str(value)
+        if raw.strip().lower() in _TOTAL_SIDES:
+            return raw
+        return aliases.get(raw)
+
+    mapped_lines["side"] = mapped_lines["side"].map(_side)
+    mapped_lines = mapped_lines[mapped_lines["side"].notna()].reset_index(drop=True)
+    return mapped_lines, mapped_events
+
+
+def align_game_ids(
+    lines: pd.DataFrame,
+    events: pd.DataFrame,
+    base_events: pd.DataFrame,
+    max_hours: float = 36.0,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Re-key one venue's rows onto a base board's game ids.
+
+    Every venue invents its own game id — The Odds API an event uuid, Kalshi an
+    event ticker, Polymarket a slug — so the same game arrives three times under
+    three names. Left that way each copy is projected separately and no price is
+    ever shopped across venues, which is the whole point of carrying an exchange
+    board.
+
+    Matching is on the canonical team pair (so :func:`apply_team_aliases` must
+    have run first) plus kickoff proximity. The time tolerance is generous
+    because venues disagree about what a game's time even is: Kalshi's tickers
+    carry an ET calendar date with no clock, and Polymarket's slugs a UTC date,
+    so a prime-time game legitimately lands a day apart across venues. A venue
+    game matching no base game is dropped — an unshoppable duplicate is worse
+    than a missing row.
+    """
+    if events.empty or base_events.empty:
+        return lines.iloc[0:0].copy(), events.iloc[0:0].copy()
+
+    time_col = "kickoff" if "kickoff" in events.columns else "date"
+    venue = events.assign(_when=pd.to_datetime(events[time_col], errors="coerce"))
+    base = base_events.assign(_base_when=pd.to_datetime(base_events["kickoff"], errors="coerce"))
+
+    merged = venue.merge(
+        base[["game_id", "home_team", "away_team", "_base_when"]].rename(
+            columns={"game_id": "_base_game_id"}
+        ),
+        on=["home_team", "away_team"],
+        how="inner",
+    )
+    if merged.empty:
+        return lines.iloc[0:0].copy(), events.iloc[0:0].copy()
+
+    gap = (merged["_when"] - merged["_base_when"]).abs()
+    # A venue that supplies no usable time still matches on the team pair; a
+    # team pair meets at most once in a season's window, so this is safe.
+    within = gap.isna() | (gap <= pd.Timedelta(hours=max_hours))
+    merged = merged[within]
+    if merged.empty:
+        return lines.iloc[0:0].copy(), events.iloc[0:0].copy()
+
+    # Keep the closest base game when a pair somehow meets twice in the window.
+    merged = merged.sort_values("_when").drop_duplicates("game_id", keep="first")
+    id_map = dict(
+        zip(
+            merged["game_id"].astype(str),
+            merged["_base_game_id"].astype(str),
+            strict=True,
+        )
+    )
+
+    mapped_events = events[events["game_id"].astype(str).isin(id_map)].copy()
+    mapped_events["game_id"] = mapped_events["game_id"].astype(str).map(id_map)
+    mapped_lines = lines[lines["game_id"].astype(str).isin(id_map)].copy()
+    if not mapped_lines.empty:
+        mapped_lines["game_id"] = mapped_lines["game_id"].astype(str).map(id_map)
+        # line_id embeds the old game id; re-stamp so ids stay unique per venue.
+        mapped_lines["line_id"] = (
+            mapped_lines["game_id"] + "|" + mapped_lines["line_id"].astype(str)
+        )
+    return mapped_lines.reset_index(drop=True), mapped_events.reset_index(drop=True)
+
+
 def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
     """Remap provider side labels to ``home``/``away``/``over``/``under``.
 

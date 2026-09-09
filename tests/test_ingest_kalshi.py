@@ -52,7 +52,7 @@ def test_winner_markets_emit_own_yes_ask_only() -> None:
     assert ml.loc["NYG", "price"] == 426  # yes-ask $0.19
     assert ml.loc["LAR", "price"] == -456  # yes-ask $0.82
     assert ml["point"].isna().all()
-    assert set(ml["game_id"]) == {"KXNFLGAME-26SEP21NYGLAR"}
+    assert set(ml["game_id"]) == {"26SEP21NYGLAR"}
 
 
 def test_spread_rungs_emit_both_sides_with_signed_points() -> None:
@@ -156,7 +156,7 @@ def test_extract_events_splits_blob_via_winner_suffixes() -> None:
     events = extract_kalshi_events(SNAPSHOT)
     assert len(events) == 1
     row = events.iloc[0]
-    assert row["game_id"] == "KXNFLGAME-26SEP21NYGLAR"
+    assert row["game_id"] == "26SEP21NYGLAR"
     assert row["away_team"] == "NYG"
     assert row["home_team"] == "LAR"
     assert row["date"] == pd.Timestamp("2026-09-21")
@@ -196,7 +196,7 @@ def test_candle_closes_feed_pit_closing_line() -> None:
     lines = normalize_kalshi_candles(CANDLE_FIXTURE["market"], CANDLE_FIXTURE["candles"])
     games = pd.DataFrame(
         {
-            "game_id": ["KXNFLGAME-26AUG29CHITEN"],
+            "game_id": ["26AUG29CHITEN"],
             "kickoff": [pd.Timestamp("2026-08-30 00:00:00")],
         }
     )
@@ -253,3 +253,49 @@ def test_historical_candle_field_names_also_parse() -> None:
     lines = normalize_kalshi_candles(market, candles)
     assert len(lines) == 1
     assert lines.loc[0, "price"] == 113  # yes-ask $0.47 → +112.8 → +113
+
+
+def test_all_series_share_one_game_id() -> None:
+    """A game's winner, spread and total rows must land on the same game.
+
+    Kalshi files each market type under its own event ticker
+    (``KXNFLGAME-…`` vs ``KXNFLSPREAD-…``), so keying ``game_id`` on the event
+    would split one game into three and strand every ladder row: the ladder
+    series carry no winner market, so nothing would ever name their teams.
+    """
+    board = {
+        "markets": [
+            {
+                "ticker": "KXNFLGAME-26SEP14DENKC-KC",
+                "title": "Kansas City wins",
+                "yes_sub_title": "Kansas City",
+                "yes_ask_dollars": "0.6500",
+            },
+            {
+                "ticker": "KXNFLGAME-26SEP14DENKC-DEN",
+                "title": "Denver wins",
+                "yes_sub_title": "Denver",
+                "yes_ask_dollars": "0.3700",
+            },
+            {
+                "ticker": "KXNFLSPREAD-26SEP14DENKC-KC7",
+                "floor_strike": 6.5,
+                "yes_ask_dollars": "0.3600",
+                "no_ask_dollars": "0.6600",
+            },
+            {
+                "ticker": "KXNFLTOTAL-26SEP14DENKC-45",
+                "floor_strike": 44.5,
+                "yes_ask_dollars": "0.5200",
+                "no_ask_dollars": "0.5000",
+            },
+        ]
+    }
+    lines = normalize_kalshi_markets(board, STAMP)
+    assert set(lines["market"]) == {"moneyline", "spread", "total"}
+    # One game, whatever series quoted it.
+    assert set(lines["game_id"]) == {"26SEP14DENKC"}
+    # And the winner series' event frame keys the same game, so the ladder
+    # rows survive the team-alias join instead of being dropped.
+    events = extract_kalshi_events(board)
+    assert set(events["game_id"]) == set(lines["game_id"])

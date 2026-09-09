@@ -483,6 +483,10 @@ def build_parser() -> argparse.ArgumentParser:
     # implied totals) but no >52.4% over-rate on *derived* numbers, so the
     # disagreement gate defaults to off — the EV gate still applies, and the
     # threshold gets calibrated once banked team-total closes accumulate.
+    parser.add_argument("--exchanges", action=argparse.BooleanOptionalAction, default=False,
+                        help="also price the Kalshi and Polymarket boards alongside the "
+                             "sportsbooks (free, keyless; docs/BUILD_EXCHANGES.md E6). "
+                             "Paper only — nothing is ever ordered.")
     parser.add_argument("--team-totals", action=argparse.BooleanOptionalAction, default=True,
                         help="fetch + price team totals on live football boards")
     parser.add_argument("--team-total-edge", type=float, default=0.0,
@@ -664,6 +668,23 @@ def main() -> None:
                 print(f"team totals: {len(team_lines)} lines joined the board")
         except Exception as exc:  # noqa: BLE001 - an optional derivative fetch
             print(f"team totals skipped: {exc}")
+    # Exchange boards ride alongside the sportsbook board, re-keyed onto its
+    # game ids so every venue's price for a game is shopped together
+    # (docs/BUILD_EXCHANGES.md E6). Best-effort: a venue that fails is
+    # reported and skipped, exactly like the team-totals fetch above.
+    if args.exchanges and not args.snapshot_file and args.league in ("nfl", "ncaaf"):
+        from velocity.ingest.exchanges import fetch_exchange_board
+
+        exchange_lines, venue_notes = fetch_exchange_board(
+            args.league, known_teams, events, generated_at
+        )
+        for venue, note in venue_notes.items():
+            print(f"{venue}: {note['lines']} lines across {note['games']} board games")
+        if not exchange_lines.empty:
+            lines = pd.concat([lines, exchange_lines], ignore_index=True)
+    elif args.exchanges:
+        print("exchanges: skipped (offline snapshot run, or league without an exchange board)")
+
     n_board = len(events)
     if args.max_days > 0 and not events.empty:
         kickoff = pd.to_datetime(events["kickoff"], errors="coerce")

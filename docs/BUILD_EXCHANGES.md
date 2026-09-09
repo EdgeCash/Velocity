@@ -1,7 +1,7 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: E1-E3 + E5 done; E2/E4 landed, awaiting in-CI
-`workflow_dispatch` verification; E6 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1-E3 + E5-E6 done; E2/E4 landed, awaiting in-CI
+`workflow_dispatch` verification; E7 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -435,7 +435,7 @@ the payout per unit staked falls from 4.26 to 3.98. A model probability
 of 0.24 still clears the gate, but stakes materially less than the same
 edge at a sportsbook.
 
-### Phase E6 — Slate & live wiring
+### Phase E6 — Slate & live wiring (done)
 
 - Both clients handed to `LiveOddsAdapter` as fetch callables; events
   frames from E1/E3 into `canonicalize_sides`; team-alias tables
@@ -449,6 +449,37 @@ edge at a sportsbook.
 
 Exit: one live slate run (workflow_dispatch) producing a mixed
 sportsbook + exchange board with sane cross-venue prices.
+**Done.** `velocity/ingest/exchanges.py` assembles one shoppable board;
+`run_live_slate --exchanges` prices it alongside the sportsbooks (paper
+only, best-effort per venue). The wiring turned out to be mostly an
+identity problem, and the live run found a real bug the fixtures could
+not:
+
+- **Venue ids and team codes had to be reconciled before boards merge.**
+  Every venue invents its own game id, so the same game arrived three
+  times under three names and no price was ever shopped across venues.
+  `align_game_ids` re-keys a venue's rows onto the sportsbook board by
+  team pair and kickoff, with a generous window because Kalshi dates
+  are ET and Polymarket's UTC.
+- **Team codes are venue-specific and collide**: `sdst` is South Dakota
+  State on Kalshi and San Diego State on Polymarket. So each venue's
+  alias table is built from *its own* display names and applied only to
+  its own rows (`exchange_aliases` + `apply_team_aliases`), never
+  merged. Deriving codes from the payload rather than hand-keying them
+  lifts NCAAF resolution from 8-12% to 97-98%; NFL codes mostly are our
+  rating keys already, needing only `LAR→LA` and `JAC→JAX`.
+- **Kalshi's `game_id` was series-scoped, which silently stranded every
+  ladder.** Kalshi files each market type under its own event ticker
+  (`KXNFLGAME-…` vs `KXNFLSPREAD-…`), so ladder rows never matched the
+  winner event that names their teams: a live board yielded **64 lines
+  instead of 1,585**. `game_id` is now the series-independent
+  date-and-teams key, with a regression test. Fixtures caught none of
+  this — only running the real board did.
+
+Live proof: 32 NFL games quoted by both venues, Kalshi winning 1,239 of
+the best prices and Polymarket 2,000; at the −14.5 rung of one game
+Kalshi's +178 beats Polymarket's +163 — the cross-venue shopping this
+phase exists for.
 
 ### Phase E7 — CLV & backtest
 

@@ -463,6 +463,31 @@ def extract_polymarket_events(events: Any) -> pd.DataFrame:
     return df
 
 
+def team_names_by_code(events: Any) -> dict[str, str]:
+    """Team code → the venue's display name, read off moneyline outcomes.
+
+    Slug codes are opaque (``txst``, ``lcdbfc25``); the moneyline outcomes name
+    the teams in away-then-home order. Resolving those names beats hand-keying
+    college codes: 98% of a live CFB board resolves this way against 12% from
+    the codes alone. Codes are **not** portable across venues — ``sdst`` is
+    South Dakota State on one exchange and San Diego State on the other — so a
+    table built here is only ever valid for Polymarket rows.
+    """
+    out: dict[str, str] = {}
+    for event in events or []:
+        parsed = parse_event_slug(str(event.get("slug", "")))
+        if parsed is None or str(event.get("slug", "")).endswith(_PROPS_SUFFIX):
+            continue
+        for market in event.get("markets") or []:
+            if str(market.get("sportsMarketType")) != "moneyline":
+                continue
+            outcomes = _loads(market.get("outcomes")) or []
+            if len(outcomes) == 2:
+                out[parsed.away] = str(outcomes[0])
+                out[parsed.home] = str(outcomes[1])
+    return out
+
+
 def token_ids(events: Any) -> list[str]:
     """Every outcome-token id nested in a Gamma events payload, de-duplicated."""
     out: list[str] = []

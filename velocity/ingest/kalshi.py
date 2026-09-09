@@ -126,7 +126,21 @@ class ParsedTicker:
 
     @property
     def event_ticker(self) -> str:
+        """Kalshi's own event id — series-scoped, so it differs per market type."""
         return f"{self.series}-{self.date_part}{self.teams}"
+
+    @property
+    def game_key(self) -> str:
+        """The game itself, independent of which series quotes it.
+
+        Kalshi files each market type under its own event
+        (``KXNFLGAME-26SEP14DENKC`` vs ``KXNFLSPREAD-26SEP14DENKC``), so using
+        the event ticker as ``game_id`` would split one game's winner, spread
+        and total rows into three unrelated games — and the ladders, whose
+        series has no winner market to name teams from, would be dropped
+        wholesale. The date-and-teams blob is what every series shares.
+        """
+        return f"{self.date_part}{self.teams}"
 
     @property
     def date(self) -> pd.Timestamp | None:
@@ -243,7 +257,7 @@ def _market_rows(
 ) -> list[dict[str, object]]:
     """Rows for one market's economic sides, per the module conventions above."""
     rows: list[dict[str, object]] = []
-    game_id = parsed.event_ticker
+    game_id = parsed.game_key
 
     if canonical == "moneyline":
         # One market per team; its yes-ask prices that team. The no-ask is a
@@ -469,7 +483,7 @@ def normalize_kalshi_props(
                 continue
             rows.append(
                 {
-                    "game_id": parsed.event_ticker,
+                    "game_id": parsed.game_key,
                     "book": _BOOK,
                     "market": stat,
                     "player": player,
@@ -498,6 +512,32 @@ def normalize_kalshi_props(
     return PropLines.validate(df[_PROP_COLUMNS])
 
 
+# Kalshi NFL codes that differ from our rating keys and whose display names are
+# too truncated to resolve ("Los Angeles R"). Everything else resolves from the
+# code or the market subtitle, so this list stays deliberately tiny.
+NFL_CODE_FIXUPS = {"LAR": "LA", "JAC": "JAX"}
+
+
+def team_names_by_code(payload: Any) -> dict[str, str]:
+    """Team code → the venue's display name, read off winner markets.
+
+    A ticker's code is opaque (``UWGA``, ``SJSU``), but the winner market's
+    subtitle names the team ("San Jose St."). Callers resolve those names
+    against the model's team universe, which beats hand-keying hundreds of
+    college codes: from a live board, 97% of Kalshi's NCAAF codes resolve this
+    way against 8% from the code alone.
+    """
+    out: dict[str, str] = {}
+    for market in _markets_of(payload):
+        parsed = parse_market_ticker(str(market.get("ticker", "")))
+        if parsed is None or GAME_MARKET_BY_SERIES.get(parsed.series) != "moneyline":
+            continue
+        name = market.get("yes_sub_title") or str(market.get("title", "")).removesuffix(" wins")
+        if parsed.suffix.isalpha() and name:
+            out[parsed.suffix] = str(name)
+    return out
+
+
 def extract_kalshi_events(payload: Any) -> pd.DataFrame:
     """Per-event metadata from a winner-series (``*GAME``) markets payload.
 
@@ -515,18 +555,18 @@ def extract_kalshi_events(payload: Any) -> pd.DataFrame:
             continue
         if not parsed.suffix.isalpha():
             continue
-        entry = codes_by_event.setdefault(parsed.event_ticker, (parsed, set()))
+        entry = codes_by_event.setdefault(parsed.game_key, (parsed, set()))
         entry[1].add(parsed.suffix)
 
     rows: list[dict[str, object]] = []
-    for event_ticker, (parsed, codes) in codes_by_event.items():
+    for game_key, (parsed, codes) in codes_by_event.items():
         home = next((c for c in codes if _is_home(parsed.teams, c)), None)
         away = None if home is None else _other_team(parsed.teams, home)
         if home is None or away is None or away not in codes:
             continue
         rows.append(
             {
-                "game_id": event_ticker,
+                "game_id": game_key,
                 "date": parsed.date,
                 "home_team": home,
                 "away_team": away,
