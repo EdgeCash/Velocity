@@ -108,3 +108,35 @@ def test_near_certain_contracts_stop_qualifying_once_the_fee_is_paid() -> None:
     # all rather than a negative or divide-by-zero one.
     assert net_payout_after_fees(-99900, "kalshi", multiplier=100.0) == 0.0
     assert kelly_fraction(0.999, -99900, "kalshi") > -1.0  # finite, not blown up
+
+
+def test_exchange_dead_heats_settle_at_fifty_cents() -> None:
+    """A tie is a push at a book and a settlement on an exchange (D5).
+
+    Kalshi's winner rules pay $0.50 a contract on a tied game, so a ticket
+    bought cheap profits and one bought rich loses. Grading it as a push would
+    book the wrong P&L on exactly the games where the distinction exists.
+    """
+    from velocity.wagering.bet_log import Bet
+
+    def moneyline(book: str, ask: float) -> Bet:
+        return Bet(
+            game_id="g", market="moneyline", side="home", book=book,
+            price=round(prob_to_american(ask)), stake=1.0, p_model=0.5,
+        )
+
+    # A sportsbook pushes: stake back, nothing won or lost.
+    assert moneyline("bookA", 0.5).grade(21, 21) == ("push", 0.0)
+
+    # An exchange settles at 50c. Bought at 19c, that is a 163% return.
+    result, profit = moneyline("kalshi", 0.19).grade(21, 21)
+    assert result == "tie"
+    assert profit == pytest.approx(1.63, abs=0.01)
+
+    # Bought at 82c, the same dead heat is a 39% loss.
+    result, profit = moneyline("kalshi", 0.82).grade(21, 21)
+    assert result == "tie"
+    assert profit == pytest.approx(-0.39, abs=0.01)
+
+    # Pricing never needed the branch: the sim splits ties 0.5, which is
+    # exactly the contract's expected payout.

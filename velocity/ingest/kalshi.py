@@ -390,7 +390,9 @@ def normalize_kalshi_markets(
     if not rows:
         return Lines.validate(_empty_frame(_LINES_COLUMNS))
     df = _finish_lines(rows, timestamp)
-    return Lines.validate(df[_LINES_COLUMNS])
+    # Board rows are executable asks; recording the basis keeps CLV
+    # like-for-like once a mid-quoted history source joins (E7).
+    return Lines.validate(df[_LINES_COLUMNS]).assign(price_basis="ask")
 
 
 def _candle_close(candle: Mapping[str, Any], side: str) -> Any:
@@ -447,7 +449,10 @@ def normalize_kalshi_candles(
     if not rows:
         return Lines.validate(_empty_frame(_LINES_COLUMNS))
     df = _finish_lines(rows)
-    return Lines.validate(df[_LINES_COLUMNS])
+    # Candle closes are ask-quoted, the same basis as the live board, so CLV
+    # against a board entry is like-for-like (docs/BUILD_EXCHANGES.md E7).
+    validated = Lines.validate(df[_LINES_COLUMNS])
+    return validated.assign(price_basis="ask")
 
 
 def normalize_kalshi_props(

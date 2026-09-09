@@ -49,6 +49,35 @@ PROP_MARKETS = [
 ]
 PROP_SIDES = ["over", "under"]
 
+# Books whose board is a **ladder**: every number is its own tradable contract,
+# quoted simultaneously, rather than one main line that moves. The distinction
+# decides how a closing line is matched (docs/BUILD_EXCHANGES.md E7). A
+# sportsbook's close is the same market at a possibly different number — that
+# movement is precisely what ``Bet.line_clv`` measures — so its close is matched
+# without regard to the number. An exchange rung's close is only ever that same
+# rung: matching it loosely would report the -1.5 rung's price as the close for
+# a -20.5 bet, inventing ~19 points of CLV that never existed.
+LADDER_BOOKS = frozenset({"kalshi", "polymarket"})
+
+
+def contract_key(market: str, side: str, point: float | None) -> float | None:
+    """The contract a ``(side, point)`` row belongs to, normalized across sides.
+
+    Anything that pairs a side against its opposite — de-vigging a quote,
+    comparing two venues' closes — must group the two sides of *one* contract
+    together. Spread sides carry mirrored points (home −3.5 against away
+    +3.5), so both are normalized to the home side's number; totals and team
+    totals already share theirs, and a moneyline has none.
+
+    ``abs(point)`` is not a substitute: both teams' ladders exist at the same
+    absolute strike (an exchange lists home −7.5 and away −7.5 as separate
+    contracts), and collapsing them would cross-pair the very rungs this
+    keeps apart.
+    """
+    if point is None:
+        return None
+    return -point if market == "spread" and side != "home" else point
+
 
 class Games(pa.DataFrameModel):
     """One row per game. ``home_score``/``away_score`` are null until played."""

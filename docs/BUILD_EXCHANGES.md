@@ -1,7 +1,8 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: E1-E3 + E5-E6 done; E2/E4 landed, awaiting in-CI
-`workflow_dispatch` verification; E7 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1-E3 + E5-E7 done (E7's graded week waits on banked
+snapshots); E2/E4 landed, awaiting in-CI `workflow_dispatch`
+verification; E8 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -481,7 +482,7 @@ the best prices and Polymarket 2,000; at the −14.5 rung of one game
 Kalshi's +178 beats Polymarket's +163 — the cross-venue shopping this
 phase exists for.
 
-### Phase E7 — CLV & backtest
+### Phase E7 — CLV & backtest (machinery done; graded week pending)
 
 - **Point-aware closes (blocking for ladders, like E5's pairing):**
   every closing-line key in the loop is point-blind today —
@@ -513,6 +514,44 @@ phase exists for.
 
 Exit: one full graded week of NFL/NCAAF with cross-venue CLV in the
 eval output.
+**Done, except the graded week itself**, which needs the collectors to
+have banked a week of snapshots against settled games — that waits on
+the merge, not on code.
+
+- **Closes are point-aware, with the sportsbook path deliberately
+  unchanged.** `LADDER_BOOKS` (schema) names the venues whose every
+  number is its own contract. For them `pit.closing_line` keys on the
+  point and `_closing_for` matches the rung exactly; for a sportsbook
+  both stay loose, because its close *is* the same market at whatever
+  number it moved to — which is precisely what `line_clv` measures.
+  Tests were run against the pre-fix code and do fail there.
+- **Exchange rows stay out of the sportsbook consensus.** An
+  executable ask on one rung is a different price basis from a two-way
+  main-line quote, so folding them into `grade_yesterday`'s cross-book
+  median would have silently shifted the existing CLV benchmark and
+  medianned a point across a whole ladder.
+- **Dead heats settle, they don't push.** A tied game pays $0.50 a
+  contract on an exchange, so a ticket bought at 19¢ returns +163% and
+  one bought at 82¢ loses 39%. `Bet.grade` returns a `tie` result for
+  ladder books, and the backtest counts it toward ROI while `hit_rate`
+  correctly ignores it (it was neither a win nor a loss).
+- **Every row records its `price_basis`.** Comparing an ask entry to a
+  mid close is biased by roughly half the spread, venue-asymmetrically
+  — the exact bias that would masquerade as a sharpness gap in the
+  report below. `velocity/eval/venues.py` de-vigs each venue's closing
+  pair, refuses to mix bases by default, and scores each venue's Brier
+  against outcomes.
+- `contract_key` moved to `store/schema.py`, since de-vig pairing (E5)
+  and venue comparison (E7) both need the same contract identity.
+
+Live cross-validation (no settled outcomes yet, so this is agreement,
+not sharpness): across **620 contracts quoted by both exchanges**, the
+de-vigged fair probabilities differ by a mean of 0.0000 and a median of
+under one point — two independently built pipelines, from different
+APIs, landing on the same number. Building the report also caught a bug
+in it: the basis was read destructively, mislabelling exactly half the
+rows `mixed` and silently halving the comparison set. Only running it
+on the real board showed that.
 
 ### Phase E8 — The ladder calibration gate (research, blocks ladder betting only)
 

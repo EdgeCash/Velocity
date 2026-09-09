@@ -29,6 +29,7 @@ import pandas as pd
 
 from velocity.models.game_nfl import GameProjection
 from velocity.store import pit
+from velocity.store.schema import LADDER_BOOKS, contract_key
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
@@ -182,27 +183,6 @@ def model_probability(
     raise ValueError(f"unknown market {market!r}")
 
 
-def contract_key(market: str, side: str, point: float | None) -> float | None:
-    """The contract a ``(side, point)`` row belongs to, normalized across sides.
-
-    De-vig pairs a side against its opposite *within the same contract*. Keying
-    a bucket on ``(market, book, timestamp)`` alone is safe only while a feed
-    carries one number per market — true of the sportsbook board, false of an
-    exchange, where one snapshot holds ~25 ladder rungs per market and rungs
-    would overwrite each other (docs/BUILD_EXCHANGES.md D2/E5).
-
-    Spread sides carry mirrored points, so both sides of one contract are
-    normalized to the **home** side's number; totals and team totals already
-    share theirs. ``abs(point)`` would not do: both teams' ladders exist at the
-    same absolute strike (Kalshi lists KC −7.5 and DEN −7.5 as separate
-    contracts), and collapsing them would re-introduce the very cross-pairing
-    this prevents.
-    """
-    if point is None:
-        return None
-    return -point if market == "spread" and side != "home" else point
-
-
 def _fair_probability(
     bucket: dict[str, tuple[float, float | None]],
     side: str,
@@ -287,7 +267,14 @@ def build_slate(
             stake = capped[bet_key]
             if stake <= 0.0:
                 continue
-            close = _closing_for(closing, game_id, info["market"], info["side"], info["book"])
+            close = _closing_for(
+                closing,
+                game_id,
+                info["market"],
+                info["side"],
+                info["book"],
+                info.get("point"),
+            )
             log.add(
                 Bet(
                     game_id=game_id,
@@ -380,17 +367,35 @@ def _best_opportunity(
 
 
 def _closing_for(
-    closing: pd.DataFrame, game_id: str, market: str, side: str, book: str
+    closing: pd.DataFrame,
+    game_id: str,
+    market: str,
+    side: str,
+    book: str,
+    point: float | None = None,
 ) -> tuple[float, float | None] | None:
-    """The closing price/point for a market side, preferring the same book."""
+    """The closing price/point for a market side, preferring the same book.
+
+    A bet struck on a :data:`~velocity.store.schema.LADDER_BOOKS` venue is
+    closed out against **its own rung**: there every number is a separate
+    contract, so the loose match a sportsbook needs would hand a −20.5 bet the
+    −1.5 rung's price and report ~19 points of CLV that never existed. A
+    sportsbook bet keeps the loose match, because its close is the same market
+    wherever the number moved to — which is what ``line_clv`` exists to measure.
+    """
     match = closing[
         (closing["game_id"] == game_id)
         & (closing["market"] == market)
         & (closing["side"] == side)
     ]
+    if str(book).lower() in LADDER_BOOKS:
+        match = match[match["book"].astype(str).str.lower().isin(LADDER_BOOKS)]
+        match = (
+            match[match["point"].isna()] if point is None else match[match["point"] == point]
+        )
     if match.empty:
         return None
     same_book = match[match["book"] == book]
     row = (same_book if not same_book.empty else match).iloc[-1]
-    point = None if pd.isna(row["point"]) else float(row["point"])
-    return float(row["price"]), point
+    close_point = None if pd.isna(row["point"]) else float(row["point"])
+    return float(row["price"]), close_point

@@ -190,7 +190,12 @@ def _summarize(
         base = float(y.mean())
         metrics["brier_baseline"] = brier_score(np.full_like(p, base), y)
 
-    graded = ledger[ledger["result"].isin(["win", "loss", "push"])] if not ledger.empty else ledger
+    # "tie" is an exchange dead heat settled at 50c a contract rather than
+    # pushed (docs/BUILD_EXCHANGES.md D5). It carries real profit, so it counts
+    # toward ROI; ``hit_rate`` looks only at win/loss and leaves it out, which
+    # is right — it was neither.
+    _GRADED = ["win", "loss", "push", "tie"]
+    graded = ledger[ledger["result"].isin(_GRADED)] if not ledger.empty else ledger
     metrics["n_bets"] = float(len(graded))
     if not graded.empty:
         metrics["roi"] = roi(graded["profit"], graded["stake"])

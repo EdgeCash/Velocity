@@ -374,7 +374,13 @@ def normalize_polymarket_events(
 
     if not rows:
         return Lines.validate(_empty_frame(_LINES_COLUMNS))
-    return Lines.validate(_finish(rows, timestamp, _LINES_COLUMNS)[_LINES_COLUMNS])
+    validated = Lines.validate(_finish(rows, timestamp, _LINES_COLUMNS)[_LINES_COLUMNS])
+    # Board rows are executable asks. Recording the basis matters because
+    # Polymarket's only historical source (``prices-history``) is a mid/last
+    # sample: comparing an ask entry to a mid close is biased by roughly half
+    # the spread, and the bias differs by venue — exactly the asymmetry that
+    # would corrupt a cross-venue sharpness comparison (E7).
+    return validated.assign(price_basis="ask")
 
 
 def normalize_polymarket_props(
