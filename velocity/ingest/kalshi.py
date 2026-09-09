@@ -41,7 +41,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -612,19 +612,19 @@ class KalshiClient:
             f"{self.base_url}{path}{query}",
             headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
         )
-        for attempt, delay in enumerate((0, 10, 30)):
+        for attempt, delay in enumerate((0, 5, 15, 45)):
             if delay:
                 time.sleep(delay)
             try:
                 with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
                     return json.loads(resp.read())
             except urllib.error.HTTPError as exc:
-                if exc.code not in (429, 500, 502, 503) or attempt == 2:
+                if exc.code not in (429, 500, 502, 503) or attempt == 3:
                     raise
             except (urllib.error.URLError, ConnectionError, TimeoutError):
                 # Sustained pulls occasionally hit a connection reset / TLS
                 # EOF (observed live 2026-09-09); transient — back off, retry.
-                if attempt == 2:
+                if attempt == 3:
                     raise
         raise RuntimeError("unreachable")
 
@@ -653,6 +653,38 @@ class KalshiClient:
                 break
             time.sleep(self.sleep_seconds)
         return {"markets": merged}
+
+    def candlesticks_batch(  # pragma: no cover - network
+        self,
+        tickers: Sequence[str],
+        start_ts: int,
+        end_ts: int,
+        period_interval: int = 1,
+    ) -> dict[str, list[dict]]:
+        """Candles for many markets in one call → ``{market_ticker: candles}``.
+
+        The batch endpoint caps a request at 10,000 candles **across all
+        markets** (verified live), so the caller sizes each batch from the
+        window: an 8-hour minute window is 480 candles a market, hence 20
+        markets a call. Pulling one market at a time instead costs two orders
+        of magnitude more requests — a college Saturday's ~10k settled rungs
+        would take hours rather than minutes.
+        """
+        out: dict[str, list[dict]] = {}
+        payload = self._get(
+            "/markets/candlesticks",
+            {
+                "market_tickers": ",".join(tickers),
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "period_interval": period_interval,
+            },
+        )
+        for entry in payload.get("markets") or []:
+            ticker = entry.get("market_ticker")
+            if ticker:
+                out[str(ticker)] = list(entry.get("candlesticks") or [])
+        return out
 
     def candlesticks(
         self,

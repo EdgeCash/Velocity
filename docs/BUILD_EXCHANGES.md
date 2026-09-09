@@ -291,8 +291,8 @@ markets).
   `collect_historical_odds.py` (the column `archive.select_boards`
   splits on) plus `collected_at`/`league` per `collect_theoddsapi.py`.
 - `scripts/collect_kalshi_candles.py` (daily): for markets settled since
-  the last run, pull 1-minute candles for the pre-close day plus hourly
-  candles for the market's life, and bank them — this is the CLV
+  the last run, pull 1-minute candles over the window that brackets
+  kickoff and bank them — this is the CLV
   archive. **Probe verdict (2026-09-09): the `/historical` archive is
   dense** — hourly candles and trades verified for Sep 2025 → Jan 2026
   playoffs, both leagues; the earlier "empty" result was a zero-volume
@@ -313,6 +313,19 @@ Exit: two workflow_dispatch runs verified; candle → `Lines` close rows
 feeding `pit.closing_line` proven on one settled game; the consolidation
 job demonstrated on real artifacts; the new collectors documented in
 DATA_PROVIDERS.md.
+**Batching is not optional here** (learned from the first live
+dispatch). The per-market pull the collector shipped with would have
+taken 1.5–3 hours for a single college weekend: 10,561 settled rungs at
+two requests each. The batch endpoint takes ≤100 tickers but caps a
+request at **10,000 candles across all markets**, and one request
+carries a single time window — so markets are sorted by close time and
+packed greedily on the batch's *real* span, not a fixed count. Two
+details cost a 400 each until measured: the exchange counts both
+endpoints (a span of N intervals is N+1 candles), and keyless reads
+rate-limit under sustained pulls, so calls are paced at 0.6s with a
+longer backoff. Result: 738 settled NFL markets → 389,029 candle rows
+in 1m44s.
+
 **Landed:** `collect_kalshi.py` + `collect_polymarket_raw.py` (hourly,
 `collect-exchanges.yml`), `collect_kalshi_candles.py` (daily,
 `collect-kalshi-candles.yml`), `consolidate_exchanges.py` (weekly,
