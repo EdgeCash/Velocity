@@ -249,14 +249,14 @@ def _consensus_prop_snapshots(
         for side, price in sides.items():
             target.setdefault(side, []).append(price)
     out: dict[tuple, dict[str, float]] = {}
-    for key, sides in grouped.items():
-        bucket = {}
-        for side, prices in sides.items():
+    for key, by_side in grouped.items():
+        bucket: dict[str, float] = {}
+        for side, prices in by_side.items():
             if len(prices) < min_books:
                 continue
-            price = consensus_american(prices)
-            if price is not None:
-                bucket[side] = float(price)
+            consensus = consensus_american(prices)
+            if consensus is not None:
+                bucket[side] = float(consensus)
         if bucket:
             out[key] = bucket
     return out

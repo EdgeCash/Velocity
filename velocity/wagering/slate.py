@@ -309,9 +309,9 @@ def consensus_snapshots(
         for side, quote in sides.items():
             target.setdefault(side, []).append(quote)
     out: dict[tuple, dict[str, tuple[float, float | None]]] = {}
-    for key, sides in grouped.items():
+    for key, by_side in grouped.items():
         bucket: dict[str, tuple[float, float | None]] = {}
-        for side, quotes in sides.items():
+        for side, quotes in by_side.items():
             if len(quotes) < min_books:
                 continue
             price = consensus_american([q[0] for q in quotes])

@@ -366,7 +366,8 @@ def neutral_site_map(
         away = resolve_team(str(event["away_team"]), known, aliases)
         if home is None or away is None:
             continue
-        when = pd.to_datetime(event.get("kickoff"), errors="coerce")
+        raw_kickoff = event.get("kickoff")
+        when = pd.NaT if raw_kickoff is None else pd.to_datetime(raw_kickoff, errors="coerce")
         candidates = index.get((home, away), []) + index.get((away, home), [])
         if not candidates:
             continue
@@ -424,7 +425,7 @@ def project_board(
             kwargs["kickoff"] = event.get("kickoff")
         if accepts_neutral and neutral.get(gid, False):
             kwargs["neutral_site"] = True
-        projections[gid] = project(home, away, **kwargs)  # type: ignore[call-arg]
+        projections[gid] = project(home, away, **kwargs)
     return projections, unresolved
 
 
