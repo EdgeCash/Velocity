@@ -103,3 +103,47 @@ def test_props_join_on_the_player_too() -> None:
     rebuilt = props.drop(columns=["stake"]).assign(result="win", profit=[0.52, 0.27])
     carried = _MOD._carry_sized(rebuilt, sized)
     assert carried["stake_sized"].tolist() == [0.4, 0.0]
+
+
+def test_prop_closes_are_the_last_pre_kickoff_quote_reduced_across_books(tmp_path: Path) -> None:
+    kickoff = pd.Timestamp("2026-09-14 17:00")
+    games = pd.DataFrame([{"game_id": "g1", "home_team": "KC", "away_team": "BUF",
+                           "kickoff": kickoff}])
+    rows = []
+    for stamp, dk_point, fd_point in (("20260913T120000Z", 5.5, 5.5),
+                                       ("20260914T150000Z", 6.5, 5.5),
+                                       ("20260914T180000Z", 9.5, 9.5)):  # post-kickoff
+        for book, point in (("dk", dk_point), ("fd", fd_point)):
+            for side, price in (("over", -115), ("under", -105)):
+                rows.append({"line_id": f"{stamp}{book}{side}", "game_id": "g1", "book": book,
+                             "market": "receptions", "player": "Travis Kelce", "side": side,
+                             "price": price, "point": point,
+                             "timestamp": pd.Timestamp(stamp), "is_closing": False,
+                             "league": "nfl"})
+        pd.DataFrame(rows[-4:]).to_parquet(tmp_path / f"props_nfl_{stamp}.parquet", index=False)
+    props = pd.DataFrame([
+        {"game_id": "g1", "player": "Travis  Kelce", "market": "receptions", "side": "over",
+         "point": 5.5, "price": -110.0, "stake": 0.5, "p_model": 0.58},
+        {"game_id": "g1", "player": "Unknown Guy", "market": "receptions", "side": "over",
+         "point": 3.5, "price": -110.0, "stake": 0.3, "p_model": 0.55},
+    ])
+    consensus = _MOD.prop_closing_for_slate(tmp_path, props, games, "nfl")
+    assert consensus is not None
+    over = consensus[(consensus["market"] == "receptions") & (consensus["side"] == "over")]
+    # The 18:00 snapshot is after kickoff and drops; the close is the median
+    # of DK's 6.5 and FD's 5.5 at 15:00.
+    assert over["closing_point"].iloc[0] == pytest.approx(6.0)
+    assert over["closing_price"].iloc[0] == pytest.approx(-115.0)
+    attached = _MOD.attach_prop_closes(props, consensus)
+    assert attached["closing_point"].tolist()[0] == pytest.approx(6.0)  # name normalized
+    assert pd.isna(attached["closing_point"].iloc[1])  # no close, no crash
+
+    from velocity.backtest.props_football import attach_prop_clv
+
+    graded = attach_prop_clv(attached.assign(result=["win", "loss"], profit=[0.91, -1.0]))
+    # Over 5.5 against a 6.0 close: half a reception of line CLV in our favour.
+    assert graded["line_clv"].iloc[0] == pytest.approx(0.5)
+    assert graded["price_clv"].iloc[0] == pytest.approx(
+        (1 + 100 / 110) / (1 + 100 / 115) - 1.0)
+    assert pd.isna(graded["line_clv"].iloc[1]) and pd.isna(graded["price_clv"].iloc[1])
+    assert _MOD.prop_closing_for_slate(tmp_path / "empty", props, games, "nfl") is None

@@ -92,7 +92,12 @@ def test_teammates_correlate_through_shared_volume() -> None:
     kelce = samples[("kc_te", "receiving_yards")]
     rice = samples[("kc_wr", "receiving_yards")]
     corr = float(np.corrcoef(kelce, rice)[0, 1])
-    assert corr > 0.05  # the shared pass-volume draw moves them together
+    # The shared pass-volume draw moves them together — a little. Measured
+    # on 525 top-receiver pairs (2020–2025) the week-to-week correlation of
+    # teammates' receiving yards is −0.02: the pie is not a common
+    # multiplier, target share trades off. The fitted σ (0.118) implies
+    # ~0.035 here; the old prior (0.18) implied 0.075.
+    assert 0.0 < corr < 0.07
 
 
 def test_qb_pass_yards_are_exactly_the_receiving_sum_scaled() -> None:
@@ -146,3 +151,70 @@ def test_name_index_and_player_key() -> None:
     assert index["patrickmahomes"] == "kc_qb"
     assert player_key(None, "Josh Allen") == "joshallen"  # id-less rows fall back to name
     assert player_key("x1", "Josh Allen") == "x1"
+
+
+def test_dispersion_is_the_fitted_per_position_table() -> None:
+    cfg = FootballPropConfig()
+    assert cfg.per_catch_sd("WR") == pytest.approx(10.57)
+    assert cfg.per_catch_sd("TE") == pytest.approx(7.92)
+    assert cfg.per_catch_sd("FB") == cfg.yards_sd_per_reception  # the fallback
+    assert cfg.phi("RB") > cfg.phi("WR") > cfg.phi("TE") == 0.0
+    assert cfg.rush_cv("QB") > cfg.rush_cv("RB") == pytest.approx(0.72)
+    assert cfg.pass_volume_sigma == pytest.approx(0.118)
+
+
+def test_receptions_carry_the_negative_binomial_overdispersion() -> None:
+    from velocity.models.props_football import _PlayerMeans
+
+    rng = np.random.default_rng(3)
+    back = _PlayerMeans(key="rb", name="Back", position="RB",
+                        means={"receptions": 4.0, "receiving_yards": 30.0})
+    end = _PlayerMeans(key="te", name="End", position="TE",
+                       means={"receptions": 4.0, "receiving_yards": 40.0})
+    cfg = FootballPropConfig(n_sims=100_000, rush_pool={})
+    samples = simulate_team_props([back, end], rng, cfg)
+    for key in ("rb", "te"):
+        assert samples[(key, "receptions")].mean() == pytest.approx(4.0, abs=0.05)
+    # var = μ + μ²·(φ_player + e^{σ²} − 1): the back's extra share shows.
+    var_rb = samples[("rb", "receptions")].var()
+    var_te = samples[("te", "receptions")].var()
+    assert var_rb > var_te + 0.5
+    assert var_te == pytest.approx(4.0 + 16.0 * (np.exp(0.118**2) - 1.0), rel=0.05)
+
+
+def test_rushing_takes_the_banked_shape_and_falls_back_to_a_normal() -> None:
+    from velocity.models.props_football import _PlayerMeans, load_rush_pool
+
+    rng = np.random.default_rng(5)
+    back = _PlayerMeans(key="rb", name="Back", position="RB", means={"rush_yards": 60.0})
+    # A right-skewed synthetic pool: long runs make the upper tail.
+    pool_z = np.random.default_rng(1).gamma(2.0, 1.0, 20_000)
+    pool_z = (pool_z - pool_z.mean()) / pool_z.std()
+    skewed = FootballPropConfig(n_sims=100_000, rush_pool={"RB": pool_z})
+    normal = FootballPropConfig(n_sims=100_000, rush_pool={})
+    rush_skewed = simulate_team_props([back], rng, skewed)[("rb", "rush_yards")]
+    rush_normal = simulate_team_props(
+        [back], np.random.default_rng(5), normal)[("rb", "rush_yards")]
+    # The pool's bounded left tail keeps the zero clip out of play; the
+    # normal at this width loses 9% of its mass below zero and the clip
+    # lifts its mean — the §2.3 censoring, as before, now visible.
+    assert rush_skewed.mean() == pytest.approx(60.0, abs=1.5)
+    assert rush_normal.mean() == pytest.approx(60.0, abs=3.0)
+    # Same width (the fitted CV), different shape: the pool's skew survives
+    # into the deep upper tail where alt-line overs are priced.
+    assert rush_skewed.std() == pytest.approx(rush_normal.std(), rel=0.1)
+    assert np.mean(rush_skewed > 160.0) > 1.5 * np.mean(rush_normal > 160.0)
+    # The committed bank loads, is right-skewed, and prices the mean back.
+    bank = load_rush_pool()
+    assert bank is not None and "RB" in bank and "QB" in bank
+    z = bank["RB"]
+    assert abs(z.mean()) < 0.05 and float(((z - z.mean()) ** 3).mean()) > 0.3
+    banked = simulate_team_props([back], np.random.default_rng(5),
+                                 FootballPropConfig(n_sims=100_000))[("rb", "rush_yards")]
+    assert banked.mean() == pytest.approx(60.0, abs=1.5)
+
+
+def test_a_missing_bank_is_the_normal_not_an_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from velocity.models.props_football import load_rush_pool
+
+    assert load_rush_pool(tmp_path / "absent.parquet") is None

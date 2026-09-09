@@ -69,6 +69,11 @@ evaluation.
   `scripts/build_sim_residuals.py` from a `scripts/model_lab.py` projections
   frame; derived from final scores and our own projections, so no odds data.
   See `docs/MODEL_LAB.md` (the sim-shape round) and `docs/SYSTEM_REVIEW.md` §2.
+- `nfl/prop_residuals.parquet` — the football prop sim's rushing shape:
+  standardized within-player-season game residuals of rushing yards per
+  position (7,701 rows, 2020–2025), drawn by `velocity/models/props_football.py`
+  in place of a normal. Built by `scripts/fit_prop_dispersion.py --bank`
+  from `player_weeks`; box-score stats only. See `docs/PROPS.md`.
 
 ## Adding your files
 
