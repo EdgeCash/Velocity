@@ -1,8 +1,8 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: E1-E3 + E5-E7 done (E7's graded week waits on banked
-snapshots); E2/E4 landed, awaiting in-CI `workflow_dispatch`
-verification; E8 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1-E8 done and merged (PR #163 carried E1-E7), except
+E4's `prices-history` close and E7's graded week, which both wait on
+banked snapshots. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -553,7 +553,7 @@ in it: the basis was read destructively, mislabelling exactly half the
 rows `mixed` and silently halving the comparison set. Only running it
 on the real board showed that.
 
-### Phase E8 — The ladder calibration gate (research, blocks ladder betting only)
+### Phase E8 — The ladder calibration gate (done)
 
 The sim is a rounded bivariate normal; its own docstring
 (`velocity/models/simulate.py`) calls the key-number treatment
@@ -574,6 +574,58 @@ filtering per market/venue, which doesn't exist today
 disagreement, not strikes — those two are the design precedents to
 extend, not reuse). Moneylines and main-number lines are not gated —
 they were priced credibly before this build.
+
+**Done — and the measurement contradicted this phase's own hypothesis.**
+`velocity/eval/ladders.py` measures, per league and market, how far a
+normal misses at each half-point offset from the fair line, using
+outcome minus the market's closing number so the test isolates the
+shape of games rather than the model's aim.
+
+The expected finding was trouble concentrated at the key numbers 3 and
+7. That is not what the data says. The residual is **leptokurtic** —
+more mass near zero, thinner shoulders — so the error is broad and
+one-signed: a normal *overstates* the chance of landing past any
+threshold, on both tails at once. For NFL spreads that is 2.0-3.7
+points of probability from half a point out to thirteen, worst in the
+shoulders (4.5 out), fading only where a normal's own mass runs out.
+
+That is the dangerous direction: the sim thinks every rung away from
+the fair line is likelier than it is, so it wants to buy them, and a
+three-point shape error swamps the two-point edge the slate gates on.
+
+Per league and market, the verdict differs sharply — which is why the
+gate is a measured table rather than a key-number rule:
+
+| | worst error | verdict at 2pp |
+|---|---|---|
+| NFL spread | 3.7pp @ 4.5 | fails within ~14 pts of fair |
+| NFL total | 3.4pp @ 3.5 | fails within ~9 pts |
+| NCAAF spread | 1.9pp @ 0.5 | **passes everywhere** |
+| NCAAF total | 2.8pp @ 0.5 | fails within ~11 pts |
+
+On a real NFL board the gate keeps 8.9% of spread rungs, 50.6% of
+totals and ~11% of team totals. Scope is deliberately narrow: only
+`LADDER_BOOKS` rows are gated, never a sportsbook's main number, which
+its own backtests already validate — gating that would have silently
+switched off ordinary spread betting. `SlateConfig.ladder_tolerance`
+(with `league`) turns it on; `run_live_slate --ladder-tolerance`
+exposes it, defaulting to the 2pp that matches `min_edge`.
+
+Two honest caveats, both recorded in the module:
+- The gate compares an **absolute** probability error, because that is
+  the unit `min_edge` is in. But a rung's EV moves by error ÷ price, so
+  the same small miss is proportionally far worse on a long-odds
+  contract — exactly the deep-tail rungs this gate admits.
+  `residual_calibration` reports both columns.
+- Residuals are measured against the market's close, the sharpest
+  available expectation. The sim's own residual is around *its*
+  projection, which is at best as sharp; if it is less sharp its
+  residuals are wider and this leptokurtosis is diluted. That makes the
+  gate conservative rather than permissive.
+
+A side finding: NCAAF's residual sd is 15.5 while the sim uses 17.0 —
+the sim is over-dispersed there by about 9%, which is a separate
+correction from this gate's.
 
 ## 4. Explicitly out of scope
 

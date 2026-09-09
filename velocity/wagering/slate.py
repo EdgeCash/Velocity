@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from velocity.eval.ladders import offset_is_honest
 from velocity.models.game_nfl import GameProjection
 from velocity.store import pit
 from velocity.store.schema import LADDER_BOOKS, contract_key
@@ -65,6 +66,15 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
+    # The E8 ladder gate: refuse rungs where the sim's *shape* is known to be
+    # wrong by more than this much probability (docs/BUILD_EXCHANGES.md E8).
+    # The sim draws a normal; real residuals are leptokurtic, so it overstates
+    # the chance of landing past any threshold — the direction that invents
+    # edges rather than hiding them. ``None`` disables the gate entirely.
+    ladder_tolerance: float | None = None
+    # The league whose calibration table the gate reads. Set by the live
+    # runner; without it the gate has no table and stands down.
+    league: str | None = None
     # Charge an exchange's per-contract taker fee against EV and stake sizing
     # (docs/BUILD_EXCHANGES.md D3). Sportsbook rows are unaffected either way:
     # their margin is already inside the price. Turn off only to model a
@@ -181,6 +191,49 @@ def model_probability(
         hit = scores > point if side == "over" else scores < point
         return float(np.mean(hit))
     raise ValueError(f"unknown market {market!r}")
+
+
+def _ladder_gate_blocks(
+    proj: GameProjection,
+    market: str,
+    side: str,
+    point: float | None,
+    book: str,
+    config: SlateConfig,
+) -> bool:
+    """Whether this rung sits where the sim's distribution shape is untrustworthy.
+
+    The offset is measured from the model's own fair line, because that is what
+    the calibration measures: how badly a normal misses this far out from the
+    expectation. Spread points are normalized to the home side first — a fair
+    spread of −6 is quoted as away +6, so comparing the away number to the home
+    fair line directly would read twelve points of offset where there are none.
+    Only :data:`~velocity.store.schema.LADDER_BOOKS` rows are gated. A
+    sportsbook posts one main number that its own backtests already validate,
+    and gating it would silently switch off ordinary spread and total betting;
+    an exchange posts the whole ladder, which is what this measurement is
+    about. A market with no number, no configured league, or no tolerance set
+    is never blocked.
+    """
+    if config.ladder_tolerance is None or config.league is None or point is None:
+        return False
+    if str(book).lower() not in LADDER_BOOKS:
+        return False
+    if market == "spread":
+        home_point = contract_key(market, side, point)
+        if home_point is None:
+            return False
+        offset = abs(home_point - float(proj.sim.fair_spread()))
+    elif market == "total":
+        offset = abs(point - float(proj.sim.fair_total()))
+    elif market in _TEAM_TOTAL_MARKETS:
+        scores = proj.sim.home_score if market == "team_total_home" else proj.sim.away_score
+        offset = abs(point - float(np.median(scores)))
+    else:
+        return False
+    return not offset_is_honest(
+        config.league, market, offset, tolerance=config.ladder_tolerance
+    )
 
 
 def _fair_probability(
@@ -333,6 +386,8 @@ def _best_opportunity(
         ):
             continue
         venue = venue_for_book(row["book"]) if config.charge_exchange_fees else None
+        if _ladder_gate_blocks(proj, market, side, point, row["book"], config):
+            continue
         p_model = model_probability(proj, market, side, point)
         if p_model is None:  # projection can't price this market (no segment sim)
             continue

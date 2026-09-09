@@ -487,6 +487,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="also price the Kalshi and Polymarket boards alongside the "
                              "sportsbooks (free, keyless; docs/BUILD_EXCHANGES.md E6). "
                              "Paper only — nothing is ever ordered.")
+    parser.add_argument("--ladder-tolerance", type=float, default=0.02,
+                        help="max probability error the sim's distribution shape may have "
+                             "at a rung's distance from the fair line before that exchange "
+                             "rung is refused (docs/BUILD_EXCHANGES.md E8). Only exchange "
+                             "rows are gated; 0 disables the gate.")
     parser.add_argument("--team-totals", action=argparse.BooleanOptionalAction, default=True,
                         help="fetch + price team totals on live football boards")
     parser.add_argument("--team-total-edge", type=float, default=0.0,
@@ -714,6 +719,8 @@ def main() -> None:
                   "--ncaaf-spreads re-enables")
         cfg = SlateConfig(
             exclude_closing=False, min_edge=args.min_edge, starting_bankroll=args.bankroll,
+            ladder_tolerance=args.ladder_tolerance if args.ladder_tolerance > 0 else None,
+            league=args.league,
             model_weight=model_weight,
             min_edge_by_market=parse_market_edges(args.min_edge_market),
             exclude_markets=game_excludes,
