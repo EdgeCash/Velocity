@@ -300,7 +300,7 @@ jobs:
               echo "board: no banked payload for ${league} under ${STALE_AFTER}min; pulling live"
             fi
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
-              EXTRA="--fp-projections $FP_FILE"
+              EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi
             if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
               EXTRA="$EXTRA --injuries-file $INJ_FILE"
