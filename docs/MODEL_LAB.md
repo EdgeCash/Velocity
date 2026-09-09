@@ -686,3 +686,89 @@ high on totals and 1.1 points low on home margin (actual home margin +6.8
 non-neutral, model +5.75): the blend's home-field advantage is under by a
 point. That is M5's "one HFA across the blend" (`docs/SYSTEM_REVIEW.md`),
 with the number now attached.
+
+## The college HFA, pace and level round (2026-09)
+
+`docs/SYSTEM_REVIEW.md` §3.3–3.5 asked three things of the college blend:
+put team pace into the EPA half instead of a 65-play constant, settle the
+two home-field numbers (the EPA half assumed 2.5, the scores fit learns
+~4.85), and down-weight garbage time. Garbage time waits on a plays
+rebuild — the committed college plays carry no win probability, clock or
+score state (1.3) — so this round ran the first two, each as the promoted
+`blend-epa50` with one change, walk-forward over 12,212 games 2015–2026:
+
+- **The home edge, fitted inside the EPA ridge.** `compress_plays` now rides
+  a home flag on each cell (+½ at home, −½ away, 0 neutral) and
+  `fit_ratings(…, home_col="home")` carries one unpenalized coefficient for
+  it. It measures **+0.027 EPA/play** over 2015+, **+0.035** over 2022+ —
+  **1.8–2.3 points at the league's pace**, *below* the 2.5 the EPA half
+  assumed and well below the scores fit's 3.96 / 4.85 and the raw
+  non-neutral home margin of +6.8. EPA does not see everything a home crowd
+  moves (field position, special teams, the kicks).
+- **Variants.** `blend-hfa-own` (EPA half at its own fitted edge, scores
+  half at its learned one), `blend-hfa-epa` (both halves at the EPA-fitted
+  edge), `blend-hfa-scores` (both at the scores-learned edge), and
+  `blend-hfa-own-pace` (the EPA half through the pace-aware
+  `NCAAFGameModel`, each team's plays per game from the training window).
+
+| variant | Brier | log loss | calibration error | ATS vs close | O/U vs close | O/U at ≥ 6 (n) | O/U at ≥ 8 (n) |
+|---|---|---|---|---|---|---|---|
+| **blend-epa50 (promoted)** | **0.19752** | **0.5754** | 0.01686 | 49.95% | 51.18% | 52.6% (3,733) | 53.3% (2,432) |
+| blend-hfa-own | 0.19824 | 0.5774 | 0.01699 | 49.99% | 51.08% | 52.7% (3,747) | 53.3% (2,439) |
+| blend-hfa-epa | 0.19918 | 0.5801 | 0.03911 | 50.02% | 51.06% | 53.6% (3,564) | 53.6% (2,304) |
+| blend-hfa-scores | 0.19856 | 0.5776 | 0.01582 | 50.01% | 51.12% | 52.7% (3,737) | 53.4% (2,435) |
+| blend-hfa-own-pace | 0.19801 | 0.5766 | **0.01496** | 50.00% | 51.03% | 52.7% (3,789) | 53.1% (2,460) |
+
+Home field does not move the money: home field is symmetric on the total,
+and every HFA variant leaves the ≥ 6 and ≥ 8 totals records where they
+were. On the moneyline the promoted constant beats every fitted edge on
+Brier (by 0.0005–0.0017, a few seed-sds), and sharing the EPA-fitted edge
+across both halves costs calibration badly (0.039): the EPA number is too
+small for the scores half. Pace buys calibration (0.0169 → 0.0150) at a
+small Brier cost and no totals gain. **None promoted.** The one variant
+that moved the totals record — `blend-hfa-epa`, 53.6% at ≥ 6 — did it by
+accident: the scores fit adds its home edge to the home team alone, so
+cutting that edge from 4.85 to 2.3 lowered the scores half's total by ~2.5
+and the blend's by ~1.25, and that happened to be the size of a bias the
+residual bank had already flagged.
+
+**The bias.** The promoted blend's totals against actuals, by season:
+
+| 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|---|
+| −0.1 | +1.5 | −0.6 | **+1.8** | **+1.2** | **+2.3** | **+1.0** | **+1.3** | **+1.4** |
+
+The EPA half is levelled on the trailing two seasons (the NFL fix); the
+scores half is not — its ridge fits one intercept over its whole history
+with no recency, and college scoring fell four points a game after 2021.
+In-sample on the trailing two seasons the scores half runs +0.89 a team.
+`calibrate_scores_level` (velocity.models.level) shifts its `base_points`
+through the model exactly as the NFL's, ratings and home edge untouched —
+the `blend-level2` variant below.
+
+**`blend-level2`** — the promoted blend with the scores half levelled on the
+trailing two seasons (everything else unchanged):
+
+| variant | Brier | log loss | calibration error | O/U vs close | O/U at ≥ 6 (n) · ROI | at ≥ 8 (n) · ROI | at ≥ 10 (n) · ROI |
+|---|---|---|---|---|---|---|---|
+| blend-epa50 (was) | 0.19752 | 0.5754 | 0.01686 | 51.18% | 52.6% (3,733) · +0.3% | 53.3% (2,432) · +1.8% | 53.7% (1,498) · +2.6% |
+| **blend-level2 (promoted)** | 0.19753 | 0.5755 | **0.01654** | **51.22%** | **53.3% (3,605) · +1.7%** | **53.5% (2,351) · +2.1%** | **53.9% (1,418) · +2.9%** |
+
+Brier and log loss flat to the fourth decimal (the level does not touch the
+margin), calibration a shade better, and the one staked market moves at
+every threshold: +0.7 points of hit rate at ≥ 6, worth 1.4% of ROI at −110.
+The by-season totals bias falls from +1.0…+2.3 to −0.1…+1.6 (2021 and 2023
+keep some: a two-season window lags a fast drop). At w = 0.13 the claimed
+edge at ≥ 6 (0.028) now sits just under the realized one (0.033) — the
+conservative side.
+
+**Promoted: `--ncaaf-level fit`** (`DEFAULT_NCAAF_LEVEL`) in the live
+runner — the scores half's `base_points` shifted through the model on the
+trailing two seasons at slate time, exactly as the NFL's level is. The
+college residual bank (`datasets/ncaaf/sim_residuals.parquet`) is rebuilt
+from the promoted model's projections.
+
+**Carried forward.** Garbage-time down-weighting (3.5) needs the college
+plays rebuilt with win probability and score state (1.3); the fitted home
+edge and the pace-aware EPA half stay in the lab as variants, measured and
+unpromoted.

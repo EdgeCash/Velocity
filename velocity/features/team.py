@@ -73,6 +73,11 @@ class TeamRatings:
     ridge_lambda: float
     n_plays: int
     teams: tuple[str, ...] = field(default_factory=tuple)
+    # The fitted home-field edge in EPA/play (the gap between an offense at
+    # home and the same offense away), when the fit carried a home column;
+    # 0.0 when it did not. A scoring model turns it into points with the
+    # matchup's pace (docs/MODEL_LAB.md, the college HFA round).
+    home_epa: float = 0.0
 
     def matchup_delta(self, off_team: str, def_team: str) -> float:
         """Net EPA/play *deviation* for ``off_team``'s offense vs ``def_team``.
@@ -95,6 +100,7 @@ def fit_ratings(
     ridge_lambda: float = DEFAULT_RIDGE_LAMBDA,
     epa_col: str = "epa",
     weights: pd.Series | None = None,
+    home_col: str | None = None,
 ) -> TeamRatings:
     """Fit ridge-adjusted offense/defense EPA/play ratings from ``plays``.
 
@@ -105,6 +111,12 @@ def fit_ratings(
     month's plays count more than last season's; ``None`` weights every play
     equally (bit-identical to the unweighted fit). The fit is fully
     deterministic — the same inputs always produce identical ratings.
+
+    ``home_col`` names a column of ``plays`` carrying +0.5 for an offense at
+    home, −0.5 away and 0 on a neutral field; the fit then carries one more
+    unpenalized coefficient, the home-field edge in EPA/play, returned as
+    ``home_epa``. Without it the intercept absorbs home field and the
+    offense/defense deviations are what they always were.
     """
     if ridge_lambda <= 0:
         raise ValueError("ridge_lambda must be positive for an identifiable fit")
@@ -118,8 +130,10 @@ def fit_ratings(
     n_teams = len(teams)
     n_plays = len(df)
 
-    # Design matrix columns: [intercept] + offense one-hot + defense one-hot.
-    n_cols = 1 + 2 * n_teams
+    # Design matrix columns: [intercept] + offense one-hot + defense one-hot
+    # (+ the home column).
+    with_home = home_col is not None and home_col in df.columns
+    n_cols = 1 + 2 * n_teams + (1 if with_home else 0)
     x = np.zeros((n_plays, n_cols))
     rows = np.arange(n_plays)
     x[:, 0] = 1.0
@@ -127,12 +141,17 @@ def fit_ratings(
     def_cols = df["defteam"].map(index).to_numpy() + 1 + n_teams
     x[rows, off_cols] = 1.0
     x[rows, def_cols] = 1.0
+    if with_home:
+        x[:, n_cols - 1] = pd.to_numeric(df[home_col], errors="coerce").fillna(0.0).to_numpy()
     y = df[epa_col].to_numpy(dtype=float)
 
-    # Ridge normal equations; the intercept (column 0) is left unpenalized.
-    # With weights this is weighted ridge: X'WX + λI and X'Wy.
+    # Ridge normal equations; the intercept (column 0) and the home column
+    # are left unpenalized. With weights this is weighted ridge: X'WX + λI
+    # and X'Wy.
     penalty = np.ones(n_cols)
     penalty[0] = 0.0
+    if with_home:
+        penalty[n_cols - 1] = 0.0
     if weights is not None:
         w = weights.reindex(df.index).to_numpy(dtype=float)
         if np.any(~np.isfinite(w)) or np.any(w < 0):
@@ -155,6 +174,7 @@ def fit_ratings(
         ridge_lambda=ridge_lambda,
         n_plays=n_plays,
         teams=tuple(teams),
+        home_epa=float(beta[n_cols - 1]) if with_home else 0.0,
     )
 
 

@@ -269,7 +269,7 @@ def nfl_variants(
     return variants
 
 
-def compress_plays(plays: pd.DataFrame) -> pd.DataFrame:
+def compress_plays(plays: pd.DataFrame, games: pd.DataFrame | None = None) -> pd.DataFrame:
     """Aggregate plays to ``(posteam, defteam, season, week)`` cells for the ridge fit.
 
     The one-hot design matrix in :func:`fit_ratings` is identical for every
@@ -291,6 +291,26 @@ def compress_plays(plays: pd.DataFrame) -> pd.DataFrame:
         .agg(epa="mean", n="count")
         .reset_index()
     )
+    if games is not None and not games.empty:
+        # The home flag rides the cell (a posteam/defteam pair in one week is
+        # one game): +0.5 at home, −0.5 away, 0 on a neutral field — the
+        # column :func:`fit_ratings` fits a home-field edge on.
+        neutral = (games["neutral_site"].astype(bool) if "neutral_site" in games.columns
+                   else pd.Series(False, index=games.index))
+        home = pd.DataFrame({
+            "posteam": games["home_team"].astype(str), "defteam": games["away_team"].astype(str),
+            "season": games["season"], "week": games["week"],
+            "home": np.where(neutral, 0.0, 0.5),
+        })
+        away = pd.DataFrame({
+            "posteam": games["away_team"].astype(str), "defteam": games["home_team"].astype(str),
+            "season": games["season"], "week": games["week"],
+            "home": np.where(neutral, 0.0, -0.5),
+        })
+        flags = pd.concat([home, away], ignore_index=True).drop_duplicates(
+            subset=["posteam", "defteam", "season", "week"])
+        cells = cells.merge(flags, on=["posteam", "defteam", "season", "week"], how="left")
+        cells["home"] = cells["home"].fillna(0.0)
     return cells
 
 
@@ -487,6 +507,81 @@ def ncaaf_variants(
             "blend-epa30": ("games", blend(0.30)),
             "blend-epa50": ("games", blend(0.50)),
             "blend-epa70": ("games", blend(0.70)),
+        })
+
+        # The college HFA and pace round (docs/SYSTEM_REVIEW.md §3.3–3.4).
+        # The EPA half assumed 2.5 points of home field while the scores
+        # half learned ~5 and the residual bank found the blend a point low
+        # on home margin; and it ran every team at 65 plays while real pace
+        # spans 55–71. Each variant is the promoted blend with one change.
+        def blend_hfa(mode: str, *, pace: bool = False) -> VariantFactory:
+            def factory(train_games: pd.DataFrame) -> BlendedGameModel:
+                from dataclasses import replace as _replace
+
+                from velocity.features.team import team_pace
+                from velocity.models.game_ncaaf import NCAAFGameModel, NCAAFModelConfig
+                from velocity.models.level import mean_points_per_team
+
+                sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                cells = compress_plays(sub, train_games)
+                ratings = fit_ratings(cells, ridge_lambda=50.0,
+                                      weights=cells["n"].astype(float), home_col="home")
+                scores_ratings = fit_scores_ratings(train_games, ridge_lambda=10.0)
+                paces = team_pace(sub) if pace else {}
+                league_pace = (float(np.mean(list(paces.values()))) if paces else 65.0)
+                # One HFA across the blend, in points: the EPA fit's edge at
+                # the league's pace ("epa"), or the scores fit's learned edge
+                # ("scores"); "own" keeps each half's own number.
+                epa_hfa_points = ratings.home_epa * league_pace
+                if mode == "epa":
+                    hfa_epa, hfa_scores = epa_hfa_points, epa_hfa_points
+                elif mode == "scores":
+                    hfa_epa, hfa_scores = scores_ratings.home_edge, scores_ratings.home_edge
+                else:
+                    hfa_epa, hfa_scores = epa_hfa_points, scores_ratings.home_edge
+                level = mean_points_per_team(train_games)
+                if pace:
+                    epa_model: object = NCAAFGameModel(
+                        ratings, paces,
+                        NCAAFModelConfig(base_points=level, hfa_points=hfa_epa,
+                                         league_pace=league_pace, sim=sim),
+                    )
+                else:
+                    epa_model = NFLGameModel(
+                        ratings, _replace(cfg, base_points=level, hfa_points=hfa_epa))
+                scores_model = _model(_replace(scores_ratings, home_edge=hfa_scores))
+                return BlendedGameModel(epa_model, scores_model, 0.5, sim)
+
+            return factory
+
+        def blend_levelled(epa_weight: float) -> VariantFactory:
+            """The promoted blend with the scores half levelled on the
+            trailing two seasons (velocity.models.level) — its unweighted
+            intercept lagged the post-2021 scoring drop by 1–2 points a game."""
+            def factory(train_games: pd.DataFrame) -> BlendedGameModel:
+                from dataclasses import replace as _replace
+
+                from velocity.models.level import calibrate_scores_level, mean_points_per_team
+
+                sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                cells = compress_plays(sub)
+                epa_model = NFLGameModel(
+                    fit_ratings(cells, ridge_lambda=50.0,
+                                weights=cells["n"].astype(float)),
+                    _replace(cfg, base_points=mean_points_per_team(train_games)),
+                )
+                scores_model = calibrate_scores_level(
+                    _model(fit_scores_ratings(train_games, ridge_lambda=10.0)), train_games)
+                return BlendedGameModel(epa_model, scores_model, epa_weight, sim)
+
+            return factory
+
+        variants.update({
+            "blend-level2": ("games", blend_levelled(0.50)),
+            "blend-hfa-own": ("games", blend_hfa("own")),
+            "blend-hfa-epa": ("games", blend_hfa("epa")),
+            "blend-hfa-scores": ("games", blend_hfa("scores")),
+            "blend-hfa-own-pace": ("games", blend_hfa("own", pace=True)),
         })
 
     return variants

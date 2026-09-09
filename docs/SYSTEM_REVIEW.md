@@ -382,9 +382,17 @@ remain. Found on the way: the live FantasyPros feed spells receptions
 receptions or receiving-yards prop was ever priced and every receiver's
 PPR points were missing from DFS. Fixed with the live spelling under test.
 
-### M5 — College model lab (one PR)
-Pace into the EPA half (3.3); one HFA across the blend (3.4); garbage-time
-rebuild and variant (1.3, 3.5). Promote what wins.
+### M5 — College model lab (one PR) — **run 2026-09; the level promoted, HFA and pace not**
+Pace into the EPA half (3.3) and the home edge fitted inside the EPA ridge
+(3.4) were run as four variants (`docs/MODEL_LAB.md`, the college round):
+neither beats the promoted blend on Brier, neither moves the totals record
+(home field is symmetric on the total), and the EPA-fitted edge is only
+1.8–2.3 points — below the 2.5 assumed, far below the scores fit's 4.85.
+What the round found instead: the scores half's intercept lagged the
+post-2021 scoring drop by 1–2 points a game. Levelled on the trailing two
+seasons (`calibrate_scores_level`), the ≥6 totals record goes 52.6% →
+53.3% with Brier flat — promoted. Garbage time (3.5) still waits on the
+plays rebuild (1.3).
 
 ### M6 — The shop (one PR, after a credit-cost check) — **mechanism landed 2026-09, the switch left to the budget**
 Sharp-close CLV (4.3): the grader prefers a Pinnacle close when one is on

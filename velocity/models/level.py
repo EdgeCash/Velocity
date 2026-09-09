@@ -30,6 +30,7 @@ from dataclasses import replace
 import pandas as pd
 
 from velocity.models.game_nfl import NFLGameModel
+from velocity.models.game_scores import ScoresGameModel
 
 
 def mean_points_per_team(
@@ -45,7 +46,9 @@ def mean_points_per_team(
     return float((played["home_score"] + played["away_score"]).mean()) / 2.0
 
 
-def level_shift(model: NFLGameModel, games: pd.DataFrame, *, seasons: int | None = None) -> float:
+def level_shift(
+    model: NFLGameModel | ScoresGameModel, games: pd.DataFrame, *, seasons: int | None = None
+) -> float:
     """Points per team the model runs high (+) or low (−) on ``games``.
 
     Projects every played game in ``games`` (the trailing ``seasons`` of it
@@ -79,3 +82,22 @@ def calibrate_level(
         return model
     config = replace(model.config, base_points=model.config.base_points - shift)
     return NFLGameModel(model.ratings, config)
+
+
+def calibrate_scores_level(
+    model: ScoresGameModel, games: pd.DataFrame, *, seasons: int | None = 2
+) -> ScoresGameModel:
+    """The scores model with ``base_points`` shifted so its totals center on the data.
+
+    The scores ridge fits one intercept over its whole training history with
+    no recency, so in a league whose scoring moved (college, −4 points a
+    game after the 2023 clock rules) its level lags the era: the college
+    blend's totals ran 1.0–2.3 points high every season from 2021 on. Same
+    remedy as the NFL's: fit the level through the model on the trailing
+    ``seasons``; ratings and the home edge untouched.
+    """
+    shift = level_shift(model, games, seasons=seasons)
+    if shift == 0.0:
+        return model
+    ratings = replace(model.ratings, base_points=model.ratings.base_points - shift)
+    return ScoresGameModel(ratings, model.config)

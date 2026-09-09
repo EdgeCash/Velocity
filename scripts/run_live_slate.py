@@ -502,6 +502,17 @@ def _build_projection(
             NFLModelConfig(base_points=base, plays_per_game=65.0,
                            hfa_points=2.5, sim=sim),
         )
+        # The scores half's level (docs/MODEL_LAB.md, the college level
+        # round): its unweighted intercept lags the post-2021 scoring drop
+        # by 1–2 points a game; fitted through the model on the trailing
+        # two seasons like the NFL's, ratings and home edge untouched.
+        if resolve_ncaaf_level(args.ncaaf_level) == "fit":
+            from velocity.models.level import calibrate_scores_level, level_shift
+
+            drift = level_shift(scores_model, games, seasons=NFL_LEVEL_SEASONS)
+            scores_model = calibrate_scores_level(scores_model, games, seasons=NFL_LEVEL_SEASONS)
+            print(f"NCAAF scores level: base {scores_model.ratings.base_points:.2f} pts/team "
+                  f"(the fit ran {drift:+.2f} on the trailing {NFL_LEVEL_SEASONS} seasons)")
         model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
         kind = (f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5, "
                 f"base {base:.1f}) on {len(plays)} plays")
@@ -525,6 +536,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
     parser.add_argument("--n-sims", type=int, default=10_000)
+    parser.add_argument("--ncaaf-level", choices=["fit", "constant"], default=None,
+                        help="the college blend's scores-half level: fitted on the trailing "
+                             "two seasons, or the ridge's own intercept")
     parser.add_argument("--nfl-level", choices=["fit", "constant"], default=None,
                         help="NFL scoring level: fitted through the model on the training "
                              "window, or the 22.5 constant (default: fit)")
@@ -839,6 +853,19 @@ NFL_LEVEL_SEASONS = 2
 
 def resolve_nfl_level(explicit: str | None) -> str:
     return explicit or DEFAULT_NFL_LEVEL
+
+
+# The college blend's scores half: "fit" levels its intercept on the trailing
+# two seasons (velocity.models.level.calibrate_scores_level); "constant"
+# keeps the ridge's own. Promoted by the college level round
+# (docs/MODEL_LAB.md): the totals record at the ≥6 filter 52.6% → 53.3%,
+# Brier flat, calibration better — the ridge's intercept lagged the
+# post-2021 scoring drop by 1–2 points a game.
+DEFAULT_NCAAF_LEVEL = "fit"
+
+
+def resolve_ncaaf_level(explicit: str | None) -> str:
+    return explicit or DEFAULT_NCAAF_LEVEL
 
 
 def resolve_sim_shape(explicit: str | None, league: str) -> str:
