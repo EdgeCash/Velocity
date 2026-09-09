@@ -359,9 +359,15 @@ realized one (median 0.039 on the re-run, stakes ~1u instead of 3–5u), and
 the class cap holds the totals class to half the slate. Provisional until
 the S3 staking sweep fits the weight. The Methods page correction is S4's.
 
-### M3 — Props (one PR)
-Dispersion fit from `player_weeks` (5.2) → `FootballPropConfig` values with
-the table in `PROPS.md`; prop-close attach in the grader (5.4).
+### M3 — Props (one PR) — **landed 2026-09**
+Dispersion fitted from `player_weeks` (5.2) into `FootballPropConfig` —
+per-catch sd per position (6.0 → 10.6 for receivers), rushing CV 0.45 →
+0.72 with the banked right-skewed shape, receptions' per-position
+overdispersion, the volume σs net of their Poisson part — with the table
+in `docs/PROPS.md`; the prior the data refused (teammates' receiving yards
+are uncorrelated week to week, −0.02) recorded there. Prop closes attached
+in the grader from the props archive (5.4), prop CLV on the ledger. 5.3
+(the QB moves every receiving prop) is the starter map's job already.
 
 ### M4 — DFS (two PRs)
 (a) DST model (6.1) + sim-scored GPP and bonus-inclusive means (6.2, 6.3)

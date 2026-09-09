@@ -20,15 +20,22 @@ terms per player (they are point projections); what they lack is a
 The result satisfies :class:`~velocity.wagering.props_slate.PropDistributions`
 (pricing) and exposes ``player_samples`` (the parlay protocol's prop hook).
 
-Dispersion defaults below are honest priors, not fitted constants — the prop
-backtest's shrink sweep (docs/FOOTBALL_CUTOVER.md Phase 3) is what calibrates
+Dispersion is fitted from the banked player-weeks (``scripts/fit_prop_dispersion.py``,
+docs/PROPS.md): the volume σs net of the Poisson count, receptions'
+per-position overdispersion, the per-catch yardage sd per position, and
+rushing yards as the player's mean times a standardized residual drawn from
+``datasets/nfl/prop_residuals.parquet`` — the measured right skew sits
+between a normal and a gamma, and the pool matches both tails. The prop
+backtest's shrink sweep (docs/FOOTBALL_CUTOVER.md Phase 3) still calibrates
 the confidence actually bet on, exactly as it did for MLB.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -61,21 +68,80 @@ def player_key(player_id: object, player_name: object) -> str:
     return _normalize_name(str(player_name))
 
 
+# Where the rushing residual pool is banked (scripts/fit_prop_dispersion.py
+# --bank): one standardized within-player-season game residual per row,
+# keyed by position. Loaded once; absent means a normal, never an error.
+PROP_RESIDUALS_PATH = Path("datasets/nfl/prop_residuals.parquet")
+_RUSH_POOL_CACHE: dict[str, dict[str, np.ndarray] | None] = {}
+
+
+def load_rush_pool(path: Path | None = None) -> dict[str, np.ndarray] | None:
+    """``position → standardized rushing residuals`` from the bank, or ``None``."""
+    target = path or PROP_RESIDUALS_PATH
+    key = str(target)
+    if key not in _RUSH_POOL_CACHE:
+        pool: dict[str, np.ndarray] | None = None
+        if target.exists():
+            frame = pd.read_parquet(target)
+            frame = frame[frame["market"] == "rush_yards"]
+            pool = {
+                str(position): part["z"].to_numpy(dtype=float)
+                for position, part in frame.groupby("position")
+                if len(part) >= 50
+            } or None
+        _RUSH_POOL_CACHE[key] = pool
+    return _RUSH_POOL_CACHE[key]
+
+
 @dataclass(frozen=True)
 class FootballPropConfig:
-    """Simulation size and dispersion priors (calibrated later by the backtest)."""
+    """Simulation size and dispersion — fitted on 2020–2025 player-weeks.
+
+    Every constant here is a within-player-season measurement from
+    ``datasets/nfl/player_weeks.parquet`` (``scripts/fit_prop_dispersion.py``;
+    the table is in docs/PROPS.md). The shipped priors they replace are in
+    the comments.
+    """
 
     n_sims: int = 10_000
-    # Team-level volume swing (lognormal sigma): how much a game script moves
-    # the whole passing/rushing pie versus its projection.
-    pass_volume_sigma: float = 0.18
-    rush_volume_sigma: float = 0.25
-    # Per-reception yardage noise, scaled by sqrt(receptions).
-    yards_sd_per_reception: float = 6.0
+    # Team-level volume swing (lognormal σ): how much a game script moves the
+    # whole passing/rushing pie versus its projection. Measured on team
+    # receptions / carries net of their Poisson part (was 0.18 / 0.25 — the
+    # priors had folded the count noise into the multiplier).
+    pass_volume_sigma: float = 0.118
+    rush_volume_sigma: float = 0.175
+    # Receptions: the per-player negative-binomial overdispersion on top of
+    # the team multiplier (a gamma-mixed Poisson). Backs' targets swing with
+    # the script far more than tight ends' (was 0 — Poisson × lognormal only).
+    receptions_phi_by_position: Mapping[str, float] = field(
+        default_factory=lambda: {"WR": 0.027, "TE": 0.0, "RB": 0.083})
+    receptions_phi: float = 0.03
+    # Per-reception yardage noise, scaled by √receptions. A deep threat is
+    # not a slot receiver (was 6.0 for everyone; measured 10.6 / 7.9 / 7.6).
+    yards_sd_by_position: Mapping[str, float] = field(
+        default_factory=lambda: {"WR": 10.57, "TE": 7.92, "RB": 7.56})
+    yards_sd_per_reception: float = 9.0
     # Player rushing-yards noise on top of the team multiplier, as a fraction
     # of the player's mean (floored so goal-line backs aren't near-determinate).
-    rush_sd_fraction: float = 0.45
+    # Measured 0.72 for backs and 0.87 for quarterbacks (was 0.45 — a normal
+    # that under-priced every alt-line over).
+    rush_cv_by_position: Mapping[str, float] = field(
+        default_factory=lambda: {"RB": 0.72, "QB": 0.87})
+    rush_sd_fraction: float = 0.72
     rush_sd_floor: float = 8.0
+    # The shape of that noise: standardized residuals per position drawn from
+    # the banked pool (right-skewed, as long runs make it). ``None`` reads the
+    # committed bank; an empty mapping forces the normal.
+    rush_pool: Mapping[str, np.ndarray] | None = field(default=None, compare=False)
+
+    def phi(self, position: str) -> float:
+        return float(self.receptions_phi_by_position.get(position, self.receptions_phi))
+
+    def per_catch_sd(self, position: str) -> float:
+        return float(self.yards_sd_by_position.get(position, self.yards_sd_per_reception))
+
+    def rush_cv(self, position: str) -> float:
+        return float(self.rush_cv_by_position.get(position, self.rush_sd_fraction))
 
 
 class FootballPropSim:
@@ -142,6 +208,7 @@ def simulate_team_props(
     """Simulate one team's player outcomes under shared volume multipliers."""
     config = config or FootballPropConfig()
     n = config.n_sims
+    pool = load_rush_pool() if config.rush_pool is None else config.rush_pool
     # Lognormal with mean exactly 1 (mu = -sigma^2/2), so projections are the
     # distribution's mean, not its median.
     pass_mult = rng.lognormal(-config.pass_volume_sigma**2 / 2, config.pass_volume_sigma, n)
@@ -154,10 +221,16 @@ def simulate_team_props(
         rec_mean = p.means.get("receptions", 0.0)
         rec_yds_mean = p.means.get("receiving_yards", 0.0)
         if rec_mean >= _MIN_MEAN["receptions"]:
-            receptions = rng.poisson(rec_mean * pass_mult).astype(float)
+            lam = rec_mean * pass_mult
+            phi = config.phi(p.position)
+            if phi > 0:
+                # Gamma-mixed Poisson: mean 1, variance φ on the rate — the
+                # negative binomial, with the team multiplier on top.
+                lam = lam * rng.gamma(1.0 / phi, phi, n)
+            receptions = rng.poisson(lam).astype(float)
             samples[(p.key, "receptions")] = receptions
             ypr = (rec_yds_mean / rec_mean) if rec_mean > 0 else 10.0
-            noise = rng.normal(0.0, config.yards_sd_per_reception * np.sqrt(receptions))
+            noise = rng.normal(0.0, config.per_catch_sd(p.position) * np.sqrt(receptions))
             rec_yards = np.clip(receptions * ypr + noise, 0.0, None)
             if rec_yds_mean >= _MIN_MEAN["receiving_yards"]:
                 samples[(p.key, "receiving_yards")] = rec_yards
@@ -165,8 +238,17 @@ def simulate_team_props(
 
         rush_mean = p.means.get("rush_yards", 0.0)
         if rush_mean >= _MIN_MEAN["rush_yards"]:
-            sd = max(config.rush_sd_fraction * rush_mean, config.rush_sd_floor)
-            rush = rng.normal(rush_mean * rush_mult, sd)
+            sd = max(config.rush_cv(p.position) * rush_mean, config.rush_sd_floor)
+            # The player's own noise takes the banked shape for his position
+            # (backs for anyone without one); a missing bank is the normal.
+            z_pool = None
+            if pool:
+                z_pool = pool.get(p.position, pool.get("RB"))
+            if z_pool is not None and len(z_pool):
+                z = z_pool[rng.integers(0, len(z_pool), size=n)]
+            else:
+                z = rng.standard_normal(n)
+            rush = rush_mean * rush_mult + sd * z
             samples[(p.key, "rush_yards")] = np.clip(rush, 0.0, None)
 
         pass_tds_mean = p.means.get("pass_tds", 0.0)

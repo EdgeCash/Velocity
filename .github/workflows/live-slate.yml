@@ -114,6 +114,13 @@ jobs:
               --limit 30 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/odds/$id" || true
           done
+          # The props collector's twice-daily snapshots — the prop closes
+          # (docs/PROPS.md). ~6 runs ≈ the last three days of prop boards.
+          mkdir -p artifacts/props
+          for id in $(gh run list --workflow collect-football-props.yml --status success \
+              --limit 6 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/props/$id" || true
+          done
 
       # The durable copy of the season chain. Previous slates live in 60-day
       # artifacts, so a failure streak or a retention gap used to lose the
@@ -143,7 +150,8 @@ jobs:
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
-              --odds-dir artifacts/odds --league "${league}" || true
+              --odds-dir artifacts/odds --props-dir artifacts/props \
+              --league "${league}" || true
           done
 
       - name: Park the season chain (R2)

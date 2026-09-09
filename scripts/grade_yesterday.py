@@ -151,6 +151,66 @@ def _carry_sized(
     return graded.merge(sized, on=keys, how="left")
 
 
+def prop_closing_for_slate(
+    props_dir: Path, props: pd.DataFrame, games_map: pd.DataFrame, league: str
+) -> pd.DataFrame | None:
+    """The consensus closing prop line per (player, market, side), or ``None``.
+
+    Reads every ``props_{league}_*.parquet`` snapshot the props collector
+    banked under ``props_dir`` (twice daily; docs/PROPS.md), keeps this
+    slate's games, takes each book's last pre-kickoff quote per (player,
+    market, side), and reduces across books to the median ``closing_point``
+    and ``closing_price``. Names match the provider's own, normalized.
+    """
+    from velocity.backtest.props_football import _normalize_name
+    from velocity.store.pit import lines_before_kickoff
+
+    pattern = rf"props_{re.escape(league)}_{_STAMP}\.parquet"
+    snapshots = sorted(p for p in props_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name))
+    if not snapshots or props.empty:
+        return None
+    game_ids = set(games_map["game_id"].astype(str))
+    frames = []
+    for path in snapshots:
+        snap = pd.read_parquet(path)
+        if "league" in snap.columns:
+            snap = snap[snap["league"].astype(str) == league]
+        snap = snap[snap["game_id"].astype(str).isin(game_ids)]
+        if not snap.empty:
+            frames.append(snap)
+    if not frames:
+        return None
+    # Snapshots stamp UTC-aware timestamps; a games map may carry naive
+    # kickoffs (or the reverse). Put both on naive UTC before comparing.
+    def _utc_naive(values: pd.Series) -> pd.Series:
+        return pd.to_datetime(values, utc=True).dt.tz_localize(None)
+
+    stacked = pd.concat(frames, ignore_index=True)
+    stacked = stacked.assign(timestamp=_utc_naive(stacked["timestamp"]))
+    kickoffs = games_map.assign(kickoff=_utc_naive(games_map["kickoff"]))
+    lines = lines_before_kickoff(stacked, kickoffs)
+    if lines.empty:
+        return None
+    lines = lines.assign(_player=lines["player"].astype(str).map(_normalize_name))
+    lines = lines.sort_values("timestamp")
+    per_book = lines.groupby(["_player", "market", "side", "book"], as_index=False).tail(1)
+    consensus = (per_book.groupby(["_player", "market", "side"], as_index=False)
+                 .agg(closing_point=("point", "median"), closing_price=("price", "median")))
+    return consensus
+
+
+def attach_prop_closes(props: pd.DataFrame, consensus: pd.DataFrame | None) -> pd.DataFrame:
+    """Join the consensus closes onto the prop slate by normalized player name."""
+    if consensus is None or consensus.empty or props.empty:
+        return props
+    from velocity.backtest.props_football import _normalize_name
+
+    keyed = props.assign(_player=props["player"].astype(str).map(_normalize_name))
+    out = keyed.drop(columns=["closing_point", "closing_price"], errors="ignore").merge(
+        consensus, on=["_player", "market", "side"], how="left")
+    return out.drop(columns=["_player"])
+
+
 def closing_for_slate(
     odds_dir: Path, slate: pd.DataFrame, games_map: pd.DataFrame, league: str
 ) -> pd.DataFrame | None:
@@ -452,6 +512,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
     parser.add_argument("--league", default="nfl",
                         choices=["nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl"])
+    parser.add_argument("--props-dir", default="artifacts/props",
+                        help="the props collector's banked snapshots (prop closes)")
     parser.add_argument("--odds-dir", default="artifacts/odds",
                         help="downloaded odds-lines snapshots (the CLV close source)")
     args = parser.parse_args()
@@ -515,6 +577,17 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             games_graded = (None if slate is None or slate.empty
                             else grade_slate(slate, finals, closing))
             games_graded = sized_profit(_carry_sized(games_graded, slate))
+            # Prop closes from the props collector's archive — attached
+            # before grading so the ledger carries prop CLV (docs/PROPS.md).
+            if props is not None and not props.empty:
+                try:
+                    consensus = prop_closing_for_slate(
+                        Path(args.props_dir), props, games_map, args.league)
+                    props = attach_prop_closes(props, consensus)
+                    matched = 0 if consensus is None else int(props["closing_point"].notna().sum())
+                    print(f"prop closing lines: {matched} slate rows matched a close")
+                except Exception as exc:  # noqa: BLE001 - CLV never blocks grading
+                    print(f"prop closing lines skipped ({exc})")
             props_graded = sized_profit(
                 _carry_sized(_grade_props(args.league, props, schedule, slate_date), props)
             )

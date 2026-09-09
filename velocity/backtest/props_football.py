@@ -85,7 +85,40 @@ def grade_prop_ledger(props: pd.DataFrame, weekly: pd.DataFrame) -> pd.DataFrame
     graded["actual"] = actuals
     graded["result"] = results
     graded["profit"] = profits
-    return graded
+    return attach_prop_clv(graded)
+
+
+def attach_prop_clv(graded: pd.DataFrame) -> pd.DataFrame:
+    """``price_clv`` / ``line_clv`` from ``closing_price`` / ``closing_point``.
+
+    The same two yardsticks the game ledger carries (``Bet.price_clv`` /
+    ``Bet.line_clv``): the decimal-odds edge over the closing price, and the
+    signed points beaten on the closing number — over wants a lower close,
+    under a higher one. Rows without a close get nulls; the columns are
+    always present so the record chain's schema is stable. Prop CLV is not
+    the doctrine's yardstick (``clv_trusted`` is False for every prop
+    market), but it is what lets the shrink sweep grade against something.
+    """
+    from velocity.wagering.odds import american_to_decimal
+
+    out = graded.copy()
+    if "closing_price" not in out.columns:
+        out["closing_price"] = float("nan")
+    if "closing_point" not in out.columns:
+        out["closing_point"] = float("nan")
+    price = pd.to_numeric(out["price"], errors="coerce")
+    close_price = pd.to_numeric(out["closing_price"], errors="coerce")
+    point = pd.to_numeric(out["point"], errors="coerce")
+    close_point = pd.to_numeric(out["closing_point"], errors="coerce")
+    price_clv = [
+        (american_to_decimal(float(a)) / american_to_decimal(float(b)) - 1.0)
+        if pd.notna(a) and pd.notna(b) and not (-100.0 < float(b) < 100.0) else float("nan")
+        for a, b in zip(price, close_price, strict=True)
+    ]
+    sign = out["side"].astype(str).map({"over": 1.0, "under": -1.0})
+    out["price_clv"] = price_clv
+    out["line_clv"] = (sign * (close_point - point)).where(point.notna() & close_point.notna())
+    return out
 
 
 def sweep_shrink(
