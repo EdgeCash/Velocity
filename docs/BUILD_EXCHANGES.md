@@ -1,11 +1,16 @@
 # The Exchange Build — Kalshi & Polymarket
 
+**Status: plan (E0). Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+[WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
+(secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
+(venue strategy).**
+
 Prediction-exchange lines as a projection target and (eventually) a venue.
-EDGE_RESEARCH §1 already names the CFTC exchange class (Kalshi, Novig,
-ProphetX) as the durable home for origination edge; this plan wires the two
-exchanges with real, free APIs — Kalshi and Polymarket — into the existing
-ingest → devig → edge → stake → CLV loop. Data first, paper slate second,
-execution never in this build (that belongs to WAGERING W1/W5).
+EDGE_RESEARCH (§1.3, §7 item 13) already names the 2026 CFTC exchange class
+(Kalshi, Novig, ProphetX) as the durable home for origination edge; this
+plan wires the two exchanges with real, free APIs — Kalshi and Polymarket —
+into the ingest → devig → edge → stake → CLV loop. Data first, paper slate
+second, execution never in this build (that belongs to the WAGERING plan).
 
 Both venues' market data was **verified free and key-less by live pulls on
 2026-09-09** from a plain unauthenticated client: markets, order books,
@@ -17,12 +22,14 @@ auth; reading does not.
 The Monte Carlo sim already prices everything these exchanges list for a
 game: `GameSim` keeps all 50k `(home_score, away_score)` draws, and every
 exchange game contract is a binary functional of that joint distribution —
-Kalshi's "BAL wins by >41.5" ladder is `market=spread, point=41.5` in the
-existing `model_probability` dispatch (`velocity/wagering/slate.py`),
-which already accepts any point. So the build is not modeling work; it is
-two ingest adapters (the `theoddsapi.py` two-layer pattern), two
-collectors on the existing hourly cron, one fee-aware EV extension
-(exchanges have no vig — they have a bid/ask spread plus a taker fee), and
+Kalshi's "BAL wins by >41.5" ladder is `market=spread, point=−41.5` (the
+BAL side; D4's sign convention) in the existing `model_probability`
+dispatch (`velocity/wagering/slate.py`), which already accepts any point.
+So the build is not modeling work; it is two ingest adapters (the
+`theoddsapi.py` two-layer pattern), two collectors on the existing hourly
+cron, one fee-aware EV extension (exchanges have no vig — they have a
+bid/ask spread plus a taker fee), one real slate-machinery fix (fair-price
+pairing must become point-aware before ladders flow through it — E5), and
 a calibration gate before we trust tight ladders at the key numbers the
 rounded-normal sim smooths over.
 
@@ -35,7 +42,7 @@ rounded-normal sim smooths over.
 | Football | NFL + NCAAF: winners, spread/total ladders, team totals, halves/quarters, player props | NFL + CFB: moneyline, ~22 alt spreads + ~22 alt totals per big game, quarters, team totals, props (136 markets on one week-1 NFL game) |
 | Price | binary contract, $0.01 tick, price = probability; API returns fixed-point dollar **strings** (`yes_ask_dollars: "0.1900"`) | outcome tokens in [0,1] = probability, decimal strings, tick 0.01 (0.001 on some) |
 | History | candlesticks (1min/1hr/1day; separate trade/bid/ask OHLC + volume + OI), ~3-month live window, archive endpoint beyond (backfill **unproven** — see §5) | `prices-history` per token, minute fidelity, survives resolution; **no historical order books** |
-| Taker fee | `ceil(0.07·C·P·(1−P))` — 1.75¢/contract max at 50¢; per-series overrides via `/exchange/series_fee_changes` | sports `0.05·p·(1−p)`/share — 1.25¢ max at 50¢; makers $0 |
+| Trading fee | `fee_multiplier · 0.07·P·(1−P)`/contract, rounded up to $0.000001 (≈1.75¢ max at 50¢); football series run `fee_type: quadratic_with_maker_fees` — **makers pay too**. Authority: `fee_type`/`fee_multiplier` on `GET /series/{ticker}`; scheduled changes at `GET /series/fee_changes` | sports taker `0.05·p·(1−p)`/share — 1.25¢ max at 50¢; makers $0 (`takerOnly` confirmed) |
 | Rate limits | keyless works but undocumented; free key ≈ 20 GET/s (Basic tier); batch candles = 100 tickers/call | Gamma 4,000 req/10s, CLOB 9,000/10s; 500-token batch endpoints |
 | Legal (trading, not data) | CFTC DCM, nationwide with a live circuit split (3rd Cir. for, 9th Cir. against, SCOTUS cert pending) | global exchange is US **close-only**; "Polymarket US" (QCX) is a separate KYC venue with separate liquidity |
 
@@ -49,8 +56,10 @@ rounded-normal sim smooths over.
 - **Ticker grammar**: event `KXNFLGAME-26SEP21NYGLAR` =
   `{SERIES}-{YY}{MON}{DD}{AWAY}{HOME}`; market appends the outcome:
   `-NYG` (winner), `-BAL42` (`floor_strike: 41.5`), `-76` (Over 75.5).
-  MLB inserts a start time; NFL/NCAAF tickers carry date only — kickoff
-  must come from our own `games` data by (date, teams) join.
+  MLB inserts a start time; NFL/NCAAF tickers carry date only — and the
+  date is the **US/ET game date** (verified: SNF/MNF games differ from
+  their UTC date) — kickoff must come from our own `games` data by
+  (teams, ET-local date) join.
 - **Board**: `GET /markets?series_ticker=KXNFLGAME&status=open&limit=1000`
   returns top-of-book (`yes_bid/yes_ask/no_bid/last` as dollar strings),
   volume/OI in `*_fp` string fields (a plain integer `volume` key is NOT
@@ -77,8 +86,15 @@ rounded-normal sim smooths over.
   `sportsMarketType`, `line`, `outcomes`, `outcomePrices`, and
   `clobTokenIds` — the two token ids every CLOB endpoint is keyed by.
 - **Prices**: CLOB `GET /book?token_id=` (bids/asks + sizes + `tick_size`
-  + `neg_risk`), `/price?token_id=&side=BUY` (the executable ask),
-  `/midpoint`, batch POST variants at 500 tokens.
+  + `neg_risk`), `/midpoint`, batch POST variants at 500 tokens.
+  **Careful with `/price`**: `side=BUY` returns the best *bid* and
+  `side=SELL` the best *ask* (verified live) — the executable buy price
+  is the book's best ask, never `side=BUY` and never Gamma's
+  `outcomePrices` (a midpoint).
+- **Slug dates are UTC**: `nfl-ind-kc-2026-09-21` is the Sunday-night
+  Sep 20 ET game (kickoff 00:20Z) — the opposite convention from
+  Kalshi's ET ticker dates. Joins match on teams within ±1 day and
+  disambiguate by kickoff.
 - **History**: `GET /prices-history?market={token_id}` with
   `interval=1h|6h|1d|1w|max` or `startTs/endTs` + `fidelity` (minutes).
   Three verified quirks: `startTs/endTs` windows much over a week are
@@ -97,46 +113,83 @@ rounded-normal sim smooths over.
 - **D1 — Price lane: convert ask → integer American at the normalizer
   boundary.** `Lines.price` is `Series[int]` American and
   `american_to_decimal` rejects (−100, 100), so cent prices cannot land
-  raw. Rounding `prob_to_american(ask)` to int costs ≤ ~0.1–0.2%
-  probability at worst (near even money) — several times finer than
-  either venue's $0.01 tick — and keeps `Lines`, `pit.closing_line`,
-  `devig`, the backtest, and every validator untouched. Escalation path
-  if sub-cent ticks ever matter: a nullable probability-native column on
-  `Lines`, which is a schema change and a separate decision.
+  raw. Rounding `prob_to_american(ask)` to int costs at most 0.083%
+  probability on the cent grid (computed exhaustively; the theoretical
+  bound near ±100 is 0.125%) — ~12× finer than the $0.01 tick — and
+  keeps `Lines`, `devig`, the backtest, and every validator untouched.
+  The precise escalation trigger: the American-int lane loses
+  information only if a $0.001-tick market trades near even money;
+  live census (2,652 mapped-market tokens across 300 NFL events) shows
+  every mapped market at $0.01 ticks — the only $0.001-tick markets
+  are exact-margin tails the normalizer drops anyway. If that changes:
+  a nullable probability-native column on `Lines` (a schema change and
+  a separate decision).
 - **D2 — The executable price is the ask, per side.** Buying YES at the
   yes-ask and NO at the no-ask; their implied probabilities sum > 1, so
-  the bid/ask spread arrives as overround and the existing `devig`
-  strips it exactly as it strips vig. Never price EV off the midpoint.
+  the bid/ask spread arrives as overround and the `devig` *math* strips
+  it exactly as it strips vig. Never price EV off the midpoint. The
+  devig *pairing*, however, does not transfer as-is: `build_slate`
+  buckets sides by `(market, book, timestamp)` **without the point**
+  (`velocity/wagering/slate.py:218-222`), so ~44 alt-spread/alt-total
+  rungs per exchange game would overwrite each other and a rung's
+  `p_fair` could be devigged from a different rung's prices (the props
+  path shares the flaw). Pairing must become per-contract — and
+  **`abs(point)` is not enough**: both teams' ladders exist at the same
+  |strike| (live: `KC8` and `DEN8` are distinct contracts, both 7.5).
+  The key that works is the **home-perspective point**
+  (`point if side == home else −point`): yes/no of one contract
+  normalize to the same value, the two teams' equal-|strike| contracts
+  stay distinct. Scheduled, load-bearing work in E5, not a free ride.
 - **D3 — Fees enter EV as an adjusted net payout.** Exchanges charge a
-  taker fee at match; today `expected_value`/`kelly_fraction`
+  fee at match; today `expected_value`/`kelly_fraction`
   (`velocity/wagering/edge.py`) have no fee term. Buying at ask `a` with
   fee `f(a)`: cost per contract `a + f(a)`, payout $1, so
-  `b′ = (1 − a − f(a)) / (a + f(a))` replaces `net_payout(price)`. A
-  venue-keyed fee table (Kalshi `0.07·P·(1−P)` rounded up, checked
-  against the per-series override endpoint; Polymarket sports
-  `0.05·p·(1−p)`; sportsbooks `f = 0`) makes this uniform. Makers pay
-  zero on both venues — a later execution refinement, not an EV input.
+  `b′ = (1 − a − f(a)) / (a + f(a))` replaces `net_payout(price)`. The
+  venue-keyed fee table: Kalshi
+  `f = fee_multiplier · 0.07 · a·(1−a)` (rounded up to $0.000001 — the
+  micro-ceil, **not** to a cent; e.g. at `a = 0.19` the fee is
+  ≈$0.0108, not 2¢), with `fee_type`/`fee_multiplier` read from
+  `GET /series/{ticker}` at collect time (scheduled changes:
+  `GET /series/fee_changes`); Polymarket sports taker `0.05·a·(1−a)`;
+  sportsbooks `f = 0`. Maker rebates are Polymarket-only — Kalshi
+  football series run `quadratic_with_maker_fees`, so no maker-zero
+  assumption anywhere on Kalshi. Fees thread through **both** `evaluate`
+  and staking (`stake_amount` calls `kelly_fraction(p, price)` un-fee'd
+  today — `velocity/wagering/staking.py:54-70`).
 - **D4 — Market mapping rides the existing enums.** Winners →
   `moneyline`; spread ladders → `spread` with `point = ±floor_strike`
   (Kalshi "BAL wins by >41.5" ≡ BAL −41.5); total ladders → `total`;
   team-total series → `team_total_home/away`; props → matching
   `PROP_MARKETS` keys (`pass_yards`, `receiving_yards`, `receptions`,
-  `anytime_td`, …). `model_probability` and `Bet.grade` already accept
-  arbitrary points for these markets, so ladders need **no** new market
-  names. Halves/quarters/exact-margin/first-TD have no sim support —
+  `anytime_td`, …). No new market names anywhere — but the two paths
+  differ: *game* ladders price via `model_probability` and grade via
+  `Bet.grade`, both of which already accept arbitrary points; *prop*
+  ladders ride `PropLines` → `props_slate`/`PropModel`
+  (`prob_over`/`prob_under` at any point) and grade via
+  `grade_prop_ledger`, never through `Bet.grade` (which raises on prop
+  markets). Halves/quarters/exact-margin/first-TD have no sim support —
   dropped by the normalizer (the pandera `isin` gate enforces this) and
   parked in §5.
-- **D5 — Push semantics: half-point strikes only, asserted.** Exchange
-  contracts resolve binary; every observed strike is a half-integer
-  (41.5, 75.5), where the sim's strict-`>` cover logic is exact. The
-  normalizers assert half-integer points on ladder markets and drop
-  anything else rather than risk mis-grading; if integer-strike
+- **D5 — Push semantics: half-point strikes only, asserted.** Ladder
+  contracts resolve binary at half-integer strikes (live census: all
+  2,708 open Kalshi football ladder strikes are half-integers,
+  `strike_type: greater`), where the sim's strict-`>` cover logic is
+  exact. The normalizers assert half-integer points on ladder markets
+  and drop anything else rather than risk mis-grading; if integer-strike
   contracts ever appear, that becomes an explicit `>=`-semantics branch,
-  not a silent one.
+  not a silent one. One exception to "binary": Kalshi **winner** markets
+  resolve at $0.50/contract on a tie (per their rules), while
+  `Bet.grade` grades a moneyline tie as a push — pricing is unaffected
+  (`p_home_win` splits ties 0.5, exactly the contract's expected
+  payout), but grading needs an exchange tie branch, scheduled in E7.
 - **D6 — Venue identity is just a book.** Rows land with
-  `book="kalshi"` / `book="polymarket"`, flowing through devig pairing,
-  `shop_best_prices`, closing-line preference, and `Bet.book` unchanged.
-  Per-venue exposure caps stay with WAGERING W5 where they belong.
+  `book="kalshi"` / `book="polymarket"`, flowing through
+  `shop_best_prices`, closing-line preference, and `Bet.book` unchanged
+  (devig pairing needs the D2/E5 point-aware fix first). Per-venue
+  exposure caps are **new scope this doc proposes for the WAGERING
+  W2/W5 family** — neither phase contains them today (W2 is per-game/
+  aggregate portfolio caps, W5 is execution polish) — and are a
+  prerequisite for trading, not for this build.
 - **D7 — Storage follows the paid-provider discipline.** The data is
   free but the repo is public: snapshots go to private Actions artifacts
   like every other odds feed (raw JSON verbatim + normalized parquet),
@@ -148,7 +201,8 @@ rounded-normal sim smooths over.
 
 Each phase is one merge, run through the BUILD.md §1 safe loop: tests
 first against frozen fixtures, offline suite green, live client verified
-via `workflow_dispatch` only.
+via `workflow_dispatch` only. Each phase's **Exit** is its definition of
+done and mints a tag (`v*-e1` … `v*-e8`, the WAGERING.md convention).
 
 ### Phase E1 — Kalshi ingest adapter
 
@@ -157,11 +211,21 @@ via `workflow_dispatch` only.
 - Pure `normalize_kalshi_markets(payload, *, is_closing=False)` → a
   `Lines.validate`-clean frame. Series→market map table (the D4 dict);
   ticker parser (`KXNFLGAME-26SEP21NYGLAR-NYG` → league, date, away,
-  home, outcome team); dollar-string fields parsed as `Decimal`; yes-ask
-  prices the named side, no-ask prices the `_OPPOSITE` side; points from
-  `floor_strike` with the D5 half-integer assertion; deterministic
+  home, outcome team); dollar-string fields parsed as `Decimal`; points
+  from `floor_strike` with the D5 half-integer assertion; deterministic
   `line_id` per the `theoddsapi.py` recipe. Unknown series and combo
-  markets (`KXMVE*`) are dropped, not errors.
+  markets (`KXMVE*`) are dropped, not errors. Row emission per market
+  shape (verified against live payloads 2026-09-09):
+  - **Winner events carry TWO markets, one per team** ("New York G
+    wins" + "Los Angeles R wins"). Emit one `moneyline` row per team
+    market from **its own yes-ask only**; the no-asks are near-duplicate
+    quotes of the other team (and differ under a tie), so emitting them
+    would double-count sides in the devig bucket.
+  - **Ladders are ONE market with two economic sides**: a spread rung
+    (`KXNFLSPREAD-…-KC7`, `floor_strike: 6.5`) emits side=KC,
+    `point=−6.5`, price=yes-ask **and** side=opponent, `point=+6.5`,
+    price=no-ask; a total rung emits over/under at the same point from
+    yes-ask/no-ask. Team totals likewise.
 - `extract_kalshi_events(payload, games)` → the events frame
   (`game_id, home_team, away_team, kickoff`) that `canonicalize_sides`
   and the live runner require; kickoff joined from our own schedule by
@@ -173,6 +237,16 @@ via `workflow_dispatch` only.
   `# pragma: no cover - network`.
 - A props normalizer for the `KXNFLPASSYDS`-family series →
   `PropLines`, same discipline.
+- **Raw snapshots start day one** (this phase, not E2/E4): a dumb
+  hourly workflow banking raw JSON verbatim for BOTH venues (Kalshi
+  `/markets` pages + Polymarket events + batch `/book`) to private
+  artifacts under the E2 durability rules — no normalizer needed, and
+  the later phases backfill parquet from banked raw. Polymarket order
+  books have zero history; every week this isn't running is spread
+  history lost while E1–E3 development proceeds.
+- Fixture sets for both venues include a prime-time (SNF/MNF) game, the
+  case where Kalshi's ET ticker date and Polymarket's UTC slug date
+  disagree.
 
 Fixtures: frozen `tests/fixtures/kalshi_nfl.json` (+ a props payload);
 tests cloning `test_ingest_theoddsapi.py` (validate, market filtering,
@@ -185,19 +259,28 @@ half-integer assertion, empty-in → valid-empty-out) and the
 - `scripts/collect_kalshi.py` on the existing hourly cron
   (`collect-odds.yml` pattern, own workflow file): snapshot the open
   board for the mapped series (`limit=1000` + cursor), bank raw JSON +
-  normalized parquet to `artifacts/kalshi/…` (private, 30-day
-  retention), tag `snapshot`/`collected_at` like
-  `collect_historical_odds.py` so `backtest/archive.py` splits
-  entry/close unchanged.
+  normalized parquet to `artifacts/kalshi/…`, tagged `snapshot` per
+  `collect_historical_odds.py` (the column `archive.select_boards`
+  splits on) plus `collected_at`/`league` per `collect_theoddsapi.py`.
 - `scripts/collect_kalshi_candles.py` (daily): for markets settled since
   the last run, pull 1-minute candlesticks via the batch endpoint (≤100
   tickers/call) and bank them — this is the CLV archive. The ~3-month
   live window means **bank-forward from day one**; a one-off spot job
   probes `/historical/*` backfill quality (empty on a Jan-2026 spot
   check) and records the verdict here.
+- **Archive durability is an exit criterion, not a default.** Unlike
+  The Odds API, expired exchange data cannot be re-pulled, and Actions
+  artifacts expire (30-day retention on `collect-odds.yml`, 90 on
+  `collect-historical-odds.yml` — and nothing in the repo consolidates
+  them). Exchange collectors use ≥90-day retention **plus** a scheduled
+  consolidation job that merges aging artifacts into a rolling
+  long-lived archive artifact (or, if the ToS read under D7 allows, a
+  private dataset). A 30-day artifact stream would silently starve E7.
 
 Exit: two workflow_dispatch runs verified; candle → `Lines` close rows
-feeding `pit.closing_line` proven on one settled game.
+feeding `pit.closing_line` proven on one settled game; the consolidation
+job demonstrated on real artifacts; the new collectors documented in
+DATA_PROVIDERS.md.
 
 ### Phase E3 — Polymarket ingest adapter
 
@@ -206,9 +289,11 @@ feeding `pit.closing_line` proven on one settled game.
 - Pure `normalize_polymarket_event(event_json, books)` → `Lines`:
   Gamma's nested markets filtered by `sportsMarketType` to the D4 map,
   `line` → point (D5 assertion), slug parser
-  (`nfl-ne-sea-2026-09-10` → teams/date), executable asks taken from
-  CLOB `/book` (or `/price?side=BUY`) per outcome token — the Gamma
-  `outcomePrices` mid is metadata, not the price we can buy (D2).
+  (`nfl-ne-sea-2026-09-10` → teams/**UTC** date), executable asks taken
+  from CLOB `/book`'s best **ask** per outcome token — never
+  `/price?side=BUY` (verified: that returns the best *bid*) and never
+  the Gamma `outcomePrices` mid (D2). A fixture test pins the
+  normalized price to the book ask, not the bid or mid.
 - `PolymarketClient`: key-less; Gamma events by `tag_id` (450 NFL,
   100351 CFB) + batch CLOB books (≤500 tokens/POST); token-id ↔
   (market, side) plumbing kept in the normalized frame so E4's history
@@ -222,17 +307,32 @@ payload; tests as E1. Exit: suite green; ToS read.
 
 - Board snapshots on the hourly cron (events + batch books →
   raw + parquet, private artifacts) — this **is** the spread/liquidity
-  history, since the CLOB keeps no historical books.
+  history, since the CLOB keeps no historical books. The E2
+  durability rule applies verbatim: ≥90-day retention + the
+  consolidation job, because this data is unrecoverable by definition.
 - Closing lines: at grade time, `prices-history` with `endTs = kickoff`
   (≤1-week windows, trim the appended current-time point) as the
   fallback close where the hourly board missed the last pre-kickoff
   snapshot.
 
 Exit: workflow verified; one game's close recovered both ways and
-agreeing within tolerance.
+agreeing within tolerance; collectors documented in DATA_PROVIDERS.md.
 
-### Phase E5 — Fee-aware EV
+### Phase E5 — Fee-aware EV & point-aware fair pairing
 
+- **The pairing fix (D2's debt, blocking for ladders):** the devig
+  snapshot key in `build_slate` (`velocity/wagering/slate.py:218-222`)
+  and `props_slate` gains the contract identity — the
+  **home-perspective point** (`point if side == home else −point`;
+  totals/team totals share the raw point; moneyline keys on `None`)
+  for game markets, `(market, player, book, timestamp, point)` for
+  props — so each ladder rung devigs against its own opposite side,
+  never a neighbor rung and never the other team's equal-|strike|
+  ladder (D2's `KC8`/`DEN8` case; plain `abs(point)` would collide
+  them). Sportsbook feeds carry one main line per bucket today, so the
+  change is behavior-preserving there; a regression test pins that, and
+  a ladder test pins per-rung pairing including the equal-|strike|
+  collision.
 - `velocity/wagering/fees.py`: venue-keyed taker-fee functions
   (D3 table) + `fee_adjusted_net_payout(prob_cost, venue)`; Kalshi
   per-series overrides fetched by the collector, not hardcoded.
@@ -240,10 +340,10 @@ agreeing within tolerance.
   (default `fee=0` keeps every existing caller and test byte-identical);
   `SlateConfig` maps `book → venue fee schedule`; `evaluate` gates on
   fee-adjusted EV for exchange books.
-- Tests: hand-computed Kalshi (yes-ask 0.19, fee ceil(0.07·0.19·0.81))
-  and Polymarket examples; a devig test proving yes-ask + no-ask
-  overround strips to sane fairs; property test that `fee=0` reproduces
-  current outputs exactly.
+- Tests: hand-computed Kalshi (yes-ask 0.19 → fee ≈ $0.010773 at
+  `fee_multiplier` 1 — the micro-ceil, not 2¢) and Polymarket examples;
+  a devig test proving yes-ask + no-ask overround strips to sane fairs;
+  property test that `fee=0` reproduces current outputs exactly.
 
 Exit: suite green; a worked example in the doc showing edge → EV → stake
 for one real Kalshi market.
@@ -265,9 +365,27 @@ sportsbook + exchange board with sane cross-venue prices.
 
 ### Phase E7 — CLV & backtest
 
-- Kalshi candle closes and Polymarket history closes flow into
-  `pit.closing_line` (last pre-kickoff observation — already
-  provider-agnostic); `grade_yesterday` extended to grade exchange rows.
+- **Point-aware closes (blocking for ladders, like E5's pairing):**
+  every closing-line key in the loop is point-blind today —
+  `pit.closing_line` groups by `(game_id, market, side, book)` and
+  keeps `tail(1)` (`velocity/store/pit.py:51`), `_closing_for` matches
+  the same way (`slate.py:342-356`), and `grade_yesterday`'s consensus
+  medians point and price across all rungs. With 25 rungs per
+  game/market/book that discards 24 closes, can assign a −20.5 bet the
+  −1.5 rung's close (~19 points of fictitious CLV), and lets
+  un-excluded rungs "bet the close" in backtests. The point (and for
+  spreads the home-perspective point, per E5) joins all three key
+  paths, with tests, before any exchange CLV number is read.
+- `grade_yesterday` extended to grade exchange game-market rows via
+  `Bet.grade`, **plus the winner tie branch** (Kalshi ties resolve at
+  $0.50/contract, not a push — D5); exchange prop rows grade through
+  the existing props path (`grade_prop_ledger`), not `Bet.grade`.
+- **Close provenance is recorded per row** (board-ask vs
+  Polymarket-history-mid vs Kalshi-candle bid/ask): ask-entry vs
+  mid-close CLV is biased by ~half the spread, venue-asymmetrically —
+  exactly the bias that would corrupt the venue comparison below. CLV
+  is computed like-for-like; mixed-basis rows are excluded from the
+  cross-venue report.
 - Backtest: `backtest/archive.py` entry/close split over the banked
   snapshots, with E5 fees applied to simulated fills.
 - The report this build exists for: **model vs exchange close vs book
@@ -283,17 +401,32 @@ eval output.
 The sim is a rounded bivariate normal; its own docstring
 (`velocity/models/simulate.py`) calls the key-number treatment
 first-order. Ladder contracts at 3/7 concentrate value exactly where a
-smooth normal misplaces mass. Before any spread-ladder bet qualifies:
-calibrate sim tail probabilities against empirical NFL/NCAAF margin
-distributions at each half-point strike; whitelist only strikes where
-the sim is honest (expectation: far strikes fine, ±2.5–7.5 suspect);
-wire the whitelist as a `SlateConfig` exclusion. Moneylines, totals, and
-team totals are not gated — they were priced credibly before this build.
+smooth normal misplaces mass — and the same tail-honesty question
+applies to every market type's far rungs, not just spreads: the
+exchanges list total ladders from ~33.5 to ~63.5, far beyond the
+main-number band `min_total_disagreement` was calibrated on. Before any
+**ladder rung outside the historically backtested band of its market
+type** qualifies: calibrate sim tail probabilities against empirical
+NFL/NCAAF margin and total distributions at each half-point strike;
+whitelist only strikes where the sim is honest (expectation: main
+numbers and near-band rungs per existing evidence; spread rungs
+±2.5–7.5 suspect for key-number mass, deep tails suspect everywhere);
+wire the whitelist as a **new** `SlateConfig` concept — point-level
+filtering per market/venue, which doesn't exist today
+(`exclude_markets` is market-level, `min_total_disagreement` gates
+disagreement, not strikes — those two are the design precedents to
+extend, not reuse). Moneylines and main-number lines are not gated —
+they were priced credibly before this build.
 
 ## 4. Explicitly out of scope
 
-- **Execution/trading** on either venue (WAGERING W1 bankroll ledger and
-  W5 venue-aware execution are prerequisites; also the legal flux below).
+- **Execution/trading** on either venue (the WAGERING W1 bankroll ledger
+  plus the per-venue caps D6 proposes for the W2/W5 family are
+  prerequisites; also the legal flux below).
+- **Novig and ProphetX** — the other two venues EDGE_RESEARCH's exchange
+  class names. Neither publishes a documented free public market-data
+  API comparable to the two wired here (unverified beyond absence of
+  docs; revisit if that changes).
 - **Polymarket US (QCX)** — separate venue, separate liquidity, no
   documented public data API; the global exchange's data is what we read.
 - **WebSockets** — both venues stream, Kalshi's needs a key; hourly REST
@@ -327,6 +460,11 @@ team totals are not gated — they were priced credibly before this build.
   Actions secrets before scaling candle backfills.
 - **Polymarket board history starts when we start.** No historical order
   books exist; every week E4 isn't running is spread history lost.
+- **Artifacts are not an archive.** Exchange data, once expired, cannot
+  be re-pulled (unlike The Odds API) — hence the E2/E4 consolidation
+  job and ≥90-day retention as exit criteria, and the standing rule
+  that the consolidated archive's continuity is checked whenever the
+  collectors change.
 
 ## 6. Immediate next step
 
