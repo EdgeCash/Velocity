@@ -1,7 +1,7 @@
 # The Exchange Build — Kalshi & Polymarket
 
-**Status: E1-E3 done; E2/E4 landed, awaiting in-CI `workflow_dispatch`
-verification; E5 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+**Status: E1-E3 + E5 done; E2/E4 landed, awaiting in-CI
+`workflow_dispatch` verification; E6 next. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -383,7 +383,7 @@ on the hourly `collect-exchanges.yml` cron, tagged like the Kalshi
 board. Still pending: the `prices-history` fallback close and the
 two-ways agreement check.
 
-### Phase E5 — Fee-aware EV & point-aware fair pairing
+### Phase E5 — Fee-aware EV & point-aware fair pairing (done)
 
 - **The pairing fix (D2's debt, blocking for ladders):** the devig
   snapshot key in `build_slate` (`velocity/wagering/slate.py:218-222`)
@@ -412,6 +412,28 @@ two-ways agreement check.
 
 Exit: suite green; a worked example in the doc showing edge → EV → stake
 for one real Kalshi market.
+**Done.** `contract_key` (`velocity/wagering/slate.py`) joins the devig
+bucket key in both the game and prop paths, and
+`velocity/wagering/fees.py` carries the venue fee table with the
+fee-adjusted payout threaded through `expected_value`, `kelly_fraction`,
+`evaluate`, `stake_fraction` and `stake_amount` (all defaulting to no
+venue, so sportsbook math is bit-identical — pinned by a test).
+`SlateConfig.charge_exchange_fees` turns the fee off for modelling a
+maker fill. Two notes on what the work actually taught:
+- `abs(point)` really is insufficient, as the review warned: both teams
+  ladder at the same absolute strike, so the key is the **home-perspective
+  point**. The ladder tests were checked against the pre-fix code and do
+  fail there — a symmetric board hides the bug, so they use asymmetric
+  rungs.
+- The fee's micro-ceil has to round the increment count before ceiling:
+  an exact $0.0175 lands a few float ulps above 17,500 increments and
+  would otherwise bill $0.017501.
+
+Worked example (a real Kalshi market): a $0.19 yes-ask is +426 American;
+the fee is `0.07 · 0.19 · 0.81 = $0.010773`, so the cost is $0.200773 and
+the payout per unit staked falls from 4.26 to 3.98. A model probability
+of 0.24 still clears the gate, but stakes materially less than the same
+edge at a sportsbook.
 
 ### Phase E6 — Slate & live wiring
 

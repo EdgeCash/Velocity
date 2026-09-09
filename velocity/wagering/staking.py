@@ -44,14 +44,16 @@ def stake_fraction(
     p_model: float,
     price: float,
     config: StakingConfig | None = None,
+    venue: str | None = None,
 ) -> float:
     """Fraction of bankroll to stake: fractional Kelly, floored at 0 and capped.
 
     Returns 0 whenever the full-Kelly fraction is non-positive (no edge at this
-    price), and never exceeds ``max_bet_fraction``.
+    price), and never exceeds ``max_bet_fraction``. ``venue`` charges an
+    exchange's taker fee against the payout, so a fee-thin edge sizes to 0.
     """
     config = config or StakingConfig()
-    full = kelly_fraction(p_model, price)
+    full = kelly_fraction(p_model, price, venue)
     if full <= 0.0:
         return 0.0
     sized = config.kelly_fraction * full
@@ -63,11 +65,12 @@ def stake_amount(
     p_model: float,
     price: float,
     config: StakingConfig | None = None,
+    venue: str | None = None,
 ) -> float:
     """Absolute stake in bankroll units (``bankroll ×`` :func:`stake_fraction`)."""
     if bankroll < 0.0:
         raise ValueError("bankroll must be non-negative")
-    return bankroll * stake_fraction(p_model, price, config)
+    return bankroll * stake_fraction(p_model, price, config, venue)
 
 
 def apply_group_cap(

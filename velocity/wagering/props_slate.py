@@ -24,6 +24,7 @@ import pandas as pd
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
+from velocity.wagering.fees import venue_for_book
 from velocity.wagering.slate import SlateConfig
 from velocity.wagering.staking import apply_group_cap, stake_amount
 
@@ -75,10 +76,19 @@ def build_prop_slate(
             continue
         records = game_lines.to_dict("records")
 
-        # Index both sides at each (market, player, book, timestamp) for de-vig.
+        # Index both sides of each contract for de-vig. The point is part of
+        # the key: an exchange posts a whole ladder for one player and market in
+        # a single snapshot, and without it the rungs overwrite each other
+        # (docs/BUILD_EXCHANGES.md D2/E5). Over and under share a point.
         snapshots: dict[tuple, dict[str, float]] = {}
         for row in records:
-            key = (row["market"], row["player"], row["book"], row["timestamp"])
+            key = (
+                row["market"],
+                row["player"],
+                row["book"],
+                row["timestamp"],
+                float(row["point"]),
+            )
             snapshots.setdefault(key, {})[row["side"]] = float(row["price"])
 
         stakes: dict[str, float] = {}
@@ -103,7 +113,11 @@ def build_prop_slate(
                 if best is None:
                     continue
                 stake = stake_amount(
-                    config.starting_bankroll, best["p_model"], best["price"], config.staking
+                    config.starting_bankroll,
+                    best["p_model"],
+                    best["price"],
+                    config.staking,
+                    venue_for_book(best["book"]) if config.charge_exchange_fees else None,
                 )
                 if stake <= 0.0:
                     continue
@@ -157,7 +171,7 @@ def _best_prop(
     best: dict | None = None
     for row in candidates.to_dict("records"):
         point = float(row["point"])
-        bucket = snapshots.get((market, player, row["book"], row["timestamp"]), {})
+        bucket = snapshots.get((market, player, row["book"], row["timestamp"], point), {})
         if side not in bucket or _OPPOSITE[side] not in bucket:
             continue
         fair = devig([bucket["over"], bucket["under"]], method=config.devig_method)
@@ -175,7 +189,11 @@ def _best_prop(
         if shrink != 1.0:
             p_model = 0.5 + shrink * (p_model - 0.5)
         signal = evaluate(
-            p_model, float(row["price"]), p_fair, min_edge=config.min_edge_for(market)
+            p_model,
+            float(row["price"]),
+            p_fair,
+            min_edge=config.min_edge_for(market),
+            venue=venue_for_book(row["book"]) if config.charge_exchange_fees else None,
         )
         if not signal.qualifies:
             continue

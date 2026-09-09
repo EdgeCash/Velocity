@@ -32,6 +32,7 @@ from velocity.store import pit
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
+from velocity.wagering.fees import venue_for_book
 from velocity.wagering.staking import StakingConfig, apply_group_cap, stake_amount
 
 _MARKET_SIDES = {
@@ -63,6 +64,11 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
+    # Charge an exchange's per-contract taker fee against EV and stake sizing
+    # (docs/BUILD_EXCHANGES.md D3). Sportsbook rows are unaffected either way:
+    # their margin is already inside the price. Turn off only to model a
+    # maker fill, which pays no fee on Polymarket.
+    charge_exchange_fees: bool = True
     # Market anchoring (docs/MODEL_LAB.md Round 3): the close's Brier beats
     # every pure model, so the *belief* probability used for staking may be
     # regressed toward the market's devigged probability:
@@ -176,6 +182,27 @@ def model_probability(
     raise ValueError(f"unknown market {market!r}")
 
 
+def contract_key(market: str, side: str, point: float | None) -> float | None:
+    """The contract a ``(side, point)`` row belongs to, normalized across sides.
+
+    De-vig pairs a side against its opposite *within the same contract*. Keying
+    a bucket on ``(market, book, timestamp)`` alone is safe only while a feed
+    carries one number per market — true of the sportsbook board, false of an
+    exchange, where one snapshot holds ~25 ladder rungs per market and rungs
+    would overwrite each other (docs/BUILD_EXCHANGES.md D2/E5).
+
+    Spread sides carry mirrored points, so both sides of one contract are
+    normalized to the **home** side's number; totals and team totals already
+    share theirs. ``abs(point)`` would not do: both teams' ladders exist at the
+    same absolute strike (Kalshi lists KC −7.5 and DEN −7.5 as separate
+    contracts), and collapsing them would re-introduce the very cross-pairing
+    this prevents.
+    """
+    if point is None:
+        return None
+    return -point if market == "spread" and side != "home" else point
+
+
 def _fair_probability(
     bucket: dict[str, tuple[float, float | None]],
     side: str,
@@ -217,8 +244,13 @@ def build_slate(
         # For de-vig we need both sides at the same (book, timestamp); index them.
         snapshots: dict[tuple, dict[str, tuple[float, float | None]]] = {}
         for row in game_lines.to_dict("records"):
-            key = (row["market"], row["book"], row["timestamp"])
             point = None if pd.isna(row["point"]) else float(row["point"])
+            key = (
+                row["market"],
+                row["book"],
+                row["timestamp"],
+                contract_key(row["market"], row["side"], point),
+            )
             snapshots.setdefault(key, {})[row["side"]] = (float(row["price"]), point)
 
         game_stakes: dict[str, float] = {}
@@ -238,6 +270,7 @@ def build_slate(
                     best["p_model"],
                     best["price"],
                     config.staking,
+                    venue_for_book(best["book"]) if config.charge_exchange_fees else None,
                 )
                 if stake <= 0.0:
                     continue
@@ -288,7 +321,9 @@ def _best_opportunity(
     best: dict | None = None
     for row in candidates.to_dict("records"):
         point = None if pd.isna(row["point"]) else float(row["point"])
-        bucket = snapshots.get((market, row["book"], row["timestamp"]), {})
+        bucket = snapshots.get(
+            (market, row["book"], row["timestamp"], contract_key(market, side, point)), {}
+        )
         p_fair = _fair_probability(bucket, side, config.devig_method)
         if p_fair is None:
             continue
@@ -310,6 +345,7 @@ def _best_opportunity(
             < config.min_team_total_disagreement
         ):
             continue
+        venue = venue_for_book(row["book"]) if config.charge_exchange_fees else None
         p_model = model_probability(proj, market, side, point)
         if p_model is None:  # projection can't price this market (no segment sim)
             continue
@@ -319,7 +355,11 @@ def _best_opportunity(
             # staking belief toward this line's own devigged probability.
             p_model = p_fair + config.model_weight * (p_model - p_fair)
         signal = evaluate(
-            p_model, float(row["price"]), p_fair, min_edge=config.min_edge_for(market)
+            p_model,
+            float(row["price"]),
+            p_fair,
+            min_edge=config.min_edge_for(market),
+            venue=venue,
         )
         if not signal.qualifies:
             continue
