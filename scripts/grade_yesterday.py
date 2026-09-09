@@ -698,6 +698,20 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     )
     print(f"season record: {len(cumulative)} settled row(s) accumulated")
 
+    # The market monitor (docs/WAGERING.md W3): per-market trailing CLV and
+    # ROI over 7/30 days with flags, read off the chain just written. One
+    # parquet per grade for the site's health page, and the table in the log.
+    try:
+        from velocity.report.monitor import health_lines, market_health
+
+        health = market_health(cumulative, as_of=slate_date)
+        health.assign(league=args.league, as_of=pd.Timestamp(slate_date)).to_parquet(
+            out / f"monitor_{args.league}_{out_stamp}.parquet", index=False
+        )
+        print("\n".join(health_lines(health, args.league)))
+    except Exception as exc:  # noqa: BLE001 - the monitor never blocks the record
+        print(f"market monitor skipped ({exc})")
+
     # The bankroll ledger: every placed bet the grade can settle, settled —
     # at the placed stakes and prices, with the close it was graded against.
     # Open game bets the slate no longer carries settle from the finals.
