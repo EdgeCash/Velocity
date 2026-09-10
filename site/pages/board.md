@@ -170,6 +170,56 @@ order by
   <Column id=status title="Status" align=center chip={true} />
 </DataTable>
 
+```sql moved
+select
+  upper(m.league) as lg,
+  coalesce(b.away_team || ' @ ' || b.home_team, m.game_id) as matchup,
+  case m.market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'ML'
+    when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
+    else replace(m.market, '_', ' ') end as market,
+  upper(m.side) as side,
+  m.point_open, m.point_now,
+  case when m.market != 'moneyline' then m.point_now - m.point_open end as ptmove,
+  m.price_open, m.price_now,
+  m.price_now - m.price_open as prmove,
+  case when b.stake_sized > 0 then 'staked' end as onthecard
+from velocity.line_moves m
+left join velocity.board b
+  on b.game_id = m.game_id and b.market = m.market and b.side = m.side
+where m.league != '__none__'
+  and m.league like coalesce(nullif('${inputs.league}', ''), '%')
+  and (coalesce(m.point_now, 0) != coalesce(m.point_open, 0)
+       or coalesce(m.price_now, 0) != coalesce(m.price_open, 0))
+order by abs(coalesce(m.point_now, 0) - coalesce(m.point_open, 0)) desc,
+         abs(coalesce(m.price_now, 0) - coalesce(m.price_open, 0)) desc
+```
+
+<SectionBar title="Moved since open" meta={`${moved.length ?? 0} markets on the move`} />
+
+What the hourly odds archive has seen change since it first priced the game.
+A matchup page carries the same movement one game at a time; this is every
+game at once, so a number running away is visible without opening sixteen of
+them. Whether a move helped or hurt is the closing-line
+calculation on [Performance](/performance), which is measured against the
+close rather than guessed from the direction.
+
+<DataTable data={moved} rows=10 compact={true} rowShading={false} emptySet=pass
+  emptyMessage="Nothing has moved yet. Movement appears once the hourly archive has seen a game more than once.">
+  <Column id=lg title="Lg" />
+  <Column id=matchup title="Matchup" />
+  <Column id=market title="Market" />
+  <Column id=side title="Side" />
+  <Column id=point_open title="Open" fmt='#,##0.0' align=right />
+  <Column id=point_now title="Now" fmt='#,##0.0' align=right />
+  <Column id=ptmove title="Line move" fmt='+#,##0.0;−#,##0.0' align=right contentType=delta deltaSymbol={false} />
+  <Column id=price_open title="Open px" fmt='+0;−0' align=right />
+  <Column id=price_now title="Now px" fmt='+0;−0' align=right />
+  <Column id=prmove title="Px move" fmt='+0;−0' align=right contentType=delta deltaSymbol={false} />
+  <Column id=onthecard title="" align=center />
+</DataTable>
+
 ```sql parlays
 select
   upper(league) as lg,

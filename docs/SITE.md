@@ -280,6 +280,20 @@ never mentioned the de-scaling at all — the term that most often decides a
 stake. `tests/test_runner_policy.py` fails if it goes back to being written
 down rather than read.
 
+## What moved
+
+`line_moves` reached only the matchup pages, one game at a time. The Board now
+carries a **Moved since open** section: every market the hourly archive has
+seen change, across every game, so a number running away is visible without
+opening sixteen pages.
+
+It deliberately makes **no claim about whether a move helped or hurt**. That
+judgement is the closing-line calculation on Performance, which measures
+against the actual close rather than inferring from the direction of travel —
+and getting the sign right depends on the side and the market's own
+convention, which is exactly the sort of thing that reads plausibly and is
+wrong.
+
 ## The prop board
 
 `props` is a separate family from the game board — `slate_{league}_props`,
