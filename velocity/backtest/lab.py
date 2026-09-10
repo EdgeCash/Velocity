@@ -1283,12 +1283,24 @@ class RestAdjustedModel:
         neutral_site: bool = False,
         rng: object = None,
         kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
     ) -> object:
+        """Rest bonuses ON TOP of whatever an outer wrapper already applied.
+
+        These wrappers stack — the live runner wraps the rest model in
+        :class:`WeatherAdjustedModel` whenever a forecast is available, and
+        that one passes its wind bonus down. Swallowing the argument instead
+        of adding to it raised ``TypeError: unexpected keyword argument
+        'home_bonus'`` on every NFL projection, killing the whole slate the
+        moment a forecast came back. Each wrapper adds its own term and
+        forwards the sum, so any stacking order composes.
+        """
         return self.inner.project(
             home_team, away_team, neutral_site=neutral_site,
             rng=rng,  # type: ignore[arg-type]
-            home_bonus=self._bonus(home_team, kickoff),
-            away_bonus=self._bonus(away_team, kickoff),
+            home_bonus=home_bonus + self._bonus(home_team, kickoff),
+            away_bonus=away_bonus + self._bonus(away_team, kickoff),
         )
 
 
@@ -1310,9 +1322,18 @@ class WeatherAdjustedModel:
         threshold_mph: float = 15.0,
         points_per_mph: float = 0.15,
     ) -> None:
+        import inspect
+
         self.inner = inner
         self.threshold_mph = threshold_mph
         self.points_per_mph = points_per_mph
+        # Decided once, at construction: a bare game model has no ``kickoff``
+        # parameter and raises if handed one.
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
         keyed = weather.dropna(subset=["kickoff"]).copy()
         keyed["_date"] = pd.to_datetime(keyed["kickoff"]).dt.normalize()
         self._wind = {
@@ -1328,7 +1349,18 @@ class WeatherAdjustedModel:
         neutral_site: bool = False,
         rng: object = None,
         kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
     ) -> object:
+        """Wind on top of whatever the caller already applied.
+
+        The inner model is either a bare game model (the lab's wind variants)
+        or another situational wrapper (the live runner stacks this over
+        :class:`RestAdjustedModel`). Only the wrappers take a ``kickoff``, so
+        it is forwarded only where it is accepted — passing it to a bare
+        model would raise, and *not* passing it to a rest wrapper would
+        silently zero every rest bonus.
+        """
         from velocity.features.weather import wind_total_bonus
 
         bonus = 0.0
@@ -1339,10 +1371,12 @@ class WeatherAdjustedModel:
                 threshold_mph=self.threshold_mph,
                 points_per_mph=self.points_per_mph,
             )
+        extra = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
         return self.inner.project(
             home_team, away_team, neutral_site=neutral_site,
             rng=rng,  # type: ignore[arg-type]
-            home_bonus=bonus, away_bonus=bonus,
+            home_bonus=home_bonus + bonus, away_bonus=away_bonus + bonus,
+            **extra,
         )
 
 

@@ -176,3 +176,48 @@ def test_an_empirical_sim_without_a_bank_falls_back_to_the_normal(tmp_path, monk
     cfg = runner.football_sim_config("ncaaf", args)
     assert cfg.residuals is None and cfg.sd_margin == 18.2
     assert runner.describe_sim(cfg, "ncaaf").startswith("normal")
+
+
+def test_exchange_venues_are_papered_unless_told_otherwise() -> None:
+    """The exchange prices belong on the board; the money is a separate call.
+
+    A Kalshi contract can be the best number on a game, so the board should
+    price and grade it — but the E8 shape gate still runs on a round 0.02
+    tolerance rather than one fitted from banked closes, and S2's rule is
+    that money does not follow a market whose evidence is not in yet.
+    """
+    runner = _runner()
+    parser = runner.build_parser()
+
+    # Exchanges off: no venue is papered, because none is priced.
+    off = parser.parse_args(["--league", "nfl"])
+    assert off.exchanges is False
+    assert runner.resolve_paper_venues(off) == frozenset()
+
+    # Exchanges on: both venues priced, neither staked.
+    on = parser.parse_args(["--league", "nfl", "--exchanges"])
+    assert on.exchange_paper is True
+    assert runner.resolve_paper_venues(on) == frozenset({"kalshi", "polymarket"})
+
+    # The escape hatch stakes them.
+    staked = parser.parse_args(["--league", "nfl", "--exchanges", "--no-exchange-paper"])
+    assert runner.resolve_paper_venues(staked) == frozenset()
+
+
+def test_a_papered_venue_prices_but_never_stakes() -> None:
+    """The rule itself, at the one point that decides whether money follows."""
+    from velocity.wagering.slate import SlateConfig
+
+    config = SlateConfig(paper_venues=frozenset({"kalshi", "polymarket"}))
+    # A sportsbook row is untouched...
+    assert config.paper_reason("total", 0.04, 0.51, "draftkings") is None
+    # ...the same edge on an exchange is priced and graded, not staked.
+    assert config.paper_reason("total", 0.04, 0.51, "kalshi") == "paper venue (kalshi)"
+    assert config.paper_reason("spread", 0.04, 0.51, "Polymarket") == "paper venue (polymarket)"
+    # A missing book cannot be judged by venue, and is not papered by accident.
+    assert config.paper_reason("total", 0.04, 0.51, None) is None
+    # The market rule still wins where both apply, so the reason stays the
+    # most specific one the operator can act on.
+    both = SlateConfig(paper_markets=frozenset({"total"}),
+                       paper_venues=frozenset({"kalshi"}))
+    assert both.paper_reason("total", 0.04, 0.51, "kalshi") == "paper market"

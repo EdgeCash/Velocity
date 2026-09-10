@@ -44,9 +44,9 @@ on:
         required: false
         default: "false"
       exchanges:
-        description: "Also price the Kalshi and Polymarket boards (football only, paper)"
+        description: "Price the Kalshi and Polymarket boards alongside the sportsbooks (football only; priced and graded at stake zero unless the runner is told otherwise)"
         required: false
-        default: "false"
+        default: "true"
       board_max_age_min:
         description: "Reuse a banked /odds payload this many minutes old before paying for a live pull"
         required: false
@@ -340,9 +340,12 @@ jobs:
               EXTRA="$EXTRA --carousel"
             fi
             # Exchange boards ride alongside the sportsbooks for football only
-            # (docs/BUILD_EXCHANGES.md E6). Off by default: the pull adds a
-            # couple of minutes a league and the ladder gate is new.
-            if [ "${{ github.event.inputs.exchanges || 'false' }}" = "true" ] \
+            # (docs/BUILD_EXCHANGES.md E6). On by default now: both venues are
+            # free and keyless, and a Kalshi contract can genuinely be the best
+            # number on a game, so the board should show it. The money is a
+            # separate decision — the runner papers the exchange venues until
+            # the E8 ladder tolerance is fitted from banked closes.
+            if [ "${{ github.event.inputs.exchanges || 'true' }}" = "true" ] \
                && { [ "${league}" = "nfl" ] || [ "${league}" = "ncaaf" ]; }; then
               EXTRA="$EXTRA --exchanges"
             fi

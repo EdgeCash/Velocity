@@ -141,6 +141,14 @@ class SlateConfig:
     # the money (docs/STRATEGY_REVIEW.md S2). Empty (default) = stake everything
     # that qualifies.
     paper_markets: frozenset[str] = frozenset()
+    # Venues priced, logged and graded but never staked. The exchanges land
+    # here by default (``LADDER_BOOKS``): their prices belong on the board —
+    # a Kalshi contract can genuinely be the best number on a game — but the
+    # E8 shape gate that decides which rungs are honest still runs on a round
+    # 0.02 tolerance rather than one fitted from banked closes, and S2's rule
+    # is that money does not follow a market whose evidence is not in yet.
+    # Empty = stake every venue that qualifies.
+    paper_venues: frozenset[str] = frozenset()
     # Edge ceilings — the adverse-selection guard applied where the money is.
     # On the repo's own graded record the highest-edge quartile carried the
     # worst closing-line value (mean CLV −0.048 vs +0.037 in the lowest;
@@ -175,7 +183,8 @@ class SlateConfig:
         """The edge threshold for ``market`` — its override, else the global."""
         return float(self.min_edge_by_market.get(market, self.min_edge))
 
-    def paper_reason(self, market: str, edge: float, p_fair: float | None) -> str | None:
+    def paper_reason(self, market: str, edge: float, p_fair: float | None,
+                     book: str | None = None) -> str | None:
         """Why a qualifying bet on ``market`` stays paper, or ``None`` to stake it.
 
         Checked after the EV gate: the bet is real enough to log and grade;
@@ -184,6 +193,8 @@ class SlateConfig:
         """
         if market in self.paper_markets or "__all__" in self.paper_markets:
             return "paper market"
+        if book is not None and str(book).strip().lower() in self.paper_venues:
+            return f"paper venue ({str(book).strip().lower()})"
         if self.max_edge is not None and edge > self.max_edge:
             return f"edge {edge:.3f} above ceiling {self.max_edge:.2f}"
         if (
@@ -387,7 +398,8 @@ def build_slate(
                 )
                 if best is None:
                     continue
-                paper = config.paper_reason(market, best["edge"], best.get("p_fair"))
+                paper = config.paper_reason(
+                    market, best["edge"], best.get("p_fair"), best.get("book"))
                 stake = stake_amount(
                     config.starting_bankroll,
                     best["p_model"],

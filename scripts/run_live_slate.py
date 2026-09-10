@@ -651,6 +651,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="also price the Kalshi and Polymarket boards alongside the "
                              "sportsbooks (free, keyless; docs/BUILD_EXCHANGES.md E6). "
                              "Paper only — nothing is ever ordered.")
+    # The exchange prices belong on the board — a Kalshi contract can be the
+    # best number on a game — but staking them is a separate decision from
+    # showing them. The E8 shape gate still runs on a round 0.02 tolerance
+    # rather than one fitted from the banked candle closes, so the venues are
+    # priced, graded and shown at stake zero until that evidence lands
+    # (docs/STRATEGY_REVIEW.md S2, docs/BUILD_EXCHANGES.md E8).
+    parser.add_argument("--exchange-paper", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="price the exchange venues but never stake them "
+                             "(default on; --no-exchange-paper stakes them)")
     parser.add_argument("--ladder-tolerance", type=float, default=0.02,
                         help="max probability error the sim's distribution shape may have "
                              "at a rung's distance from the fair line before that exchange "
@@ -826,8 +836,12 @@ def live_config_rows(
     rows.append(("Edge ceilings",
                  " · ".join(ceilings) + " — past either, paper" if ceilings else "off"))
     paper = resolve_paper_markets(args)
-    rows.append(("Paper", "every market — content + CLV posture" if "__all__" in paper
-                 else ("team totals" if paper else "none")))
+    venues = resolve_paper_venues(args)
+    paper_label = ("every market — content + CLV posture" if "__all__" in paper
+                   else ("team totals" if paper else "none"))
+    if venues:
+        paper_label += f" · exchanges ({', '.join(sorted(venues))})"
+    rows.append(("Paper", paper_label))
     if args.league in FOOTBALL_SDS:
         rows.append(("Simulation", describe_sim(football_sim_config(args.league, args),
                                                 args.league)))
@@ -937,6 +951,15 @@ def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
     if resolve_paper(args.paper, args.league):
         return frozenset(GAME_MARKETS) | frozenset({"__all__"})
     return frozenset(_TEAM_TOTALS) if args.team_totals_paper else frozenset()
+
+
+def resolve_paper_venues(args: argparse.Namespace) -> frozenset[str]:
+    """The venues this run prices but never stakes — the exchanges, by default."""
+    from velocity.store.schema import LADDER_BOOKS
+
+    if not getattr(args, "exchanges", False):
+        return frozenset()
+    return frozenset(LADDER_BOOKS) if args.exchange_paper else frozenset()
 
 
 def _prop_paper_markets(args: argparse.Namespace) -> frozenset[str]:
@@ -1086,6 +1109,11 @@ def main() -> None:
         elif paper_markets:
             print("team totals: paper — priced and graded, staked at zero until "
                   "posted closes calibrate the gate (--no-team-totals-paper to stake)")
+        paper_venues = resolve_paper_venues(args)
+        if paper_venues:
+            print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
+                  "board, staked at zero until the ladder tolerance is fitted "
+                  "(--no-exchange-paper to stake them)")
         max_edge = args.max_edge if args.max_edge > 0 else None
         max_rel = args.max_relative_edge if args.max_relative_edge > 0 else None
         if max_edge is not None or max_rel is not None:
@@ -1101,6 +1129,7 @@ def main() -> None:
             min_total_disagreement=total_edge,
             min_team_total_disagreement=args.team_total_edge,
             paper_markets=paper_markets,
+            paper_venues=paper_venues,
             max_edge=max_edge,
             max_relative_edge=max_rel,
             devig_anchor=args.devig_anchor,
