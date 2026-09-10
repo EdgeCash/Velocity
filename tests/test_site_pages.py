@@ -216,3 +216,32 @@ def test_american_prices_are_never_grouped(page: Path) -> None:
             f"{page.name}: price column `{column}` uses fmt='{fmt}', which "
             "groups thousands. Use '+0;−0'."
         )
+
+
+@pytest.mark.parametrize("page", MD_PAGES, ids=lambda p: str(p.relative_to(PAGES)))
+def test_an_input_is_never_hidden_behind_a_conditional(page: Path) -> None:
+    """A `<ButtonGroup>` inside `{#if}` hangs every query templated on it.
+
+    Evidence's inputs are declared by the component that renders them, so a
+    filter wrapped in a conditional that happens to be false leaves the
+    interpolated input undefined forever, and every query using it waits for
+    a value that never arrives — a page-level skeleton that never resolves.
+
+    Not hypothetical: hiding the league filter when a slate carried only one
+    league hung the whole Today page, on exactly the quiet slate its empty
+    states were written for. Hide such a control with CSS, which keeps it
+    mounted, rather than with a block that keeps it from existing.
+    """
+    depth = 0
+    for line in page.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("{#if", "{#each")):
+            depth += 1
+        elif stripped.startswith(("{/if}", "{/each}")):
+            depth = max(0, depth - 1)
+        elif "<ButtonGroup" in stripped or "<Dropdown" in stripped:
+            assert depth == 0, (
+                f"{page.name}: `{stripped[:60]}` sits inside a conditional. "
+                "The component is what declares its input, so a false branch "
+                "hangs every query using it. Hide it with CSS instead."
+            )

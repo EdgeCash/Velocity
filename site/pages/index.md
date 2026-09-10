@@ -190,11 +190,11 @@ where league != '__none__' and published
   tone="brand"
 />
 
-{#if leagues.length > 1}
+<div class:lone-filter={leagues.length <= 1}>
 
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
 
-{/if}
+</div>
 
 {#if card.length > 0}
   <div class="play-list">
@@ -266,4 +266,7 @@ portfolio-sized number after the per-game, per-class and slate caps._
   @media (min-width: 1000px) {
     .play-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
+  /* A filter with one option is noise, but it still has to mount: the
+     input it declares is what the page's queries are templated on. */
+  .lone-filter { display: none; }
 </style>

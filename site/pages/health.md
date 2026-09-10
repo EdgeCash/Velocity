@@ -62,11 +62,11 @@ order by window_days, league, n_bets desc
 
 <SectionBar title="Flags" meta={summary[0]?.flagged > 0 ? 'act on these first' : 'nothing flagged'} />
 
-{#if leagues.length > 1}
+<div class:lone-filter={leagues.length <= 1}>
 
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
 
-{/if}
+</div>
 
 <DataTable data={flagged} compact={true} rowShading={false} emptySet=pass
   emptyMessage="No market is flagged — every settled market with enough bets is inside its bands.">
@@ -158,3 +158,9 @@ order by league, thin, n_bets desc
   than 0.05 ahead of the realized win rate: the shrink or the anchoring weight
   has drifted from what the record earns.
 - **Thin** is fewer than 20 bets in the window. Nothing else is said about it.
+
+<style>
+  /* A filter with one option is noise, but it still has to mount: the
+     input it declares is what the page's queries are templated on. */
+  .lone-filter { display: none; }
+</style>
