@@ -99,20 +99,34 @@ ledger is adjusted.
 ```sql open_rows
 select
   upper(league) as lg,
-  case when player is not null and player != '' then player
-       else coalesce(game_id, '') end as who,
+  -- The matchup, never the game id. A hash is not a bet.
+  coalesce(
+    nullif(trim(coalesce(away_team, '') || ' @ ' || coalesce(home_team, '')), '@'),
+    'Game ' || substr(game_id, 1, 6)) as matchup,
+  -- One readable call, the way a bet is actually spoken: "OVER 8.5",
+  -- "HOME -1.5", "T. Turner o1.5 HRR". Four columns of market/side/line
+  -- is a spreadsheet talking, not a bet.
+  trim(
+    case when player is not null and player != '' then player || ' ' else '' end ||
+    case market
+      when 'moneyline' then upper(side)
+      when 'total' then (case lower(side) when 'over' then 'OVER' when 'under' then 'UNDER'
+                         else upper(side) end) || ' ' || cast(point as varchar)
+      when 'spread' then upper(side) || ' ' ||
+           (case when point > 0 then '+' else '' end) || cast(point as varchar)
+      else upper(side) || coalesce(' ' || cast(point as varchar), '') end
+  ) as play,
   case market
     when 'spread' then 'Spread' when 'total' then 'Total'
     when 'moneyline' then 'ML'
     when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
     else replace(market, '_', ' ') end as market,
-  upper(side) as side,
-  point, price, stake,
+  price, stake,
   case when book is not null and book != '' then book end as book,
-  placed_at
+  strftime(placed_at, '%b %-d') as placed
 from velocity.ledger_open
 where league != '__none__'
-order by placed_at desc
+order by placed_at desc, stake desc
 ```
 
 ```sql open_total
@@ -127,17 +141,16 @@ from velocity.ledger_open where league != '__none__'
     : 'nothing live'}
 />
 
-<DataTable data={open_rows} compact={true} rowShading={false} emptySet=pass
+<DataTable data={open_rows} rows=8 compact={true} rowShading={false} emptySet=pass
   emptyMessage="No bet is open. The ledger records one the moment a play is placed, and closes it on the morning grade.">
   <Column id=lg title="Lg" />
-  <Column id=who title="Bet" />
+  <Column id=matchup title="Matchup" />
+  <Column id=play title="Play" />
   <Column id=market title="Market" />
-  <Column id=side title="Side" />
-  <Column id=point title="Line" fmt='#,##0.0' align=right />
   <Column id=price title="Price" fmt='+0;−0' align=right />
   <Column id=book title="Book" />
   <Column id=stake title="Stake" fmt='#,##0.00"u"' align=right />
-  <Column id=placed_at title="Placed" />
+  <Column id=placed title="Placed" align=right />
 </DataTable>
 
 _Money already on the table, from the bankroll ledger. A position leaves this

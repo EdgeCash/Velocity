@@ -287,28 +287,34 @@
      columns or pushes the page sideways on a phone.
      -------------------------------------------------------------------- */
   :global(.markdown table) {
-    font-size: 0.8rem;
+    font-size: 0.86rem;
     border-collapse: separate;
     border-spacing: 0;
   }
   :global(.markdown thead th) {
-    font-size: 0.6rem !important;
+    font-size: 0.63rem !important;
     font-weight: 700 !important;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.11em;
     color: var(--v-ink-3) !important;
     border-bottom: 1px solid var(--v-line-2) !important;
-    padding-top: 0.35rem !important;
-    padding-bottom: 0.45rem !important;
+    padding-top: 0.6rem !important;
+    padding-bottom: 0.6rem !important;
     background: transparent !important;
     white-space: nowrap;
   }
+  /* Row height is the single biggest lever on how a board reads. These
+     were 0.42rem and the tables felt like a spreadsheet squint; the boards
+     this is measured against run roughly double that. Legibility first —
+     a dense row nobody wants to read is not density, it is just small. */
   :global(.markdown tbody td) {
     border-bottom: 1px solid var(--v-line) !important;
-    padding-top: 0.42rem !important;
-    padding-bottom: 0.42rem !important;
+    padding-top: 0.78rem !important;
+    padding-bottom: 0.78rem !important;
+    padding-right: 1.1rem !important;
     color: var(--v-ink);
     vertical-align: middle;
+    line-height: 1.35;
   }
   /* Every quantity on the site wears the board face. Evidence tags each
      cell with its column type, so this reaches every number in every
@@ -317,7 +323,7 @@
      and the digits are widened back out very slightly. */
   :global(.markdown td.number) {
     font-family: var(--v-board);
-    font-size: 0.92rem;
+    font-size: 1.02rem;
     font-weight: 600;
     letter-spacing: 0.015em;
     font-variant-numeric: tabular-nums;
