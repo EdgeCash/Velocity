@@ -126,3 +126,90 @@ def test_the_nav_order_is_decision_first() -> None:
     assert order["health"] < order["ratings"]
     # Positions are unique, or the tie falls back to filename order.
     assert len(set(order.values())) == len(order), f"duplicate positions: {order}"
+
+
+# --- the board's typographic rules --------------------------------------
+#
+# These are the two things the design leans on that a page can silently
+# break: a hyphen where a minus belongs, and a coloured number with no sign
+# to make the colour redundant. Both are invisible in review and obvious on
+# the built page, so they are checked here rather than trusted.
+
+_FMT = re.compile(r"fmt='([^']*)'")
+_DELTA_COL = re.compile(r"<Column\b[^>]*contentType=delta[^>]*>", re.S)
+
+
+@pytest.mark.parametrize("page", MD_PAGES, ids=lambda p: str(p.relative_to(PAGES)))
+def test_negative_numbers_use_a_real_minus_sign(page: Path) -> None:
+    """U+2212, never a hyphen.
+
+    Every board in this genre sets its negative prices with a true minus.
+    A hyphen is narrower than a digit, so a column of ``-110`` next to
+    ``+140`` visibly fails to align, and it is the single clearest tell
+    that a page was typed rather than designed.
+    """
+    for match in _FMT.finditer(page.read_text()):
+        body = match.group(1)
+        negative = body.split(";", 1)[1] if ";" in body else ""
+        assert not negative.startswith("-"), (
+            f"{page.name}: fmt='{body}' opens its negative section with a "
+            "hyphen. Use a real minus sign (−, U+2212)."
+        )
+
+
+@pytest.mark.parametrize("page", MD_PAGES, ids=lambda p: str(p.relative_to(PAGES)))
+def test_a_coloured_number_also_carries_its_sign(page: Path) -> None:
+    """Colour is the fast read; the sign is the one that always works.
+
+    ``contentType=delta`` colours a cell green or red, which a deuteranope
+    cannot separate. The number therefore has to say which way it went on
+    its own — either with a printed sign in the format, or with the arrow
+    glyph Evidence draws when ``deltaSymbol`` is left on.
+    """
+    for match in _DELTA_COL.finditer(page.read_text()):
+        column = match.group(0)
+        fmt = _FMT.search(column)
+        signed_format = bool(fmt and fmt.group(1).startswith("+"))
+        arrow_shown = "deltaSymbol={false}" not in column
+        assert signed_format or arrow_shown, (
+            f"{page.name}: `{' '.join(column.split())}` is coloured by sign "
+            "but prints neither a sign nor an arrow, so the direction is "
+            "carried by hue alone."
+        )
+
+
+def test_the_board_face_is_vendored_not_fetched() -> None:
+    """The numeral face ships with the site.
+
+    Pulling it from a font CDN would put a third-party request in front of
+    every page load of a private board, and the board would render in the
+    fallback until it landed.
+    """
+    site = PAGES.parent
+    layout = (PAGES / "+layout.svelte").read_text()
+    assert "fonts.googleapis.com" not in layout and "fonts.gstatic.com" not in layout, (
+        "the board face must not be fetched from a font CDN"
+    )
+    for weight in ("500", "600", "700"):
+        face = site / "static" / "fonts" / f"saira-condensed-{weight}.woff2"
+        assert face.exists(), f"missing vendored face: {face.name}"
+        assert f"saira-condensed-{weight}.woff2" in layout, (
+            f"{face.name} is vendored but never declared in the layout"
+        )
+
+
+@pytest.mark.parametrize("page", MD_PAGES, ids=lambda p: str(p.relative_to(PAGES)))
+def test_american_prices_are_never_grouped(page: Path) -> None:
+    """A board writes +2400, never +2,400.
+
+    Nothing in the genre groups an American price — the comma is what a
+    general-purpose number formatter does, and on a ladder market where
+    prices run to four figures it is the difference between a board and a
+    spreadsheet.
+    """
+    for match in re.finditer(r"<Column id=(price\w*)\b[^>]*?fmt='([^']*)'", page.read_text()):
+        column, fmt = match.groups()
+        assert "#,##" not in fmt, (
+            f"{page.name}: price column `{column}` uses fmt='{fmt}', which "
+            "groups thousands. Use '+0;−0'."
+        )

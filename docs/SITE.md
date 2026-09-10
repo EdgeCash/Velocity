@@ -61,25 +61,99 @@ Dark only, on purpose: `appearance.switcher` is off and every surface is
 picked for the near-black ground. A light mode would be a second design to
 keep honest for no one.
 
-Four rules the pages inherit from `pages/+layout.svelte`:
+The reference is the genre, not a BI tool. What follows is the short version
+of what a scouting pass across Outlier, BettorSheets, Mongoose Bets, the
+sportsbook apps and the pro odds screens found to be *shared* by all of them,
+and which of it this site adopts.
 
-1. **Numbers are the product.** Tabular figures everywhere
-   (`font-feature-settings: "tnum"`), so columns of money line up.
-2. **Money color is never the only channel.** Profit green and loss red are
-   indistinguishable under deuteranopia, so every number wearing them also
-   carries a sign or an arrow. They are status colors, never categorical
-   slots (`evidence.config.yaml` says so at the top).
-3. **Nothing clips.** The content column is a flex child with `min-width: 0`
-   and every table scrolls inside its own box, so a wide blotter never steals
-   the page's width — which is exactly what made the old board show two
-   columns on a phone.
-4. **Empty is a designed state.** Half the site is fed by the morning grade,
-   so most of the day something is legitimately empty; pages carry
-   `<EmptyNote>` and the framework's red error boxes are suppressed.
+### The board face
+
+Every serious board in this genre licenses a **condensed athletic grotesque**
+for its numerals — DraftKings ships Saira Condensed — and prose lives in a
+separate humanist sans. That single split does more for "this is a board"
+than any amount of colour.
+
+`Saira Condensed` (500/600/700, latin subset, ~54KB) is **vendored** into
+`site/static/fonts/` rather than fetched from a font CDN: a private board
+should not put a third-party request in front of every page load, and a cold
+cache would otherwise render the whole board in the fallback face. It is
+bound to `--v-board` and applied to every quantity — Evidence tags each cell
+with its column type, so `td.number` reaches every number in every table
+without a page having to ask.
+
+### Six rules the pages inherit from `pages/+layout.svelte`
+
+1. **Numbers are the product, and the typography says so.** The board face,
+   tabular figures, and a value roughly twice the size of the micro-label
+   under it. That label-over-value pair is the atomic unit of the design.
+2. **A negative price is not a loss.** Prices are sign-explicit and set with
+   a **real minus (U+2212)**, never a hyphen — a hyphen is narrower than a
+   digit, so a column of `−110` beside `+140` visibly fails to align. And
+   American prices are never grouped: `+2400`, not `+2,400`.
+3. **Money colour is never the only channel, and red is held in reserve.**
+   Profit green and loss salmon are indistinguishable under deuteranopia, so
+   every number wearing them also carries a sign. The loss colour is
+   **salmon `#f97289`, not red**: it sits beside a positive on nearly every
+   row, and a fire-alarm red there makes an ordinary losing market look like
+   a fault. True red (`--v-alert`) is spent on the kill switch alone.
+4. **One lit object.** Depth is a five-step near-black ladder inside a 20-value
+   luminance range with white-alpha hairlines, so almost everything is
+   dark-on-dark; exactly one thing per list gets the inverted brand pill.
+   `PlayCard` takes a `lead` prop for precisely this. A list where every price
+   is filled is the genre's clearest cheap tell — if everything is lit,
+   nothing is.
+5. **Nothing clips.** The content column and its wrapper are flex children
+   with `min-width: 0`, and every table scrolls inside its own box, so a wide
+   blotter never steals the page's width — which is exactly what made the old
+   board show two columns on a phone.
+6. **Empty is a designed state, and so is low confidence.** Half the site is
+   fed by the morning grade, so most of the day something is legitimately
+   empty; pages carry `<EmptyNote>` and the framework's red error boxes are
+   suppressed. Output the model declined to fund is **desaturated, never
+   hidden** — a paper row is a real opinion and still has to be legible next
+   to the ones that cleared.
+
+### The bet object
+
+`PlayCard` is a card carrying a **nested ticket** one elevation step lighter.
+The nesting is what separates "the game" from "the bet" without a rule or a
+heading, and it is the move the whole genre shares. Inside the ticket: the
+call on the left, the price on the right, and a four-up strip of
+edge / model / fair / stake, each value over its own micro-label.
+
+The venue rides in the price pill as a **two-letter monogram in the venue's
+own colour** (`venueMark` / `venueColor` in `components/format.js`). No board
+in the genre spells a book's name out inside a dense row — it shows a mark —
+and a tile we draw ourselves needs nobody's logo asset. The full name sits
+under the pill, and `sources/velocity/board.sql` resolves the raw feed codes
+(`williamhill_us`, `mybookieag`) to the name the venue uses for itself, once,
+so every page inherits it.
+
+### Things deliberately not done
+
+- **No gold, felt, or card-suit ornament.** None of the reference products
+  has any, and "Vegas" in this genre means a lit trading desk, not a casino
+  floor. The one piece of literal Vegas texture is the stub at the foot of
+  every page — the boring jurisdiction/timestamp line every real book prints.
+- **No boxes around every number.** Dense grids in the genre box *nothing*;
+  only the tap target gets a box. `chip={true}` on a `Column` renders bare
+  text in Evidence 40.1.8 anyway, so the micro-caps do the work.
+- **No arrow on a number that already prints its sign.** Colour plus sign
+  plus arrow is three channels for one fact.
 
 Chart marks are stepped into the dark band rather than reusing the brighter
 UI accents, and single-series charts (the bankroll curve, cumulative units)
 take the brand teal directly instead of a categorical palette.
+
+### A source may not assume its own column types
+
+`tier` and `rationale` are written by the intel layer, which does not run on
+every slate. When a board carries none of them, pandas writes the column as
+all-NaN `float64`, and the Board page's `coalesce(tier, '')` then dies with
+`Could not convert string '' to DOUBLE` — a red box where the board should
+be, for a slate that is otherwise perfectly good. `board.sql` casts both to
+`varchar` so an untiered board renders as an untiered board. Any optional
+text column added later needs the same treatment.
 
 ### Two markdown traps
 
@@ -96,7 +170,9 @@ Component attributes are not prose and are unaffected. Keep underscores and
 quote literals out of prose interpolations: rename the SQL alias
 (`mode_note` → `modenote`) or build the string in the query.
 `tests/test_site_pages.py` fails on both, plus a missing `title` or
-`sidebar_position`, so a bad page breaks pytest instead of the nightly deploy.
+`sidebar_position`, a hyphen where a minus belongs, a grouped price, a
+colour-only delta, and a board face that is fetched rather than vendored — so
+a bad page breaks pytest instead of the nightly deploy.
 
 `scripts/build_site_data.py` finds the **latest stamp per league** for each
 artifact family in `--slate-dir`, joins what the pages need (slate ×

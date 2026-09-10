@@ -73,7 +73,7 @@ select
   upper(side) as side,
   point,
   price,
-  case when venue = 'sportsbook' then book else venue end as venue_label,
+  venue_label,
   edge,
   coalesce(tier, '') as tier,
   conviction,
@@ -100,9 +100,9 @@ order by
   <Column id=market_label title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' align=right />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=price title="Price" fmt='+0;−0' align=right />
   <Column id=venue_label title="Venue" />
-  <Column id=edge title="Edge" fmt='0.0%' align=right contentType=delta />
+  <Column id=edge title="Edge" fmt='+0.0%;−0.0%' align=right contentType=delta deltaSymbol={false} />
   <Column id=tier title="Tier" align=center />
   <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' align=right />
   <Column id=status title="Status" align=center chip={true} />
@@ -130,9 +130,9 @@ its EV is the most it could be, not what the book will pay.
   <Column id=lg title="Lg" />
   <Column id=legs title="Legs" wrap={true} />
   <Column id=n_legs title="#" align=right />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=price title="Price" fmt='+0;−0' align=right />
   <Column id=p_win title="Win" fmt='0.0%' align=right />
-  <Column id=ev title="EV" fmt='0.0%' align=right contentType=delta />
+  <Column id=ev title="EV" fmt='+0.0%;−0.0%' align=right contentType=delta deltaSymbol={false} />
   <Column id=stake title="Stake" fmt='#,##0.00"u"' align=right />
   <Column id=caveat title="" align=center chip={true} />
 </DataTable>

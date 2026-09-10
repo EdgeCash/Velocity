@@ -188,8 +188,8 @@ judged on profit and loss instead.
   emptySet=pass emptyMessage="Per-market results fill as graded plays accumulate.">
   <Column id=market_label title="Market" />
   <Column id=n_bets title="Bets" align=right />
-  <Column id=units title="Units" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
-  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=units title="Units" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
+  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
   <Column id=beat_close title="Beat close" fmt='0%' align=right />
   <Column id=judged_on title="Judged on" align=center chip={true} />
 </DataTable>
@@ -256,10 +256,10 @@ order by slate_date desc, abs(coalesce(profit_sized, profit)) desc
   <Column id=market title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' align=right />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=price title="Price" fmt='+0;−0' align=right />
   <Column id=result title="Result" align=center chip={true} />
-  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
-  <Column id=line_clv title="CLV" fmt='+#,##0.0;−#,##0.0' align=right contentType=delta />
+  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
+  <Column id=line_clv title="CLV" fmt='+#,##0.0;−#,##0.0' align=right contentType=delta deltaSymbol={false} />
 </DataTable>
 
 ```sql pending

@@ -70,9 +70,9 @@ order by window_days, league, n_bets desc
   <Column id=market_label title="Market" />
   <Column id=window title="Window" align=center />
   <Column id=n_bets title="Bets" align=right />
-  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta />
-  <Column id=mean_line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
-  <Column id=drift title="Real − claim" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta deltaSymbol={false} />
+  <Column id=mean_line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
+  <Column id=drift title="Real − claim" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
   <Column id=flags title="Flag" wrap={true} />
 </DataTable>
 
@@ -103,9 +103,9 @@ order by league, thin, n_bets desc
   <Column id=market_label title="Market" />
   <Column id=n_bets title="Bets" align=right />
   <Column id=staked title="Staked" fmt='#,##0.0"u"' align=right />
-  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
-  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta />
-  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
+  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta deltaSymbol={false} />
+  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
   <Column id=beat_close title="Beat close" fmt='0%' align=right />
   <Column id=claimed title="Claimed" fmt='0.00' align=right />
   <Column id=realized title="Realized" fmt='0.00' align=right />
@@ -135,9 +135,9 @@ order by league, thin, n_bets desc
   emptyMessage="Nothing settled in the last week.">
   <Column id=market_label title="Market" />
   <Column id=n_bets title="Bets" align=right />
-  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
-  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta />
-  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
+  <Column id=roi title="ROI" fmt='+#,##0.0%;−#,##0.0%' align=right contentType=delta deltaSymbol={false} />
+  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta deltaSymbol={false} />
   <Column id=read title="Read" align=center chip={true} />
 </DataTable>
 

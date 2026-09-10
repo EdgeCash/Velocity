@@ -110,7 +110,7 @@ select
   p.game_id, p.league, p.market, p.side, p.price, p.player,
   p.tier, p.conviction, p.edge, p.home_team, p.away_team, p.kickoff,
   coalesce(p.stake_sized, p.stake) as stake,
-  b.point, b.book, b.venue, b.rationale
+  b.point, b.book, b.venue, b.rationale, b.note, b.p_model, b.p_fair
 from velocity.publish p
 left join velocity.board b
   on b.league = p.league and b.game_id = p.game_id
@@ -139,8 +139,8 @@ where league != '__none__' and published
 
 {#if card.length > 0}
   <div class="play-list">
-    {#each card as play}
-      <PlayCard {...play} />
+    {#each card as play, i}
+      <PlayCard {...play} lead={i === 0} />
     {/each}
   </div>
 {:else}
@@ -187,7 +187,7 @@ order by p.conviction desc nulls last
   <Column id=market title="Market" />
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' align=right />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=price title="Price" fmt='+0;−0' align=right />
   <Column id=edge title="Edge" fmt='0.0%' align=right />
   <Column id=conviction title="Conv" fmt='0.00' align=right />
   <Column id=reason title="Why it sat" wrap={true} />

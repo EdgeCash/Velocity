@@ -54,10 +54,10 @@ order by market, side
   <Column id=market_label title="Market" />
   <Column id=side title="Side" />
   <Column id=point_open title="Open" fmt='#,##0.0' />
-  <Column id=price_open title="Open price" fmt='+#,##0;-#,##0' />
+  <Column id=price_open title="Open price" fmt='+0;−0' />
   <Column id=point_now title="Now" fmt='#,##0.0' />
-  <Column id=price_now title="Now price" fmt='+#,##0;-#,##0' />
-  <Column id=pt_move title="Move" fmt='+#,##0.0;-#,##0.0' contentType=delta />
+  <Column id=price_now title="Now price" fmt='+0;−0' />
+  <Column id=pt_move title="Move" fmt='+#,##0.0;−#,##0.0' contentType=delta deltaSymbol={false} />
 </DataTable>
 
 ## Markets
@@ -99,10 +99,10 @@ where game_id = '${params.game_id}'
   <Column id=side title="Side" />
   <Column id=point title="Line" fmt='#,##0.0' />
   <Column id=venue_label title="Venue" />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
+  <Column id=price title="Price" fmt='+0;−0' />
   <Column id=p_model title="Model %" fmt='pct1' />
   <Column id=p_fair title="Fair %" fmt='pct1' />
-  <Column id=edge title="Edge" fmt='pct1' contentType=delta />
+  <Column id=edge title="Edge" fmt='+0.0%;−0.0%' contentType=delta deltaSymbol={false} />
   <Column id=tier title="Tier" />
   <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' />
   <Column id=status title="Status" wrap=true />
