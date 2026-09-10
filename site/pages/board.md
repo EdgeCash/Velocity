@@ -35,6 +35,64 @@ order by stake_sized desc
   <Column id=stake_solo title="Solo Kelly" fmt='#,##0.00"u"' align=right />
 </DataTable>
 
+
+```sql sizing
+select
+  upper(p.league) as lg,
+  coalesce(b.away_team || ' @ ' || b.home_team, p.game_id) as matchup,
+  case p.market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'ML'
+    when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
+    else replace(p.market, '_', ' ') end as market,
+  upper(p.side) as side,
+  p.stake_solo as solo,
+  p.stake as sized,
+  case when p.stake_solo > 0 then p.stake / p.stake_solo end as kept,
+  count(*) over (partition by p.game_id) as gamebets
+from velocity.portfolio p
+left join (
+  select distinct game_id, home_team, away_team from velocity.board
+) b on b.game_id = p.game_id
+where p.league != '__none__' and coalesce(p.stake_solo, 0) > 0
+order by p.stake_solo desc
+```
+
+```sql trimmed
+select
+  count(*) as n,
+  count(*) filter (stake < stake_solo - 0.0001) as cut,
+  coalesce(sum(stake_solo), 0) as solo,
+  coalesce(sum(stake), 0) as sized
+from velocity.portfolio
+where league != '__none__' and coalesce(stake_solo, 0) > 0
+```
+
+<SectionBar
+  title="Sizing"
+  meta={trimmed[0]?.n > 0
+    ? `${trimmed[0].cut} of ${trimmed[0].n} cut below their own Kelly`
+    : ''}
+/>
+
+Kelly sizes each bet as if it were the only one on the board. Two bets on the
+same game are not two independent bets, so a game's bets are de-scaled
+together by **1 / (1 + (n − 1)ρ)** before any cap applies — three bets on one
+game each keep half their standalone stake at ρ = 0.5. **Kept** is what
+survived that and the per-game, per-class and slate caps.
+
+<DataTable data={sizing} rows=12 compact={true} rowShading={false} emptySet=pass
+  emptyMessage="Sizing fills when a run stakes something.">
+  <Column id=lg title="Lg" />
+  <Column id=matchup title="Matchup" />
+  <Column id=market title="Market" />
+  <Column id=side title="Side" />
+  <Column id=gamebets title="Bets on game" align=right />
+  <Column id=solo title="Solo Kelly" fmt='#,##0.00"u"' align=right />
+  <Column id=sized title="Sized" fmt='#,##0.00"u"' align=right />
+  <Column id=kept title="Kept" fmt='0%' align=right />
+</DataTable>
+
 ```sql leagues
 select '%' as league, 'All' as lg, 0 as ord
 union all

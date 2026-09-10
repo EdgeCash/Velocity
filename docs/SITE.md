@@ -257,6 +257,29 @@ fields and edge-cached ~45s. `LiveTicker.svelte` polls it every 60s and
 renders the scrolling crawl on the Today page; it hides itself when the
 endpoint is unreachable (local preview) or all leagues are dark.
 
+## Why a bet is smaller than its own Kelly
+
+The Board's **Sizing** section answers the question the site could not
+previously answer: Kelly said 1.04u and the card staked 0.52u — why?
+
+Almost always the answer is not a cap. It is the **same-game correlation
+de-scaling**: two bets on one game are not two independent bets, so a game's
+bets are scaled together by `1 / (1 + (n − 1)ρ)` *before* any cap applies.
+At the default `ρ = 0.5` that is 100% for one bet, 67% for two and 50% for
+three. Only what survives that meets the per-game, per-class and slate caps.
+
+This was verified against a real slate rather than read off the constant:
+every game on the board had exactly one distinct `stake / stake_solo` ratio,
+and the ratios came out 1, ⅔ and ½ for 1, 2 and 3 bets — which is
+`correlation_scale()` exactly.
+
+The Methods page's Staking row now carries `ρ` too. It used to be a **string
+literal**, which is precisely the drift the rest of that block exists to
+prevent: it hardcoded the slate cap that `--max-slate-fraction` moves, and it
+never mentioned the de-scaling at all — the term that most often decides a
+stake. `tests/test_runner_policy.py` fails if it goes back to being written
+down rather than read.
+
 ## The prop board
 
 `props` is a separate family from the game board — `slate_{league}_props`,

@@ -802,6 +802,12 @@ GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_a
 _TEAM_TOTALS = ("team_total_home", "team_total_away")
 
 
+def _kelly_label(fraction: float) -> str:
+    """``0.25`` reads as ``\u00bc``; anything unusual reads as itself."""
+    return {0.25: "\u00bc", 0.5: "\u00bd", 0.75: "\u00be",
+            1.0: "full"}.get(round(fraction, 4), f"{fraction:g}\u00d7")
+
+
 def live_config_rows(
     args: argparse.Namespace, fit_kind: str, cfg: object | None
 ) -> list[tuple[str, str]]:
@@ -846,8 +852,25 @@ def live_config_rows(
         rows.append(("Simulation", describe_sim(football_sim_config(args.league, args),
                                                 args.league)))
     rows.append(("De-vig", f"{args.devig_anchor} anchor, multiplicative"))
-    rows.append(("Staking", "¼-Kelly, 5% per bet, 10% per game, 25% per slate, "
-                            "one market class ≤ half the slate"))
+    # Built from the config objects rather than written down. This row was a
+    # string literal, which is exactly the drift the rest of this function
+    # exists to prevent: it hardcoded the slate cap that `--max-slate-fraction`
+    # moves, and it never mentioned the same-game correlation de-scaling at
+    # all — the term that actually halves a stake when a game carries three
+    # bets, and the most common reason a play is sized below its own Kelly.
+    from velocity.wagering.portfolio import PortfolioConfig as _Portfolio
+    from velocity.wagering.staking import StakingConfig as _Staking
+
+    staking = _Staking()
+    portfolio = _Portfolio(max_portfolio_fraction=args.max_slate_fraction)
+    rows.append(("Staking",
+                 f"{_kelly_label(staking.kelly_fraction)}-Kelly, "
+                 f"{staking.max_bet_fraction:.0%} per bet, "
+                 f"{portfolio.group_cap_fraction:.0%} per game, "
+                 f"{portfolio.max_portfolio_fraction:.0%} per slate, "
+                 f"one market class ≤ {portfolio.max_class_fraction:.0%} of the "
+                 f"slate; same-game exposure de-scaled at "
+                 f"\u03c1={portfolio.group_correlation:g}"))
     if cfg is not None and getattr(cfg, "ladder_tolerance", None):
         rows.append(("Exchange rungs", f"E8 shape gate at {cfg.ladder_tolerance:g} "  # type: ignore[attr-defined]
                                        "probability error; taker fees charged"))
