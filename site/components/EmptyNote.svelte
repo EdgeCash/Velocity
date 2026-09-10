@@ -22,7 +22,7 @@
     display: flex;
     align-items: flex-start;
     gap: 0.6rem;
-    background: var(--v-surface, #10161f);
+    background: var(--v-lvl-1, #10161f);
     border: 1px dashed var(--v-line-2, #26333f);
     border-radius: var(--v-radius, 10px);
     padding: 0.85rem 0.95rem;

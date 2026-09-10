@@ -95,3 +95,68 @@ export function marketLabel(market) {
 export function sideLabel(side) {
   return String(side ?? '').toUpperCase();
 }
+
+/** Venue codes → the name the venue actually uses for itself. */
+const VENUE_NAME = {
+  draftkings: 'DraftKings', fanduel: 'FanDuel', betmgm: 'BetMGM',
+  betrivers: 'BetRivers', pointsbetus: 'PointsBet', williamhill_us: 'Caesars',
+  betonlineag: 'BetOnline', lowvig: 'LowVig', bovada: 'Bovada',
+  mybookieag: 'MyBookie', betus: 'BetUS', fanatics: 'Fanatics',
+  espnbet: 'ESPN BET', hardrockbet: 'Hard Rock', ballybet: 'Bally Bet',
+  pinnacle: 'Pinnacle', novig: 'Novig', prophetx: 'ProphetX',
+  kalshi: 'Kalshi', polymarket: 'Polymarket',
+};
+
+/* Each venue gets a monogram tile in its own colour. The genre never writes a
+   book's name in a dense view — it shows a mark — and a two-letter tile in the
+   right hue is the version of that we can ship without anyone's logo asset.
+   A venue we have no colour for falls back to the neutral chip. */
+const VENUE_COLOR = {
+  draftkings: '#53d337', fanduel: '#1493ff', betmgm: '#c8a55b',
+  betrivers: '#3d8bd4', pointsbetus: '#ed1c24', williamhill_us: '#c8a94e',
+  betonlineag: '#d8232a', lowvig: '#5b8dff', bovada: '#cc2b2b',
+  mybookieag: '#e08a1e', betus: '#d43f3f', fanatics: '#e0405c',
+  espnbet: '#e03131', hardrockbet: '#9b4dca', ballybet: '#e8a33d',
+  pinnacle: '#d24b4b', novig: '#5b7cff', prophetx: '#f5a623',
+  kalshi: '#00d09c', polymarket: '#4a7dff',
+};
+
+export function venueLabel(venue) {
+  const key = String(venue ?? '').trim().toLowerCase();
+  if (!key) return '';
+  return VENUE_NAME[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+/** The two-letter mark on the tile: KA, PO, DK, FD, MG. */
+export function venueMark(venue) {
+  const name = venueLabel(venue);
+  if (!name) return '';
+  const caps = name.replace(/[^A-Za-z]/g, '');
+  const initials = name.match(/[A-Z]/g);
+  if (initials && initials.length >= 2) return initials.slice(0, 2).join('');
+  return caps.slice(0, 2).toUpperCase();
+}
+
+export function venueColor(venue) {
+  return VENUE_COLOR[String(venue ?? '').trim().toLowerCase()] ?? null;
+}
+
+/** An exchange contract is not a sportsbook line, and the card says so. */
+export const LADDER_VENUES = new Set(['kalshi', 'polymarket']);
+
+export function isExchange(venue) {
+  return LADDER_VENUES.has(String(venue ?? '').trim().toLowerCase());
+}
+
+/* Over/under abbreviates by density, the way every board in the genre does
+   it: `o48.5` in a grid, `O 48.5` on a tap target, `Over 48.5` where the bet
+   is being confirmed. `mode` picks which. */
+export function overUnder(side, point, mode = 'tap') {
+  const s = String(side ?? '').toLowerCase();
+  const n = Number(point);
+  const value = Number.isNaN(n) ? '' : String(n.toFixed(1)).replace(/\.0$/, '');
+  if (s !== 'over' && s !== 'under') return null;
+  if (mode === 'grid') return `${s[0]}${value}`;
+  if (mode === 'long') return `${s[0].toUpperCase()}${s.slice(1)} ${value}`;
+  return `${s[0].toUpperCase()} ${value}`;
+}

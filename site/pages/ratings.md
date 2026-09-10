@@ -29,12 +29,12 @@ order by league, rank
 <DataTable data={ratings_rows} rows=60 groupBy=lg search=true emptySet=pass emptyMessage="Ratings publish with each live run — the table fills when a slate prices.">
   <Column id=rank title="#" />
   <Column id=team title="Team" />
-  <Column id=net title="Net" fmt='+#,##0.00;-#,##0.00' contentType=delta />
-  <Column id=off title="Off" fmt='+#,##0.00;-#,##0.00' />
-  <Column id=defense title="Def" fmt='+#,##0.00;-#,##0.00' />
+  <Column id=net title="Net" fmt='+#,##0.00;−#,##0.00' contentType=delta deltaSymbol={false} />
+  <Column id=off title="Off" fmt='+#,##0.00;−#,##0.00' />
+  <Column id=defense title="Def" fmt='+#,##0.00;−#,##0.00' />
   <Column id=pace title="Pace" fmt='#,##0.0' />
-  <Column id=moved title="Δ rank" fmt='+#,##0;-#,##0' contentType=delta />
-  <Column id=net_chg title="Δ net" fmt='+#,##0.00;-#,##0.00' contentType=delta />
+  <Column id=moved title="Δ rank" fmt='+#,##0;−#,##0' contentType=delta deltaSymbol={false} />
+  <Column id=net_chg title="Δ net" fmt='+#,##0.00;−#,##0.00' contentType=delta deltaSymbol={false} />
 </DataTable>
 
 _Scales differ by league (each fit's natural unit): points/game for the

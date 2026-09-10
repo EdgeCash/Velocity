@@ -12,6 +12,11 @@
 # palette entirely. Profit green and loss red are STATUS colors, not
 # categorical slots: they are indistinguishable under deuteranopia, so every
 # number that wears them also carries a sign or an arrow, never color alone.
+#
+# `negative` is salmon, not red. It is the loss half of the money axis and it
+# sits beside a positive on nearly every row; a fire-alarm red there makes an
+# ordinary losing market look like a fault. True red (#e5484d) is spent on the
+# kill switch alone, which is why it is not in this palette.
 appearance:
   default: dark
   switcher: false
@@ -19,22 +24,22 @@ appearance:
 theme:
   colors:
     # The ground and its elevations. base-100 is also the chart canvas.
-    base: "#0a0e13"
-    base-200: "#10161f"
-    base-300: "#1e2a37"
-    base-content: "#dfe7ef"
-    base-content-muted: "#93a1b1"
+    base: "#06090d"
+    base-200: "#101822"
+    base-300: "#26333f"
+    base-content: "#e9f1f9"
+    base-content-muted: "#8fa0b3"
     base-heading: "#f2f7fb"
     # Brand teal: the model's own color, used for accents and single series.
     primary: "#3ddad0"
     primary-content: "#04100f"
-    accent: "#d29922"
-    accent-content: "#150e02"
-    info: "#58a6ff"
+    accent: "#f5b342"
+    accent-content: "#170f02"
+    info: "#5b8dff"
     # Money. Always paired with a sign or arrow — see the note above.
-    positive: "#2ea043"
-    negative: "#e5484d"
-    warning: "#d29922"
+    positive: "#35d07f"
+    negative: "#f97289"
+    warning: "#f5b342"
   colorPalettes:
     # The validated dark categorical order, for the rare chart that must tell
     # series apart. Assigned in fixed order, never cycled.
@@ -48,7 +53,7 @@ theme:
   colorScales:
     # Sequential: one hue, dark → bright.
     default:
-      - "#0c2b29"
+      - "#0b2a28"
       - "#3ddad0"
 
 plugins:
