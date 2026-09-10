@@ -114,11 +114,11 @@ where league != '__none__'
   meta={`${board_count[0]?.n ?? 0} priced · ${board_count[0]?.staked ?? 0} staked`}
 />
 
-{#if leagues.length > 1}
+<div class:lone-filter={leagues.length <= 1}>
 
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
 
-{/if}
+</div>
 
 ```sql board_rows
 select
@@ -259,3 +259,9 @@ The [Performance](/performance) page carries what all of it earned._
      for the static build, even on an empty board (offseason). The sentinel
      page renders its own empty states. -->
 <a href="/matchup/__none__" style="display:none" aria-hidden="true">.</a>
+
+<style>
+  /* A filter with one option is noise, but it still has to mount: the
+     input it declares is what the page's queries are templated on. */
+  .lone-filter { display: none; }
+</style>

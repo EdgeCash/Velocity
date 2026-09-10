@@ -54,17 +54,17 @@ order by ord, market
 
 <SectionBar title="The prop board" meta="ranked by edge" />
 
-{#if leagues.length > 1}
+<div class:lone-filter={leagues.length <= 1}>
 
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
 
-{/if}
+</div>
 
-{#if markets.length > 1}
+<div class:lone-filter={markets.length <= 1}>
 
 <ButtonGroup data={markets} name=market value=market label=ml defaultValue="%" />
 
-{/if}
+</div>
 
 ```sql rows
 select
@@ -126,3 +126,9 @@ order by coalesce(stake, 0) desc, edge desc
   why a prop market needs a bigger sample before it says anything.
 - **Status** is why a row sat: a market without a promoted edge, an edge past
   the adverse-selection ceiling, or a per-class cap already spent.
+
+<style>
+  /* Mounted always, hidden when there is nothing to choose: the ButtonGroup
+     is what declares the input the queries below are templated on. */
+  .lone-filter { display: none; }
+</style>
