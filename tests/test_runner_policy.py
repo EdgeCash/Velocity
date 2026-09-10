@@ -144,6 +144,33 @@ def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
     assert "every market" in nhl_rows["Paper"]
 
 
+def test_the_staking_row_is_read_from_the_config_not_written_down() -> None:
+    """The Methods block's whole claim is that it cannot drift from the code.
+
+    This row was a string literal. It hardcoded the slate cap that
+    ``--max-slate-fraction`` moves, so the page kept saying 25% however the
+    run was invoked, and it never mentioned the same-game correlation
+    de-scaling — the term that halves a stake when a game carries three
+    bets, and the most common reason a play is sized below its own Kelly.
+    """
+    runner = _runner()
+    from velocity.wagering.portfolio import PortfolioConfig
+    from velocity.wagering.staking import StakingConfig
+
+    args = runner.build_parser().parse_args(["--league", "nfl"])
+    row = dict(runner.live_config_rows(args, "fit", None))["Staking"]
+    # Every number in the row is the config's, and the de-scaling is named.
+    assert f"{StakingConfig().max_bet_fraction:.0%} per bet" in row
+    assert f"{PortfolioConfig().group_cap_fraction:.0%} per game" in row
+    assert "\u03c1=0.5" in row and "de-scaled" in row
+
+    # The slate cap tracks the flag rather than the sentence.
+    tighter = runner.build_parser().parse_args(
+        ["--league", "nfl", "--max-slate-fraction", "0.15"])
+    assert "15% per slate" in dict(
+        runner.live_config_rows(tighter, "fit", None))["Staking"]
+
+
 def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
     """The M1 round's promotions (docs/MODEL_LAB.md): flags override, defaults pin."""
     runner = _runner()
