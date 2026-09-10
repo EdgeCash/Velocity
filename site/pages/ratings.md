@@ -1,9 +1,10 @@
 ---
 title: Ratings
 hide_title: true
+sidebar_position: 5
 ---
 
-<HeroBand
+<PageHead
   title="Power ratings"
   subtitle="The per-team strengths behind the live model, straight from each league's promoted fit — never hand-tuned. Off/Def are deviations from league average; Net is the expected margin against an average opponent on a neutral floor."
 />

@@ -19,26 +19,71 @@ site/
   sources/velocity/       DuckDB source; one .sql per table over data/*.parquet
     data/                 assembled per-run by scripts/build_site_data.py (gitignored)
   pages/
-    index.md              Today board (market · model · edge · tier) + live ticker,
-                          the ledger's bankroll / drawdown / open-exposure tiles
-    picks.md              "Plays": the publish gate's calls + the held-back
-                          audit with reasons (the full board stays on index)
-    performance.md        units, win rate, the bankroll (ledger curve, open bets),
-                          CLV block, cumulative chart, graded slate
+    +layout.svelte        THE CHROME: wordmark, no Evidence footer, and the
+                          global design system every page is written against
+    index.md          (1) Today — the decision: bankroll, exposure, the card
+                          as PlayCards, and the held-back rows beneath it
+    board.md          (2) the whole priced board, exposure and parlays
+    performance.md    (3) the record: bankroll curve, per-market CLV, settled
+    health.md         (4) per-market trailing 7/30-day ROI, CLV and
+                          claimed-vs-realized, with the monitor's flags
+    ratings.md        (5) per-league power ratings with movement
+    dfs.md            (6) cash lineup + GPP set
+    methods.md        (7) what is live in each league's model
+    graphics/         (8) card room — per-league sheet galleries
     matchup/[game_id].md  the game dossier: line movement, markets, sims,
                           weather, injury report, the game's own cards
-    health.md             market health: per-market trailing 7/30-day ROI,
-                          CLV and claimed-vs-realized, with the monitor's flags
-    ratings.md            per-league power ratings with movement
-    dfs.md                cash lineup + GPP set
-    graphics/             card room section — per-league pages (left menu)
-                          of the SHEETS (one all-inclusive graphic per game:
-                          card + deep dive composed by report/sheet_png.py)
-    methods.md            the "what's live" transparency block + glossary
-  components/             LiveTicker / HeroBand / CardGallery / WeatherLine
-  static/cards/           newest-stamp card PNGs (gitignored, per-run)
+  components/
+    PageHead / StatRow / StatCard / PlayCard / SectionBar / EmptyNote
+                          the design system's own pieces (format.js holds the
+                          number rules); LiveTicker / CardGallery / WeatherLine
+  static/                 favicon + icon set (the V drawn as a bankroll curve)
+    cards/                newest-stamp card PNGs (gitignored, per-run)
   worker.js + wrangler.toml + deploy.sh   Cloudflare deploy + /api/scores
 ```
+
+## The design
+
+Dark only, on purpose: `appearance.switcher` is off and every surface is
+picked for the near-black ground. A light mode would be a second design to
+keep honest for no one.
+
+Four rules the pages inherit from `pages/+layout.svelte`:
+
+1. **Numbers are the product.** Tabular figures everywhere
+   (`font-feature-settings: "tnum"`), so columns of money line up.
+2. **Money color is never the only channel.** Profit green and loss red are
+   indistinguishable under deuteranopia, so every number wearing them also
+   carries a sign or an arrow. They are status colors, never categorical
+   slots (`evidence.config.yaml` says so at the top).
+3. **Nothing clips.** The content column is a flex child with `min-width: 0`
+   and every table scrolls inside its own box, so a wide blotter never steals
+   the page's width — which is exactly what made the old board show two
+   columns on a phone.
+4. **Empty is a designed state.** Half the site is fed by the morning grade,
+   so most of the day something is legitimately empty; pages carry
+   `<EmptyNote>` and the framework's red error boxes are suppressed.
+
+Chart marks are stepped into the dark band rather than reusing the brighter
+UI accents, and single-series charts (the bankroll curve, cumulative units)
+take the brand teal directly instead of a categorical palette.
+
+### Two markdown traps
+
+Evidence runs its **markdown pass before Svelte compiles the page**, so inside
+a paragraph:
+
+- a pair of underscores becomes `<em>` — *including inside a `{...}`
+  expression, and including across two lines*. `{bank[0]?.mode_note}` compiled
+  to `{bank[0]?.mode<em>note}` and the build died with `Expected }`.
+- `''` is smart-quoted into typographic quotes, so `{x ?? ''}` becomes invalid
+  JS and the build dies with `Unexpected character '”'`.
+
+Component attributes are not prose and are unaffected. Keep underscores and
+quote literals out of prose interpolations: rename the SQL alias
+(`mode_note` → `modenote`) or build the string in the query.
+`tests/test_site_pages.py` fails on both, plus a missing `title` or
+`sidebar_position`, so a bad page breaks pytest instead of the nightly deploy.
 
 `scripts/build_site_data.py` finds the **latest stamp per league** for each
 artifact family in `--slate-dir`, joins what the pages need (slate ×

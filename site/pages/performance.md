@@ -1,17 +1,42 @@
 ---
 title: Performance
+sidebar_position: 3
+hide_title: true
 ---
+
+```sql stamp
+select max(stamp) as stamp from velocity.record where league != '__none__'
+```
+
+<PageHead
+  title="Performance"
+  subtitle="What the model actually earned, and whether it beat the number it closed at. Losses are shown as plainly as wins — the record is the product."
+  stamp={stamp[0]?.stamp}
+/>
+
+```sql bank
+select
+  current, seed, peak, drawdown, open_exposure, open_bets, settled_bets,
+  staked, profit, halted, halt_threshold as haltthreshold,
+  case when staked > 0 then profit / staked end as roi,
+  case when seed > 0 then current / seed - 1 end as growth,
+  case mode
+    when 'auto' then 'Booked automatically at the recommended terms.'
+    when 'manual' then 'Booked as the operator recorded them.'
+    else '' end as modenote
+from velocity.bankroll
+where league != '__none__'
+```
 
 ```sql season
 select
   count(*) filter (result = 'win') as wins,
   count(*) filter (result = 'loss') as losses,
   count(*) filter (result = 'push') as pushes,
-  coalesce(sum(profit), 0) as units,
-  coalesce(sum(coalesce(profit_sized, profit)), 0) as units_sized,
-  count(*) filter (profit_sized is null) as unsized_rows,
   count(*) filter (result in ('win','loss')) as decided,
-  strftime(min(slate_date), '%Y-%m-%d') as since,
+  coalesce(sum(coalesce(profit_sized, profit)), 0) as units,
+  coalesce(sum(stake), 0) as staked,
+  strftime(min(slate_date), '%b %-d') as since,
   count(distinct slate_date) as days
 from velocity.cumulative_record
 where league != '__none__' and result in ('win','loss','push')
@@ -19,131 +44,119 @@ where league != '__none__' and result in ('win','loss','push')
 ```
 
 ```sql season_rate
-select wins, losses, pushes, units, units_sized, unsized_rows, since, days,
-  case when decided > 0 then wins / decided end as win_rate
+select *, case when decided > 0 then wins::double / decided end as win_rate
 from ${season}
 ```
 
-```sql pending
+```sql clv_head
 select
-  (select count(*) from velocity.record
-    where league != '__none__' and result = 'pending') as pending,
-  (select count(*) from velocity.cumulative_record
-    where league != '__none__' and result in ('win','loss','push')
-      and coalesce(stake, 0) = 0) as paper_settled,
-  (select count(*) filter (result = 'win') from velocity.cumulative_record
-    where league != '__none__' and coalesce(stake, 0) = 0) as paper_wins,
-  (select count(*) filter (result = 'loss') from velocity.cumulative_record
-    where league != '__none__' and coalesce(stake, 0) = 0) as paper_losses
+  avg(r.line_clv) filter (r.line_clv is not null) as line_clv,
+  count(*) filter (r.line_clv is not null or r.price_clv is not null) as with_close,
+  count(*) filter (r.line_clv is not null or r.price_clv is not null)
+    || ' bets · ' || printf('%+.2f', avg(r.line_clv)) || ' pts' as clv_label,
+  avg(case
+        when r.line_clv is not null then case when r.line_clv > 0 then 1.0 when r.line_clv < 0 then 0.0 end
+        when r.price_clv is not null then case when r.price_clv > 0 then 1.0 when r.price_clv < 0 then 0.0 end
+      end) as beat_close
+from velocity.cumulative_record r
+where r.league != '__none__' and r.result in ('win','loss','push')
+  and exists (select 1 from velocity.clv_by_market c
+              where c.league = r.league and c.market = r.market and c.clv_trusted)
 ```
 
-<BigValue data={season_rate} value=units_sized title="Season units (sized stakes)" fmt='+#,##0.0"U"' />
-<BigValue data={season_rate} value=units title="Season units (solo Kelly)" fmt='+#,##0.0"U"' />
-<BigValue data={season_rate} value=win_rate title="Win rate (decided)" fmt='pct1' />
-<BigValue data={season_rate} value=wins title="Wins" />
-<BigValue data={season_rate} value=losses title="Losses" />
-<BigValue data={pending} value=pending title="Pending" />
+<StatRow>
+  <StatCard
+    label="Bankroll"
+    value={bank[0]?.seed > 0 ? bank[0].current : null}
+    format="units"
+    accent="brand"
+    delta={bank[0]?.seed > 0 ? bank[0].growth : null}
+    sub={bank[0]?.seed > 0 ? `peak ${bank[0].peak.toFixed(2)}u` : 'no ledger yet'}
+  />
+  <StatCard
+    label="Season units"
+    value={season_rate[0]?.units}
+    format="units"
+    sign={true}
+    accent="money"
+    sub={season_rate[0]?.days > 0
+      ? `${season_rate[0].wins}-${season_rate[0].losses}-${season_rate[0].pushes} since ${season_rate[0].since}`
+      : 'nothing graded yet'}
+  />
+  <StatCard
+    label="Return on stake"
+    value={season_rate[0]?.staked > 0 ? season_rate[0].units / season_rate[0].staked : null}
+    format="percent"
+    sign={true}
+    accent="money"
+    sub={season_rate[0]?.staked > 0 ? `on ${season_rate[0].staked.toFixed(1)}u staked` : ''}
+  />
+  <StatCard
+    label="Win rate"
+    value={season_rate[0]?.win_rate}
+    format="percent"
+    sub={season_rate[0]?.decided > 0 ? `${season_rate[0].decided} decided` : 'no decided bets'}
+  />
+  <StatCard
+    label="Beat the close"
+    value={clv_head[0]?.with_close > 0 ? clv_head[0].beat_close : null}
+    format="percent"
+    sub={clv_head[0]?.with_close > 0 ? clv_head[0].clv_label : 'no close matched yet'}
+    hint="Trusted markets only: spreads, totals and moneylines."
+  />
+</StatRow>
 
-_Record since {season_rate[0]?.since ?? '—'}
-over {season_rate[0]?.days ?? 0} graded day(s). Sized units are at the
-portfolio stake the card recommended; solo units at the uncapped Kelly stake
-the slate keeps for backtest comparability. {season_rate[0]?.unsized_rows ?? 0}
-row(s) predate sized stakes and count at their solo stake in the sized line.
-Paper calls — priced, graded, never staked — sit outside the headline:
-{pending[0]?.paper_wins ?? 0}-{pending[0]?.paper_losses ?? 0} so far._
+{#if bank[0]?.halted}
+<Alert status="negative">
 
-## Bankroll
+**Kill-switch tripped.** The bankroll sits more than
+{Math.round((bank[0]?.haltthreshold ?? 0.3) * 100)}% below its peak. The next
+card stakes nothing until the ledger is adjusted.
 
-The ledger's number: one bankroll, seeded once, moved only by settled bets
-and recorded adjustments (docs/WAGERING.md W1). The record above counts every
-recommendation; this counts what was actually on the books.
+</Alert>
+{/if}
 
-```sql bankroll
-select current, seed, peak, drawdown, open_exposure, open_bets, settled_bets,
-  staked, profit, case when staked > 0 then profit / staked end as roi,
-  halted, halt_threshold,
-  case mode
-    when 'auto' then 'Bets are booked automatically at the recommended terms: the model''s own card, compounding.'
-    when 'manual' then 'Bets are what the operator recorded placing.'
-    else 'Nothing placed on the ledger yet.' end as mode_note,
-  case when halted then 'The kill-switch is tripped: the next card stakes nothing until the ledger is adjusted.'
-    else '' end as halt_note,
-  strftime(as_of, '%Y-%m-%d') as as_of
-from velocity.bankroll
-where league != '__none__'
-```
-
-<BigValue data={bankroll} value=current title="Bankroll" fmt='#,##0.00"u"' />
-<BigValue data={bankroll} value=peak title="Peak" fmt='#,##0.00"u"' />
-<BigValue data={bankroll} value=drawdown title="Drawdown" fmt='pct1' />
-<BigValue data={bankroll} value=roi title="ROI on settled stakes" fmt='pct1' />
-<BigValue data={bankroll} value=open_exposure title="Open exposure" fmt='#,##0.00"u"' />
-
-```sql bankroll_curve
-select recorded_at, bankroll, record_type, upper(coalesce(league, '')) as lg,
-  amount, result, market
+```sql curve
+select recorded_at, bankroll, record_type, amount, market, result
 from velocity.bankroll_curve
 where league != '__none__'
 order by recorded_at
 ```
 
-<LineChart
-  data={bankroll_curve}
-  x=recorded_at
-  y=bankroll
-  yAxisTitle="bankroll after each settlement"
-  emptySet=pass
-  emptyMessage="The curve draws once the ledger has a seed and a settled bet."
+<SectionBar
+  title="Bankroll"
+  meta={bank[0]?.seed > 0 ? `${bank[0].settled_bets} settled · ${bank[0].open_bets} open` : ''}
 />
 
-```sql ledger_by_league
-select upper(league) as lg,
-  count(*) as bets,
-  count(*) filter (result = 'win') as w,
-  count(*) filter (result = 'loss') as l,
-  sum(amount) as profit
-from velocity.bankroll_curve
-where league != '__none__' and record_type = 'settled'
-group by league
-order by profit desc
-```
+{#if curve.length > 1}
 
-<DataTable data={ledger_by_league} emptySet=pass emptyMessage="Settled bets by league appear as the ledger settles.">
-  <Column id=lg title="League" />
-  <Column id=bets title="Settled" />
-  <Column id=w title="W" />
-  <Column id=l title="L" />
-  <Column id=profit title="Profit" fmt='+#,##0.00;-#,##0.00' contentType=delta />
-</DataTable>
+<LineChart
+  data={curve}
+  x=recorded_at
+  y=bankroll
+  yAxisTitle="units"
+  lineColor="#2bb3ab"
+  lineWidth={2}
+  markers={false}
+  yMin={0}
+  chartAreaHeight={190}
+/>
 
-```sql ledger_open
-select upper(league) as lg, market, upper(side) as side, player, point, book,
-  price, stake, strftime(placed_at, '%Y-%m-%d %H:%M') as placed_at
-from velocity.ledger_open
-where league != '__none__'
-order by placed_at desc
-```
+_One bankroll, seeded once, moved only by settled bets and recorded
+adjustments. Open bets do not move it until they settle._
 
-<DataTable data={ledger_open} emptySet=pass emptyMessage="No open bets on the ledger.">
-  <Column id=lg title="League" />
-  <Column id=market title="Market" />
-  <Column id=side title="Side" />
-  <Column id=player title="Player" />
-  <Column id=point title="Number" />
-  <Column id=book title="Book" />
-  <Column id=price title="Price" />
-  <Column id=stake title="Stake" fmt='#,##0.00"u"' />
-  <Column id=placed_at title="Placed" />
-</DataTable>
+{#if bank[0]?.modenote}
 
-_{bankroll[0]?.mode_note} {bankroll[0]?.halt_note}_
+_{bank[0].modenote}_
 
-## Closing line value
+{/if}
 
-The professional's yardstick: did each bet beat the number it closed at?
-Units are noisy; CLV converges fast — but only on markets whose close is
-sharp. Spreads, totals and moneylines are; props, team totals and thin
-derivatives are not, and their rows say so instead of carrying a number.
+{:else}
+<EmptyNote
+  title="The curve starts at the first settled bet"
+  detail="The ledger holds the seed, every recommendation and every placed bet; the line draws once the morning grade settles the first of them."
+/>
+{/if}
 
 ```sql clv_market
 select
@@ -154,132 +167,115 @@ select
     when 'team_total_home' then 'Team total (H)'
     when 'team_total_away' then 'Team total (A)'
     when 'parlay' then 'Parlay'
-    else market end as market_label,
+    else replace(market, '_', ' ') end as market_label,
   n_bets,
   units,
   case when clv_trusted then mean_line_clv end as line_clv,
-  case when clv_trusted then mean_price_clv end as price_clv,
   case when clv_trusted then pct_beat_close end as beat_close,
-  case when clv_trusted then 'CLV is the yardstick' else 'judge on P/L' end as verdict
+  case when clv_trusted then 'CLV' else 'P/L' end as judged_on
 from velocity.clv_by_market
 where league != '__none__'
 order by league, clv_trusted desc, n_bets desc
 ```
 
-<DataTable data={clv_market} groupBy=lg emptySet=pass emptyMessage="Per-market CLV fills as graded plays match an archived close.">
+<SectionBar title="By market" meta="closing-line value where the close is sharp" />
+
+Spreads, totals and moneylines close efficiently enough that beating the number
+is skill. Props and team totals do not, so their rows carry no CLV and are
+judged on profit and loss instead.
+
+<DataTable data={clv_market} groupBy=lg compact={true} rowShading={false}
+  emptySet=pass emptyMessage="Per-market results fill as graded plays accumulate.">
   <Column id=market_label title="Market" />
-  <Column id=n_bets title="Bets" />
-  <Column id=units title="Units" fmt='+#,##0.0;-#,##0.0' contentType=delta />
-  <Column id=line_clv title="Line CLV (pts)" fmt='+#,##0.00;-#,##0.00' contentType=delta />
-  <Column id=price_clv title="Price CLV" fmt='+#,##0.000;-#,##0.000' contentType=delta />
-  <Column id=beat_close title="Beat the close" fmt='pct0' />
-  <Column id=verdict title="Read it as" />
+  <Column id=n_bets title="Bets" align=right />
+  <Column id=units title="Units" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=line_clv title="Line CLV" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=beat_close title="Beat close" fmt='0%' align=right />
+  <Column id=judged_on title="Judged on" align=center chip={true} />
 </DataTable>
 
-```sql clv
-select
-  count(*) as graded,
-  count(*) filter (r.line_clv is not null or r.price_clv is not null) as with_close,
-  avg(r.line_clv) filter (r.line_clv is not null) as mean_line_clv,
-  avg(r.price_clv) filter (r.price_clv is not null) as mean_price_clv,
-  avg(case
-        when r.line_clv is not null then case when r.line_clv > 0 then 1.0 when r.line_clv < 0 then 0.0 end
-        when r.price_clv is not null then case when r.price_clv > 0 then 1.0 when r.price_clv < 0 then 0.0 end
-      end) as pct_beat_close
-from velocity.cumulative_record r
-where r.league != '__none__' and r.result in ('win','loss','push')
-  and exists (select 1 from velocity.clv_by_market c
-              where c.league = r.league and c.market = r.market and c.clv_trusted)
-```
-
-<BigValue data={clv} value=mean_line_clv title="Mean line CLV (pts), trusted markets" fmt='+#,##0.00;-#,##0.00' />
-<BigValue data={clv} value=pct_beat_close title="Beat the close" fmt='pct1' />
-<BigValue data={clv} value=with_close title="Bets with a close" />
-
-```sql clv_by_day
-select r.slate_date, upper(r.league) as lg,
-  avg(r.line_clv) as clv
-from velocity.cumulative_record r
-where r.league != '__none__' and r.line_clv is not null
-  and exists (select 1 from velocity.clv_by_market c
-              where c.league = r.league and c.market = r.market and c.clv_trusted)
-group by r.slate_date, r.league
-order by r.slate_date
-```
-
-<LineChart
-  data={clv_by_day}
-  x=slate_date
-  y=clv
-  series=lg
-  yAxisTitle="mean line CLV (pts) per day, trusted markets"
-  emptySet=pass
-  emptyMessage="CLV accrues once graded plays match an archived close (the hourly odds snapshots)."
-/>
-
-## Units over time
-
 ```sql units_by_day
-select slate_date, league, units, units_sized
+select slate_date, sum(units_sized) as units
 from velocity.units
 where league != '__none__'
+group by slate_date
 order by slate_date
 ```
+
+<SectionBar title="Units over time" meta="every league, at the sized stake" />
+
+{#if units_by_day.length > 1}
 
 <LineChart
   data={units_by_day}
   x=slate_date
-  y=units_sized
-  series=league
-  yAxisTitle="cumulative units at sized stakes"
-  emptySet=pass
-  emptyMessage="The record chart draws as graded days accumulate."
+  y=units
+  yAxisTitle="cumulative units"
+  lineColor="#2bb3ab"
+  lineWidth={2}
+  chartAreaHeight={170}
 />
 
-## By league
+{:else}
+<EmptyNote
+  title="One graded day so far"
+  detail="The line needs a second settled day before it says anything. Until then the numbers above are the honest read."
+/>
+{/if}
 
-```sql by_league
+```sql recent
 select
   upper(league) as lg,
-  count(*) filter (result = 'win') as w,
-  count(*) filter (result = 'loss') as l,
-  count(*) filter (result = 'push') as p,
-  coalesce(sum(coalesce(profit_sized, profit)), 0) as units_sized,
-  coalesce(sum(profit), 0) as units
+  strftime(slate_date, '%b %-d') as day,
+  case when length(play) > 46 then substr(play, 1, 44) || '…' else play end as play,
+  case market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'ML'
+    when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
+    when 'parlay' then 'Parlay'
+    else replace(market, '_', ' ') end as market,
+  upper(side) as side,
+  point,
+  price,
+  result,
+  coalesce(profit_sized, profit) as profit,
+  line_clv
 from velocity.cumulative_record
 where league != '__none__' and result in ('win','loss','push')
   and coalesce(stake, 0) > 0
-group by league
-order by units_sized desc
+order by slate_date desc, abs(coalesce(profit_sized, profit)) desc
 ```
 
-<DataTable data={by_league} emptySet=pass emptyMessage="No graded plays yet.">
-  <Column id=lg title="League" />
-  <Column id=w title="W" />
-  <Column id=l title="L" />
-  <Column id=p title="P" />
-  <Column id=units_sized title="Units (sized)" fmt='+#,##0.0' contentType=delta />
-  <Column id=units title="Units (solo)" fmt='+#,##0.0' contentType=delta />
-</DataTable>
+<SectionBar title="Settled" meta={`${recent.length ?? 0} graded plays`} />
 
-## Latest graded slate
-
-```sql latest_graded
-select upper(league) as lg, section, play, upper(side) as side, point, price,
-  result, profit, stake_sized, profit_sized
-from velocity.record
-where league != '__none__' and result is not null
-order by league, case result when 'pending' then 1 else 0 end, section
-```
-
-<DataTable data={latest_graded} rows=30 emptySet=pass emptyMessage="Yesterday's grading appears after the morning run.">
-  <Column id=lg title="League" />
-  <Column id=section title="Section" />
+<DataTable data={recent} rows=12 compact={true} rowShading={false} search={true}
+  emptySet=pass emptyMessage="Yesterday's grading appears after the morning run.">
+  <Column id=day title="Day" />
+  <Column id=lg title="Lg" />
   <Column id=play title="Play" />
-  <Column id=result title="Result" />
-  <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' />
-  <Column id=profit_sized title="Profit (sized)" fmt='+#,##0.00' contentType=delta />
-  <Column id=profit title="Profit (solo)" fmt='+#,##0.00' contentType=delta />
+  <Column id=market title="Market" />
+  <Column id=side title="Side" />
+  <Column id=point title="Line" fmt='#,##0.0' align=right />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=result title="Result" align=center chip={true} />
+  <Column id=profit title="Profit" fmt='+#,##0.00;−#,##0.00' align=right contentType=delta />
+  <Column id=line_clv title="CLV" fmt='+#,##0.0;−#,##0.0' align=right contentType=delta />
 </DataTable>
 
-_Losses shown as plainly as wins — the record is the product._
+```sql pending
+select
+  (select count(*) from velocity.record
+    where league != '__none__' and result = 'pending') as pending,
+  (select count(*) from velocity.cumulative_record
+    where league != '__none__' and result in ('win','loss','push')
+      and coalesce(stake, 0) = 0) as paper_settled,
+  (select count(*) filter (result = 'win') from velocity.cumulative_record
+    where league != '__none__' and coalesce(stake, 0) = 0) as paperwins,
+  (select count(*) filter (result = 'loss') from velocity.cumulative_record
+    where league != '__none__' and coalesce(stake, 0) = 0) as paperlosses
+```
+
+_{pending[0]?.pending ?? 0} play(s) are still pending a final. Paper calls —
+priced and graded, never staked — sit outside the headline at
+{pending[0]?.paperwins ?? 0}-{pending[0]?.paperlosses ?? 0}. Per-market
+flags and the trailing windows are on [Market health](/health)._

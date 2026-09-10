@@ -354,7 +354,60 @@ def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
         (p for p in prev_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name)),
         key=lambda p: p.name,
     )
-    return newest_chain([pd.read_parquet(p) for p in matches])
+    return newest_chain(_read_chains(matches))
+
+
+def _read_chains(paths: list[Path]) -> list[pd.DataFrame]:
+    """Every readable copy, skipping the ones that are not parquet at all.
+
+    A failed R2 fetch leaves a **zero-byte** file where the chain should be
+    (wrangler creates ``--file`` before it discovers the object is missing),
+    and pyarrow raises on it. That raise used to kill the grader between
+    writing the day's record and writing the season chain, so the chain was
+    never written, never parked, and never found on the next run — a
+    bootstrap deadlock that silently cost the season (the whole Performance
+    page read empty). An unreadable copy is now reported and skipped.
+    """
+    chains: list[pd.DataFrame] = []
+    for path in paths:
+        if path.stat().st_size == 0:
+            print(f"chain copy {path.name} is empty — skipped")
+            continue
+        try:
+            chains.append(pd.read_parquet(path))
+        except Exception as exc:  # noqa: BLE001 - a bad copy never blocks the chain
+            print(f"chain copy {path.name} unreadable ({exc}) — skipped")
+    return chains
+
+
+def _bootstrap_chain(prev_dir: Path, league: str) -> pd.DataFrame | None:
+    """Start the season chain from the daily records already banked.
+
+    With no chain copy anywhere — a first run, or the seasons the zero-byte
+    bug above silently ate — the history is not actually lost: every previous
+    run's artifact still carries its ``record_{league}_{stamp}.parquet``.
+    Folding those settled rows in recovers the record instead of restarting
+    it at zero, and the dedup key in ``accumulate_record`` makes replaying a
+    day idempotent.
+    """
+    from velocity.report.daily_record import accumulate_record
+
+    pattern = rf"record_{re.escape(league)}_{_STAMP}\.parquet"
+    matches = sorted(
+        (p for p in prev_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name)),
+        key=lambda p: p.name,
+    )
+    days = [f for f in _read_chains(matches) if not f.empty and "result" in f.columns]
+    if not days:
+        return None
+    chain = None
+    for day in days:
+        chain = accumulate_record(chain, day[day["result"] != "pending"])
+    if chain is None or chain.empty:
+        return None
+    print(f"season chain bootstrapped from {len(days)} banked daily record(s): "
+          f"{len(chain)} settled row(s)")
+    return chain
 
 
 def newest_chain(chains: list[pd.DataFrame]) -> pd.DataFrame | None:
@@ -689,6 +742,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     # Filtering the downloaded chain too heals any history that already
     # carries them.
     prior = _newest_cumulative(Path(args.prev_dir), args.league)
+    if prior is None:
+        prior = _bootstrap_chain(Path(args.prev_dir), args.league)
     if prior is not None and "result" in prior.columns:
         prior = prior[prior["result"] != "pending"]
     settled_record = record[record["result"] != "pending"] if not record.empty else record

@@ -141,10 +141,19 @@ jobs:
         run: |
           mkdir -p artifacts/previous/r2
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+            dest="artifacts/previous/r2/cumulative_record_${league}_00000000T000000Z.parquet"
             npx --yes wrangler@4 r2 object get \
               "velocity-wasm/records/cumulative_record_${league}.parquet" \
-              --file "artifacts/previous/r2/cumulative_record_${league}_00000000T000000Z.parquet" \
-              --remote 2>/dev/null || echo "no stored chain for ${league}"
+              --file "$dest" --remote 2>/dev/null || echo "no stored chain for ${league}"
+            # wrangler creates --file before it discovers the object is
+            # missing, so a miss leaves a ZERO-BYTE parquet behind. Reading
+            # one used to kill the grader before it wrote the season chain,
+            # which meant the chain was never written, never parked, and
+            # never found again — the record could not bootstrap. The reader
+            # skips empties now; deleting them here keeps the log honest too.
+            if [ -f "$dest" ] && [ ! -s "$dest" ]; then
+              rm -f "$dest"
+            fi
           done
 
       # The bankroll ledger (docs/WAGERING.md W1): one private parquet — the
@@ -164,6 +173,11 @@ jobs:
           npx --yes wrangler@4 r2 object get "velocity-wasm/ledger/ledger.parquet" \
             --file artifacts/ledger/ledger_r2.parquet --remote 2>/dev/null \
             || echo "no stored ledger yet"
+          # Same zero-byte trap as the season chain above.
+          if [ -f artifacts/ledger/ledger_r2.parquet ] \
+             && [ ! -s artifacts/ledger/ledger_r2.parquet ]; then
+            rm -f artifacts/ledger/ledger_r2.parquet
+          fi
           python scripts/ledger.py merge --into artifacts/ledger/ledger.parquet \
             artifacts/ledger/ledger_r2.parquet artifacts/previous/*/*/ledger.parquet
           rm -f artifacts/ledger/ledger_r2.parquet
@@ -177,12 +191,26 @@ jobs:
           if [ -f artifacts/ledger/ledger.parquet ]; then
             LEDGER="--ledger artifacts/ledger/ledger.parquet"
           fi
+          # A league that fails must not stop the others, but it must not
+          # pass silently either: `|| true` hid a crash that cost the season
+          # record for weeks. Failures are collected and the step ends red
+          # (continue-on-error keeps the run itself green).
+          failed=""
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
-            python scripts/grade_yesterday.py \
+            echo "::group::grade ${league}"
+            if ! python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --props-dir artifacts/props \
-              --league "${league}" $LEDGER || true
+              --league "${league}" $LEDGER; then
+              failed="$failed ${league}"
+              echo "::warning title=Grading failed::${league} did not grade"
+            fi
+            echo "::endgroup::"
           done
+          if [ -n "$failed" ]; then
+            echo "grading failed for:$failed"
+            exit 1
+          fi
 
       - name: Park the season chain (R2)
         if: env.CLOUDFLARE_API_TOKEN != ''

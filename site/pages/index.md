@@ -1,169 +1,209 @@
 ---
 title: Today
 hide_title: true
+sidebar_position: 1
 ---
+
+```sql stamp
+select max(stamp) as stamp from velocity.board where league != '__none__'
+```
+
+<PageHead
+  title="Today"
+  subtitle="The card the model recommends, the money already on the table, and what the record says about both."
+  stamp={stamp[0]?.stamp}
+/>
 
 <LiveTicker />
 
-```sql tiles
+```sql bank
 select
-  (select count(distinct game_id) from velocity.games
-    where league != '__none__') as games_today,
-  (select sum(stake_sized) from velocity.exposure
-    where league != '__none__') as sized_total,
-  (select sum(cap_units) from velocity.exposure
-    where league != '__none__') as cap_total,
-  (select count(*) from velocity.board
-    where league != '__none__' and stake_sized > 0) as staked,
-  (select count(*) from velocity.board
-    where league != '__none__' and note is not null) as paper,
-  coalesce((select sum(profit_sized) from velocity.units
-    where league != '__none__'), 0) as season_units,
-  (select max(stamp) from velocity.board
-    where league != '__none__') as as_of,
-  (select strftime(max(seen_now), '%Y-%m-%d %H:%M') from velocity.line_moves
-    where league != '__none__') as odds_as_of
-```
-
-```sql exposure_tile
-select
-  case when cap_total > 0 then sized_total / cap_total end as of_cap,
-  coalesce(sized_total, 0) as sized_total,
-  coalesce(cap_total, 0) as cap_total
-from ${tiles}
-```
-
-<HeroBand
-  title="Today's board"
-  subtitle="Every priced market, ranked the way the card is built: tier, then conviction, then edge. Stake is the portfolio-sized number; paper rows are priced and graded but not wagered."
-  stamp={tiles[0]?.as_of}
-/>
-
-<BigValue data={tiles} value=games_today title="Games on the board" />
-<BigValue data={tiles} value=staked title="Staked plays" />
-<BigValue data={exposure_tile} value=of_cap title="Exposure (sized / slate cap)" fmt='pct0' />
-<BigValue data={tiles} value=season_units title="Season units (sized)" fmt='+#,##0.0"U"' />
-
-```sql bankroll_tile
-select current, seed, peak, drawdown, open_exposure, open_bets, halted,
-  round(drawdown * 100) as drawdown_pct,
-  round(halt_threshold * 100) as halt_pct,
-  case mode
-    when 'auto' then 'booked automatically at the recommended terms'
-    when 'manual' then 'as placed by the operator'
-    else 'none placed yet' end as mode_label
+  current, seed, peak, drawdown, open_exposure, open_bets, halted,
+  round(drawdown * 100) as drawdownpct,
+  round(halt_threshold * 100) as haltpct,
+  case when seed > 0 then current / seed - 1 end as growth
 from velocity.bankroll
 where league != '__none__'
 ```
 
-{#if bankroll_tile.length > 0}
-
-<BigValue data={bankroll_tile} value=current title="Bankroll (ledger)" fmt='#,##0.00"u"' />
-<BigValue data={bankroll_tile} value=drawdown title="Drawdown from peak" fmt='pct1' />
-<BigValue data={bankroll_tile} value=open_exposure title="Open exposure" fmt='#,##0.00"u"' />
-<BigValue data={bankroll_tile} value=open_bets title="Open bets" />
-
-{#if bankroll_tile[0]?.halted}
-
-<Alert status=danger>
-<b>Kill-switch tripped.</b> The bankroll is {bankroll_tile[0]?.drawdown_pct}% below its peak, past the {bankroll_tile[0]?.halt_pct}% halt. Every stake on today's card is zeroed until the ledger is adjusted.
-</Alert>
-
-{/if}
-
-_The bankroll is the ledger's: seeded at {bankroll_tile[0]?.seed}u and moved by
-every settled bet ({bankroll_tile[0]?.mode_label}). Stakes are sized off it,
-and money already on the table counts against the slate cap._
-
-{/if}
-
-```sql exposure_rows
-select upper(league) as lg, bets, games, stake_sized, cap_units,
-  exposure, stake_solo
-from velocity.exposure
-where league != '__none__'
-order by stake_sized desc
+```sql today
+select
+  (select coalesce(sum(stake_sized), 0) from velocity.exposure
+    where league != '__none__') as sized,
+  (select coalesce(sum(cap_units), 0) from velocity.exposure
+    where league != '__none__') as cap,
+  (select count(*) from velocity.publish
+    where league != '__none__' and published) as plays,
+  (select count(*) from velocity.board
+    where league != '__none__') as priced,
+  (select count(distinct game_id) from velocity.games
+    where league != '__none__') as games
 ```
 
-<DataTable data={exposure_rows} emptySet=pass emptyMessage="No sized card yet — exposure fills when a run stakes something.">
-  <Column id=lg title="League" />
-  <Column id=bets title="Bets" />
-  <Column id=games title="Games" />
-  <Column id=stake_sized title="Sized" fmt='#,##0.00"u"' />
-  <Column id=cap_units title="Slate cap" fmt='#,##0.0"u"' />
-  <Column id=exposure title="Of bankroll" fmt='pct1' />
-  <Column id=stake_solo title="Solo Kelly" fmt='#,##0.00"u"' />
-</DataTable>
+```sql season
+select
+  coalesce(sum(coalesce(profit_sized, profit)), 0) as units,
+  count(*) filter (result = 'win') as wins,
+  count(*) filter (result = 'loss') as losses,
+  count(distinct slate_date) as days
+from velocity.cumulative_record
+where league != '__none__' and result in ('win','loss','push')
+  and coalesce(stake, 0) > 0
+```
+
+<StatRow>
+  <StatCard
+    label="Bankroll"
+    value={bank[0]?.current}
+    format="units"
+    accent="brand"
+    delta={bank[0]?.growth}
+    sub={bank[0] ? `from ${bank[0].seed}u seed` : 'no ledger yet'}
+  />
+  <StatCard
+    label="Today's exposure"
+    value={today[0]?.sized}
+    format="units"
+    meter={today[0]?.cap > 0 ? today[0].sized / today[0].cap : null}
+    sub={today[0]?.cap > 0 ? `of ${today[0].cap.toFixed(1)}u slate cap` : 'nothing staked'}
+  />
+  <StatCard
+    label="On the card"
+    value={today[0]?.plays}
+    format="number"
+    dp={0}
+    sub={`${today[0]?.priced ?? 0} priced · ${today[0]?.games ?? 0} games`}
+  />
+  <StatCard
+    label="Season"
+    value={season[0]?.units}
+    format="units"
+    sign={true}
+    accent="money"
+    sub={season[0]?.days > 0
+      ? `${season[0].wins}-${season[0].losses} over ${season[0].days} graded day(s)`
+      : 'no graded days yet'}
+  />
+</StatRow>
+
+{#if bank[0]?.halted}
+<Alert status="negative">
+
+**Kill-switch tripped.** The bankroll is {bank[0]?.drawdownpct}% below its peak,
+past the {bank[0]?.haltpct}% halt. Every stake on today's card is zero until the
+ledger is adjusted.
+
+</Alert>
+{/if}
 
 ```sql leagues
 select '%' as league, 'All' as lg, 0 as ord
 union all
 select distinct league, upper(league), 1
-from velocity.board
-where league != '__none__'
+from velocity.publish
+where league != '__none__' and published
 order by ord, league
 ```
 
-<ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
-
-```sql board_rows
+```sql card
 select
-  upper(league) as lg,
-  away_team || ' @ ' || home_team as matchup,
-  '/matchup/' || game_id as matchup_link,
-  case market
-    when 'spread' then 'Spread'
-    when 'total' then 'Total'
-    when 'moneyline' then 'ML'
-    when 'team_total_home' then 'TT home'
-    when 'team_total_away' then 'TT away'
-    else market end as market_label,
-  upper(side) as side,
-  point,
-  price,
-  case when venue = 'sportsbook' then book else venue end as venue_label,
-  p_model,
-  edge,
-  coalesce(tier, '') as tier,
-  conviction,
-  case when stake_sized > 0 then stake_sized end as stake_sized,
-  case
-    when note is not null then 'paper — ' || note
-    when stake_sized > 0 then 'staked'
-    else 'watch' end as status,
-  kickoff
-from velocity.board
-where league != '__none__'
-  and league like coalesce(nullif('${inputs.league}', ''), '%')
-order by
-  case coalesce(tier, '') when 'A' then 0 when 'B' then 1 when 'C' then 2
-    when '' then 3 else 4 end,
-  conviction desc nulls last,
-  edge desc
+  p.game_id, p.league, p.market, p.side, p.price, p.player,
+  p.tier, p.conviction, p.edge, p.home_team, p.away_team, p.kickoff,
+  coalesce(p.stake_sized, p.stake) as stake,
+  b.point, b.book, b.venue, b.rationale
+from velocity.publish p
+left join velocity.board b
+  on b.league = p.league and b.game_id = p.game_id
+  and b.market = p.market and b.side = p.side
+where p.league != '__none__' and p.published
+  and p.league like coalesce(nullif('${inputs.league}', ''), '%')
+order by p.conviction desc, p.edge desc
 ```
 
-<DataTable data={board_rows} link=matchup_link rows=40 emptySet=pass emptyMessage="No slate loaded — the board fills when the daily run publishes.">
-  <Column id=lg title="League" />
+```sql card_total
+select count(*) as n, coalesce(sum(coalesce(stake_sized, stake)), 0) as units
+from velocity.publish
+where league != '__none__' and published
+  and league like coalesce(nullif('${inputs.league}', ''), '%')
+```
+
+<SectionBar
+  title="The card"
+  meta={card_total[0]?.n > 0
+    ? `${card_total[0].n} plays · ${card_total[0].units.toFixed(2)}u`
+    : ''}
+  tone="brand"
+/>
+
+<ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
+
+{#if card.length > 0}
+  <div class="play-list">
+    {#each card as play}
+      <PlayCard {...play} />
+    {/each}
+  </div>
+{:else}
+  <EmptyNote
+    title="No play cleared the gate"
+    detail="A quiet day is the gate doing its job: the model priced the board and nothing met the conviction floor, the corroboration rule and the edge band at once. The full board is still below."
+  />
+{/if}
+
+<SectionBar title="Rest of the board" meta={`${(today[0]?.priced ?? 0) - (today[0]?.plays ?? 0)} priced, not on the card`} />
+
+Every other market the model priced today, with the rule that held it back.
+Paper rows are priced and graded for closing-line value but never staked.
+
+```sql held
+select
+  upper(p.league) as lg,
+  p.away_team || ' @ ' || p.home_team as matchup,
+  '/matchup/' || p.game_id as matchup_link,
+  case p.market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'ML'
+    when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
+    else p.market end as market,
+  upper(p.side) as side,
+  b.point,
+  p.price,
+  p.edge,
+  p.conviction,
+  p.reason
+from velocity.publish p
+left join velocity.board b
+  on b.league = p.league and b.game_id = p.game_id
+  and b.market = p.market and b.side = p.side
+where p.league != '__none__' and not p.published
+  and p.league like coalesce(nullif('${inputs.league}', ''), '%')
+order by p.conviction desc nulls last
+```
+
+<DataTable data={held} link=matchup_link rows=8 compact={true} rowShading={false}
+  emptySet=pass emptyMessage="Everything the model priced today made the card.">
+  <Column id=lg title="Lg" />
   <Column id=matchup title="Matchup" />
-  <Column id=market_label title="Market" />
+  <Column id=market title="Market" />
   <Column id=side title="Side" />
-  <Column id=point title="Line" fmt='#,##0.0' />
-  <Column id=price title="Price" fmt='+#,##0;-#,##0' />
-  <Column id=venue_label title="Venue" />
-  <Column id=p_model title="Model %" fmt='pct1' />
-  <Column id=edge title="Edge" fmt='pct1' contentType=delta />
-  <Column id=tier title="Tier" />
-  <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' />
-  <Column id=status title="Status" wrap=true />
+  <Column id=point title="Line" fmt='#,##0.0' align=right />
+  <Column id=price title="Price" fmt='+#,##0;-#,##0' align=right />
+  <Column id=edge title="Edge" fmt='0.0%' align=right />
+  <Column id=conviction title="Conv" fmt='0.00' align=right />
+  <Column id=reason title="Why it sat" wrap={true} />
 </DataTable>
 
-_Model output, graded in public. Edge = model probability minus the de-vigged
-market probability. Stake is the portfolio-sized number after the per-game,
-per-class and slate caps; a paper row says why it is not staked. The
-[Performance](/performance) page carries the record; the odds archive behind
-the line moves was last seen {tiles[0]?.odds_as_of ?? 'never'} UTC._
+_The full board, every venue and price, is on the [Board](/board) page. Edge is
+the model probability minus the de-vigged market probability; stake is the
+portfolio-sized number after the per-game, per-class and slate caps._
 
-<!-- Crawl seed: the matchup template route must have at least one
-     discoverable instance for the static build, even on an empty board
-     (offseason). The sentinel page renders its empty states. -->
-<a href="/matchup/__none__" style="display:none" aria-hidden="true">.</a>
+<style>
+  .play-list {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.2rem 0 0.6rem;
+  }
+  @media (min-width: 1000px) {
+    .play-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>

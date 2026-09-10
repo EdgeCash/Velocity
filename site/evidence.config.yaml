@@ -1,57 +1,55 @@
-# Velocity site theme — the mockup's trading-desk tokens
-# (velocity/report/social_png.py: #0b0f14 ground, #3ddad0 brand teal,
-# #0d9488 model teal, #d97706 amber, green/red semantics).
+# Velocity — the trading-desk theme.
+#
+# Dark only, on purpose. This is a board you read at night and on a phone at
+# the sportsbook; a light mode would be a second design to keep honest for no
+# one. The switcher is off and every surface below is picked for the dark
+# ground.
+#
+# Chart marks are stepped into the dark band (OKLCH L 0.48–0.67) rather than
+# reusing the brighter UI accents — a #3ddad0 line on a near-black ground
+# glares. The categorical palette is the validated eight-hue order (adjacent
+# CVD ΔE ≥ 8); single-series charts take the brand teal directly and skip the
+# palette entirely. Profit green and loss red are STATUS colors, not
+# categorical slots: they are indistinguishable under deuteranopia, so every
+# number that wears them also carries a sign or an arrow, never color alone.
 appearance:
   default: dark
-  switcher: true
+  switcher: false
 
 theme:
-  colorPalettes:
-    default:
-      light:
-        - "#0d9488"
-        - "#d97706"
-        - "#8b96a3"
-        - "#2563eb"
-        - "#8f3d56"
-        - "#46a485"
-      dark:
-        - "#3ddad0"
-        - "#d97706"
-        - "#8b96a3"
-        - "#71b9f4"
-        - "#8f3d56"
-        - "#46a485"
-  colorScales:
-    default:
-      light:
-        - "#a5f0ea"
-        - "#0d9488"
-      dark:
-        - "#123a37"
-        - "#3ddad0"
   colors:
-    primary:
-      light: "#0d9488"
-      dark: "#3ddad0"
-    accent:
-      light: "#b45309"
-      dark: "#d97706"
-    base:
-      light: "#f4f6f8"
-      dark: "#0b0f14"
-    info:
-      light: "#0284c7"
-      dark: "#71b9f4"
-    positive:
-      light: "#16a34a"
-      dark: "#22c55e"
-    warning:
-      light: "#b45309"
-      dark: "#d97706"
-    negative:
-      light: "#dc2626"
-      dark: "#ef4444"
+    # The ground and its elevations. base-100 is also the chart canvas.
+    base: "#0a0e13"
+    base-200: "#10161f"
+    base-300: "#1e2a37"
+    base-content: "#dfe7ef"
+    base-content-muted: "#93a1b1"
+    base-heading: "#f2f7fb"
+    # Brand teal: the model's own color, used for accents and single series.
+    primary: "#3ddad0"
+    primary-content: "#04100f"
+    accent: "#d29922"
+    accent-content: "#150e02"
+    info: "#58a6ff"
+    # Money. Always paired with a sign or arrow — see the note above.
+    positive: "#2ea043"
+    negative: "#e5484d"
+    warning: "#d29922"
+  colorPalettes:
+    # The validated dark categorical order, for the rare chart that must tell
+    # series apart. Assigned in fixed order, never cycled.
+    default:
+      - "#3987e5"
+      - "#d95926"
+      - "#199e70"
+      - "#c98500"
+      - "#d55181"
+      - "#008300"
+  colorScales:
+    # Sequential: one hue, dark → bright.
+    default:
+      - "#0c2b29"
+      - "#3ddad0"
 
 plugins:
   components:

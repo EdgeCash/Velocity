@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Velocity">
+  <rect width="64" height="64" rx="14" fill="#0a0e13"/>
+  <!-- The V, drawn as a descending line into a rising one: a bankroll curve
+       that happens to be the initial. -->
+  <path d="M14 18 L30 46 L50 12" fill="none" stroke="#3ddad0" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="50" cy="12" r="5" fill="#3ddad0"/>
+</svg>

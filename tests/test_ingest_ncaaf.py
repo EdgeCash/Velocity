@@ -108,3 +108,35 @@ def test_distill_rest_plays_renames_stamps_and_filters() -> None:
 
 def test_distill_rest_plays_empty_payload() -> None:
     assert distill_rest_plays([], season=2023, week=5).empty
+
+
+def test_camel_case_cfbd_payloads_normalize() -> None:
+    """The v5 client serializes through its API aliases, so the frame arrives
+    camelCase. Indexing one spelling raised ``KeyError('home_team')`` and took
+    NCAAF grading offline: the schedule fetch failed every night and the
+    college record never accumulated."""
+    from velocity.ingest.ncaaf import snake_columns
+
+    camel = pd.DataFrame([{
+        "id": 401628442, "season": 2026, "week": 2, "seasonType": "regular",
+        "startDate": "2026-09-06T23:30:00.000Z", "homeTeam": "Georgia",
+        "awayTeam": "Clemson", "homePoints": 34, "awayPoints": 17,
+        "neutralSite": False,
+    }])
+    games = normalize_games(camel)
+    assert len(games) == 1
+    row = games.iloc[0]
+    assert row["home_team"] == "Georgia" and row["away_team"] == "Clemson"
+    assert row["home_score"] == 34 and row["away_score"] == 17
+    assert row["season_type"] == "REG" and row["game_id"] == "401628442"
+
+    # The old spelling still works, and the two agree exactly.
+    snake = camel.rename(columns={
+        "seasonType": "season_type", "startDate": "start_date",
+        "homeTeam": "home_team", "awayTeam": "away_team",
+        "homePoints": "home_points", "awayPoints": "away_points",
+        "neutralSite": "neutral_site"})
+    assert normalize_games(snake).equals(games)
+    # A frame carrying both spellings does not end up with duplicate columns.
+    assert not snake_columns(pd.concat([camel, snake], axis=1)).columns.duplicated().any()
+
