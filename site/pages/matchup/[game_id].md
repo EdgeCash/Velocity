@@ -1,5 +1,6 @@
 ```sql game
-select away_team || ' @ ' || home_team as matchup, kickoff, upper(league) as lg
+select away_team || ' @ ' || home_team as matchup, home_team, away_team,
+       kickoff, upper(league) as lg, league
 from velocity.games
 where game_id = '${params.game_id}'
 limit 1
@@ -7,24 +8,15 @@ limit 1
 
 <PageHead
   title={game[0]?.matchup ?? 'Matchup'}
-  subtitle={game[0]?.lg ? game[0].lg + ' · every price, the simulated distribution, and the argument' : ''}
+  subtitle={game[0]?.lg ? game[0].lg + ' · the head-to-head, every price, and the simulated distribution' : ''}
 />
 
 ```sql proj
-select mu_away, mu_home, p_home_win, fair_spread, fair_total, n_sims
+select mu_away, mu_home, p_home_win, fair_spread, fair_total, n_sims, home, away
 from velocity.projections
 where game_id = '${params.game_id}'
-union all
-select null, null, null, null, null, null
-where not exists (select 1 from velocity.projections
-                  where game_id = '${params.game_id}')
 limit 1
 ```
-
-<BigValue data={proj} value=mu_away title="Projected away" fmt='#,##0.0' />
-<BigValue data={proj} value=mu_home title="Projected home" fmt='#,##0.0' />
-<BigValue data={proj} value=p_home_win title="Home win %" fmt='pct1' />
-<BigValue data={proj} value=fair_total title="Fair total" fmt='#,##0.0' />
 
 ```sql conditions
 select w.covered, w.temp_f, w.wind_mph, w.precip_pct
@@ -33,7 +25,42 @@ where w.game_id = '${params.game_id}'
 limit 1
 ```
 
-<WeatherLine row={conditions[0]} />
+```sql side_ratings
+select r.team, r.off, r.def, r.net, r.rank,
+       case when r.team = p.home then 'home' else 'away' end as which
+from velocity.ratings r
+join velocity.projections p
+  on p.league = r.league and r.team in (p.home, p.away)
+where p.game_id = '${params.game_id}'
+```
+
+```sql codes
+select away as awaycode, home as homecode
+from velocity.projections where game_id = '${params.game_id}' limit 1
+```
+
+```sql outs
+select i.team, count(*) as n
+from velocity.injuries i
+join velocity.projections p
+  on p.league = i.league and i.team in (p.home, p.away)
+where p.game_id = '${params.game_id}' and i.is_out
+group by i.team
+```
+
+<MatchupSheet
+  away={game[0]?.away_team ?? ''}
+  home={game[0]?.home_team ?? ''}
+  kickoff={game[0]?.kickoff}
+  proj={proj[0]}
+  awayCode={codes[0]?.awaycode ?? ''}
+  homeCode={codes[0]?.homecode ?? ''}
+  awayRating={side_ratings.find((r) => r.which === 'away')}
+  homeRating={side_ratings.find((r) => r.which === 'home')}
+  weather={conditions[0]}
+  awayOut={outs.find((o) => o.team === codes[0]?.awaycode)?.n ?? 0}
+  homeOut={outs.find((o) => o.team === codes[0]?.homecode)?.n ?? 0}
+/>
 
 ## Line movement
 

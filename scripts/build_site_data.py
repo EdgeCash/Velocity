@@ -181,7 +181,8 @@ def build_clv_by_market(record: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def build_bankroll(ledger_path: Path | None) -> dict[str, pd.DataFrame]:
+def build_bankroll(ledger_path: Path | None,
+                   games: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
     """The ledger's three site tables: the bankroll now, its curve, the open bets.
 
     ``bankroll`` is one row — seed, current, peak, drawdown, open exposure,
@@ -227,6 +228,13 @@ def build_bankroll(ledger_path: Path | None) -> dict[str, pd.DataFrame]:
     open_ = ledger.open_bets()
     if not open_.empty:
         open_ = open_.drop(columns=["settled"])
+        # A position is only as readable as the matchup behind it; the ledger
+        # itself stores a game id and nothing else.
+        if games is not None and not games.empty:
+            open_ = open_.merge(games, on="game_id", how="left")
+        else:
+            open_["home_team"] = None
+            open_["away_team"] = None
     return {"bankroll": bankroll, "bankroll_curve": curve, "ledger_open": open_}
 
 
@@ -299,6 +307,36 @@ def build_units(record: pd.DataFrame) -> pd.DataFrame:
 # composed); social/deepdive stay listed so older artifacts still surface.
 # `grid` is the weekend broadcast grid (one per league-day, no matchup key).
 CARD_KINDS = ("grid", "sheet", "social", "deepdive", "simcheck", "recordcard")
+
+
+def game_directory(*folders: Path | None) -> pd.DataFrame:
+    """Every ``game_id -> matchup`` this run can see, newest first.
+
+    The ledger records a bet against a ``game_id`` and nothing else, so an
+    open position is only as readable as what we can join back to it. The
+    board's own ``games`` family covers today; a bet placed two days ago
+    needs the *previous* slates too, which is why this walks every
+    ``games_*.parquet`` it is given rather than the latest stamp per league.
+
+    Without it the site printed raw hashes where a matchup belongs —
+    ``46bb732d224f9da07f9e3bb2f32281cc`` in the first table on the home page.
+    """
+    frames: list[pd.DataFrame] = []
+    for folder in folders:
+        if folder is None or not Path(folder).exists():
+            continue
+        for path in sorted(Path(folder).rglob("games_*.parquet"), reverse=True):
+            try:
+                frame = pd.read_parquet(path)
+            except Exception:
+                continue
+            if {"game_id", "home_team", "away_team"} <= set(frame.columns):
+                frames.append(frame[["game_id", "home_team", "away_team"]])
+    if not frames:
+        return pd.DataFrame(columns=["game_id", "home_team", "away_team"])
+    return (pd.concat(frames, ignore_index=True)
+            .dropna(subset=["game_id"])
+            .drop_duplicates("game_id"))
 
 
 def build_ratings(slate_dir: Path, prev_dir: Path | None) -> pd.DataFrame:
@@ -625,7 +663,9 @@ def main() -> None:
               else tables["record"])
     tables["units"] = build_units(season)
     tables["clv_by_market"] = build_clv_by_market(season)
-    tables.update(build_bankroll(None if args.ledger is None else Path(args.ledger)))
+    tables.update(build_bankroll(
+        None if args.ledger is None else Path(args.ledger),
+        game_directory(slate_dir, Path(args.prev_dir))))
 
     # An absent family still writes a typed one-row sentinel frame so every
     # page's SQL parses AND every source query returns a row (see
@@ -756,6 +796,7 @@ def main() -> None:
         "ledger_open": {"bet_id": str, "league": str, "kind": str, "game_id": str,
                         "market": str, "side": str, "player": str, "point": float,
                         "book": str, "price": float, "stake": float,
+                        "home_team": str, "away_team": str,
                         "placed_at": "datetime64[ns]"},
     }
     for name, frame in tables.items():

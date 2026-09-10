@@ -81,6 +81,23 @@ bound to `--v-board` and applied to every quantity — Evidence tags each cell
 with its column type, so `td.number` reaches every number in every table
 without a page having to ask.
 
+### Legibility beats density
+
+An earlier pass set table rows at `0.42rem` padding and called it a
+blotter. It was measured against real reference boards — BettorSheets,
+Outlier — and they run roughly double that. A row nobody wants to read is
+not information density, it is just small. Rows are `0.78rem`, the board
+face sits at `1.02rem`, and the table body at `0.86rem`.
+
+The same rule decides what a cell contains. `46bb732d224f9da07f9e3bb2f32281cc`
+is not a bet; **Cleveland Browns @ Jacksonville Jaguars** is. The ledger
+records only a `game_id`, so `game_directory()` in
+`scripts/build_site_data.py` walks every `games_*.parquet` it can reach —
+today's slate *and* the previous ones, because a bet placed two days ago
+still needs its name — and open positions carry the matchup from there.
+A bet is also spoken as one string (`OVER 8.5`, `HOME +1.5`), not spread
+across four columns of market/side/line.
+
 ### Six rules the pages inherit from `pages/+layout.svelte`
 
 1. **Numbers are the product, and the typography says so.** The board face,
@@ -256,6 +273,28 @@ ESPN's public scoreboard JSON for the five leagues, trimmed to ticker
 fields and edge-cached ~45s. `LiveTicker.svelte` polls it every 60s and
 renders the scrolling crawl on the Today page; it hides itself when the
 endpoint is unreachable (local preview) or all leagues are dark.
+
+## The matchup sheet
+
+`MatchupSheet.svelte` is the research object: two team blocks, one
+saturated context band, and a mirrored head-to-head with the advantage
+marked down the middle. The shape is the genre's, and the middle column is
+the point — a list of markets says what to bet, the sheet says why.
+
+Two things it has to get right, both of which were wrong first:
+
+- **`net = off − def`, so a lower defensive number is the better one**, and
+  a lower power rank is better. A naive "higher wins" marks the wrong side
+  on two of five rows. `row()` takes `lowerWins` per statistic.
+- **`fair_spread` is already the home side's line.** Negative means the
+  home team lays points. Negating it put the favourite on the wrong side
+  of the band — `SEA +7.0` for a team the model had winning 71% of the
+  time.
+
+It also joins ratings through **`projections`, not `games`**: projections
+carry the team abbreviations (`NE`, `SEA`) that ratings are keyed by, while
+games carry full names. Joining ratings to games matches nothing and the
+sheet silently renders one row.
 
 ## Why a bet is smaller than its own Kelly
 
