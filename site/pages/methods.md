@@ -1,6 +1,13 @@
 ---
 title: Methods
+sidebar_position: 7
+hide_title: true
 ---
+
+<PageHead
+  title="Methods"
+  subtitle="What is live in each league's model, written by the run itself from the flags it actually used — so this page cannot drift from the code."
+/>
 
 What's live in each league's model — promoted through the walk-forward lab
 (docs/MODEL_LAB.md), never hand-tuned on the live board. Each block is

@@ -15,6 +15,7 @@ lazily import the ``cfbd`` client (network) and are not part of the test gate.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Iterable
 
 import numpy as np
@@ -31,14 +32,36 @@ SEASON_TYPE_MAP = {
 }
 
 
+def snake_columns(raw: pd.DataFrame) -> pd.DataFrame:
+    """CFBD field names in one spelling, whichever the client handed us.
+
+    The v5 ``cfbd`` client's models serialize through their API aliases, so
+    ``to_dict()`` yields ``homeTeam``/``startDate`` where older releases
+    yielded ``home_team``/``start_date``. A normalizer that indexes one
+    spelling raises ``KeyError`` on the other — which is exactly what took
+    NCAAF grading offline: the schedule fetch failed with ``'home_team'``
+    every night and the college record stayed empty. Convert camelCase to
+    snake_case up front and accept either.
+    """
+    def snake(name: object) -> object:
+        if not isinstance(name, str):
+            return name
+        return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower()
+
+    out = raw.rename(columns=snake)
+    # A frame carrying both spellings keeps the first non-null of each pair.
+    return out.loc[:, ~out.columns.duplicated()]
+
+
 def normalize_games(raw: pd.DataFrame) -> pd.DataFrame:
     """Map a CFBD games frame onto the canonical ``Games`` schema (tolerant).
 
     Expects CFBD columns ``id, season, week, season_type, start_date,
     home_team, away_team, home_points, away_points, neutral_site`` (``venue``,
-    ``grass`` optional). Rows without an id or either team are dropped.
+    ``grass`` optional), in either the snake_case or camelCase spelling the
+    client may emit. Rows without an id or either team are dropped.
     """
-    raw = raw.copy()
+    raw = snake_columns(raw)
     essential = raw["id"].notna() & raw["home_team"].notna() & raw["away_team"].notna()
     raw = raw[essential]
 
@@ -81,9 +104,7 @@ def normalize_plays(raw: pd.DataFrame) -> pd.DataFrame:
     ``ppa``/``down``/``yards_gained`` coerce to null rather than raising. Rows
     without a game id are dropped.
     """
-    raw = raw.copy()
-    if "game_id" not in raw.columns and "gameId" in raw.columns:
-        raw = raw.rename(columns={"gameId": "game_id"})
+    raw = snake_columns(raw)
     raw = raw[raw["game_id"].notna()]
 
     def num(name: str) -> pd.Series:

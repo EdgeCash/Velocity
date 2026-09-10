@@ -5,7 +5,10 @@ where game_id = '${params.game_id}'
 limit 1
 ```
 
-# {game[0]?.matchup ?? 'Matchup'}
+<PageHead
+  title={game[0]?.matchup ?? 'Matchup'}
+  subtitle={game[0]?.lg ? game[0].lg + ' · every price, the simulated distribution, and the argument' : ''}
+/>
 
 ```sql proj
 select mu_away, mu_home, p_home_win, fair_spread, fair_total, n_sims

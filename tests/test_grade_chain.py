@@ -234,3 +234,53 @@ def test_settle_ledger_settles_open_bets_once(tmp_path: Path) -> None:
     # No seed → nothing to settle, and no crash.
     _MOD.settle_ledger(tmp_path / "none.parquet", "nfl", games, props, finals, now)
     assert not (tmp_path / "none.parquet").exists()
+
+
+def test_a_zero_byte_chain_copy_is_skipped_not_fatal(tmp_path: Path) -> None:
+    """A failed R2 fetch leaves a zero-byte parquet where the chain should be.
+
+    Reading it raised, and the raise landed between writing the day's record
+    and writing the season chain — so the chain was never written, never
+    parked, and never found on the next run. The record could not bootstrap
+    out of it, and the site's whole Performance page read empty.
+    """
+    (tmp_path / "cumulative_record_nfl_00000000T000000Z.parquet").write_bytes(b"")
+    good = _chain(["2026-09-07", "2026-09-14"])
+    good.to_parquet(tmp_path / "cumulative_record_nfl_20260914T120000Z.parquet", index=False)
+    carried = _MOD._newest_cumulative(tmp_path, "nfl")
+    assert carried is not None and len(carried) == 2
+
+    # Corrupt (non-empty, not parquet) copies are skipped the same way.
+    (tmp_path / "cumulative_record_nfl_20260915T120000Z.parquet").write_bytes(b"not parquet")
+    again = _MOD._newest_cumulative(tmp_path, "nfl")
+    assert again is not None and len(again) == 2
+
+    # Nothing readable at all is None, not an exception.
+    (tmp_path / "cumulative_record_nfl_20260914T120000Z.parquet").unlink()
+    assert _MOD._newest_cumulative(tmp_path, "nfl") is None
+
+
+def test_the_chain_bootstraps_from_banked_daily_records(tmp_path: Path) -> None:
+    """With no chain anywhere, the daily records in the artifacts rebuild it."""
+    for i, stamp in enumerate(("20260907T120000Z", "20260908T120000Z")):
+        pd.DataFrame([
+            {"section": "games", "play": f"A@B {i}", "market": "total", "side": "over",
+             "point": 44.5, "price": -110.0, "stake": 1.0, "result": "win", "profit": 0.91,
+             "slate_date": pd.Timestamp(f"2026-09-0{6 + i}")},
+            {"section": "games", "play": "later", "market": "spread", "side": "home",
+             "point": -3.0, "price": -110.0, "stake": 1.0, "result": "pending",
+             "profit": None, "slate_date": pd.Timestamp(f"2026-09-0{6 + i}")},
+        ]).to_parquet(tmp_path / f"record_nfl_{stamp}.parquet", index=False)
+
+    chain = _MOD._bootstrap_chain(tmp_path, "nfl")
+    assert chain is not None
+    # Settled rows only: a pending bet is never revisited, so it would be
+    # permanent noise on the chain.
+    assert chain["result"].tolist() == ["win", "win"]
+    assert len(chain) == 2
+
+    # Replaying the same day is idempotent (the accumulate dedup key).
+    again = _MOD._bootstrap_chain(tmp_path, "nfl")
+    assert len(again) == 2
+    # Another league's records are not this league's chain.
+    assert _MOD._bootstrap_chain(tmp_path, "ncaaf") is None

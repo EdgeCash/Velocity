@@ -1,9 +1,10 @@
 ---
 title: Graphics
 hide_title: true
+sidebar_position: 8
 ---
 
-<HeroBand
+<PageHead
   title="Card room"
   subtitle="One all-inclusive sheet per game — market vs model, the deep-dive table, and the simulated margin in a single postable graphic. Pick a league from the menu."
 />

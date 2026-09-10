@@ -1,5 +1,6 @@
 ---
 title: DFS
+sidebar_position: 6
 ---
 
 ```sql lineup
