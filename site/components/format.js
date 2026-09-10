@@ -160,3 +160,48 @@ export function overUnder(side, point, mode = 'tap') {
   if (mode === 'long') return `${s[0].toUpperCase()}${s.slice(1)} ${value}`;
   return `${s[0].toUpperCase()} ${value}`;
 }
+
+/* Where a bet sits on the simulated outcome distribution, and which way it
+   wins. The distributions table carries two kinds per game — `margin` (home
+   score minus away) and `total` — so a bet has to be turned into a cut point
+   on one of them plus a direction.
+
+   Spreads are the fiddly half. A home bet at −1.5 covers when the home margin
+   clears +1.5, so the cut is the *negated* handicap; an away bet at +1.5
+   covers when the margin stays under +1.5, so the cut is the handicap itself
+   and the direction flips. Team totals have no matching distribution and
+   return null rather than guess.
+
+   `splitTie` is the moneyline's own wrinkle, and it is not cosmetic. The
+   margin distribution is a continuous simulation rounded into integer bins,
+   so the `0` bin is really the interval around zero rather than a literal
+   tie — and the model prices a moneyline as
+   `P(margin > 0) + P(margin = 0) / 2`, which is exactly what its own
+   `p_home_win` reports. Counting the bin strictly understates the side by
+   about 1.4 points, enough for the printed Sim to disagree with the Belief
+   sitting directly above it. A *spread* push is a real push, refunded rather
+   than split, and reconciles on the strict count — so the split is asked for
+   per market rather than applied to every integer cut. */
+export function distThreshold(market, side, point) {
+  const m = String(market ?? '').toLowerCase();
+  const s = String(side ?? '').toLowerCase();
+  const p = Number(point);
+
+  if (m === 'moneyline') {
+    if (s === 'home') return { kind: 'margin', at: 0, above: true, splitTie: true };
+    if (s === 'away') return { kind: 'margin', at: 0, above: false, splitTie: true };
+    return null;
+  }
+  if (!Number.isFinite(p)) return null;
+  if (m === 'total') {
+    if (s === 'over') return { kind: 'total', at: p, above: true, splitTie: false };
+    if (s === 'under') return { kind: 'total', at: p, above: false, splitTie: false };
+    return null;
+  }
+  if (m === 'spread') {
+    if (s === 'home') return { kind: 'margin', at: -p, above: true, splitTie: false };
+    if (s === 'away') return { kind: 'margin', at: p, above: false, splitTie: false };
+    return null;
+  }
+  return null;
+}

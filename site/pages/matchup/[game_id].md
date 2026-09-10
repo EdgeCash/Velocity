@@ -64,25 +64,12 @@ order by market, side
 
 ```sql markets
 select
-  case market
-    when 'spread' then 'Spread' when 'total' then 'Total'
-    when 'moneyline' then 'Moneyline'
-    when 'team_total_home' then 'Team total (home)'
-    when 'team_total_away' then 'Team total (away)'
-    else market end as market_label,
-  upper(side) as side, point,
-  case when venue = 'sportsbook' then book else venue || ' (' || book || ')' end as venue_label,
-  price, p_model, p_fair, edge,
-  coalesce(tier, '') as tier,
-  case when stake_sized > 0 then stake_sized end as stake_sized,
-  case
-    when note is not null then 'paper — ' || note
-    when stake_sized > 0 then 'staked'
-    else 'watch' end as status,
-  rationale
+  game_id, league, market, side, point, price, book, venue,
+  p_model, p_fair, edge, tier, conviction, rationale, note,
+  coalesce(stake_sized, stake) as stake
 from velocity.board
 where game_id = '${params.game_id}'
-order by case when stake_sized > 0 then 0 else 1 end, edge desc
+order by case when coalesce(stake_sized, 0) > 0 then 0 else 1 end, edge desc
 ```
 
 ```sql refusals
@@ -94,24 +81,44 @@ from velocity.board
 where game_id = '${params.game_id}'
 ```
 
-<DataTable data={markets} emptySet=pass emptyMessage="No priced markets for this game.">
-  <Column id=market_label title="Market" />
-  <Column id=side title="Side" />
-  <Column id=point title="Line" fmt='#,##0.0' />
-  <Column id=venue_label title="Venue" />
-  <Column id=price title="Price" fmt='+0;−0' />
-  <Column id=p_model title="Model %" fmt='pct1' />
-  <Column id=p_fair title="Fair %" fmt='pct1' />
-  <Column id=edge title="Edge" fmt='+0.0%;−0.0%' contentType=delta deltaSymbol={false} />
-  <Column id=tier title="Tier" />
-  <Column id=stake_sized title="Stake" fmt='#,##0.00"u"' />
-  <Column id=status title="Status" wrap=true />
-</DataTable>
+```sql game_dist
+select game_id, kind, value, prob
+from velocity.distributions
+where game_id = '${params.game_id}'
+```
+
+{#if markets.length > 0}
+  <div class="market-cards">
+    {#each markets as m, i}
+      <PlayCard {...m} lead={i === 0 && m.stake > 0} dist={game_dist} compact={true} />
+    {/each}
+  </div>
+{:else}
+  <EmptyNote
+    title="No priced market for this game"
+    detail="The board carries a market only where the model could price it and a book was quoting it. A game with neither shows nothing here rather than an empty table."
+  />
+{/if}
+
+<style>
+  /* One column, then two once there is genuinely room. `auto-fill` with a
+     fixed minimum cannot shrink below that minimum, so at phone width it
+     overflowed the content column and clipped every card's price — the
+     same shape of bug that lost the board's last columns. */
+  .market-cards {
+    display: grid;
+    gap: 0.7rem;
+    margin: 0.6rem 0 0.4rem;
+  }
+  @media (min-width: 1000px) {
+    .market-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
 
 _{refusals[0]?.staked ?? 0} market(s) staked here for
 {(refusals[0]?.exposure ?? 0).toFixed(2)}u after the per-game cap;
 {refusals[0]?.paper ?? 0} priced on paper (a ceiling or an untrusted market —
-the status column says which)._
+the reason rides on the card)._
 
 ## The argument
 
@@ -143,6 +150,14 @@ a bet the model did not already like.
 
 ## Simulated total
 
+```sql market_lines
+select
+  max(case when market = 'total' then point end) as totalline,
+  max(case when market = 'spread' and side = 'home' then -point end) as marginline
+from velocity.board
+where game_id = '${params.game_id}'
+```
+
 ```sql total_pmf
 select value, prob
 from velocity.distributions
@@ -156,9 +171,20 @@ order by value
   y=prob
   xAxisTitle="total points"
   yAxisTitle="probability"
+  fillColor="#2bb3ab"
   emptySet=pass
   emptyMessage="No distribution banked for this game."
-/>
+>
+  {#if market_lines[0]?.totalline}
+    <ReferenceLine x={market_lines[0].totalline} label="market total" color=warning />
+  {/if}
+</BarChart>
+
+A distribution without the number drawn on it is decoration. The rule is where
+the book has the total; the model's opinion is how much of the mass sits past
+it. That mass is the **raw simulation** — the belief the board stakes is the
+same number pulled four fifths of the way back to the market
+([Methods](/methods)).
 
 ## Simulated margin
 
@@ -175,9 +201,15 @@ order by value
   y=prob
   xAxisTitle="home margin"
   yAxisTitle="probability"
+  fillColor="#2bb3ab"
   emptySet=pass
   emptyMessage="No distribution banked for this game."
-/>
+>
+  {#if market_lines[0]?.marginline !== null && market_lines[0]?.marginline !== undefined}
+    <ReferenceLine x={market_lines[0].marginline} label="spread" color=warning />
+  {/if}
+  <ReferenceLine x={0} label="even" color=info />
+</BarChart>
 
 ## Injury report
 

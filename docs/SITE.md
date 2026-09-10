@@ -129,6 +129,52 @@ under the pill, and `sources/velocity/board.sql` resolves the raw feed codes
 (`williamhill_us`, `mybookieag`) to the name the venue uses for itself, once,
 so every page inherits it.
 
+### Three probabilities, three different numbers
+
+Every card carries `Market`, `Belief` and — under the distribution — `Sim`,
+and they are not the same quantity. The board's staking belief is anchored to
+the market:
+
+```
+belief = market + w × (sim − market)          # NFL: w = 0.2
+```
+
+so `Belief` is four fifths market and one fifth model, while `Sim` is the raw
+Monte Carlo probability read straight off the simulated distribution. The gap
+between them is routinely 0.09–0.13 and it is the anchoring doing its job, not
+an error. `Edge` is `Belief − Market`, never `Sim − Market`.
+
+This mattered enough to relabel: the strip used to say **Model** for a number
+that is mostly the market, which is the sort of label that quietly teaches you
+the wrong thing about your own system.
+
+### The distribution is drawn, not just stored
+
+`distributions` is ~80 bins per game of simulated totals and margins — the
+richest thing the model produces, and for a long time it reached only two bare
+`BarChart`s on the matchup page with no line drawn on them. A distribution
+without the number marked on it is decoration.
+
+`DistStrip.svelte` puts it on the bet object itself: the covered side lit, the
+market's number as a rule, and the exact covered mass printed beneath. The cut
+point comes from `distThreshold()` in `components/format.js`, which is the
+fiddly part — a home bet at −1.5 covers when the margin clears **+1.5**, so the
+cut is the negated handicap, while an away bet at +1.5 covers *below* its own
+handicap. Moneylines are the same object cut at zero; team totals have no
+matching distribution and return `null` rather than guess.
+
+The page hands each card both of the game's distributions and the card picks
+the one it is struck against, because Evidence's queries live on the page and
+a component cannot run one.
+
+### A grid minimum cannot shrink
+
+`repeat(auto-fill, minmax(400px, 1fr))` does not fall back below 400px, so
+inside the 342px content column of a phone it overflows and clips every card's
+price. Card grids here are one column with a `min-width: 1000px` media query
+promoting them to two — the same pattern `.play-list` already used. Verified by
+measuring card rects against the article's, not by looking at a screenshot.
+
 ### Things deliberately not done
 
 - **No gold, felt, or card-suit ornament.** None of the reference products

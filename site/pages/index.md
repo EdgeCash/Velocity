@@ -96,6 +96,54 @@ ledger is adjusted.
 </Alert>
 {/if}
 
+```sql open_rows
+select
+  upper(league) as lg,
+  case when player is not null and player != '' then player
+       else coalesce(game_id, '') end as who,
+  case market
+    when 'spread' then 'Spread' when 'total' then 'Total'
+    when 'moneyline' then 'ML'
+    when 'team_total_home' then 'TT home' when 'team_total_away' then 'TT away'
+    else replace(market, '_', ' ') end as market,
+  upper(side) as side,
+  point, price, stake,
+  case when book is not null and book != '' then book end as book,
+  placed_at
+from velocity.ledger_open
+where league != '__none__'
+order by placed_at desc
+```
+
+```sql open_total
+select count(*) as n, coalesce(sum(stake), 0) as units
+from velocity.ledger_open where league != '__none__'
+```
+
+<SectionBar
+  title="Open positions"
+  meta={open_total[0]?.n > 0
+    ? `${open_total[0].n} live · ${open_total[0].units.toFixed(2)}u at risk`
+    : 'nothing live'}
+/>
+
+<DataTable data={open_rows} compact={true} rowShading={false} emptySet=pass
+  emptyMessage="No bet is open. The ledger records one the moment a play is placed, and closes it on the morning grade.">
+  <Column id=lg title="Lg" />
+  <Column id=who title="Bet" />
+  <Column id=market title="Market" />
+  <Column id=side title="Side" />
+  <Column id=point title="Line" fmt='#,##0.0' align=right />
+  <Column id=price title="Price" fmt='+0;−0' align=right />
+  <Column id=book title="Book" />
+  <Column id=stake title="Stake" fmt='#,##0.00"u"' align=right />
+  <Column id=placed_at title="Placed" />
+</DataTable>
+
+_Money already on the table, from the bankroll ledger. A position leaves this
+list when the morning grade settles it, which is also when it moves the
+bankroll — an open bet never does._
+
 ```sql leagues
 select '%' as league, 'All' as lg, 0 as ord
 union all
@@ -120,6 +168,13 @@ where p.league != '__none__' and p.published
 order by p.conviction desc, p.edge desc
 ```
 
+```sql dists
+select game_id, kind, value, prob
+from velocity.distributions
+where league != '__none__'
+  and league like coalesce(nullif('${inputs.league}', ''), '%')
+```
+
 ```sql card_total
 select count(*) as n, coalesce(sum(coalesce(stake_sized, stake)), 0) as units
 from velocity.publish
@@ -135,12 +190,17 @@ where league != '__none__' and published
   tone="brand"
 />
 
+{#if leagues.length > 1}
+
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
+
+{/if}
 
 {#if card.length > 0}
   <div class="play-list">
     {#each card as play, i}
-      <PlayCard {...play} lead={i === 0} />
+      <PlayCard {...play} lead={i === 0}
+        dist={dists.filter((d) => d.game_id === play.game_id)} />
     {/each}
   </div>
 {:else}

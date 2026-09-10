@@ -28,13 +28,29 @@ order by league
 
 ## Reading the numbers
 
-- **Model %** — the Monte Carlo probability of the listed side (10,000 sims
-  per game unless noted), after the league's market anchoring above.
-- **Fair %** — the de-vigged market probability; the De-vig row above says
+Three probabilities appear on every card, and they are three different
+numbers. Reading them as one is the easiest way to misread this site.
+
+- **Sim %** — the raw Monte Carlo probability of the listed side, straight
+  off the simulated distribution drawn beside it. Nothing has been done to
+  it. This is what the model, alone, believes.
+- **Market %** — the de-vigged market probability; the De-vig row above says
   which anchor (the cross-book consensus, or the shopped book's own pair).
-- **Edge** — Model % minus Fair %. The bet gate requires positive EV at the
-  shopped price, not just a probability gap; past the edge ceilings the row
-  turns to paper.
+- **Belief %** — what the model is actually willing to stake, after the
+  market anchoring in the block above: `belief = market + w × (sim − market)`.
+  At the NFL's `w = 0.2` that is four fifths market and one fifth model, so
+  Belief always sits far closer to Market than Sim does. The lab put it
+  there: the close's Brier score beat the model's own, and a belief that
+  ignores that fact loses money confidently.
+- **Edge** — Belief % minus Market %, never Sim % minus Market %. The bet
+  gate requires positive EV at the shopped price, not just a probability
+  gap; past the edge ceilings the row turns to paper.
+
+A wide gap between Sim and Belief is not an error — it is the anchoring
+doing its job, and it is worth looking at. A market where Sim is repeatedly
+far from Market *and* the record earns is a market whose `w` may be too low;
+that argument belongs on [Market health](/health) with a season behind it,
+not on a hunch.
 - **Tier** — the intelligence layer's conviction grade (A/B/C); X marks a
   veto. Conviction = 0.4·edge + 0.6·context.
 - **Stake** — the portfolio-sized number: quarter-Kelly, then the per-bet,
