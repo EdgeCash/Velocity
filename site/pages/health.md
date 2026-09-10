@@ -62,7 +62,11 @@ order by window_days, league, n_bets desc
 
 <SectionBar title="Flags" meta={summary[0]?.flagged > 0 ? 'act on these first' : 'nothing flagged'} />
 
+{#if leagues.length > 1}
+
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
+
+{/if}
 
 <DataTable data={flagged} compact={true} rowShading={false} emptySet=pass
   emptyMessage="No market is flagged — every settled market with enough bets is inside its bands.">

@@ -56,7 +56,11 @@ where league != '__none__'
   meta={`${board_count[0]?.n ?? 0} priced · ${board_count[0]?.staked ?? 0} staked`}
 />
 
+{#if leagues.length > 1}
+
 <ButtonGroup data={leagues} name=league value=league label=lg defaultValue="%" />
+
+{/if}
 
 ```sql board_rows
 select

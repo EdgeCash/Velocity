@@ -15,9 +15,10 @@
   // so the one actionable number on a screen of dark-on-dark is the only
   // bright object on it.
   import {
-    american, isExchange, kickoffLabel, line, marketLabel, num, pct,
-    sideLabel, venueColor, venueLabel, venueMark,
+    american, distThreshold, isExchange, kickoffLabel, line, marketLabel,
+    num, pct, sideLabel, venueColor, venueLabel, venueMark,
   } from './format.js';
+  import DistStrip from './DistStrip.svelte';
 
   export let league = '';
   export let home_team = '';
@@ -46,6 +47,12 @@
      inverted pill on the page. A list where every price is filled is the
      genre's clearest cheap tell: if everything is lit, nothing is. */
   export let lead = false;
+  /* The simulated outcome distribution for this game, as {value, prob}
+     rows. Passed in rather than queried because the card is rendered from
+     a row and Evidence's queries live on the page. */
+  export let dist = [];
+  /** Drop the matchup line — the page above already names the game. */
+  export let compact = false;
 
   $: paper = !(Number(stake) > 0);
   $: href = game_id ? `/matchup/${game_id}` : null;
@@ -62,19 +69,29 @@
   $: grade = String(tier || '').toUpperCase();
   $: gradeHint = conviction === null || conviction === undefined
     ? '' : `conviction ${num(conviction, 2)}`;
+  // Where the bet sits on the simulated distribution, and which way it wins.
+  $: cut = distThreshold(market, side, point);
+  // The page hands over both of the game's distributions; the bet picks the
+  // one it is actually struck against.
+  $: bins = cut === null
+    ? []
+    : (dist ?? []).filter((d) => String(d.kind) === cut.kind);
 </script>
 
 <article class="play" class:paper>
+  {#if !compact || grade || contract || paper}
   <header class="head">
     {#if grade}
       <span class="grade grade-{grade.toLowerCase()}" title={gradeHint}>{grade}</span>
     {/if}
-    <span class="lg">{String(league).toUpperCase()}</span>
+    {#if !compact}<span class="lg">{String(league).toUpperCase()}</span>{/if}
     {#if at}<span class="at">{at}</span>{/if}
     {#if contract}<span class="tag">Contract</span>{/if}
     {#if paper}<span class="state">Paper</span>{/if}
   </header>
+  {/if}
 
+  {#if !compact}
   <div class="who">
     {#if href}
       <a {href}>{matchup}</a>
@@ -83,6 +100,7 @@
     {/if}
     {#if player}<span class="player">{player}</span>{/if}
   </div>
+  {/if}
 
   <div class="ticket">
     <div class="row">
@@ -112,18 +130,23 @@
         <span class="k">Edge</span>
       </div>
       <div class="cell">
-        <span class="v">{pct(p_model, 1)}</span>
-        <span class="k">Model</span>
+        <span class="v">{pct(p_fair, 1)}</span>
+        <span class="k">Market</span>
       </div>
       <div class="cell">
-        <span class="v">{pct(p_fair, 1)}</span>
-        <span class="k">Fair</span>
+        <span class="v" title="Market anchored: belief = market + 0.2 x (model - market)"
+          >{pct(p_model, 1)}</span>
+        <span class="k">Belief</span>
       </div>
       <div class="cell">
         <span class="v" class:brand={!paper}>{paper ? '—' : `${num(stake, 2)}u`}</span>
         <span class="k">Stake</span>
       </div>
     </div>
+
+    {#if bins.length > 0}
+      <DistStrip bins={bins} line={cut.at} above={cut.above} splitTie={cut.splitTie} />
+    {/if}
   </div>
 
   {#if paper && note}
