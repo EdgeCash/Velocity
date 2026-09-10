@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from velocity.eval.ladders import default_relative_tolerance
 from velocity.features.scores import fit_scores_ratings
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
@@ -872,8 +873,11 @@ def live_config_rows(
                  f"slate; same-game exposure de-scaled at "
                  f"\u03c1={portfolio.group_correlation:g}"))
     if cfg is not None and getattr(cfg, "ladder_tolerance", None):
-        rows.append(("Exchange rungs", f"E8 shape gate at {cfg.ladder_tolerance:g} "  # type: ignore[attr-defined]
-                                       "probability error; taker fees charged"))
+        tol = float(cfg.ladder_tolerance)  # type: ignore[attr-defined]
+        rows.append(("Exchange rungs", f"E8 shape gate: the sim may overstate a rung by "
+                                       f"{tol:g} probability, or "
+                                       f"{default_relative_tolerance(tol):.0%} of its own price, "
+                                       "whichever is tighter; taker fees charged"))
     return rows
 
 

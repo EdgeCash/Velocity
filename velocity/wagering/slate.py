@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from velocity.eval.ladders import offset_is_honest
+from velocity.eval.ladders import residual_threshold, rung_is_honest
 from velocity.models.game_nfl import GameProjection
 from velocity.store import pit
 from velocity.store.schema import LADDER_BOOKS, contract_key
@@ -66,11 +66,16 @@ class SlateConfig:
     # yet (all we have is the current snapshot), so it must keep every observation
     # as a candidate; CLV is measured later against the true closing snapshot.
     exclude_closing: bool = True
-    # The E8 ladder gate: refuse rungs where the sim's *shape* is known to be
-    # wrong by more than this much probability (docs/BUILD_EXCHANGES.md E8).
-    # The sim draws a normal; real residuals are leptokurtic, so it overstates
-    # the chance of landing past any threshold — the direction that invents
-    # edges rather than hiding them. ``None`` disables the gate entirely.
+    # The E8 ladder gate: refuse rungs where the sim's *shape* is known to
+    # overstate that side by more than this much probability
+    # (docs/BUILD_EXCHANGES.md E8). The sim draws a normal; real residuals are
+    # leptokurtic, so near the line it overstates the chance of landing past a
+    # threshold — the direction that invents edges rather than hiding them. The
+    # gate is side-aware, so the tail the sim *understates* is not charged for
+    # the other one's error, and it scales this tolerance by the rung's own
+    # price: EV per unit staked moves by the error divided by the price, so a
+    # bar fixed in probability is far too loose on a 6-cent contract.
+    # ``None`` disables the gate entirely.
     ladder_tolerance: float | None = None
     # The league whose calibration table the gate reads. Set by the live
     # runner; without it the gate has no table and stands down.
@@ -264,14 +269,25 @@ def _ladder_gate_blocks(
     point: float | None,
     book: str,
     config: SlateConfig,
+    p_fair: float | None = None,
 ) -> bool:
-    """Whether this rung sits where the sim's distribution shape is untrustworthy.
+    """Whether the sim's distribution shape can price *this side* of this rung.
 
-    The offset is measured from the model's own fair line, because that is what
-    the calibration measures: how badly a normal misses this far out from the
-    expectation. Spread points are normalized to the home side first — a fair
-    spread of −6 is quoted as away +6, so comparing the away number to the home
-    fair line directly would read twelve points of offset where there are none.
+    The rung is placed in residual space relative to the model's own fair line,
+    because that is what the calibration measures: how badly a normal misses
+    this far out from the expectation. Spread points are normalized to the home
+    side first — a fair spread of −6 is quoted as away +6, so comparing the away
+    number to the home fair line directly would read twelve points of offset
+    where there are none — and then
+    :func:`~velocity.eval.ladders.residual_threshold` undoes the home line's
+    negation so the sign says which tail the bet is buying.
+
+    ``p_fair`` is the rung's own de-vigged probability, and the gate scales its
+    tolerance by it: the same probability error costs far more EV per unit
+    staked on a 6-cent contract than at even money, which is exactly where the
+    deep-tail rungs an exchange ladder offers live
+    (:func:`~velocity.eval.ladders.rung_is_honest`).
+
     Only :data:`~velocity.store.schema.LADDER_BOOKS` rows are gated. A
     sportsbook posts one main number that its own backtests already validate,
     and gating it would silently switch off ordinary spread and total betting;
@@ -287,16 +303,21 @@ def _ladder_gate_blocks(
         home_point = contract_key(market, side, point)
         if home_point is None:
             return False
-        offset = abs(home_point - float(proj.sim.fair_spread()))
+        threshold = residual_threshold(market, home_point, float(proj.sim.fair_spread()))
     elif market == "total":
-        offset = abs(point - float(proj.sim.fair_total()))
+        threshold = residual_threshold(market, point, float(proj.sim.fair_total()))
     elif market in _TEAM_TOTAL_MARKETS:
         scores = proj.sim.home_score if market == "team_total_home" else proj.sim.away_score
-        offset = abs(point - float(np.median(scores)))
+        threshold = residual_threshold(market, point, float(np.median(scores)))
     else:
         return False
-    return not offset_is_honest(
-        config.league, market, offset, tolerance=config.ladder_tolerance
+    return not rung_is_honest(
+        config.league,
+        market,
+        side,
+        threshold,
+        price=p_fair,
+        tolerance=config.ladder_tolerance,
     )
 
 
@@ -502,7 +523,7 @@ def _best_opportunity(
         ):
             continue
         venue = venue_for_book(row["book"]) if config.charge_exchange_fees else None
-        if _ladder_gate_blocks(proj, market, side, point, row["book"], config):
+        if _ladder_gate_blocks(proj, market, side, point, row["book"], config, p_fair):
             continue
         p_model = model_probability(proj, market, side, point)
         if p_model is None:  # projection can't price this market (no segment sim)
