@@ -122,6 +122,9 @@ def test_the_nav_order_is_decision_first() -> None:
         if match:
             order[page.stem] = int(match.group(1))
     assert order["index"] == 1, "Today is the home page and sorts first"
+    # Props is a decision surface, so it sits with the board rather than
+    # behind the research pages.
+    assert order["board"] < order["props"] < order["performance"]
     assert order["board"] < order["performance"] < order["health"]
     assert order["health"] < order["ratings"]
     # Positions are unique, or the tie falls back to filename order.

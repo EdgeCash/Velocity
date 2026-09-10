@@ -191,6 +191,19 @@ Chart marks are stepped into the dark band rather than reusing the brighter
 UI accents, and single-series charts (the bankroll curve, cumulative units)
 take the brand teal directly instead of a categorical palette.
 
+### A source may not assume its own column *presence* either
+
+The schema block in `scripts/build_site_data.py` is a **floor, not a filter**:
+it adds any listed column a frame is missing and writes the sentinel row for
+an empty family, but it never drops an extra. So a column the producer writes
+and the schema omits exists on a busy day and vanishes on a quiet one.
+
+`props` was exactly that. `prop_slate_to_frame` writes fourteen columns
+including `book` and `note`; the schema listed twelve. A page selecting
+`book` would have rendered all season and then shown a red box on the first
+slate with no props — the same failure as the `tier` cast below, arriving by
+a different route. Anything a producer writes has to be listed in the schema.
+
 ### A source may not assume its own column types
 
 `tier` and `rationale` are written by the intel layer, which does not run on
@@ -243,6 +256,24 @@ ESPN's public scoreboard JSON for the five leagues, trimmed to ticker
 fields and edge-cached ~45s. `LiveTicker.svelte` polls it every 60s and
 renders the scrolling crawl on the Today page; it hides itself when the
 endpoint is unreachable (local preview) or all leagues are dark.
+
+## The prop board
+
+`props` is a separate family from the game board — `slate_{league}_props`,
+priced off the correlated per-game simulation rather than the game model —
+and it has its own page. Two things differ from a game market and the page
+says both:
+
+- **A prop carries no closing-line value.** Few sharps price a receptions
+  line, so its close is not a yardstick. The monitor judges props on realised
+  profit instead (docs/WAGERING.md §8), which is why a prop market needs a
+  much bigger sample before it says anything.
+- **The gate wants more edge.** A prop line is thinner and the price is
+  worse, so `min_edge_for` asks for more of it than a game market does.
+
+The football props ride on the FantasyPros pull: a slate without one prices
+the game markets only, and the page's empty state says so rather than
+implying the model had no opinion.
 
 ## Local preview
 
