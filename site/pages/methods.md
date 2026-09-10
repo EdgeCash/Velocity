@@ -1,6 +1,6 @@
 ---
 title: Methods
-sidebar_position: 7
+sidebar_position: 8
 hide_title: true
 ---
 

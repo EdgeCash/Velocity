@@ -684,9 +684,17 @@ def main() -> None:
                      "stake_sized": float, "stake_solo": float,
                      "bankroll": float, "cap_fraction": float,
                      "cap_units": float, "exposure": float, "stamp": str},
+        # `book` and `note` are written by `prop_slate_to_frame` but were
+        # missing here, so the column set differed between a day with props
+        # and a day without: the sentinel had twelve columns, a real frame
+        # fourteen. A page selecting `book` then rendered fine all season
+        # and died with a red box on the first quiet slate. The schema is a
+        # floor, not a filter — anything the producer writes has to be
+        # listed here or the empty case silently drops it.
         "props": {"game_id": str, "player": str, "market": str, "side": str,
-                  "point": float, "price": float, "p_model": float,
-                  "p_fair": float, "edge": float, "stake": float,
+                  "point": float, "book": str, "price": float,
+                  "p_model": float, "p_fair": float, "edge": float,
+                  "stake": float, "note": str,
                   "league": str, "stamp": str},
         "dfs_lineup": {"slot": str, "player_name": str, "position": str,
                        "kickoff": "datetime64[ns]", "game_time": str,
