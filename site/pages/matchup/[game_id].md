@@ -48,9 +48,18 @@ where p.game_id = '${params.game_id}' and i.is_out
 group by i.team
 ```
 
+```sql marks
+select t.team, t.code, t.color, t.color_dark, t.logo
+from velocity.teams t
+join velocity.games g on g.league = t.league
+where g.game_id = '${params.game_id}'
+  and t.team in (g.home_team, g.away_team)
+```
+
 <MatchupSheet
   away={game[0]?.away_team ?? ''}
   home={game[0]?.home_team ?? ''}
+  marks={marks}
   kickoff={game[0]?.kickoff}
   proj={proj[0]}
   awayCode={codes[0]?.awaycode ?? ''}

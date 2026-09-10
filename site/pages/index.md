@@ -181,6 +181,10 @@ where p.league != '__none__' and p.published
 order by p.conviction desc, p.edge desc
 ```
 
+```sql marks
+select league, team, code, color, color_dark, logo from velocity.teams
+```
+
 ```sql dists
 select game_id, kind, value, prob
 from velocity.distributions
@@ -212,7 +216,7 @@ where league != '__none__' and published
 {#if card.length > 0}
   <div class="play-list">
     {#each card as play, i}
-      <PlayCard {...play} lead={i === 0}
+      <PlayCard {...play} lead={i === 0} marks={marks}
         dist={dists.filter((d) => d.game_id === play.game_id)} />
     {/each}
   </div>

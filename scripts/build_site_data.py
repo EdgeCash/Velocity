@@ -18,6 +18,7 @@ Access-gated private host (public split is a later phase).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 from pathlib import Path
@@ -339,6 +340,68 @@ def game_directory(*folders: Path | None) -> pd.DataFrame:
             .drop_duplicates("game_id"))
 
 
+# The panel every team colour is measured against: --v-lvl-0 in the site's
+# layout, the surface a matchup sheet and a play card actually sit on.
+PANEL = "#0b1017"
+
+
+def build_teams(games: pd.DataFrame) -> pd.DataFrame:
+    """Mark, code and brand colour for every team on the slate.
+
+    The site knew teams only as strings, so a matchup sheet led with
+    "Jacksonville Jaguars at Cincinnati Bengals" in the same grey as the row
+    below it. A logo and the club's own colour are what make a sheet scannable
+    at a glance, and both are facts the repo already resolves for the card
+    renderers — :func:`~velocity.report.assets.team_identity` is that resolution
+    shared rather than copied.
+
+    ``color_dark`` is the brand colour raised until it measurably contrasts with
+    the site's panel — hue and saturation held, so a navy club still reads as
+    navy and a purple one as purple. It is a *measured* lift
+    (:func:`~velocity.report.assets.readable_on`) rather than a lightness floor
+    because lightness is not luminance: at the card renderer's floor, fifteen of
+    the thirty-two clubs sit under 3:1 here and the Ravens' purple at 1.5:1, so a
+    rule in it would read as a dark line rather than as a colour. Computed here
+    rather than in the browser because the maths belongs with the palette and is
+    tested; the page just paints what it is handed.
+
+    Marks are **hot-linked** from ESPN's public CDN rather than vendored: the
+    repo is public and club marks are not ours to redistribute, which is the
+    same line the card renderers draw. A page therefore has to survive the
+    image not loading, and ``TeamMark`` falls back to the code chip.
+
+    NCAAF identity needs ``CFBD_API_KEY`` (or its cached payload) and degrades
+    to bare codes without it, so a missing key costs colour, never a build.
+    """
+    from velocity.report.assets import readable_on, team_identity
+
+    if games.empty or "league" not in games.columns:
+        return pd.DataFrame(columns=["league", "team", "code", "color", "color_dark", "logo"])
+    rows: list[dict[str, object]] = []
+    for league, block in games.groupby("league"):
+        names = sorted(
+            {str(n) for n in pd.concat([block["away_team"], block["home_team"]]).dropna()}
+        )
+        identities = team_identity(
+            str(league), names,
+            api_key=os.environ.get("CFBD_API_KEY"),
+            cache_dir=Path(os.environ.get("VELOCITY_ASSET_DIR", "artifacts/assets")),
+        )
+        for name in names:
+            ident = identities.get(name)
+            if ident is None:
+                continue
+            rows.append({
+                "league": str(league),
+                "team": ident.team,
+                "code": ident.code,
+                "color": ident.color or "",
+                "color_dark": readable_on(ident.color, PANEL) if ident.color else "",
+                "logo": ident.logo or "",
+            })
+    return pd.DataFrame(rows)
+
+
 def build_ratings(slate_dir: Path, prev_dir: Path | None) -> pd.DataFrame:
     """The power-ratings table, with movement vs the previous run's export.
 
@@ -654,6 +717,7 @@ def main() -> None:
         "market_health": collect(slate_dir, "monitor"),
         "cards": collect_cards(slate_dir, Path(args.cards_out)),
         "ratings": build_ratings(slate_dir, Path(args.prev_dir)),
+        "teams": build_teams(collect(slate_dir, "games")),
         "line_moves": build_line_moves(slate_dir, Path(args.odds_dir)),
         "injuries": build_injuries(Path(args.fp_dir)),
         "weather": (pd.DataFrame() if args.no_weather
@@ -684,6 +748,8 @@ def main() -> None:
                     "legs_json": str, "league": str, "stamp": str},
         "games": {"game_id": str, "home_team": str, "away_team": str,
                   "kickoff": "datetime64[ns]", "league": str, "stamp": str},
+        "teams": {"league": str, "team": str, "code": str, "color": str,
+                  "color_dark": str, "logo": str},
         "projections": {"game_id": str, "away": str, "home": str, "n_sims": int,
                         "mu_away": float, "mu_home": float, "p_home_win": float,
                         "fair_spread": float, "fair_total": float,

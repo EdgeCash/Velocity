@@ -296,6 +296,52 @@ carry the team abbreviations (`NE`, `SEA`) that ratings are keyed by, while
 games carry full names. Joining ratings to games matches nothing and the
 sheet silently renders one row.
 
+## Team marks and colours
+
+Every surface that names a team can also show its mark and wear its colour:
+the matchup sheet's two team blocks, and both ends of a play card's matchup
+line. `velocity.teams` carries one row per team on the slate —
+`code`, `color`, `color_dark`, `logo` — built by `build_teams` in
+`scripts/build_site_data.py` and resolved through
+`velocity.report.assets.team_identity`, which is the card renderers' own
+resolution shared rather than copied a fourth time.
+
+Four things this had to get right:
+
+- **Marks are hot-linked from ESPN's public CDN, never vendored.** The repo
+  is public and club marks are not ours to redistribute — the same line the
+  card renderers draw. That makes "the image did not arrive" a normal state,
+  not an error, so `TeamMark.svelte` carries an `on:error` and falls back to
+  a code chip. A test refuses any club mark committed under `site/static/`.
+- **A team is spelled two ways in our own data.** `projections` names NFL
+  clubs by code (`SEA`); `games` names them in full (`Seattle Seahawks`).
+  Looking a display name up in `TEAM_META` directly misses all thirty-two,
+  silently, with a trigram that happens to be right for Seattle and wrong for
+  New England. `team_identity` runs both through `resolve_team`.
+- **Contrast has to be measured, not assumed.** The card renderer's
+  `lighten_for_dark` raises HLS *lightness* to a floor, which is the right
+  idea in the wrong space — lightness is not luminance. Against this site's
+  panel that floor leaves fifteen of thirty-two clubs under 3:1 and the
+  Ravens' purple at 1.5:1, and raising the floor does not fix it: at 0.50 the
+  deep blues and purples are still under the bar and the bright hues have gone
+  garish. `readable_on` searches lightness *for the contrast* instead, holding
+  hue and saturation, so a navy stays navy and every club clears 3:1 — WCAG's
+  bar for non-text graphics, which is what a rule and a hairline are.
+- **Clubs share colours.** New England and Seattle wear the same navy,
+  Cincinnati and Denver the same orange, so a sheet can put two identical
+  rules on the page and look broken. `distinctPair` is the card renderer's
+  de-collision rule on the web surface: the away side steps lighter and a
+  little less saturated. Lighter is the safe direction on a dark panel — it
+  only adds contrast — and identity never rests on colour anyway, since the
+  mark and the name are right beside it.
+
+The colour is a rule under each team's name rather than the name's own
+colour: a brand primary lifted just far enough to be visible is still too
+dark for 1.1rem of text.
+
+College identity rides `CFBD_API_KEY` (or its cached payload) and degrades to
+bare codes without it, so a missing key costs colour, never a build.
+
 ## Why a bet is smaller than its own Kelly
 
 The Board's **Sizing** section answers the question the site could not
