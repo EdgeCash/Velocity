@@ -825,3 +825,51 @@ def test_rest_model_ignores_the_offseason_and_the_game_itself() -> None:
     assert model.project("KC", "BUF", kickoff=pd.Timestamp("2026-09-13 17:00")) == (0.0, 0.0)
     # Week 2, seven days on: a normal week, no adjustment either way.
     assert model.project("BUF", "KC", kickoff=pd.Timestamp("2026-09-20 17:00")) == (0.0, 0.0)
+
+
+def test_situational_wrappers_stack_without_colliding() -> None:
+    """Wind over rest: both bonuses land, and neither wrapper eats the other.
+
+    The live runner wraps the rest model in the weather model whenever a
+    forecast comes back. The weather wrapper passed ``home_bonus`` down and
+    the rest wrapper did not accept it, so every NFL projection raised
+    ``TypeError`` the moment a forecast was available — the whole slate died.
+    The rest wrapper also never saw a ``kickoff`` through the stack, which
+    silently zeroed every rest bonus.
+    """
+    from velocity.backtest.lab import RestAdjustedModel, WeatherAdjustedModel
+
+    captured: dict[str, float] = {}
+
+    class _Base:
+        def project(self, home_team, away_team, *, neutral_site=False, rng=None,
+                    home_bonus=0.0, away_bonus=0.0):
+            captured.update(home_bonus=home_bonus, away_bonus=away_bonus)
+            return "proj"
+
+    kickoff = pd.Timestamp("2025-12-14 18:00")
+    # GB comes off a 14-day rest (a bye); CHI played 7 days ago.
+    schedule = pd.DataFrame({
+        "home_team": ["GB", "CHI"],
+        "away_team": ["MIN", "DET"],
+        "kickoff": [kickoff - pd.Timedelta(days=14), kickoff - pd.Timedelta(days=7)],
+    })
+    weather = pd.DataFrame({
+        "home_team": ["GB"], "kickoff": [kickoff], "roof": ["outdoors"],
+        "wind_max": [25.0], "temp_mean": [20.0], "precip": [0.0],
+    })
+
+    rest = RestAdjustedModel(_Base(), schedule, bye_points=1.5, short_points=1.0)
+    stacked = WeatherAdjustedModel(rest, weather, threshold_mph=15.0, points_per_mph=0.15)
+
+    # No TypeError, and both terms are present: wind −1.5 on both sides,
+    # plus GB's +1.5 bye. The away side gets wind only.
+    stacked.project("GB", "CHI", kickoff=kickoff)
+    assert captured["home_bonus"] == pytest.approx(-1.5 + 1.5)
+    assert captured["away_bonus"] == pytest.approx(-1.5)
+
+    # The weather model over a BARE model still works — it must not forward a
+    # kickoff to something that cannot take one.
+    bare = WeatherAdjustedModel(_Base(), weather, threshold_mph=15.0, points_per_mph=0.15)
+    bare.project("GB", "CHI", kickoff=kickoff)
+    assert captured["home_bonus"] == pytest.approx(-1.5)

@@ -449,7 +449,28 @@ the payout per unit staked falls from 4.26 to 3.98. A model probability
 of 0.24 still clears the gate, but stakes materially less than the same
 edge at a sportsbook.
 
-### Phase E6 — Slate & live wiring (done)
+### Phase E6 — Slate & live wiring (done; on the board from 2026-09-10)
+
+> **Update (2026-09-10): the exchanges reach the site.** E6 shipped the
+> ability to price them and then left it switched off — `--exchanges`
+> defaulted to false in the runner *and* the workflow only passed it on a
+> manual dispatch whose own input defaulted to `"false"`. No scheduled run
+> ever priced a Kalshi or Polymarket line, so not one exchange row ever
+> reached the board, the record, or the site. Both venues are free and
+> keyless and a contract can genuinely be the best number on a game, so the
+> workflow input now defaults to `true` for football.
+>
+> **Priced, not staked.** The money is a separate decision from the display.
+> `SlateConfig.paper_venues` papers a whole venue the way `paper_markets`
+> papers a market, the runner puts `LADDER_BOOKS` in it by default
+> (`--no-exchange-paper` stakes them), and the reason rides on the ticket as
+> `paper venue (kalshi)`. The evidence for that posture is in the first real
+> mixed board: of the five exchange rows the model liked, four were deep-tail
+> ladder rungs — a total *under 19.5* at +2400, an *over 66.5* at +1011 —
+> which is exactly the shape the E8 gate exists to distrust, and the E8
+> tolerance is still a round 0.02 rather than a number fitted from the banked
+> candle closes. S2's rule applies: money does not follow a market whose
+> evidence is not in yet.
 
 - Both clients handed to `LiveOddsAdapter` as fetch callables; events
   frames from E1/E3 into `canonicalize_sides`; team-alias tables

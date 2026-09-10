@@ -42,6 +42,19 @@ site/
   worker.js + wrangler.toml + deploy.sh   Cloudflare deploy + /api/scores
 ```
 
+## Venues
+
+Sportsbook and exchange prices ride the **same board** — there is no separate
+Kalshi page, because an exchange contract competes for the same bet as a
+sportsbook line and the only question that matters is which venue has the
+better number. The `venue` column carries `sportsbook` or the exchange's own
+name, and the Board table and the play card both show the venue in place of
+the book whenever it is not a sportsbook.
+
+Exchange rows are **priced and graded at stake zero** by default
+(`docs/BUILD_EXCHANGES.md` E6), so they appear on the board with a `paper`
+status and never on Today's card.
+
 ## The design
 
 Dark only, on purpose: `appearance.switcher` is off and every surface is

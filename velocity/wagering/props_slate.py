@@ -116,7 +116,8 @@ def build_prop_slate(
                                   config, consensus)
                 if best is None:
                     continue
-                paper = config.paper_reason(market, best["edge"], best.get("p_fair"))
+                paper = config.paper_reason(
+                    market, best["edge"], best.get("p_fair"), best.get("book"))
                 stake = stake_amount(
                     config.starting_bankroll,
                     best["p_model"],
