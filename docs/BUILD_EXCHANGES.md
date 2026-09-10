@@ -630,32 +630,85 @@ three-point shape error swamps the two-point edge the slate gates on.
 Per league and market, the verdict differs sharply — which is why the
 gate is a measured table rather than a key-number rule:
 
-| | worst error | verdict at 2pp |
+| | worst error | verdict at 2pp, symmetric |
 |---|---|---|
 | NFL spread | 3.7pp @ 4.5 | fails within ~14 pts of fair |
 | NFL total | 3.4pp @ 3.5 | fails within ~9 pts |
 | NCAAF spread | 1.9pp @ 0.5 | **passes everywhere** |
 | NCAAF total | 2.8pp @ 0.5 | fails within ~11 pts |
 
-On a real NFL board the gate keeps 8.9% of spread rungs, 50.6% of
-totals and ~11% of team totals. Scope is deliberately narrow: only
+On a real NFL board that gate kept 8.9% of spread rungs, 50.6% of
+totals and ~11% of team totals. Both the verdict column and those
+percentages are the *symmetric* gate's, superseded by E8b below — the
+worst-error column is a property of the measurement and still stands.
+Scope is deliberately narrow: only
 `LADDER_BOOKS` rows are gated, never a sportsbook's main number, which
 its own backtests already validate — gating that would have silently
 switched off ordinary spread betting. `SlateConfig.ladder_tolerance`
 (with `league`) turns it on; `run_live_slate --ladder-tolerance`
 exposes it, defaulting to the 2pp that matches `min_edge`.
 
-Two honest caveats, both recorded in the module:
-- The gate compares an **absolute** probability error, because that is
-  the unit `min_edge` is in. But a rung's EV moves by error ÷ price, so
-  the same small miss is proportionally far worse on a long-odds
-  contract — exactly the deep-tail rungs this gate admits.
-  `residual_calibration` reports both columns.
-- Residuals are measured against the market's close, the sharpest
-  available expectation. The sim's own residual is around *its*
-  projection, which is at best as sharp; if it is less sharp its
-  residuals are wider and this leptokurtosis is diluted. That makes the
-  gate conservative rather than permissive.
+One caveat remains, and it is the reason the table is safe to read in
+either direction: residuals are measured against the market's close,
+the sharpest available expectation. The sim's own residual is around
+*its* projection, which is at best as sharp; if it is less sharp its
+residuals are wider and this leptokurtosis is diluted. That makes the
+gate conservative rather than permissive, and — since dilution shrinks a
+bias toward zero and cannot flip its sign — a measured understatement
+stays one.
+
+### E8b: the gate was the right test in the wrong units
+
+The module recorded a second caveat as a possible future refinement: the
+gate compares an **absolute** probability error, because that is the unit
+`min_edge` is in, but a rung's EV per unit staked moves by error ÷ price,
+so the same miss is proportionally far worse on a long-odds contract.
+Measured, that is not a footnote — it inverts the gate. The ratio does
+not shrink with distance, it **grows**:
+
+| | error ÷ price at 0.5 | at 14.5 | at 28.5 |
+|---|---|---|---|
+| NFL spread | 0.06 | 0.12 | 0.34 |
+| NFL total | 0.06 | 0.11 | 0.46 |
+| NCAAF spread | 0.04 | 0.05 | 0.04 |
+| NCAAF total | 0.06 | 0.04 | 0.31 |
+
+So the absolute bar admitted precisely the rungs where a shape error
+costs the most — which is why the first live exchange board came back
+entirely deep tail, every rung 15 to 22 points out and priced in single
+cents.
+
+The second finding is that the error **has a side**, and averaging the
+two tails threw that away. `OFFSET_BIAS` now banks the signed error per
+tail: positive where the normal overstates that tail, which is the only
+dangerous sign, since a probability the sim inflates is an edge it can
+invent while one it understates it can only hide. The tails diverge
+sharply. On NFL spreads the favourite's tail flips to an understatement
+past 16.5 while the dog's stays overstated out to 24.5 — opposite signs
+at the same offset. On both leagues' totals the *under* tail is the
+overstated one from 9.5 out (NFL +1.3 to +1.6pp at 16.5–21.5) while the
+over tail has already gone negative. `OFFSET_ERROR` is still available
+as `max(|over|, |under|)`, now derived from the signed table rather than
+banked beside it, so the two cannot drift.
+
+`rung_is_honest` therefore asks one question — by how much does the sim
+overstate **this bet**? — and charges the bar `min(tolerance,
+relative_tolerance × price)`, with `relative_tolerance` derived as
+`tolerance ÷ 0.5` rather than set: it is the EV distortion the absolute
+bar already accepts at even money, held constant across the price range,
+which is why the two tests agree exactly at 0.5 instead of being two
+knobs to keep in sync.
+
+The net effect is a different set, not a smaller one. Over a full
+±28-point ladder on a −6/45 NFL game and a −10.5/55 NCAAF game it admits
+**more** rungs than the symmetric gate (148 vs 121 NFL; 171 vs 163
+NCAAF) while refusing 32 and 22 the old one took. What it opens is the
+near-the-line rungs the old gate blocked wholesale by charging them the
+shoulder error that, on the side they actually buy, runs the other way.
+What it closes is every deep cheap rung: NFL total unders from 13.5 out
+(2¢–15¢) and deep spread rungs 14.5–22.5 out (4¢–13¢), NCAAF total
+rungs past 10.5 on both sides (4¢–26¢). That is the set the live board
+had filled itself with.
 
 A side finding, since corrected and worth reading as a caution: NCAAF's
 residual sd *against the market's close* is 15.5 while the sim used
