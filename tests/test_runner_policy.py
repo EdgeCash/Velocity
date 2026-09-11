@@ -205,13 +205,14 @@ def test_an_empirical_sim_without_a_bank_falls_back_to_the_normal(tmp_path, monk
     assert runner.describe_sim(cfg, "ncaaf").startswith("normal")
 
 
-def test_exchange_venues_are_papered_unless_told_otherwise() -> None:
-    """The exchange prices belong on the board; the money is a separate call.
+def test_exchange_venues_are_staked_and_bounded() -> None:
+    """The exchanges are live, and the flag that held them back still works.
 
-    A Kalshi contract can be the best number on a game, so the board should
-    price and grade it — but the E8 shape gate still runs on a round 0.02
-    tolerance rather than one fitted from banked closes, and S2's rule is
-    that money does not follow a market whose evidence is not in yet.
+    They were papered while the E8 gate ran on an absolute tolerance that could
+    not answer for a rung's own distance and price — S2's rule being that money
+    does not follow a market whose evidence is not in yet. E8b is that evidence,
+    so the money follows; the posture is still a flag rather than a deletion,
+    because a venue that has to be pulled back should not need a code change.
     """
     runner = _runner()
     parser = runner.build_parser()
@@ -221,14 +222,40 @@ def test_exchange_venues_are_papered_unless_told_otherwise() -> None:
     assert off.exchanges is False
     assert runner.resolve_paper_venues(off) == frozenset()
 
-    # Exchanges on: both venues priced, neither staked.
+    # Exchanges on: priced *and* staked.
     on = parser.parse_args(["--league", "nfl", "--exchanges"])
-    assert on.exchange_paper is True
-    assert runner.resolve_paper_venues(on) == frozenset({"kalshi", "polymarket"})
+    assert on.exchange_paper is False
+    assert runner.resolve_paper_venues(on) == frozenset()
 
-    # The escape hatch stakes them.
-    staked = parser.parse_args(["--league", "nfl", "--exchanges", "--no-exchange-paper"])
-    assert runner.resolve_paper_venues(staked) == frozenset()
+    # And the way back, which needs no code change.
+    papered = parser.parse_args(["--league", "nfl", "--exchanges", "--exchange-paper"])
+    assert runner.resolve_paper_venues(papered) == frozenset({"kalshi", "polymarket"})
+
+
+def test_the_first_live_exchange_exposure_is_bounded() -> None:
+    """A venue class with no live record does not get the whole slate.
+
+    Every exchange row on the card shares one cap, because what is untested
+    about Kalshi and Polymarket is the same sim, the same ladder and the same
+    shape gate. The cap is a share of the slate cap rather than a second
+    absolute number, so it moves when the slate does instead of drifting.
+    """
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl", "--exchanges"])
+    assert args.exchange_slate_share == 0.25
+    assert args.max_slate_fraction * args.exchange_slate_share < 0.07, (
+        "a first live exposure should be a few percent of bankroll, not a quarter"
+    )
+    # The Methods block says so, rather than the site claiming a stale posture.
+    rows = dict(runner.live_config_rows(args, "fit", None))
+    assert "live" in rows["Exchange stakes"] and "25%" in rows["Exchange stakes"]
+    papered = runner.build_parser().parse_args(
+        ["--league", "nfl", "--exchanges", "--exchange-paper"])
+    assert "staked at zero" in dict(runner.live_config_rows(papered, "fit", None))[
+        "Exchange stakes"]
+    # Nothing is claimed at all when the exchanges are not priced this run.
+    plain = runner.build_parser().parse_args(["--league", "nfl"])
+    assert "Exchange stakes" not in dict(runner.live_config_rows(plain, "fit", None))
 
 
 def test_a_papered_venue_prices_but_never_stakes() -> None:

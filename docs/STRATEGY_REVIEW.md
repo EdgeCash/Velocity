@@ -252,6 +252,18 @@ totals are paper on every league; NCAAB, NHL and WNBA run in an explicit
 paper posture; parlay legs come only from staked sportsbook rows; the
 publish gate refuses paper rows first.
 
+The **exchanges are no longer papered**. S2's rule is that money does not
+follow a market whose evidence is not in yet, and for Kalshi and Polymarket
+that evidence was a shape gate that could answer for a ladder rung at its
+own distance *and* its own price — which is what BUILD_EXCHANGES E8b is.
+They are staked under one shared cap at 25% of the slate cap (6.25% of
+bankroll across every exchange row), because the risk that is untested is
+the sim, the ladder and the gate they have in common rather than either
+venue alone. `--exchange-paper` returns them to stake zero without giving
+up their prices, their CLV or their place on the board, and
+`--exchange-slate-share` moves the cap. The first weeks of graded exchange
+CLV are what should decide whether that share rises, not an argument.
+
 
 - **Build:** in `run_live_slate.py` defaults — NCAAF `moneyline` joins
   `spread` in `exclude_markets` (re-enable flag, like `--ncaaf-spreads`);

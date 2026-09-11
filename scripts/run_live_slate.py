@@ -653,15 +653,30 @@ def build_parser() -> argparse.ArgumentParser:
                              "sportsbooks (free, keyless; docs/BUILD_EXCHANGES.md E6). "
                              "Paper only — nothing is ever ordered.")
     # The exchange prices belong on the board — a Kalshi contract can be the
-    # best number on a game — but staking them is a separate decision from
-    # showing them. The E8 shape gate still runs on a round 0.02 tolerance
-    # rather than one fitted from the banked candle closes, so the venues are
-    # priced, graded and shown at stake zero until that evidence lands
-    # (docs/STRATEGY_REVIEW.md S2, docs/BUILD_EXCHANGES.md E8).
+    # best number on a game — and as of E8b they are staked too. The condition
+    # this flag was waiting on was a shape gate that could be trusted at a
+    # rung's own distance and price; that landed, though not by the route the
+    # old note here expected. It is not a tolerance fitted from banked candle
+    # closes (there are two collection runs, nowhere near enough): it is a gate
+    # that reads the sim's error per *tail* and charges it against the rung's
+    # own price, which is what the deep cheap rungs the first board filled
+    # itself with were never bounded by (docs/BUILD_EXCHANGES.md E8b).
+    #
+    # Staking is still a separate decision from showing, so the flag stays:
+    # ``--exchange-paper`` puts the venues back to stake zero without giving up
+    # their prices, their CLV or their place on the board.
     parser.add_argument("--exchange-paper", action=argparse.BooleanOptionalAction,
-                        default=True,
+                        default=False,
                         help="price the exchange venues but never stake them "
-                             "(default on; --no-exchange-paper stakes them)")
+                             "(default off — exchange rows are staked; "
+                             "--exchange-paper returns them to stake zero)")
+    # The first live exposure on a venue class whose record is entirely paper.
+    # A share of the slate cap, so it moves with the slate rather than being a
+    # second absolute number to keep in sync: 0.25 of a 25% slate cap is 6.25%
+    # of bankroll across every exchange row on the card.
+    parser.add_argument("--exchange-slate-share", type=float, default=0.25,
+                        help="most of the slate cap every exchange row may hold "
+                             "together (0 stakes none, 1 removes the cap)")
     parser.add_argument("--ladder-tolerance", type=float, default=0.02,
                         help="max probability error the sim's distribution shape may have "
                              "at a rung's distance from the fair line before that exchange "
@@ -878,6 +893,16 @@ def live_config_rows(
                                        f"{tol:g} probability, or "
                                        f"{default_relative_tolerance(tol):.0%} of its own price, "
                                        "whichever is tighter; taker fees charged"))
+    if getattr(args, "exchanges", False):
+        share = getattr(args, "exchange_slate_share", 1.0)
+        if resolve_paper_venues(args):
+            rows.append(("Exchange stakes", "priced and graded on the board, staked at zero"))
+        elif share >= 1.0:
+            rows.append(("Exchange stakes", "live and uncapped beyond the slate's own limits"))
+        else:
+            rows.append(("Exchange stakes",
+                         f"live, capped together at {share:.0%} of the slate cap "
+                         f"({share * args.max_slate_fraction:.2%} of bankroll)"))
     return rows
 
 
@@ -1139,8 +1164,16 @@ def main() -> None:
         paper_venues = resolve_paper_venues(args)
         if paper_venues:
             print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
-                  "board, staked at zero until the ladder tolerance is fitted "
-                  "(--no-exchange-paper to stake them)")
+                  "board, staked at zero (--no-exchange-paper to stake them)")
+        elif getattr(args, "exchanges", False):
+            from velocity.store.schema import LADDER_BOOKS
+
+            share = args.exchange_slate_share
+            print(f"exchanges: {', '.join(sorted(LADDER_BOOKS))} LIVE — staked, and "
+                  f"capped together at {share:.0%} of the slate cap "
+                  f"({share * args.max_slate_fraction:.2%} of bankroll). Rungs still "
+                  "pass the E8b shape gate at their own distance and price "
+                  "(--exchange-paper returns them to zero)")
         max_edge = args.max_edge if args.max_edge > 0 else None
         max_rel = args.max_relative_edge if args.max_relative_edge > 0 else None
         if max_edge is not None or max_rel is not None:
@@ -1490,6 +1523,20 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
         if card.empty:
             print("\n=== Portfolio-sized card — nothing staked (paper posture) ===")
             return
+        from velocity.store.schema import LADDER_BOOKS
+
+        def _venue_class(row: dict) -> str | None:
+            """The exchange family, or ``None`` for a sportsbook (uncapped).
+
+            Kalshi and Polymarket share one cap rather than holding one each:
+            what is untested about them is the same sim, the same ladder and
+            the same shape gate, and that shared risk is the larger one. Two
+            separate caps would let the pair hold twice what the evidence
+            supports while each looked individually bounded.
+            """
+            book = str(row.get("book", "")).strip().lower()
+            return "exchange" if book in LADDER_BOOKS else None
+
         candidates = [
             BetCandidate(
                 key=str(i),
@@ -1499,10 +1546,17 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                 # prop market for props. Capped at half the slate.
                 market_class=(f"prop:{row['market']}" if row.get("kind") == "prop"
                               else str(row["market"])),
+                venue=_venue_class(row),
             )
             for i, row in enumerate(card.to_dict("records"))
         ]
-        config = PortfolioConfig(max_portfolio_fraction=args.max_slate_fraction)
+        # The exchanges' first live exposure, bounded as a share of the slate
+        # cap. A share of 1 removes the cap rather than setting it to the whole
+        # slate — the same arithmetic, but it says so.
+        share = float(getattr(args, "exchange_slate_share", 1.0))
+        venue_caps = {} if share >= 1.0 else {"exchange": max(0.0, share)}
+        config = PortfolioConfig(max_portfolio_fraction=args.max_slate_fraction,
+                                 venue_caps=venue_caps)
 
         # The ledger's say: the kill-switch, and the room left under the
         # slate cap once today's open bets are counted. A bet already on the
