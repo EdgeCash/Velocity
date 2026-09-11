@@ -192,6 +192,8 @@ def test_build_teams_reads_the_cache_the_slate_run_already_warmed(tmp_path) -> N
     (assets / "ncaaf_teams.json").write_text(json.dumps([
         {"id": 194, "school": "Ohio State", "abbreviation": "OSU",
          "color": "#bb0000", "altColor": "#666666"},
+        {"id": 61, "school": "Georgia", "abbreviation": "UGA", "color": "#BA0C2F"},
+        {"id": 2, "school": "Georgia Southern", "abbreviation": "GASO", "color": "#041E42"},
     ]))
     table = build_teams(
         pd.DataFrame({"league": ["ncaaf"], "home_team": ["Ohio State"],
@@ -202,6 +204,24 @@ def test_build_teams_reads_the_cache_the_slate_run_already_warmed(tmp_path) -> N
     assert row.code == "OSU"
     assert row.logo == "https://a.espncdn.com/i/teamlogos/ncaa/500/194.png"
     assert row.color_dark and contrast_ratio(row.color_dark, PANEL) >= BAR - 1e-9
+    # College names arrive as school + nickname from the odds provider, and
+    # both forms have to land on the same school — including the pair the
+    # prefix rule exists for, where the shorter school is a prefix of the
+    # longer one's provider name.
+    mixed = build_teams(
+        pd.DataFrame({
+            "league": ["ncaaf", "ncaaf"],
+            "home_team": ["Ohio State Buckeyes", "Georgia Southern Eagles"],
+            "away_team": ["Georgia Bulldogs", "Ohio State"],
+        }),
+        tmp_path,
+    ).set_index("team")
+    assert mixed.loc["Ohio State Buckeyes", "code"] == mixed.loc["Ohio State", "code"] == "OSU"
+    assert mixed.loc["Georgia Bulldogs", "code"] == "UGA"
+    assert mixed.loc["Georgia Southern Eagles", "code"] == "GASO", (
+        "the longest school name must win, or Georgia Southern becomes Georgia"
+    )
+
     # Without the cache there is no key and no fetch: codes, and nothing breaks.
     bare = build_teams(
         pd.DataFrame({"league": ["ncaaf"], "home_team": ["Ohio State"],
