@@ -311,8 +311,18 @@ Four things this had to get right:
 - **Marks are hot-linked from ESPN's public CDN, never vendored.** The repo
   is public and club marks are not ours to redistribute — the same line the
   card renderers draw. That makes "the image did not arrive" a normal state,
-  not an error, so `TeamMark.svelte` carries an `on:error` and falls back to
-  a code chip. A test refuses any club mark committed under `site/static/`.
+  not an error — and there are three ways to have no logo, only one of which
+  fires an `error`. A blocked or slow CDN just leaves the request **pending**,
+  so an `on:error` fallback alone shows an empty plate for as long as the
+  browser is willing to wait. `TeamMark.svelte` therefore paints the code chip
+  first and reveals the image over it only once it has actually decoded, which
+  covers no logo, not yet, never, and loaded with two booleans and no timers.
+  `use:settle` reads `complete` on mount, because a cached logo can decode
+  before Svelte binds its listeners and would otherwise leave the chip up over
+  a perfectly good image. It renders nothing at all when there is neither a
+  logo nor a code — an empty plate reads as a logo that failed rather than as
+  a team nothing knows about, and lands on the page as a few-pixel sliver.
+  A test refuses any club mark committed under `site/static/`.
 - **A team is spelled two ways in our own data.** `projections` names NFL
   clubs by code (`SEA`); `games` names them in full (`Seattle Seahawks`).
   Looking a display name up in `TEAM_META` directly misses all thirty-two,
