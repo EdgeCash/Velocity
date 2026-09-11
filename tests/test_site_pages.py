@@ -289,9 +289,24 @@ def test_a_team_mark_falls_back_when_the_logo_does_not_arrive() -> None:
     """
     mark = (PAGES.parent / "components" / "TeamMark.svelte").read_text()
     assert "on:error" in mark, "TeamMark must notice a logo that fails to load"
-    assert re.search(r"\{:else if code\}|\{:else\}", mark), (
-        "TeamMark must render something when there is no usable logo"
+    assert "on:load" in mark, (
+        "TeamMark must reveal the logo only once it has decoded — a blocked or "
+        "slow CDN leaves the request pending and never fires `error`, so an "
+        "on:error fallback alone shows an empty plate for as long as the "
+        "browser waits"
     )
+    assert re.search(r'class="chip"', mark), (
+        "TeamMark must carry the code chip under the logo as its fallback"
+    )
+    # And nothing at all when there is neither a logo nor a code: an empty
+    # plate reads as a logo that failed, not as a team nothing knows about.
+    assert re.search(r"\{#if logo \|\| code\}", mark), (
+        "TeamMark must render nothing when it has neither a logo nor a code"
+    )
+    # `mark` is EmptyNote's class as well. Svelte scopes the styles so nothing
+    # leaks, but two components answering the same selector sent one debugging
+    # session down the wrong path.
+    assert 'class="mark"' not in mark, "use a component-specific class, not `mark`"
     assert "a.espncdn.com" not in mark, (
         "the CDN belongs in the data (build_teams), not hardcoded in the component"
     )
