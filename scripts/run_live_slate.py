@@ -1484,6 +1484,37 @@ def _record_card(
         print(f"ledger append skipped ({exc})")
 
 
+def _drawdown_halt(ledger: Any) -> str | None:
+    """The kill-switch reason from the ledger alone, or ``None``.
+
+    Split out so it can be read *outside* the sizing guard. Everything in
+    :func:`_portfolio_card` runs under a broad ``except`` so that a sizing
+    failure never breaks the slates — a good trade for sizing, and a bad one
+    for the halt, which the same guard used to swallow along with it. A
+    bankroll past the drawdown threshold could then go unannounced because
+    something unrelated raised a few lines earlier, and the only signal was a
+    one-line notice that read like housekeeping.
+
+    The drawdown threshold is a :class:`PortfolioConfig` default and does not
+    move with the slate cap or the venue caps, so reading it here gives the
+    same answer the sized path would.
+    """
+    if ledger is None:
+        return None
+    try:
+        from velocity.wagering.portfolio import PortfolioConfig, should_halt
+
+        threshold = PortfolioConfig().max_drawdown_fraction
+        state = ledger.state()
+        if not should_halt(state.current, state.peak, threshold):
+            return None
+        return (f"drawdown {state.drawdown:.0%} ≥ {threshold:.0%} "
+                f"(bankroll {state.current:.2f} from a peak of {state.peak:.2f})")
+    except Exception as exc:  # noqa: BLE001 - an unreadable ledger is reported, not raised
+        print(f"\n=== KILL-SWITCH UNREADABLE — could not evaluate the halt: {exc} ===")
+        return None
+
+
 def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card's parts
     args: argparse.Namespace,
     frame: pd.DataFrame,
@@ -1502,6 +1533,9 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
     exposure summary and persists the sized combined card; the per-slate
     parquets keep their solo-Kelly stakes.
     """
+    # Read before the guard, so no failure below can hide a halt.
+    standing_halt = _drawdown_halt(ledger)
+    announced = False
     try:
         from velocity.wagering.portfolio import (
             BetCandidate,
@@ -1561,7 +1595,9 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
         # The ledger's say: the kill-switch, and the room left under the
         # slate cap once today's open bets are counted. A bet already on the
         # books (placed off an earlier card this week) is held, not doubled.
-        halted: str | None = None
+        # Seeded from the halt read before the guard, so the drawdown case is
+        # already decided here even if something below would have raised.
+        halted: str | None = standing_halt
         current = peak = None
         card["held"] = False
         if ledger is not None:
@@ -1585,12 +1621,18 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                     halted = (f"open exposure {elsewhere:.2f} on other games already "
                               f"fills the {args.max_slate_fraction:.0%} slate cap")
                 else:
-                    config = PortfolioConfig(max_portfolio_fraction=room)
+                    # Rebuilt for the smaller slate cap — and it has to carry
+                    # the venue caps with it. Constructing a bare config here
+                    # silently dropped the exchange cap on exactly the days
+                    # money was already on the table, which is when it matters.
+                    config = PortfolioConfig(max_portfolio_fraction=room,
+                                             venue_caps=config.venue_caps)
                     print(f"open exposure {elsewhere:.2f} on games off today's card "
                           f"leaves {room:.1%} of bankroll under the slate cap")
         if halted is not None:
             sized = {c.key: 0.0 for c in candidates}
             print(f"\n=== KILL-SWITCH — halted: {halted}; every stake zeroed ===")
+            announced = True
         else:
             sized = size_portfolio(candidates, args.bankroll, config,
                                    current_bankroll=current, peak_bankroll=peak)
@@ -1628,7 +1670,18 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
         if ledger is not None:
             _record_card(ledger, card, args, stamp, generated_at, halted)
     except Exception as exc:  # noqa: BLE001 - sizing never breaks the slates
-        print(f"portfolio sizing skipped: {exc}")
+        # Loud, and specific about what did not happen. This used to read
+        # "portfolio sizing skipped: ..." — a line that looks like housekeeping
+        # for an outcome that means no sized card, no ledger record and, before
+        # the halt was hoisted above, no kill-switch either.
+        print(f"\n=== PORTFOLIO SIZING FAILED ({type(exc).__name__}: {exc}) ===\n"
+              "    No sized card was written and nothing was recorded to the "
+              "ledger. The per-slate parquets keep their solo-Kelly stakes, "
+              "which are NOT portfolio-capped — do not stake from them unsized.")
+        if standing_halt is not None and not announced:
+            print(f"=== KILL-SWITCH — halted: {standing_halt} ===\n"
+                  "    Read from the ledger before sizing, so it stands "
+                  "regardless of the failure above: stake nothing today.")
 
 
 def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's parts
