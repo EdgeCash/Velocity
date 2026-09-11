@@ -245,3 +245,68 @@ def test_an_input_is_never_hidden_behind_a_conditional(page: Path) -> None:
                 "The component is what declares its input, so a false branch "
                 "hangs every query using it. Hide it with CSS instead."
             )
+
+
+def test_every_table_a_page_queries_has_a_source_and_a_schema() -> None:
+    """Two halves of the same failure: a table the site cannot produce.
+
+    Missing the `.sql` is the loud half — `evidence sources` never materializes
+    the table and every page that reads it dies with *Table with name teams does
+    not exist*. Missing the schema entry in `build_site_data.py` is the quiet
+    half: on a slate where the family happens to be empty there is no typed
+    sentinel row, the source query returns nothing, and the page that templates
+    a query on it simply never resolves — the empty-state hang this suite
+    already guards from the input side.
+    """
+    site = PAGES.parent
+    sources = {path.stem for path in (site / "sources" / "velocity").glob("*.sql")}
+    build = (site.parent / "scripts" / "build_site_data.py").read_text()
+    schemas = set(re.findall(r'^\s{8}"(\w+)": \{', build, re.M))
+
+    queried: dict[str, set[str]] = {}
+    for page in MD_PAGES:
+        for table in re.findall(r"\bvelocity\.(\w+)", page.read_text()):
+            queried.setdefault(table, set()).add(page.name)
+    for table, pages in sorted(queried.items()):
+        assert table in sources, (
+            f"{sorted(pages)} query velocity.{table}, but "
+            f"site/sources/velocity/{table}.sql does not exist"
+        )
+        assert table in schemas, (
+            f"velocity.{table} has a source but no schema in build_site_data.py, "
+            "so an empty slate writes no sentinel row and "
+            f"{sorted(pages)} hang instead of rendering an empty state"
+        )
+
+
+def test_a_team_mark_falls_back_when_the_logo_does_not_arrive() -> None:
+    """Marks are hot-linked, so "the image did not load" is a normal state.
+
+    ESPN's CDN is a third party the board does not control, and the repo is
+    public so the marks cannot be vendored instead. The component therefore has
+    to have both branches — an error handler that gives up on the image, and a
+    code chip to fall back to — or a bad CDN day is a page of empty squares.
+    """
+    mark = (PAGES.parent / "components" / "TeamMark.svelte").read_text()
+    assert "on:error" in mark, "TeamMark must notice a logo that fails to load"
+    assert "on:load" in mark, (
+        "TeamMark must reveal the logo only once it has decoded — a blocked or "
+        "slow CDN leaves the request pending and never fires `error`, so an "
+        "on:error fallback alone shows an empty plate for as long as the "
+        "browser waits"
+    )
+    assert re.search(r'class="chip"', mark), (
+        "TeamMark must carry the code chip under the logo as its fallback"
+    )
+    # And nothing at all when there is neither a logo nor a code: an empty
+    # plate reads as a logo that failed, not as a team nothing knows about.
+    assert re.search(r"\{#if logo \|\| code\}", mark), (
+        "TeamMark must render nothing when it has neither a logo nor a code"
+    )
+    # `mark` is EmptyNote's class as well. Svelte scopes the styles so nothing
+    # leaks, but two components answering the same selector sent one debugging
+    # session down the wrong path.
+    assert 'class="mark"' not in mark, "use a component-specific class, not `mark`"
+    assert "a.espncdn.com" not in mark, (
+        "the CDN belongs in the data (build_teams), not hardcoded in the component"
+    )

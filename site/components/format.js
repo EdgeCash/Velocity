@@ -205,3 +205,91 @@ export function distThreshold(market, side, point) {
   }
   return null;
 }
+
+/** `team → {code, color, logo}` from the `velocity.teams` rows.
+ *
+ * Identity is a join away from every surface that shows a team, and the join
+ * key is the team string the data already carries — nflverse codes for the
+ * NFL, school names for college. Colours arrive pre-lifted for the dark
+ * surface (`color_dark`), because the lightness maths lives in Python where it
+ * is tested; `color` is the unadjusted brand primary and only stands in when
+ * the lift produced nothing.
+ */
+export function teamIndex(rows) {
+  const out = {};
+  for (const row of rows ?? []) {
+    const team = row?.team === undefined || row?.team === null ? '' : String(row.team);
+    if (!team) continue;
+    const identity = {
+      code: String(row.code ?? '') || team.slice(0, 3).toUpperCase(),
+      color: String(row.color_dark ?? '') || String(row.color ?? ''),
+      logo: String(row.logo ?? ''),
+    };
+    // Keyed both ways. A surface that spans leagues — the card does — must not
+    // let one league's "Miami" answer for the other's, and one that has only
+    // the team string still resolves.
+    out[team] = identity;
+    if (row.league) out[`${String(row.league)}|${team}`] = identity;
+  }
+  return out;
+}
+
+/** Identity for one team — never undefined, so a page renders either way.
+ *
+ * A team the table has never seen still gets a code, because the alternative
+ * is a blank where a team name belongs. The logo and colour are simply absent,
+ * which is exactly what `TeamMark` is built to handle.
+ */
+export function teamMark(index, team, league = '') {
+  const key = team === undefined || team === null ? '' : String(team);
+  const scoped = league ? `${String(league)}|${key}` : '';
+  return (index && (index[scoped] || index[key]))
+    || { code: key.slice(0, 3).toUpperCase(), color: '', logo: '' };
+}
+
+/** Two club colours that will not be mistaken for one another.
+ *
+ * Clubs share colours: the Patriots and the Seahawks wear the same navy
+ * (#002244) and the Bengals and Broncos the same orange, so a sheet can put
+ * two identical rules on the page and look broken. This is the card
+ * renderer's rule (`velocity.report.assets.bar_colors`) applied to the web
+ * surface: when the pair is too close, the **away** side steps lighter and a
+ * little less saturated. Lighter is the safe direction on a dark panel — it
+ * only adds contrast — and identity never rests on colour anyway, since the
+ * mark and the name sit right beside it.
+ */
+export function distinctPair(awayHex, homeHex) {
+  const rgb = (hex) => {
+    const h = String(hex ?? '').replace('#', '');
+    if (h.length !== 6) return null;
+    return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  };
+  const a = rgb(awayHex), h = rgb(homeHex);
+  if (!a || !h) return [awayHex, homeHex];
+  const distance = a.reduce((sum, v, i) => sum + Math.abs(v - h[i]), 0);
+  if (distance >= 0.55) return [awayHex, homeHex];
+  // RGB → HLS, lift and desaturate, back again — the same three steps the
+  // Python does, with the same constants.
+  const max = Math.max(...a), min = Math.min(...a), l = (max + min) / 2;
+  let hue = 0, sat = 0;
+  if (max !== min) {
+    const d = max - min;
+    sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === a[0]) hue = ((a[1] - a[2]) / d + (a[1] < a[2] ? 6 : 0)) / 6;
+    else if (max === a[1]) hue = ((a[2] - a[0]) / d + 2) / 6;
+    else hue = ((a[0] - a[1]) / d + 4) / 6;
+  }
+  const lifted = Math.min(l + 0.28, 0.85), muted = Math.max(sat * 0.7, 0.1);
+  const chan = (t) => {
+    t = (t + 1) % 1;
+    const q = lifted < 0.5 ? lifted * (1 + muted) : lifted + muted - lifted * muted;
+    const p = 2 * lifted - q;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const hex = [chan(hue + 1 / 3), chan(hue), chan(hue - 1 / 3)]
+    .map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+  return [`#${hex}`, homeHex];
+}

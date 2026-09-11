@@ -6,7 +6,8 @@
   // numbers reading leftward, the home team's rightward, and a column down
   // the centre saying who wins each row. A list of markets tells you what
   // to bet; this tells you why, which is what the matchup page was missing.
-  import { num, signed } from './format.js';
+  import { distinctPair, num, signed, teamIndex, teamMark } from './format.js';
+  import TeamMark from './TeamMark.svelte';
 
   export let away = '';
   export let home = '';
@@ -25,6 +26,20 @@
   /** Counts of players ruled out, per side. */
   export let awayOut = 0;
   export let homeOut = 0;
+  /* Rows from `velocity.teams` for this game's two sides. The sheet resolves
+     them itself because an Evidence markdown page cannot import a plain JS
+     helper — the lookup has to live in a component, so it lives here.
+     Identity is optional throughout: with no rows the mark degrades to the
+     code chip and the rule under each name falls back to the hairline. */
+  export let marks = [];
+
+  $: index = teamIndex(marks);
+  $: awaySeal = teamMark(index, away);
+  $: homeSeal = teamMark(index, home);
+  // Clubs share colours — NE and SEA wear the same navy — so the pair is
+  // separated before either is drawn, or the sheet shows two identical rules
+  // and reads as a bug.
+  $: [awayClub, homeClub] = distinctPair(awaySeal.color, homeSeal.color);
 
   const n = (v) => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -70,23 +85,35 @@
 </script>
 
 <section class="sheet">
+  <!-- The club's own colour rules the line under its name. It is deliberately
+       not the name's colour: a brand primary lifted just far enough to be
+       visible is still too dark for 1.1rem of text, and two clubs' colours
+       competing as body type is what made the first attempt unreadable. -->
   <header class="teams">
     <div class="side away">
-      <span class="name">{away}</span>
-      {#if homeRating || awayRating}
-        <span class="sub">{awayRating?.rank ? `#${num(awayRating.rank, 0)}` : ''}
-          {awayRating?.net !== undefined && awayRating?.net !== null
-            ? `· net ${signed(awayRating.net, 2)}` : ''}</span>
-      {/if}
+      <TeamMark code={awaySeal.code || awayCode} logo={awaySeal.logo}
+                color={awayClub} label={away} size={40} />
+      <div class="ident">
+        <span class="name" style="--club: {awayClub || 'var(--v-line-2, rgba(255,255,255,0.13))'}">{away}</span>
+        {#if homeRating || awayRating}
+          <span class="sub">{awayRating?.rank ? `#${num(awayRating.rank, 0)}` : ''}
+            {awayRating?.net !== undefined && awayRating?.net !== null
+              ? `· net ${signed(awayRating.net, 2)}` : ''}</span>
+        {/if}
+      </div>
     </div>
     <span class="at">at</span>
     <div class="side home">
-      <span class="name">{home}</span>
-      {#if homeRating}
-        <span class="sub">{homeRating?.rank ? `#${num(homeRating.rank, 0)}` : ''}
-          {homeRating?.net !== undefined && homeRating?.net !== null
-            ? `· net ${signed(homeRating.net, 2)}` : ''}</span>
-      {/if}
+      <div class="ident">
+        <span class="name" style="--club: {homeClub || 'var(--v-line-2, rgba(255,255,255,0.13))'}">{home}</span>
+        {#if homeRating}
+          <span class="sub">{homeRating?.rank ? `#${num(homeRating.rank, 0)}` : ''}
+            {homeRating?.net !== undefined && homeRating?.net !== null
+              ? `· net ${signed(homeRating.net, 2)}` : ''}</span>
+        {/if}
+      </div>
+      <TeamMark code={homeSeal.code || homeCode} logo={homeSeal.logo}
+                color={homeClub} label={home} size={40} />
     </div>
   </header>
 
@@ -135,14 +162,18 @@
     gap: 0.8rem;
     padding: 0.95rem 1.1rem;
   }
-  .side { display: flex; flex-direction: column; gap: 0.16rem; min-width: 0; }
-  .side.home { text-align: right; align-items: flex-end; }
+  .side { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+  .side.home { justify-content: flex-end; }
+  .ident { display: flex; flex-direction: column; gap: 0.16rem; min-width: 0; }
+  .side.home .ident { text-align: right; align-items: flex-end; }
   .name {
     font-size: 1.12rem;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: #f2f7fb;
     line-height: 1.15;
+    border-bottom: 2px solid var(--club, rgba(255, 255, 255, 0.13));
+    padding-bottom: 0.14rem;
   }
   .sub {
     font-family: var(--v-board, sans-serif);
@@ -237,6 +268,7 @@
 
   @media (max-width: 640px) {
     .name { font-size: 0.95rem; }
+    .side { gap: 0.42rem; }
     .h2h td, .h2h th { padding-left: 0.6rem; padding-right: 0.6rem; }
     .band { padding-left: 0.6rem; padding-right: 0.6rem; }
     .stat { font-size: 0.74rem; }

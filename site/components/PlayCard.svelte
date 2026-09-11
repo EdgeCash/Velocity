@@ -16,9 +16,10 @@
   // bright object on it.
   import {
     american, distThreshold, isExchange, kickoffLabel, line, marketLabel,
-    num, pct, sideLabel, venueColor, venueLabel, venueMark,
+    num, pct, sideLabel, teamIndex, teamMark, venueColor, venueLabel, venueMark,
   } from './format.js';
   import DistStrip from './DistStrip.svelte';
+  import TeamMark from './TeamMark.svelte';
 
   export let league = '';
   export let home_team = '';
@@ -53,6 +54,13 @@
   export let dist = [];
   /** Drop the matchup line — the page above already names the game. */
   export let compact = false;
+  /* Rows from `velocity.teams`. Optional: with none, the matchup line is the
+     text it has always been, which is why every page need not pass them. */
+  export let marks = [];
+
+  $: marked = teamIndex(marks);
+  $: awaySeal = teamMark(marked, away_team, league);
+  $: homeSeal = teamMark(marked, home_team, league);
 
   $: paper = !(Number(stake) > 0);
   $: href = game_id ? `/matchup/${game_id}` : null;
@@ -94,9 +102,19 @@
   {#if !compact}
   <div class="who">
     {#if href}
-      <a {href}>{matchup}</a>
+      <a {href}>
+        <TeamMark code={awaySeal.code} logo={awaySeal.logo} color={awaySeal.color}
+                  label={away_team} size={20} />
+        <span>{matchup}</span>
+        <TeamMark code={homeSeal.code} logo={homeSeal.logo} color={homeSeal.color}
+                  label={home_team} size={20} />
+      </a>
     {:else}
-      {matchup}
+      <TeamMark code={awaySeal.code} logo={awaySeal.logo} color={awaySeal.color}
+                label={away_team} size={20} />
+      <span>{matchup}</span>
+      <TeamMark code={homeSeal.code} logo={homeSeal.logo} color={homeSeal.color}
+                label={home_team} size={20} />
     {/if}
     {#if player}<span class="player">{player}</span>{/if}
   </div>
@@ -260,6 +278,10 @@
     color: var(--v-ink, rgba(233, 241, 249, 0.92));
     line-height: 1.25;
   }
+  /* The marks bracket the matchup rather than sitting in front of it: away
+     mark, "A @ B", home mark, so the two logos land on the sides they play
+     on and the text between them still reads as one line. */
+  .who a, .who { display: flex; align-items: center; gap: 0.42rem; flex-wrap: wrap; }
   .who a { color: inherit; text-decoration: none; border: 0; }
   .who a:hover { color: var(--v-brand, #3ddad0); }
   .player {
