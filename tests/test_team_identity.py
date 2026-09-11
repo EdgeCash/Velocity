@@ -173,6 +173,44 @@ def test_an_uncovered_league_resolves_without_touching_the_network(monkeypatch) 
     assert assets.team_identity("nfl", ["SEA"])["SEA"].logo is not None
 
 
+def test_build_teams_reads_the_cache_the_slate_run_already_warmed(tmp_path) -> None:
+    """College identity has to survive a site build that holds no CFBD key.
+
+    `run_live_slate` fetches the CFBD teams table and caches it under
+    `<slate-dir>/.assets` — hidden, deliberately outside the artifact upload
+    globs. The site step in the deploy workflow carries no key of its own, so
+    if `build_teams` looked anywhere else, every college team on the board
+    would come out a bare trigram with no mark and no colour: half the slate,
+    silently, with nothing failing.
+    """
+    import json
+
+    from scripts.build_site_data import build_teams
+
+    assets = tmp_path / ".assets"
+    assets.mkdir()
+    (assets / "ncaaf_teams.json").write_text(json.dumps([
+        {"id": 194, "school": "Ohio State", "abbreviation": "OSU",
+         "color": "#bb0000", "altColor": "#666666"},
+    ]))
+    table = build_teams(
+        pd.DataFrame({"league": ["ncaaf"], "home_team": ["Ohio State"],
+                      "away_team": ["Ohio State"]}),
+        tmp_path,
+    )
+    row = table.iloc[0]
+    assert row.code == "OSU"
+    assert row.logo == "https://a.espncdn.com/i/teamlogos/ncaa/500/194.png"
+    assert row.color_dark and contrast_ratio(row.color_dark, PANEL) >= BAR - 1e-9
+    # Without the cache there is no key and no fetch: codes, and nothing breaks.
+    bare = build_teams(
+        pd.DataFrame({"league": ["ncaaf"], "home_team": ["Ohio State"],
+                      "away_team": ["Ohio State"]}),
+        tmp_path / "nowhere",
+    )
+    assert bare.iloc[0].code == "OHI" and bare.iloc[0].logo == ""
+
+
 def test_build_teams_is_offline_for_an_uncovered_league(monkeypatch) -> None:
     import velocity.report.assets as assets
     from scripts.build_site_data import build_teams

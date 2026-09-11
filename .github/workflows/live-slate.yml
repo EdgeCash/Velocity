@@ -502,6 +502,14 @@ jobs:
       # that the site didn't publish.
       - name: Build the site
         if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          # College identity (school codes + colours + the ESPN mark id) comes
+          # from the CFBD teams table. The slate step above already cached it
+          # under artifacts/slate/.assets, so this is normally a cache read —
+          # the key is here so a site build without a preceding slate run, or
+          # one whose cache is cold, still gets college colours rather than
+          # bare trigrams for half the board.
+          CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
           python scripts/build_site_data.py --slate-dir artifacts/slate \
             --prev-dir artifacts/previous --odds-dir artifacts/odds \

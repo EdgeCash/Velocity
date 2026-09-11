@@ -349,8 +349,14 @@ The colour is a rule under each team's name rather than the name's own
 colour: a brand primary lifted just far enough to be visible is still too
 dark for 1.1rem of text.
 
-College identity rides `CFBD_API_KEY` (or its cached payload) and degrades to
-bare codes without it, so a missing key costs colour, never a build.
+College identity rides `CFBD_API_KEY` **or** its cached payload, and degrades
+to bare codes without either — a missing key costs colour, never a build. Two
+things make it actually resolve on a deploy, and both were wrong first:
+`build_teams` reads the cache the slate run already warmed under
+`<slate-dir>/.assets` (hidden, outside the artifact upload globs), and the
+workflow's *Build the site* step carries the key for a build whose cache is
+cold. Without either, every college team on the board is a bare trigram with
+no mark and no colour — half the slate, silently, with nothing failing.
 
 ## Why a bet is smaller than its own Kelly
 

@@ -345,7 +345,7 @@ def game_directory(*folders: Path | None) -> pd.DataFrame:
 PANEL = "#0b1017"
 
 
-def build_teams(games: pd.DataFrame) -> pd.DataFrame:
+def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFrame:
     """Mark, code and brand colour for every team on the slate.
 
     The site knew teams only as strings, so a matchup sheet led with
@@ -370,8 +370,12 @@ def build_teams(games: pd.DataFrame) -> pd.DataFrame:
     same line the card renderers draw. A page therefore has to survive the
     image not loading, and ``TeamMark`` falls back to the code chip.
 
-    NCAAF identity needs ``CFBD_API_KEY`` (or its cached payload) and degrades
-    to bare codes without it, so a missing key costs colour, never a build.
+    NCAAF identity needs ``CFBD_API_KEY`` or its cached payload, and degrades to
+    bare codes without either — a missing key costs colour, never a build. The
+    cache is the one the slate run already warmed, under ``<slate-dir>/.assets``
+    (:mod:`scripts.run_live_slate` puts it there, hidden from the upload globs).
+    Reading it back is what makes college identity work on a deploy whose site
+    step holds no key, and it costs no second request when the step does.
     """
     from velocity.report.assets import readable_on, team_identity
 
@@ -385,7 +389,7 @@ def build_teams(games: pd.DataFrame) -> pd.DataFrame:
         identities = team_identity(
             str(league), names,
             api_key=os.environ.get("CFBD_API_KEY"),
-            cache_dir=Path(os.environ.get("VELOCITY_ASSET_DIR", "artifacts/assets")),
+            cache_dir=None if slate_dir is None else Path(slate_dir) / ".assets",
         )
         for name in names:
             ident = identities.get(name)
@@ -717,7 +721,7 @@ def main() -> None:
         "market_health": collect(slate_dir, "monitor"),
         "cards": collect_cards(slate_dir, Path(args.cards_out)),
         "ratings": build_ratings(slate_dir, Path(args.prev_dir)),
-        "teams": build_teams(collect(slate_dir, "games")),
+        "teams": build_teams(collect(slate_dir, "games"), slate_dir),
         "line_moves": build_line_moves(slate_dir, Path(args.odds_dir)),
         "injuries": build_injuries(Path(args.fp_dir)),
         "weather": (pd.DataFrame() if args.no_weather
