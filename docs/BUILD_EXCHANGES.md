@@ -754,9 +754,15 @@ gate's own table is conservative rather than permissive.
   formula is corroborated by three secondary sources and the per-series
   override endpoint is authoritative programmatically — E5 reads
   overrides at collect time rather than trusting the base formula.
-- **Sim shape at key numbers** — the E8 gate. Until it lands, no spread
-  ladders qualify, however fat the apparent edge (an apparent 4% edge at
-  a 3.5 strike is more likely sim mass misplacement than market error).
+- **Sim shape at key numbers** — the E8 gate, landed, then refitted by E8b
+  to read the sim's error per tail and charge it against the rung's own
+  price. That was the condition the venues were papered on, so as of E8c
+  they are **staked**: `--exchanges` now prices *and* sizes them, and
+  `--exchange-paper` is the way back without a code change. The first live
+  exposure is bounded — every exchange row shares one cap at 25% of the
+  slate cap, 6.25% of bankroll, set by `--exchange-slate-share`. What is
+  untested about Kalshi and Polymarket is the same sim, ladder and gate, so
+  they share the cap rather than holding one each.
 - **Legal flux affects trading, not data.** Circuit split live, SCOTUS
   cert pending; nothing here places orders, so the build is unaffected,
   but the venue-strategy payoff (E7's question) could be repriced by a

@@ -118,3 +118,63 @@ def test_model_weight_anchors_belief_to_the_market() -> None:
     assert len(anchored) == 0  # full anchoring = the market is the belief: no bets
     same = build_slate(proj, lines, games, replace(cfg, model_weight=1.0))
     assert len(same) == len(raw)  # 1.0 is bit-identical to the default
+
+
+def test_a_venue_cap_bounds_where_the_bets_live_not_just_what_they_are() -> None:
+    """Model risk and venue risk are different risks, so they are different caps.
+
+    A market class answers for the model: sixty-six moneyline dogs out of one
+    sim's tail are one assumption, however many games they span. A venue
+    answers for where the bet lives — an exchange's liquidity and fills, its
+    settlement, and a ladder priced by a shape gate with no live record behind
+    it yet. A bet carries both at once, so the venue cap is its own dimension
+    rather than a relabelling of the class: these twenty bets are on twenty
+    separate games and ten different markets, so neither the group cap nor the
+    class cap touches the exchange half.
+    """
+    book = [BetCandidate(f"b{i}", 0.03, f"g{i}", market_class=f"m{i}") for i in range(10)]
+    exchange = [BetCandidate(f"x{i}", 0.03, f"h{i}", market_class=f"m{i}", venue="exchange")
+                for i in range(10)]
+    bankroll, slate = 100.0, 0.25
+
+    uncapped = size_portfolio(book + exchange, bankroll,
+                              PortfolioConfig(max_portfolio_fraction=slate))
+    held = sum(v for k, v in uncapped.items() if k.startswith("x"))
+    assert held / (slate * bankroll) > 0.45, (
+        "without a venue cap the exchange takes about half the card — which is "
+        "the exposure this cap exists to bound on a first live run"
+    )
+
+    capped = size_portfolio(
+        book + exchange, bankroll,
+        PortfolioConfig(max_portfolio_fraction=slate, venue_caps={"exchange": 0.25}),
+    )
+    held = sum(v for k, v in capped.items() if k.startswith("x"))
+    assert held <= 0.25 * slate * bankroll + 1e-9
+    # Every exchange bet is smaller than it was, and the slate cap still binds.
+    for key in (k for k in capped if k.startswith("x")):
+        assert capped[key] <= uncapped[key] + 1e-9
+    assert sum(capped.values()) <= slate * bankroll + 1e-9
+
+    # The sportsbook side goes *up*, which is the cap working rather than a
+    # leak: the slate cap is a budget, so without the venue cap the exchange's
+    # half was being paid for by scaling everything down proportionally. Freeing
+    # that share hands it back to bets that were already under their own Kelly
+    # and their own group and class caps — it never lifts a bet past those.
+    assert sum(v for k, v in capped.items() if k.startswith("b")) > sum(
+        v for k, v in uncapped.items() if k.startswith("b")
+    )
+    standalone = size_portfolio(book, bankroll, PortfolioConfig(max_portfolio_fraction=slate))
+    for key in (k for k in capped if k.startswith("b")):
+        assert capped[key] <= standalone[key] + 1e-9
+
+
+def test_venue_caps_are_off_unless_named() -> None:
+    # Absent config changes nothing, and an unlisted venue is uncapped — so
+    # this is invisible to every caller that does not ask for it.
+    cands = [BetCandidate(f"x{i}", 0.05, f"g{i}", venue="exchange") for i in range(8)]
+    plain = size_portfolio(cands, 100.0, PortfolioConfig())
+    other = size_portfolio(cands, 100.0, PortfolioConfig(venue_caps={"somewhere-else": 0.1}))
+    assert plain == other
+    with pytest.raises(ValueError, match="venue_caps"):
+        PortfolioConfig(venue_caps={"exchange": 1.5})
