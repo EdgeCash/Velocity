@@ -204,8 +204,10 @@ def test_settle_ledger_settles_open_bets_once(tmp_path: Path) -> None:
          "book": "dk", "price": -115.0, "stake": 0.5, "p_model": 0.58, "kind": "prop",
          "player": "A. Brown"},
     ]), league="nfl", stamp="20260913T140000Z", at=at)
+    # The first two use the short, view-only form an operator might still
+    # type off an older to-do; each resolves to the one bet on its view.
     for bid, stake in (("nfl|g1|total|under|", 2.0), ("nfl|g2|spread|home|", 1.0),
-                       ("nfl|g1|receptions|over|A. Brown", 0.5)):
+                       ("nfl|g1|receptions|over|A. Brown|5.5", 0.5)):
         ledger.place(bid, stake, at=at)
     ledger.save()
 
@@ -221,10 +223,10 @@ def test_settle_ledger_settles_open_bets_once(tmp_path: Path) -> None:
     _MOD.settle_ledger(path, "nfl", games, props, finals, now, stamp="20260913T140000Z")
     after = Ledger.load(path)
     assert after.current_bankroll() == pytest.approx(100.0 + 2.0 * 100 / 110 - 1.0)
-    assert after.open_bets()["bet_id"].tolist() == ["nfl|g1|receptions|over|A. Brown"]
+    assert after.open_bets()["bet_id"].tolist() == ["nfl|g1|receptions|over|A. Brown|5.5"]
     settled = after.frame[after.frame["record_type"] == "settled"].set_index("bet_id")
-    assert settled.loc["nfl|g1|total|under|", "line_clv"] == 0.5
-    assert settled.loc["nfl|g2|spread|home|", "result"] == "loss"
+    assert settled.loc["nfl|g1|total|under||44.5", "line_clv"] == 0.5
+    assert settled.loc["nfl|g2|spread|home||-3", "result"] == "loss"
 
     # The morning re-run: nothing settles twice, the bankroll holds.
     _MOD.settle_ledger(path, "nfl", games, props, finals, now, stamp="20260913T140000Z")

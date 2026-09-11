@@ -66,9 +66,9 @@ def test_empty_ledger_seeds_cleanly_and_seeds_only_once(tmp_path: Path) -> None:
 
 def test_recommend_place_settle_round_trip_moves_bankroll_exactly(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
-    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
+    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)
 
     # Placed at the recommended terms unless told otherwise; the prop is
     # taken at a better price and a bigger stake than the card said.
@@ -104,8 +104,8 @@ def test_recommend_place_settle_round_trip_moves_bankroll_exactly(tmp_path: Path
 
 def test_resettlement_is_idempotent_and_pending_leaves_bankroll_alone(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
 
@@ -152,16 +152,16 @@ def test_peak_tracks_through_a_win_loss_win(tmp_path: Path) -> None:
 
 def test_skip_closes_without_exposure_and_status_reads_right(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.skip(fav, at=T0)
     assert ledger.open_exposure() == 2.0
     todo = ledger.latest_recommendations("nfl").set_index("bet_id")["status"]
     assert todo[under] == "placed"
     assert todo[fav] == "skipped"
-    assert todo[bet_id("nfl", "g1", "receptions", "over", "A. Brown")] == "open"
-    assert todo[bet_id("nfl", "g3", "team_total_home", "over")] == "paper"
+    assert todo[bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)] == "open"
+    assert todo[bet_id("nfl", "g3", "team_total_home", "over", None, 24.5)] == "paper"
     # A skipped bet never settles: its result row is ignored.
     assert ledger.settle(pd.DataFrame([{"bet_id": fav, "result": "win"}]), at=T0).empty
 
@@ -194,9 +194,9 @@ def test_adjustments_are_new_records_that_move_the_curve(tmp_path: Path) -> None
 
 def test_settle_from_finals_grades_open_game_bets_and_leaves_props(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
-    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
+    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
     ledger.place(prop, 0.5, at=T0)
@@ -217,7 +217,7 @@ def test_settle_from_finals_grades_open_game_bets_and_leaves_props(tmp_path: Pat
 
 def test_two_placements_of_one_bet_settle_together(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
     ledger.place(under, 1.0, price=-110.0, at=T0)
     ledger.place(under, 1.0, price=-100.0, book="fanduel", at=T0 + pd.Timedelta(minutes=5))
     assert len(ledger.open_bets()) == 1
@@ -242,22 +242,28 @@ def test_exchange_tie_settles_at_fifty_cents() -> None:
 
 def test_pnl_views_and_results_from_graded(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
     games = pd.DataFrame([
-        {"game_id": "g1", "market": "total", "side": "under", "result": "win",
-         "closing_point": 45.0, "line_clv": 0.5},
-        {"game_id": "g2", "market": "spread", "side": "home", "result": "loss"},
+        {"game_id": "g1", "market": "total", "side": "under", "point": 44.5,
+         "result": "win", "closing_point": 45.0, "line_clv": 0.5},
+        {"game_id": "g2", "market": "spread", "side": "home", "point": -3.0,
+         "result": "loss"},
     ])
     props = pd.DataFrame([
         {"game_id": "g1", "player": "A. Brown", "market": "receptions", "side": "over",
-         "result": "pending"},
+         "point": 5.5, "result": "pending"},
     ])
     results = results_from_graded("nfl", games, props)
     assert results["bet_id"].tolist() == [
-        under, fav, bet_id("nfl", "g1", "receptions", "over", "A. Brown")]
+        under, fav, bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)]
+    # A graded row with no number still settles: the id comes back as a bare
+    # view and `settle` resolves it, so a position opened before the number
+    # joined the id is not left open and stripped of its CLV.
+    bare = results_from_graded("nfl", games.drop(columns=["point"]), None)
+    assert bare["bet_id"].tolist() == ["nfl|g1|total|under||", "nfl|g2|spread|home||"]
     ledger.settle(results, at=T0)
     by_league = ledger.pnl(("league",)).set_index("league")
     assert by_league.loc["nfl", "bets"] == 2
@@ -276,7 +282,7 @@ def test_merge_is_a_union_by_record_identity(tmp_path: Path) -> None:
     # The operator's local copy gains a placement; the workflow's copy gains
     # a settlement of something else. Pushing merges both, once each.
     local = Ledger.load(ledger.path)
-    local.place(bet_id("nfl", "g1", "total", "under"), 2.0, at=T0)
+    local.place(bet_id("nfl", "g1", "total", "under", None, 44.5), 2.0, at=T0)
     remote = Ledger.load(ledger.path)
     remote.recommend(_card().head(1), league="nfl", stamp="20260911T140000Z", at=T0)
     merged = merge_ledgers(local.frame, remote.frame, local.frame)

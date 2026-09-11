@@ -287,7 +287,7 @@ def test_ledger_tables_ride_into_the_site(tmp_path: Path) -> None:
     assert curve["record_type"].tolist() == ["seed", "settled"]
     assert curve["league"].tolist() == ["all", "mlb"]  # the seed rides through the filter
     open_ = pd.read_parquet(out / "ledger_open.parquet")
-    assert open_["bet_id"].tolist() == ["mlb|g2|spread|home|"]
+    assert open_["bet_id"].tolist() == ["mlb|g2|spread|home||-1.5"]
 
     # Without a ledger the tables are typed sentinels, so the pages parse.
     result = subprocess.run(

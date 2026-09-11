@@ -128,8 +128,11 @@ def test_portfolio_card_holds_open_bets_and_counts_exposure_elsewhere(tmp_path: 
     assert not card["halted"].any()
     # Auto mode placed only the bet that was not already open.
     placed = book.frame[book.frame["record_type"] == "placed"]
-    assert placed["bet_id"].tolist() == ["nfl|g1|total|under|", "nfl|g0|total|over|",
-                                         "nfl|g2|spread|home|"]
+    # g1 was placed against the short, view-only id an operator might type;
+    # it resolved to the one bet recommended on that view and booked under its
+    # full id. g0 was placed from fields with no number and keeps an empty one.
+    assert placed["bet_id"].tolist() == ["nfl|g1|total|under||44.5", "nfl|g0|total|over||",
+                                         "nfl|g2|spread|home||-3"]
     assert len(book.open_bets()) == 3
 
 
@@ -228,17 +231,17 @@ def test_the_venue_cap_survives_the_open_exposure_rebuild(tmp_path: Path) -> Non
     )
 
 
-def test_a_row_crowded_out_by_another_venue_says_so(tmp_path: Path) -> None:
-    """The inert exchange go-live, made visible.
+def test_a_rung_priced_elsewhere_is_a_new_position(tmp_path: Path) -> None:
+    """What implied probability buys: the rung the old rule swallowed.
 
-    A `bet_id` is a view, so an exchange rung and a sportsbook number on the
-    same game/market/side are one bet and the rung is held rather than placed.
-    That is the right call — the view is already on the books, and making the
-    id name the number instead would re-place on every line tick. What was
-    wrong is that it happened in silence: the card showed a full stake, the log
-    said "N already on the books", and a whole venue never placed with nothing
-    saying why. Nineteen exchange rows across NFL and NCAAF went that way on
-    the first live run, and one bet was placed all night.
+    An exchange rung at +900 and a sportsbook number at −110 are the same view
+    of the same game, and the old rule held the rung because of it — nineteen
+    exchange rows went that way on the first live run and one bet was placed
+    all night. Their implied probabilities are 10% and 52%, which is not one
+    position by any reading, so the rung now places.
+
+    The line-tick case is the other half and is tested beside this one: it is
+    the *price*, not the number, that decides.
     """
     import contextlib
     import io
@@ -263,13 +266,42 @@ def test_a_row_crowded_out_by_another_venue_says_so(tmp_path: Path) -> None:
     with contextlib.redirect_stdout(buf):
         runner._portfolio_card(args, card, None, now,
                                pd.Timestamp(now).tz_localize(None), ledger=book)
-    out = buf.getvalue()
-    assert "held at a different venue" in out, out
-    assert "kalshi total under 25.5 held by lowvig 44.5" in out, out
-
     sized = pd.read_parquet(next(iter(tmp_path.glob("portfolio_nfl_*.parquet"))))
     row = sized[sized["book"] == "kalshi"].iloc[0]
-    assert bool(row["held"]) and row["held_by"] == "lowvig 44.5"
-    # The row on the same venue as the open bet is held too, but that is the
-    # ordinary case and is not called out as a crowding.
-    assert "fd spread home" not in out
+    assert not bool(row["held"]), "a 10c rung is not the 52c bet already on the books"
+    assert row["held_by"] is None
+    assert "held at a different venue" not in buf.getvalue()
+
+
+def test_a_line_that_ticked_is_still_the_position_already_held(tmp_path: Path) -> None:
+    """And the half that keeps the money safe.
+
+    The book moves the total and re-prices to hold roughly −110, so the number
+    changes and the implied probability does not. That is one bet, and placing
+    it again on every tick would double a directional view for nothing.
+    """
+    import contextlib
+    import io
+    from datetime import UTC, datetime
+
+    from velocity.wagering.ledger import Ledger
+
+    runner = _runner()
+    book = Ledger(path=tmp_path / "ledger.parquet")
+    at = pd.Timestamp("2026-09-10")
+    book.seed(100.0, at=at)
+    book.place(None, 1.10, price=-110.0, at=at, book="lowvig", point=44.5,
+               fields={"league": "nfl", "game_id": "g1", "market": "total", "side": "under"})
+
+    card = _card_frame()
+    card.loc[0, ["book", "point", "price"]] = ["lowvig", 45.5, -108.0]
+    args = _fake_args(tmp_path)
+    now = datetime(2026, 9, 11, 12, tzinfo=UTC)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        runner._portfolio_card(args, card, None, now,
+                               pd.Timestamp(now).tz_localize(None), ledger=book)
+    sized = pd.read_parquet(next(iter(tmp_path.glob("portfolio_nfl_*.parquet"))))
+    moved = sized[sized["game_id"] == "g1"].iloc[0]
+    assert bool(moved["held"]), "a ticked line must not open a second position"
+    assert moved["held_by"] == "lowvig 44.5"

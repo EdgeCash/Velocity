@@ -74,11 +74,75 @@ _IDENTITY = ("record_type", "recorded_at", "league", "bet_id", "slate_stamp",
              "stake", "price", "point", "book", "result", "profit", "note")
 
 
+# How close two prices have to be, as a fraction of the larger implied
+# probability, before the same view at two numbers counts as one position.
+#
+# The discriminator is the *price's* implied probability rather than the
+# number, because a book moving a total from 44.5 to 45.5 re-prices to hold
+# roughly −110 — the number moves, the implied probability barely does, and it
+# is plainly the same bet. A ladder rung deep in the tail sits at a completely
+# different implied probability and is plainly not. Relative rather than
+# absolute for the reason the E8b gate learned: a 6-point gap is nothing at
+# even money and is the whole bet at a tenth.
+SAME_POSITION_TOLERANCE = 0.20
+
+
+def _point_key(point: object) -> str:
+    """The number as an id segment — ``44.5``, not ``44.50``; ``""`` for none."""
+    value = _clean(point)
+    return "" if value is None else f"{float(value):g}"
+
+
 def bet_id(league: str, game_id: object, market: object, side: object,
-           player: object = None) -> str:
-    """The bet's identity across records — no stamp, no book, no price."""
+           player: object = None, point: object = None) -> str:
+    """The bet's identity across records — no stamp, no book, no price.
+
+    The **number** is part of it, because settlement is: a total landing on 30
+    wins an under 44.5 and loses an under 25.5, so two rungs that can disagree
+    must be able to settle apart. The **venue** is not, because it is not:
+    the same number bought at two books is one outcome, and pooling them is
+    what gives the settled row its stake-weighted price.
+
+    What the number does *not* decide is whether a new rung gets placed at all.
+    A line ticking 44.5 → 45.5 would be a new id here and must not become a
+    second bet — that is :data:`SAME_POSITION_TOLERANCE`'s job, on implied
+    probability, at the view level. Two jobs, two mechanisms, deliberately.
+    """
     who = "" if player is None or (isinstance(player, float) and math.isnan(player)) else player
-    return f"{league}|{game_id}|{market}|{side}|{who}"
+    return f"{league}|{game_id}|{market}|{side}|{who}|{_point_key(point)}"
+
+
+def view_id(bet_id_: str) -> str:
+    """The bet's *view* — game, market, side — without its number.
+
+    Ids written before the number joined them are already views, so this is
+    the key that matches a card's new-format row against a position opened
+    under the old scheme.
+    """
+    parts = str(bet_id_).split("|")
+    return "|".join(parts[:5])
+
+
+def same_position(price_a: object, price_b: object,
+                  tolerance: float = SAME_POSITION_TOLERANCE) -> bool:
+    """Whether two prices on one view are close enough to be the same bet.
+
+    A missing price on either side answers *yes*: with nothing to compare, the
+    safe reading is that the view is already on the books, which is the
+    behaviour that held before implied probability was consulted at all.
+    """
+    from velocity.wagering.odds import american_to_prob
+
+    a, b = _clean(price_a), _clean(price_b)
+    if a is None or b is None:
+        return True
+    try:
+        pa, pb = american_to_prob(float(a)), american_to_prob(float(b))
+    except ValueError:  # a price outside (−100, 100) is not a price
+        return True
+    if max(pa, pb) <= 0:
+        return True
+    return abs(pa - pb) / max(pa, pb) <= tolerance
 
 
 def _clean(value: object) -> Any:
@@ -233,7 +297,8 @@ class Ledger:
             player = _clean(r.get("player"))
             rows.append({
                 "record_type": RECOMMENDED, "recorded_at": at, "league": league,
-                "bet_id": bet_id(league, r["game_id"], r["market"], r["side"], player),
+                "bet_id": bet_id(league, r["game_id"], r["market"], r["side"], player,
+                                 r.get("point")),
                 "slate_stamp": stamp, "kind": kind,
                 "game_id": str(r["game_id"]), "market": str(r["market"]),
                 "side": str(r["side"]), "player": None if player is None else str(player),
@@ -321,10 +386,40 @@ class Ledger:
             if not fields:
                 raise ValueError("a bet needs a bet_id or its fields")
             bet_id_ = bet_id(fields["league"], fields["game_id"], fields["market"],
-                             fields["side"], fields.get("player"))
+                             fields["side"], fields.get("player"),
+                             point if point is not None else fields.get("point"))
+        # An id without a number still resolves: a position opened before the
+        # number joined the id, or an operator typing the short form off an
+        # older to-do. Only when the view names exactly one bet, so this can
+        # never quietly pick between two rungs.
         asked = (book if book is not None else (fields or {}).get("book"),
                  point if point is not None else (fields or {}).get("point"))
-        offered = {self._contract(r) for r in self._known(bet_id_).to_dict("records")}
+        known = self._known(bet_id_)
+        if known.empty:
+            want_view = view_id(bet_id_)
+            all_known = self.frame[self.frame["record_type"].isin([RECOMMENDED, PLACED])]
+            # A boolean *list* selects columns on an empty frame, not rows.
+            on_view = all_known[all_known["bet_id"].map(
+                lambda b: view_id(b) == want_view).astype(bool)]
+            same_view = set(on_view["bet_id"])
+            named = {r["bet_id"] for r in on_view.to_dict("records")
+                     if all(w is None or c == w for c, w in
+                            zip(self._contract(r),
+                                self._contract(dict(zip(("book", "point"), asked, strict=True))),
+                                strict=True))} if asked != (None, None) else set()
+            if len(same_view) == 1:
+                bet_id_ = same_view.pop()
+            elif len(named) == 1:
+                # The short form plus the terms names exactly one contract.
+                bet_id_ = named.pop()
+            elif same_view:
+                # Several contracts answer to this view and nothing picks one.
+                # That is the ambiguity the message below exists for, not an
+                # unknown bet.
+                known = on_view
+            if known.empty:
+                known = self._known(bet_id_)
+        offered = {self._contract(r) for r in known.to_dict("records")}
         if stake > 0 and len(offered) > 1:
             shown = ", ".join(
                 f"{bk or '?'} @ {pt if pt is not None else '—'}"
@@ -341,7 +436,17 @@ class Ledger:
                     f"{bet_id_!r} was never recommended at those terms and has more "
                     f"than one contract on record ({shown}); pass price= as well"
                 )
-        rec = self._recommendation(bet_id_, book=asked[0], point=asked[1])
+        # Pick from the records already resolved above rather than looking the
+        # id up again — the short form may have widened to a whole view, and
+        # re-querying it would come back empty.
+        rec = None
+        if not known.empty:
+            want = self._contract(dict(zip(("book", "point"), asked, strict=True)))
+            matches = [r for r in known.to_dict("records")
+                       if all(w is None or c == w
+                              for c, w in zip(self._contract(r), want, strict=True))]
+            chosen = matches[-1] if matches else known.to_dict("records")[-1]
+            rec = {str(k): v for k, v in chosen.items()}
         if rec is None and not fields:
             raise ValueError(f"unknown bet {bet_id_!r}: pass its fields to place an unlisted bet")
         base: dict[str, Any] = dict(rec or {})
@@ -388,12 +493,27 @@ class Ledger:
         if open_.empty:
             return empty_ledger()
         placements = self._placements()
+        open_ids = set(open_["bet_id"])
+        # A position opened before the number joined the id is keyed by its
+        # view alone. Today's grading recomputes the id *with* the number, so
+        # the two no longer match — resolve the old one rather than leave a
+        # real open bet unsettled and stripped of its CLV. Only when the view
+        # holds exactly one open id, so this can never pick between rungs.
+        by_view: dict[str, list[str]] = {}
+        for open_id in open_ids:
+            by_view.setdefault(view_id(open_id), []).append(open_id)
         rows = []
         for r in results.drop_duplicates(subset="bet_id").to_dict("records"):
             result = str(r.get("result") or "")
-            if result not in SETTLED_RESULTS or r["bet_id"] not in set(open_["bet_id"]):
+            target = r["bet_id"]
+            if target not in open_ids:
+                candidates = by_view.get(view_id(target), [])
+                if len(candidates) != 1:
+                    continue
+                target = candidates[0]
+            if result not in SETTLED_RESULTS:
                 continue
-            legs = placements[placements["bet_id"] == r["bet_id"]]
+            legs = placements[placements["bet_id"] == target]
             profit = float(sum(
                 settle_profit(result, float(leg["stake"]), float(leg["price"]), leg["book"])
                 for leg in legs.to_dict("records")
@@ -564,19 +684,53 @@ class Ledger:
         placed_ids = set(placed.loc[placed["stake"] > 0, "bet_id"])
         skipped_ids = set(placed.loc[placed["stake"] == 0, "bet_id"]) - placed_ids
         settled = self.settled_ids()
+        # Prices still open on each *view*, so a new number on a view already
+        # held can be judged against what is holding it rather than against its
+        # own id. This is what lets a genuinely different rung through while a
+        # line that merely ticked stays one bet.
+        open_now = self.open_bets()
+        open_prices: dict[str, list[Any]] = {}
+        for r in open_now.to_dict("records"):
+            open_prices.setdefault(view_id(r["bet_id"]), []).append(_clean(r.get("price")))
 
-        def status(bid: str, stake: float) -> str:
+        def status(bid: str, stake: float, price: object) -> str:
             if bid in settled:
                 return "settled"
             if bid in placed_ids:
                 return "placed"
             if bid in skipped_ids:
                 return "skipped"
-            return "paper" if not stake > 0 else "open"
+            if not stake > 0:
+                return "paper"
+            held = open_prices.get(view_id(bid), [])
+            if any(same_position(price, other) for other in held):
+                return "placed"
+            return "open"
 
-        rec = rec.assign(status=[status(b, s) for b, s in zip(rec["bet_id"], rec["stake"],
-                                                               strict=True)])
+        rec = rec.assign(status=[
+            status(b, s, p) for b, s, p in
+            zip(rec["bet_id"], rec["stake"], rec["price"], strict=True)
+        ])
         return rec.reset_index(drop=True)
+
+    def holding(self, league: str, game_id: object, market: object, side: object,
+                player: object = None, *, price: object = None) -> dict[str, Any] | None:
+        """The open bet that already covers this row, or ``None``.
+
+        One place decides "is this view already on the books?", so the runner's
+        card and the operator's to-do cannot drift apart on it. Matching is on
+        the **view** — the number is not part of the question — and then on
+        implied probability, so a line that ticked is the position already held
+        while a rung priced somewhere else entirely is not
+        (:data:`SAME_POSITION_TOLERANCE`).
+        """
+        want = view_id(bet_id(league, game_id, market, side, player))
+        for row in self.open_bets().to_dict("records"):
+            if view_id(row["bet_id"]) != want:
+                continue
+            if same_position(price, row.get("price")):
+                return {str(k): v for k, v in row.items()}
+        return None
 
     def state(self) -> LedgerState:
         settled = self.frame[self.frame["record_type"] == SETTLED]
@@ -609,7 +763,7 @@ def results_from_graded(
             player = _clean(r.get("player")) if is_prop else None
             rows.append({
                 "bet_id": bet_id(league, r.get("game_id"), r.get("market"), r.get("side"),
-                                 player),
+                                 player, r.get("point")),
                 "result": r.get("result"),
                 **{c: _clean(r.get(c)) for c in columns[2:]},
             })

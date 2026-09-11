@@ -1621,25 +1621,28 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
 
             state = ledger.state()
             current, peak = state.current, state.peak
-            open_now = ledger.open_bets()
-            open_ids = set(open_now["bet_id"])
-            # What is holding each one. A bet_id is a view, so the open bet can
-            # be a different contract than today's row — a sportsbook's 44.5
-            # against an exchange rung at 25.5. Held is the right call (the
-            # view is already on the books) but it has to be legible, or a
-            # whole venue quietly never places and nothing says why.
-            holder = {
-                r["bet_id"]: f"{r.get('book') or '?'} "
-                             f"{'' if _clean_term(r.get('point')) is None else r['point']}".strip()
-                for r in open_now.to_dict("records")
-            }
-            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"))
+            # Is this view already on the books? The ledger owns that question
+            # — matching on the view, then on implied probability, so a line
+            # that merely ticked is the position already held while a rung
+            # priced somewhere else entirely is a new one.
+            holds = [
+                ledger.holding(args.league, r["game_id"], r["market"], r["side"],
+                               r.get("player"), price=_clean_term(r.get("price")))
+                for r in card.to_dict("records")
+            ]
+            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"),
+                          r.get("point"))
                    for r in card.to_dict("records")]
-            card["held"] = [i in open_ids for i in ids]
+            card["held"] = [h is not None for h in holds]
             # Name the contract already on the books next to the one today's
             # card wanted, so a crowded-out venue is visible rather than a
             # count. This is how an inert exchange go-live was found.
-            card["held_by"] = [holder.get(i) if i in open_ids else None for i in ids]
+            card["held_by"] = [
+                None if h is None else
+                f"{h.get('book') or '?'} "
+                f"{'' if _clean_term(h.get('point')) is None else h['point']}".strip()
+                for h in holds
+            ]
             crowded = [
                 f"{r['book']} {r['market']} {r['side']}"
                 f"{'' if _clean_term(r.get('point')) is None else ' ' + str(r['point'])}"
