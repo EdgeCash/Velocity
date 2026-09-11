@@ -315,6 +315,11 @@ def ncaaf_team_index(
 # than as a fourth copy of the nickname bridge.
 
 
+# The leagues :func:`team_identity` can actually resolve. Everything else is
+# codes only, resolved without a network call of any kind.
+IDENTITY_LEAGUES = frozenset({"nfl", "ncaaf"})
+
+
 @dataclass(frozen=True)
 class TeamIdentity:
     """What a surface needs to draw a team: a code, a brand color, and a mark.
@@ -360,12 +365,21 @@ def team_identity(
     no color or mark. Identity is a presentation nicety; a team the table has
     never heard of must still render, and the surfaces here all fall back to
     the code chip.
+
+    Only the leagues this module actually has identity for consult anything.
+    A league it does not cover gets codes and returns **without touching the
+    network** — treating every non-NFL league as college football would have a
+    site build for an MLB slate calling a college-football endpoint, and would
+    put a live request inside an offline test suite.
     """
     from velocity.wagering.live import nickname_aliases, resolve_team
 
     names = [str(team) for team in teams if str(team)]
     out: dict[str, TeamIdentity] = {}
-    if str(league).lower() == "nfl":
+    key = str(league).lower()
+    if key not in IDENTITY_LEAGUES:
+        return {name: TeamIdentity(team=name, code=name[:3].upper()) for name in names}
+    if key == "nfl":
         for name in names:
             code = resolve_team(name, TEAM_META.keys())
             club = TEAM_META.get(code) if code else None

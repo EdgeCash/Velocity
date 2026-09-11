@@ -147,3 +147,43 @@ def test_club_marks_are_never_vendored_into_the_public_repo() -> None:
         and "logo" in path.parts[-2:][0].lower() + path.name.lower()
     ]
     assert not marks, f"club marks must not be vendored: {[str(m) for m in marks]}"
+
+
+def test_an_uncovered_league_resolves_without_touching_the_network(monkeypatch) -> None:
+    """The offline suite has to stay offline, and an MLB slate is not college.
+
+    `team_identity` used to send every non-NFL league down the NCAAF branch,
+    which calls the CFBD teams endpoint. Locally that is invisible — no
+    `CFBD_API_KEY`, so the index comes back empty instantly. In CI the key is
+    set, so `build_site_data.py` on the MLB fixture made a live HTTPS request
+    from inside the suite that is named *offline*, once per subprocess test.
+    """
+    import velocity.report.assets as assets
+
+    def explode(*args: object, **kwargs: object) -> dict:
+        raise AssertionError("team_identity reached the network for an uncovered league")
+
+    monkeypatch.setattr(assets, "ncaaf_team_index", explode)
+    for league in ("mlb", "nhl", "wnba", "ncaab", ""):
+        out = assets.team_identity(league, ["Toronto Blue Jays", "Anaheim Ducks"])
+        assert [ident.code for ident in out.values()] == ["TOR", "ANA"]
+        assert all(ident.logo is None and ident.color is None for ident in out.values())
+    # NFL is resolved from the committed table, so it is offline too.
+    monkeypatch.setattr(assets, "ncaaf_team_index", explode)
+    assert assets.team_identity("nfl", ["SEA"])["SEA"].logo is not None
+
+
+def test_build_teams_is_offline_for_an_uncovered_league(monkeypatch) -> None:
+    import velocity.report.assets as assets
+    from scripts.build_site_data import build_teams
+
+    monkeypatch.setattr(
+        assets, "ncaaf_team_index",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("network in build_teams")),
+    )
+    monkeypatch.setenv("CFBD_API_KEY", "pretend-this-is-real")
+    table = build_teams(pd.DataFrame({
+        "league": ["mlb"], "home_team": ["Toronto Blue Jays"], "away_team": ["Seattle Mariners"],
+    }))
+    assert sorted(table.code) == ["SEA", "TOR"]
+    assert (table.logo == "").all() and (table.color_dark == "").all()
