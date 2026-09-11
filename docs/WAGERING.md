@@ -479,3 +479,130 @@ overclaims), a thin market, paper and pending rows, and empty chains.
 archive graded back through the chain; the DoD's seven consecutive runs
 start with the next grade.
 
+
+## 9. Addendum (2026-09): same-game correlation, measured
+
+`size_portfolio` de-scales exposure inside a correlation group by
+`1/(1+(n−1)ρ)`, and the live runner groups by game with a single
+`group_correlation = 0.5` for every pair on it. That constant was set when
+one bet per view was the rule. An exchange ladder broke that: a card can
+now hold several contracts on one game's total, so what ρ *is* for a given
+pair decides real stake.
+
+`velocity/eval/correlation.py` measures it; `scripts/measure_correlation.py`
+runs it. **Staking is unchanged** — the flat 0.5 still applies. The
+measurement is deliberately not wired into the sizing path, because the
+dominant correction *raises* exposure and that decision wants the realized
+table next to the historical one.
+
+The quantity is the correlation between the two bets' **win indicators**,
+which is what inflates the variance of a combined stake. Bets are defined
+against each game's closing number (the sharpest per-game expectation
+available, so this isolates the shape of joint outcomes rather than the
+model's aim — the same reasoning as the E8 ladder gate), pushes dropped on
+both legs, 95% intervals bootstrapped over games.
+
+### 9.1 What it says
+
+**The flat 0.5 is wrong in both directions, and the biggest error is on the
+pair a card carries most often.** Spread and total on the same game are
+close to independent: NFL ρ **−0.006**, CI [−0.034, +0.027] on 3,952
+non-push games, and every one of fifteen seasons admits zero. De-scaling
+that pair as if it were half-correlated under-bets both legs by ~34%.
+
+**That pair must be read from the favourite's side.** A first pass measured
+*home* covers × over and got +0.023 — the home-field artifact. Restated from
+the favourite it is −0.006. The two framings disagree because a home
+favourite and a home dog contribute mirror images that cancel, which is
+exactly how a real effect hides inside a near-zero pooled number.
+`tests/test_correlation.py` pins this with a fixture built so the framings
+disagree by construction (ρ = +1 favourite-relative, 0 home-relative).
+
+**The exception is blowout pricing, and only in college.** NCAAF
+favourite-covers × over is +0.067 pooled, which represents no actual game:
+
+| NCAAF favourite | n | ρ | 95% CI |
+|---|---|---|---|
+| 0–3 | 1,373 | +0.018 | [−0.035, +0.070] |
+| 3–7 | 2,796 | +0.001 | [−0.036, +0.036] |
+| 7–10 | 1,519 | +0.014 | [−0.038, +0.065] |
+| 10–14 | 1,514 | +0.006 | [−0.045, +0.058] |
+| **14–21** | 1,928 | **+0.102** | [+0.056, +0.145] |
+| **21–28** | 1,121 | **+0.185** | [+0.127, +0.243] |
+| **28+** | 1,132 | **+0.260** | [+0.205, +0.316] |
+
+Flat under 14 points, monotone above it. Physically plain: a four-touchdown
+college favourite covering *is* a game with points in it. Stable season by
+season inside the big-favourite slice (sd 0.065 across eleven seasons), so
+the apparent recent upward "trend" in the pooled number is a mix effect —
+the dataset carries more mismatches lately, not a changing game. NFL prices
+a favourite that big in 2–5% of games and shows nothing at any size.
+
+**The ladder curve is the opposite story and far better determined.** Two
+rungs on the same side of one total, pooled ρ with the per-season spread:
+
+| apart | NFL ρ | NFL sd | NCAAF ρ | NCAAF sd | stake err at 0.5 (NFL / NCAAF) |
+|---|---|---|---|---|---|
+| 2p | +0.878 | 0.027 | +0.912 | 0.016 | +25% / +28% |
+| 4p | +0.766 | 0.027 | +0.815 | 0.012 | +18% / +21% |
+| 8p | +0.588 | 0.039 | +0.655 | 0.022 | +6% / +10% |
+| 12p | +0.443 | 0.036 | +0.530 | 0.015 | −4% / +2% |
+| 16p | +0.315 | 0.032 | +0.417 | 0.021 | −12% / −6% |
+| 20p | +0.220 | 0.036 | +0.320 | 0.020 | −19% / −12% |
+
+Positive `stake err` means the flat 0.5 stakes too much. The practical
+consequence runs against the worry that prompted the measurement: **our own
+rungs are not the correlated ones.** A rung priced at +900 is priced there
+because it sits sixteen to twenty points off the book number, and that is
+where ρ has already fallen to 0.22–0.42. The flat 0.5 over-de-scales the
+exchange legs too. The pairs genuinely near ρ 0.9 are two rungs within a
+couple of points of each other, which the E8b gate and the ledger's 20%
+`SAME_POSITION_TOLERANCE` largely prevent us from holding at all.
+
+**Opposite sides are negatively correlated and the formula cannot say so.**
+An exchange `under 25.5` against a book `over 44.5` cannot both lose: NFL
+−0.588 at eight points apart, NCAAF −0.655. A *middle* (`over 36.5` against
+`under 44.5`) both-wins 19–23% of the time at −0.61 / −0.67. Applying a
+positive ρ charges a hedge for adding risk it removes. Hedge and middle are
+separate pair classes (`pair_class`): a side-only label collapses them, and
+they are different bets — one has a both-win region of zero, the other a
+both-lose region of zero.
+
+A realistic three-leg game group — spread, total, one rung sixteen points
+off — has mean pairwise ρ of −0.11 (NFL) / −0.14 (NCAAF) against the 0.5
+applied. Floored at zero that group's scale is 1.00 against the 0.50 the
+flat assumption gives it: a 50% under-bet.
+
+### 9.2 Why a measured ρ should not be used naked
+
+These legs share a **model**, not only a game. If the sim is wrong about a
+game's pace, the over and the team total are both wrong even though their
+outcomes are near-independent under the true distribution. Outcome
+correlation is not correlation of our *edge estimates*, and the second is
+what loses money together. Any staking use of this table wants a floor
+under it — `ρ_eff = max(floor, measured)` — for that reason alone. At a
+floor of 0.25 the two-leg spread+total pair moves 0.67 → 0.80 (+20% stake)
+rather than → 1.00 (+50%), and the tightening of near rungs is unaffected
+either way.
+
+### 9.3 What is still missing
+
+**Zero graded rungs.** Run 106's own log: `NFL market health: nothing
+settled in the window`, the same for NCAAF, `season record: 0 settled
+row(s)` in both football leagues, and all 46 settled ledger bets are
+MLB/WNBA. Football exchange positions were opened after the games that have
+graded, so the realized half of the measurement is empty and is *correctly*
+empty — `realized_correlation` returns `[]` rather than reporting a ρ from
+nothing.
+
+The ledger already carries what the live measurement needs on settled rows
+(`game_id`, `market`, `side`, `point`, `book`, `result`), so no schema
+change is pending — `measure_correlation.py --ledger` produces the realized
+table as soon as football settles. The first rungs to grade are on the
+current card.
+
+Until then the historical table stands on its own for the ladder curve (sd
+0.012–0.039 per season; nothing further to confirm) and for NFL spread×total
+(fifteen seasons, all admitting zero). What wants live evidence is which
+pair classes our cards actually end up holding, and at what venues — the
+question the datasets cannot answer because they do not know what we bet.
