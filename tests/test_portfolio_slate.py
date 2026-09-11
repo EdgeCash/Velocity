@@ -163,3 +163,66 @@ def test_portfolio_card_halts_past_the_drawdown_threshold(tmp_path: Path) -> Non
     # Recorded, placed nowhere: the ledger's exposure stays zero.
     assert int((book.frame["record_type"] == "recommended").sum()) == 2
     assert book.open_exposure() == 0.0
+
+
+def test_a_sizing_failure_cannot_hide_the_kill_switch(tmp_path: Path) -> None:
+    """The halt is read before the guard, so nothing below can swallow it.
+
+    Every line of `_portfolio_card` runs under a broad `except` so a sizing
+    failure never breaks the slates. That guard used to take the kill-switch
+    with it: a bankroll past the drawdown threshold went unannounced because
+    something unrelated raised a few lines earlier, and all the operator saw
+    was `portfolio sizing skipped: ...` — a line that reads like housekeeping.
+    """
+    import contextlib
+    import io
+    from datetime import UTC, datetime
+
+    from velocity.wagering.ledger import Ledger
+
+    runner = _runner()
+    book = Ledger(path=tmp_path / "ledger.parquet")
+    at = pd.Timestamp("2026-09-01")
+    book.seed(100.0, at=at)
+    row = book.place(None, 35.0, price=-110.0, at=at,
+                     fields={"league": "nfl", "game_id": "old", "market": "total",
+                             "side": "over"})
+    book.settle(pd.DataFrame([{"bet_id": row["bet_id"], "result": "loss"}]), at=at)
+    assert book.drawdown() == pytest.approx(0.35)
+
+    # A card with no `stake` column raises inside the guard, well before the
+    # ledger is consulted — the shape of the failure that used to go quiet.
+    broken = _card_frame().drop(columns=["stake"])
+    args = _fake_args(tmp_path, bankroll=65.0)
+    now = datetime(2026, 9, 11, 12, tzinfo=UTC)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        runner._portfolio_card(args, broken, None, now,
+                               pd.Timestamp(now).tz_localize(None), ledger=book)
+    out = buf.getvalue()
+    assert "PORTFOLIO SIZING FAILED" in out, "a failure must not read like a note"
+    assert "KILL-SWITCH — halted: drawdown 35%" in out, (
+        "the halt is read before the guard and must survive the failure"
+    )
+    assert "do not stake from them unsized" in out
+    # Nothing was written, which is the safe direction.
+    assert not list(tmp_path.glob("portfolio_nfl_*.parquet"))
+
+
+def test_the_venue_cap_survives_the_open_exposure_rebuild(tmp_path: Path) -> None:
+    """Room left under the slate cap rebuilds the config — with its caps intact.
+
+    On a day with money already on the table the slate cap shrinks to the room
+    remaining, and the config is rebuilt for it. Constructing a bare one there
+    dropped the exchange cap on exactly the days it matters most.
+    """
+    from velocity.wagering.portfolio import PortfolioConfig
+
+    rebuilt = PortfolioConfig(max_portfolio_fraction=0.05,
+                              venue_caps=PortfolioConfig(
+                                  venue_caps={"exchange": 0.25}).venue_caps)
+    assert rebuilt.venue_caps == {"exchange": 0.25}
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "run_live_slate.py").read_text()
+    assert "venue_caps=config.venue_caps" in source, (
+        "the open-exposure rebuild must carry the venue caps forward"
+    )
