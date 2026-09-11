@@ -226,3 +226,50 @@ def test_the_venue_cap_survives_the_open_exposure_rebuild(tmp_path: Path) -> Non
     assert "venue_caps=config.venue_caps" in source, (
         "the open-exposure rebuild must carry the venue caps forward"
     )
+
+
+def test_a_row_crowded_out_by_another_venue_says_so(tmp_path: Path) -> None:
+    """The inert exchange go-live, made visible.
+
+    A `bet_id` is a view, so an exchange rung and a sportsbook number on the
+    same game/market/side are one bet and the rung is held rather than placed.
+    That is the right call — the view is already on the books, and making the
+    id name the number instead would re-place on every line tick. What was
+    wrong is that it happened in silence: the card showed a full stake, the log
+    said "N already on the books", and a whole venue never placed with nothing
+    saying why. Nineteen exchange rows across NFL and NCAAF went that way on
+    the first live run, and one bet was placed all night.
+    """
+    import contextlib
+    import io
+    from datetime import UTC, datetime
+
+    from velocity.wagering.ledger import Ledger
+
+    runner = _runner()
+    book = Ledger(path=tmp_path / "ledger.parquet")
+    at = pd.Timestamp("2026-09-10")
+    book.seed(100.0, at=at)
+    # Already on the books: the sportsbook's number on g1's under.
+    book.place(None, 1.10, price=-110.0, at=at, book="lowvig", point=44.5,
+               fields={"league": "nfl", "game_id": "g1", "market": "total", "side": "under"})
+
+    # Today's card wants the same view as a Kalshi rung at a different number.
+    card = _card_frame()
+    card.loc[0, ["book", "point", "price"]] = ["kalshi", 25.5, 900.0]
+    args = _fake_args(tmp_path)
+    now = datetime(2026, 9, 11, 12, tzinfo=UTC)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        runner._portfolio_card(args, card, None, now,
+                               pd.Timestamp(now).tz_localize(None), ledger=book)
+    out = buf.getvalue()
+    assert "held at a different venue" in out, out
+    assert "kalshi total under 25.5 held by lowvig 44.5" in out, out
+
+    sized = pd.read_parquet(next(iter(tmp_path.glob("portfolio_nfl_*.parquet"))))
+    row = sized[sized["book"] == "kalshi"].iloc[0]
+    assert bool(row["held"]) and row["held_by"] == "lowvig 44.5"
+    # The row on the same venue as the open bet is held too, but that is the
+    # ordinary case and is not called out as a crowding.
+    assert "fd spread home" not in out

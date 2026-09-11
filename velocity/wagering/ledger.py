@@ -244,13 +244,51 @@ class Ledger:
             })
         return len(self._append(rows))
 
-    def _recommendation(self, bet_id_: str) -> dict[str, Any] | None:
-        """The bet's latest known terms: its newest recommendation, or the
-        last placement of a bet the card never listed."""
-        known = self.frame[self.frame["record_type"].isin([RECOMMENDED, PLACED])
-                           & (self.frame["bet_id"] == bet_id_)]
+    def _known(self, bet_id_: str) -> pd.DataFrame:
+        """Every record that carries terms for this bet, oldest first."""
+        return self.frame[self.frame["record_type"].isin([RECOMMENDED, PLACED])
+                          & (self.frame["bet_id"] == bet_id_)]
+
+    @staticmethod
+    def _contract(row: Any) -> tuple[Any, Any]:
+        """The contract a row names: its book and its number.
+
+        A :func:`bet_id` is a *view* — this game, this market, this side — and
+        deliberately so, or a total ticking from 44.5 to 45.5 would read as a
+        new bet and get placed a second time. One view can be bought as many
+        different contracts, which is what a ladder is, so terms have to be
+        matched on the contract rather than assumed from the view.
+        """
+        point = _clean(row.get("point") if isinstance(row, dict) else row.point)
+        book = _clean(row.get("book") if isinstance(row, dict) else row.book)
+        return (None if book is None else str(book),
+                None if point is None else round(float(point), 4))
+
+    def _recommendation(self, bet_id_: str, *, book: str | None = None,
+                        point: float | None = None) -> dict[str, Any] | None:
+        """This bet's latest known terms, for the contract asked for.
+
+        With ``book``/``point`` given, the newest record naming that contract;
+        without, the newest record of any. The caller is responsible for not
+        asking the bare question when the answer is ambiguous — see
+        :meth:`place`.
+        """
+        known = self._known(bet_id_)
         if known.empty:
             return None
+        if book is not None or point is not None:
+            want = (None if book is None else str(book),
+                    None if point is None else round(float(point), 4))
+            rows = [r for r in known.to_dict("records")
+                    if all(w is None or c == w
+                           for c, w in zip(self._contract(r), want, strict=True))]
+            if rows:
+                return {str(k): v for k, v in rows[-1].items()}
+            # Nothing recommended at those terms — the operator took a number
+            # the card never listed. The newest record still supplies the
+            # identity fields; :meth:`place` is what decides that a *price*
+            # must not be inherited across a contract that does not match.
+            return None if known.empty else dict(known.iloc[-1])
         return dict(known.iloc[-1])
 
     def place(  # noqa: PLR0913 - a ticket has this many terms
@@ -270,13 +308,40 @@ class Ledger:
         Terms not given come from the latest recommendation of the same bet;
         a bet the ledger never recommended needs ``fields`` (league, game_id,
         market, side, optional player/kind) to be placed at all.
+
+        A ``bet_id`` names a *view*, not a contract, so one bet can have been
+        recommended as several — a sportsbook's 44.5 and an exchange rung at
+        25.5 are the same view of the same game. When that has happened and no
+        terms are supplied, this refuses rather than reaching for the newest:
+        guessing there booked a −110 bet at 44.5 as a +900 longshot at 25.5,
+        which is a wrong ledger, a wrong bankroll and a wrong CLV all at once.
+        Pass ``book``/``point`` (or ``fields``) to say which one was taken.
         """
         if bet_id_ is None:
             if not fields:
                 raise ValueError("a bet needs a bet_id or its fields")
             bet_id_ = bet_id(fields["league"], fields["game_id"], fields["market"],
                              fields["side"], fields.get("player"))
-        rec = self._recommendation(bet_id_)
+        asked = (book if book is not None else (fields or {}).get("book"),
+                 point if point is not None else (fields or {}).get("point"))
+        offered = {self._contract(r) for r in self._known(bet_id_).to_dict("records")}
+        if stake > 0 and len(offered) > 1:
+            shown = ", ".join(
+                f"{bk or '?'} @ {pt if pt is not None else '—'}"
+                for bk, pt in sorted(offered, key=lambda c: (str(c[0]), str(c[1])))
+            )
+            if asked == (None, None):
+                raise ValueError(
+                    f"{bet_id_!r} has been recommended as more than one contract "
+                    f"({shown}); pass book= and point= to say which was taken"
+                )
+            if price is None and self._contract(dict(zip(("book", "point"), asked,
+                                                         strict=True))) not in offered:
+                raise ValueError(
+                    f"{bet_id_!r} was never recommended at those terms and has more "
+                    f"than one contract on record ({shown}); pass price= as well"
+                )
+        rec = self._recommendation(bet_id_, book=asked[0], point=asked[1])
         if rec is None and not fields:
             raise ValueError(f"unknown bet {bet_id_!r}: pass its fields to place an unlisted bet")
         base: dict[str, Any] = dict(rec or {})

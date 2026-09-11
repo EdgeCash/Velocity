@@ -347,6 +347,30 @@ recommended Wednesday, placed Thursday and settled Monday is one bet.
 Records merge by identity, so every copy of the ledger unions into the same
 ledger; nothing can overwrite anything.
 
+**Identity is a *view*, not a contract, and that is deliberate.** It names the
+game, the market and the side — not the number and not the venue. A total
+ticking from 44.5 to 45.5 is the same bet, so the card does not place the same
+directional view a second time every time a line moves. Putting the number into
+the id looks like the obvious fix once a ladder is on the board; it would cost
+far more than it saved, because lines move far more often than rungs appear.
+
+Two things follow, and both were found the hard way on the first live exchange
+run (E8c), where nineteen exchange rows across NFL and NCAAF were held and one
+bet was placed all night:
+
+- **One view can be bought as several contracts.** A sportsbook's 44.5 and an
+  exchange rung at 25.5 share an id, so `place()` must not fill missing terms
+  from whichever record is newest — doing that booked a −110 bet at 44.5 as a
+  +900 longshot at 25.5, which is a wrong ledger, a wrong bankroll and a wrong
+  CLV at once. It now refuses and names the contracts on record; pass `book=`
+  and `point=` to say which was taken. The runner's auto path passes the row's
+  own terms rather than relying on inheritance at all.
+- **Being crowded out has to be visible.** An exchange rung held because a
+  sportsbook bet on the same view is open is the right call, but it used to
+  show only as a count. The card carries `held_by`, and the run prints
+  `kalshi total under 25.5 held by lowvig 44.5` for every row held at a
+  different venue, so a venue that never places says why.
+
 **The views.** Current bankroll (seed + adjustments + settlements), peak,
 drawdown, open exposure (placed money with no settlement), P&L by league and
 market, and the operator's to-do (the newest card with each row's status:

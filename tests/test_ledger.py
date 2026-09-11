@@ -299,3 +299,87 @@ def test_empty_ledger_round_trips_and_seeds_on_first_run(tmp_path: Path) -> None
     assert ledger.seed(100.0, at=T0)
     ledger.save()
     assert Ledger.load(path).current_bankroll() == 100.0
+
+
+def _laddered(tmp_path):
+    """A view recommended as two contracts — a sportsbook number and a rung."""
+    book = Ledger(path=tmp_path / "ladder.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    for stamp, at, point, house, price in (
+        ("A", "2026-09-10", 44.5, "lowvig", -110.0),
+        ("B", "2026-09-11", 25.5, "kalshi", 900.0),
+    ):
+        book.recommend(pd.DataFrame([{
+            "game_id": "G", "market": "total", "side": "under", "point": point,
+            "book": house, "price": price, "stake": 1.0, "kind": "game",
+        }]), league="nfl", stamp=stamp, at=pd.Timestamp(at))
+    return book
+
+
+def test_placing_a_view_that_has_two_contracts_refuses_to_guess(tmp_path) -> None:
+    """The bug that made a −110 bet into a +900 longshot.
+
+    A `bet_id` is a view — this game, this market, this side — and stays one on
+    purpose: a total ticking from 44.5 to 45.5 must not read as a new bet and
+    get placed a second time. But one view can be bought as several contracts,
+    which is exactly what an exchange ladder is, and `place` used to fill
+    missing terms from whichever record was newest. Booking the sportsbook bet
+    by hand after a Kalshi rung had been recommended therefore recorded it at
+    the rung's price and number: wrong ledger, wrong bankroll, wrong CLV.
+    """
+    book = _laddered(tmp_path)
+    with pytest.raises(ValueError, match="more than one contract"):
+        book.place(bet_id("nfl", "G", "total", "under"), 1.10, at=pd.Timestamp("2026-09-11"))
+    # The message has to name them, or the operator cannot answer it.
+    try:
+        book.place(bet_id("nfl", "G", "total", "under"), 1.10, at=pd.Timestamp("2026-09-11"))
+    except ValueError as exc:
+        assert "lowvig @ 44.5" in str(exc) and "kalshi @ 25.5" in str(exc)
+
+
+def test_naming_the_contract_books_that_contract_s_terms(tmp_path) -> None:
+    book = _laddered(tmp_path)
+    row = book.place(bet_id("nfl", "G", "total", "under"), 1.10,
+                     at=pd.Timestamp("2026-09-11"), book="lowvig", point=44.5)
+    assert (row["price"], row["point"], row["book"]) == (-110.0, 44.5, "lowvig")
+    rung = book.place(bet_id("nfl", "G", "total", "under"), 0.98,
+                      at=pd.Timestamp("2026-09-11"), book="kalshi", point=25.5)
+    assert (rung["price"], rung["point"], rung["book"]) == (900.0, 25.5, "kalshi")
+
+
+def test_one_contract_and_a_skip_still_need_no_terms(tmp_path) -> None:
+    # Nothing changes for the ordinary case: a view offered as one contract
+    # still inherits its terms, and a skip risks no money so it never asks.
+    book = Ledger(path=tmp_path / "plain.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    book.recommend(pd.DataFrame([{
+        "game_id": "G", "market": "total", "side": "under", "point": 44.5,
+        "book": "lowvig", "price": -110.0, "stake": 1.0, "kind": "game",
+    }]), league="nfl", stamp="A", at=pd.Timestamp("2026-09-10"))
+    row = book.place(bet_id("nfl", "G", "total", "under"), 1.0, at=pd.Timestamp("2026-09-10"))
+    assert row["price"] == -110.0 and row["point"] == 44.5
+
+    laddered = _laddered(tmp_path)
+    skipped = laddered.skip(bet_id("nfl", "G", "total", "under"), at=pd.Timestamp("2026-09-11"))
+    assert skipped["stake"] == 0.0
+
+
+def test_a_line_that_moves_is_still_the_same_bet(tmp_path) -> None:
+    """Why the view identity stays a view, rather than naming the number.
+
+    Putting the point into `bet_id` looks like the obvious fix for a ladder —
+    and it would place the same directional view again every time a total
+    ticked, which happens far more often than a rung and costs real money.
+    """
+    book = Ledger(path=tmp_path / "moved.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    for stamp, at, point in (("A", "2026-09-10", 44.5), ("B", "2026-09-11", 45.5)):
+        book.recommend(pd.DataFrame([{
+            "game_id": "G", "market": "total", "side": "under", "point": point,
+            "book": "lowvig", "price": -110.0, "stake": 1.0, "kind": "game",
+        }]), league="nfl", stamp=stamp, at=pd.Timestamp(at))
+        if stamp == "A":
+            book.place(bet_id("nfl", "G", "total", "under"), 1.0,
+                       at=pd.Timestamp(at), book="lowvig", point=point)
+    assert book.latest_recommendations("nfl").iloc[0]["status"] == "placed"
+    assert len(book.open_bets()) == 1, "a moved line must not open a second position"
