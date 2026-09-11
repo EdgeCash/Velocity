@@ -347,6 +347,48 @@ recommended Wednesday, placed Thursday and settled Monday is one bet.
 Records merge by identity, so every copy of the ledger unions into the same
 ledger; nothing can overwrite anything.
 
+**Identity carries the number; implied probability decides whether to place.**
+Two jobs, two mechanisms, and conflating them is what made the first live
+exchange run (E8c) place one bet all night while nineteen exchange rows across
+NFL and NCAAF were held.
+
+- The **id** is `league|game|market|side|player|point`. The number belongs
+  there because *settlement* needs it: a total landing on 30 wins an under 44.5
+  and loses an under 25.5, so two rungs that can disagree must settle apart.
+  The venue does not, because settlement does not care — the same number at two
+  books is one outcome, and pooling them is what gives the settled row its
+  stake-weighted price.
+- Whether a new number on a view you already hold becomes a *second bet* is
+  decided on the **price's implied probability**, not the number. A book moving
+  a total 44.5 → 45.5 re-prices to hold roughly −110: the number moved, the
+  implied probability did not, and placing again would double a directional
+  view for nothing. A ladder rung at +900 is 10% against 52% and is plainly a
+  different bet. `SAME_POSITION_TOLERANCE` is 20% *relative* — a six-point gap
+  is nothing at even money and is the whole bet at a tenth, the same lesson the
+  E8b gate learned. `Ledger.holding()` is the one place that answers it, so the
+  card and the operator's to-do cannot drift apart.
+
+An id written before the number joined it is a bare view, and still resolves:
+`place()` and `settle()` match it to the one bet on that view, so a position
+opened under the old scheme is neither re-placed nor left unsettled. The short
+form is also what an operator might type off an older to-do; when it names more
+than one contract, the error says which.
+
+Two more things follow, both found on that same first live run:
+
+- **One view can be bought as several contracts.** `place()` must not fill
+  missing terms
+  from whichever record is newest — doing that booked a −110 bet at 44.5 as a
+  +900 longshot at 25.5, which is a wrong ledger, a wrong bankroll and a wrong
+  CLV at once. It now refuses and names the contracts on record; pass `book=`
+  and `point=` to say which was taken. The runner's auto path passes the row's
+  own terms rather than relying on inheritance at all.
+- **Being held has to be visible.** A row held because an equivalently priced
+  bet on the same view is already open used to show only as a count. The card
+  carries `held_by`, and the run names what is holding each one —
+  `lowvig 45.5 held by lowvig 44.5` — so a venue that never places says why
+  instead of leaving it to be inferred from an arithmetic that does not add up.
+
 **The views.** Current bankroll (seed + adjustments + settlements), peak,
 drawdown, open exposure (placed money with no settlement), P&L by league and
 market, and the operator's to-do (the newest card with each row's status:

@@ -1454,6 +1454,15 @@ def _open_ledger(args: argparse.Namespace, generated_at: pd.Timestamp) -> Any:
         return None
 
 
+def _clean_term(value: object) -> Any:
+    """A term as the ledger wants it: ``None`` for a missing or NaN cell."""
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    return value
+
+
 def _record_card(
     ledger: Any, card: pd.DataFrame, args: argparse.Namespace, stamp: str,
     generated_at: pd.Timestamp, halted: str | None,
@@ -1471,7 +1480,14 @@ def _record_card(
         if args.ledger_mode == "auto" and halted is None:
             todo = ledger.latest_recommendations(args.league)
             for row in todo[todo["status"] == "open"].to_dict("records"):
+                # The row's own terms, not the ledger's guess. A bet_id is a
+                # view and a view can have been recommended as several
+                # contracts, so inheriting "the newest" is only right by
+                # accident — and wrong the moment a ladder is on the board.
                 ledger.place(row["bet_id"], float(row["stake"]), at=generated_at,
+                             price=_clean_term(row.get("price")),
+                             book=_clean_term(row.get("book")),
+                             point=_clean_term(row.get("point")),
                              note="auto: booked at the recommended terms")
                 placed += 1
         ledger.save()
@@ -1605,10 +1621,42 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
 
             state = ledger.state()
             current, peak = state.current, state.peak
-            open_ids = set(ledger.open_bets()["bet_id"])
-            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"))
+            # Is this view already on the books? The ledger owns that question
+            # — matching on the view, then on implied probability, so a line
+            # that merely ticked is the position already held while a rung
+            # priced somewhere else entirely is a new one.
+            holds = [
+                ledger.holding(args.league, r["game_id"], r["market"], r["side"],
+                               r.get("player"), price=_clean_term(r.get("price")))
+                for r in card.to_dict("records")
+            ]
+            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"),
+                          r.get("point"))
                    for r in card.to_dict("records")]
-            card["held"] = [i in open_ids for i in ids]
+            card["held"] = [h is not None for h in holds]
+            # Name the contract already on the books next to the one today's
+            # card wanted, so a crowded-out venue is visible rather than a
+            # count. This is how an inert exchange go-live was found.
+            card["held_by"] = [
+                None if h is None else
+                f"{h.get('book') or '?'} "
+                f"{'' if _clean_term(h.get('point')) is None else h['point']}".strip()
+                for h in holds
+            ]
+            crowded = [
+                f"{r['book']} {r['market']} {r['side']}"
+                f"{'' if _clean_term(r.get('point')) is None else ' ' + str(r['point'])}"
+                f" held by {r['held_by']}"
+                for r in card.to_dict("records")
+                if r.get("held") and r.get("held_by")
+                and str(r["held_by"]).split(" ")[0] != str(r.get("book"))
+            ]
+            if crowded:
+                print(f"held at a different venue ({len(crowded)}) — today's row never places:")
+                for line in crowded[:8]:
+                    print(f"    {line}")
+                if len(crowded) > 8:
+                    print(f"    … and {len(crowded) - 8} more")
             on_card = ledger.open_bets()
             elsewhere = float(on_card.loc[~on_card["bet_id"].isin(ids), "stake"].sum())
             if should_halt(current, peak, config.max_drawdown_fraction):

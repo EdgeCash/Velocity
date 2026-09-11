@@ -33,7 +33,8 @@ def test_operator_loop_seed_place_settle_adjust(tmp_path: Path) -> None:
                   "--league", "nfl", "--game-id", "abc", "--market", "total", "--side", "under",
                   "--point", "44.5")
     assert placed.returncode == 0, placed.stderr
-    assert "placed nfl|abc|total|under|: 3.00 at -105.0 (fanduel)" in placed.stdout
+    assert "placed nfl|abc|total|under||44.5: 3.00 at -105.0 (fanduel)" in placed.stdout
+    # The short form an operator might still type resolves to it.
     # A second placement of the same bet finds its terms from the first.
     again = _cli(ledger, "place", "--bet-id", "nfl|abc|total|under|", "--stake", "1")
     assert again.returncode == 0, again.stderr

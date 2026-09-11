@@ -66,9 +66,9 @@ def test_empty_ledger_seeds_cleanly_and_seeds_only_once(tmp_path: Path) -> None:
 
 def test_recommend_place_settle_round_trip_moves_bankroll_exactly(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
-    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
+    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)
 
     # Placed at the recommended terms unless told otherwise; the prop is
     # taken at a better price and a bigger stake than the card said.
@@ -104,8 +104,8 @@ def test_recommend_place_settle_round_trip_moves_bankroll_exactly(tmp_path: Path
 
 def test_resettlement_is_idempotent_and_pending_leaves_bankroll_alone(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
 
@@ -152,16 +152,16 @@ def test_peak_tracks_through_a_win_loss_win(tmp_path: Path) -> None:
 
 def test_skip_closes_without_exposure_and_status_reads_right(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.skip(fav, at=T0)
     assert ledger.open_exposure() == 2.0
     todo = ledger.latest_recommendations("nfl").set_index("bet_id")["status"]
     assert todo[under] == "placed"
     assert todo[fav] == "skipped"
-    assert todo[bet_id("nfl", "g1", "receptions", "over", "A. Brown")] == "open"
-    assert todo[bet_id("nfl", "g3", "team_total_home", "over")] == "paper"
+    assert todo[bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)] == "open"
+    assert todo[bet_id("nfl", "g3", "team_total_home", "over", None, 24.5)] == "paper"
     # A skipped bet never settles: its result row is ignored.
     assert ledger.settle(pd.DataFrame([{"bet_id": fav, "result": "win"}]), at=T0).empty
 
@@ -194,9 +194,9 @@ def test_adjustments_are_new_records_that_move_the_curve(tmp_path: Path) -> None
 
 def test_settle_from_finals_grades_open_game_bets_and_leaves_props(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
-    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
+    prop = bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
     ledger.place(prop, 0.5, at=T0)
@@ -217,7 +217,7 @@ def test_settle_from_finals_grades_open_game_bets_and_leaves_props(tmp_path: Pat
 
 def test_two_placements_of_one_bet_settle_together(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
     ledger.place(under, 1.0, price=-110.0, at=T0)
     ledger.place(under, 1.0, price=-100.0, book="fanduel", at=T0 + pd.Timedelta(minutes=5))
     assert len(ledger.open_bets()) == 1
@@ -242,22 +242,28 @@ def test_exchange_tie_settles_at_fifty_cents() -> None:
 
 def test_pnl_views_and_results_from_graded(tmp_path: Path) -> None:
     ledger = _seeded(tmp_path)
-    under = bet_id("nfl", "g1", "total", "under")
-    fav = bet_id("nfl", "g2", "spread", "home")
+    under = bet_id("nfl", "g1", "total", "under", None, 44.5)
+    fav = bet_id("nfl", "g2", "spread", "home", None, -3.0)
     ledger.place(under, 2.0, at=T0)
     ledger.place(fav, 1.0, at=T0)
     games = pd.DataFrame([
-        {"game_id": "g1", "market": "total", "side": "under", "result": "win",
-         "closing_point": 45.0, "line_clv": 0.5},
-        {"game_id": "g2", "market": "spread", "side": "home", "result": "loss"},
+        {"game_id": "g1", "market": "total", "side": "under", "point": 44.5,
+         "result": "win", "closing_point": 45.0, "line_clv": 0.5},
+        {"game_id": "g2", "market": "spread", "side": "home", "point": -3.0,
+         "result": "loss"},
     ])
     props = pd.DataFrame([
         {"game_id": "g1", "player": "A. Brown", "market": "receptions", "side": "over",
-         "result": "pending"},
+         "point": 5.5, "result": "pending"},
     ])
     results = results_from_graded("nfl", games, props)
     assert results["bet_id"].tolist() == [
-        under, fav, bet_id("nfl", "g1", "receptions", "over", "A. Brown")]
+        under, fav, bet_id("nfl", "g1", "receptions", "over", "A. Brown", 5.5)]
+    # A graded row with no number still settles: the id comes back as a bare
+    # view and `settle` resolves it, so a position opened before the number
+    # joined the id is not left open and stripped of its CLV.
+    bare = results_from_graded("nfl", games.drop(columns=["point"]), None)
+    assert bare["bet_id"].tolist() == ["nfl|g1|total|under||", "nfl|g2|spread|home||"]
     ledger.settle(results, at=T0)
     by_league = ledger.pnl(("league",)).set_index("league")
     assert by_league.loc["nfl", "bets"] == 2
@@ -276,7 +282,7 @@ def test_merge_is_a_union_by_record_identity(tmp_path: Path) -> None:
     # The operator's local copy gains a placement; the workflow's copy gains
     # a settlement of something else. Pushing merges both, once each.
     local = Ledger.load(ledger.path)
-    local.place(bet_id("nfl", "g1", "total", "under"), 2.0, at=T0)
+    local.place(bet_id("nfl", "g1", "total", "under", None, 44.5), 2.0, at=T0)
     remote = Ledger.load(ledger.path)
     remote.recommend(_card().head(1), league="nfl", stamp="20260911T140000Z", at=T0)
     merged = merge_ledgers(local.frame, remote.frame, local.frame)
@@ -299,3 +305,87 @@ def test_empty_ledger_round_trips_and_seeds_on_first_run(tmp_path: Path) -> None
     assert ledger.seed(100.0, at=T0)
     ledger.save()
     assert Ledger.load(path).current_bankroll() == 100.0
+
+
+def _laddered(tmp_path):
+    """A view recommended as two contracts — a sportsbook number and a rung."""
+    book = Ledger(path=tmp_path / "ladder.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    for stamp, at, point, house, price in (
+        ("A", "2026-09-10", 44.5, "lowvig", -110.0),
+        ("B", "2026-09-11", 25.5, "kalshi", 900.0),
+    ):
+        book.recommend(pd.DataFrame([{
+            "game_id": "G", "market": "total", "side": "under", "point": point,
+            "book": house, "price": price, "stake": 1.0, "kind": "game",
+        }]), league="nfl", stamp=stamp, at=pd.Timestamp(at))
+    return book
+
+
+def test_placing_a_view_that_has_two_contracts_refuses_to_guess(tmp_path) -> None:
+    """The bug that made a −110 bet into a +900 longshot.
+
+    A `bet_id` is a view — this game, this market, this side — and stays one on
+    purpose: a total ticking from 44.5 to 45.5 must not read as a new bet and
+    get placed a second time. But one view can be bought as several contracts,
+    which is exactly what an exchange ladder is, and `place` used to fill
+    missing terms from whichever record was newest. Booking the sportsbook bet
+    by hand after a Kalshi rung had been recommended therefore recorded it at
+    the rung's price and number: wrong ledger, wrong bankroll, wrong CLV.
+    """
+    book = _laddered(tmp_path)
+    with pytest.raises(ValueError, match="more than one contract"):
+        book.place(bet_id("nfl", "G", "total", "under"), 1.10, at=pd.Timestamp("2026-09-11"))
+    # The message has to name them, or the operator cannot answer it.
+    try:
+        book.place(bet_id("nfl", "G", "total", "under"), 1.10, at=pd.Timestamp("2026-09-11"))
+    except ValueError as exc:
+        assert "lowvig @ 44.5" in str(exc) and "kalshi @ 25.5" in str(exc)
+
+
+def test_naming_the_contract_books_that_contract_s_terms(tmp_path) -> None:
+    book = _laddered(tmp_path)
+    row = book.place(bet_id("nfl", "G", "total", "under"), 1.10,
+                     at=pd.Timestamp("2026-09-11"), book="lowvig", point=44.5)
+    assert (row["price"], row["point"], row["book"]) == (-110.0, 44.5, "lowvig")
+    rung = book.place(bet_id("nfl", "G", "total", "under"), 0.98,
+                      at=pd.Timestamp("2026-09-11"), book="kalshi", point=25.5)
+    assert (rung["price"], rung["point"], rung["book"]) == (900.0, 25.5, "kalshi")
+
+
+def test_one_contract_and_a_skip_still_need_no_terms(tmp_path) -> None:
+    # Nothing changes for the ordinary case: a view offered as one contract
+    # still inherits its terms, and a skip risks no money so it never asks.
+    book = Ledger(path=tmp_path / "plain.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    book.recommend(pd.DataFrame([{
+        "game_id": "G", "market": "total", "side": "under", "point": 44.5,
+        "book": "lowvig", "price": -110.0, "stake": 1.0, "kind": "game",
+    }]), league="nfl", stamp="A", at=pd.Timestamp("2026-09-10"))
+    row = book.place(bet_id("nfl", "G", "total", "under"), 1.0, at=pd.Timestamp("2026-09-10"))
+    assert row["price"] == -110.0 and row["point"] == 44.5
+
+    laddered = _laddered(tmp_path)
+    skipped = laddered.skip(bet_id("nfl", "G", "total", "under"), at=pd.Timestamp("2026-09-11"))
+    assert skipped["stake"] == 0.0
+
+
+def test_a_line_that_moves_is_still_the_same_bet(tmp_path) -> None:
+    """Why the view identity stays a view, rather than naming the number.
+
+    Putting the point into `bet_id` looks like the obvious fix for a ladder —
+    and it would place the same directional view again every time a total
+    ticked, which happens far more often than a rung and costs real money.
+    """
+    book = Ledger(path=tmp_path / "moved.parquet")
+    book.seed(100.0, at=pd.Timestamp("2026-09-10"))
+    for stamp, at, point in (("A", "2026-09-10", 44.5), ("B", "2026-09-11", 45.5)):
+        book.recommend(pd.DataFrame([{
+            "game_id": "G", "market": "total", "side": "under", "point": point,
+            "book": "lowvig", "price": -110.0, "stake": 1.0, "kind": "game",
+        }]), league="nfl", stamp=stamp, at=pd.Timestamp(at))
+        if stamp == "A":
+            book.place(bet_id("nfl", "G", "total", "under"), 1.0,
+                       at=pd.Timestamp(at), book="lowvig", point=point)
+    assert book.latest_recommendations("nfl").iloc[0]["status"] == "placed"
+    assert len(book.open_bets()) == 1, "a moved line must not open a second position"
