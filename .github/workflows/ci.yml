@@ -41,3 +41,13 @@ jobs:
 
       - name: Pytest (offline suite)
         run: pytest -q
+
+      # The hub's joins are JavaScript, and they are the kind of code that
+      # fails QUIETLY: a team-name match that misses drops a league's live
+      # scores while the board still looks fine, and a box-score parser that
+      # guesses column names mislabels a row of numbers rather than erroring.
+      # node's own runner, no dependencies — it needs neither `npm ci` nor a
+      # browser, so it costs seconds.
+      - name: Node (hub join + formatter tests)
+        if: matrix.python-version == '3.12'
+        run: node --test "site/tests/**/*.test.mjs"

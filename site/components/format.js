@@ -12,11 +12,24 @@ export function signed(value, dp = 2) {
   return `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(dp)}`;
 }
 
+/** The real minus sign, U+2212, in place of the ASCII hyphen.
+ *
+ * `toFixed` emits a hyphen-minus, which on the board face is visibly shorter
+ * and sits at the wrong height beside a tabular digit — the one typographic
+ * detail that most makes a board look like a spreadsheet. Every formatter here
+ * goes through this rather than each caller remembering, because the callers
+ * that forget are the ones nobody looks at: a spread POINT is negative as
+ * often as a profit is, and it reached the surface through `num`.
+ */
+function minus(text) {
+  return text.replace('-', '−');
+}
+
 /** Plain fixed-point, em-dash for missing. */
 export function num(value, dp = 2) {
   const n = Number(value);
   if (value === null || value === undefined || Number.isNaN(n)) return '—';
-  return n.toFixed(dp);
+  return minus(n.toFixed(dp));
 }
 
 /** A fraction as a percentage; `sign` adds the leading +/−. */
@@ -24,7 +37,7 @@ export function pct(value, dp = 1, sign = false) {
   const n = Number(value);
   if (value === null || value === undefined || Number.isNaN(n)) return '—';
   const body = `${Math.abs(n * 100).toFixed(dp)}%`;
-  if (!sign) return `${(n * 100).toFixed(dp)}%`;
+  if (!sign) return minus(`${(n * 100).toFixed(dp)}%`);
   return `${n > 0 ? '+' : n < 0 ? '−' : ''}${body}`;
 }
 
@@ -88,7 +101,13 @@ export const MARKET_LABEL = {
 
 export function marketLabel(market) {
   const key = String(market ?? '');
-  return MARKET_LABEL[key] ?? key.replace(/_/g, ' ');
+  if (MARKET_LABEL[key]) return MARKET_LABEL[key];
+  // Prop markets arrive as free text from the odds feed ("pitcher strikeouts",
+  // "player_reception_yds") and have no entry above. Sentence-casing them
+  // stops a table reading half title-case and half not, which is what a raw
+  // passthrough produced.
+  const words = key.replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : '';
 }
 
 /** over/under/home/away → OVER/UNDER/HOME/AWAY, players left alone. */

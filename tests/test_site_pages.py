@@ -94,41 +94,29 @@ def test_prose_interpolations_survive_the_markdown_pass(page: Path) -> None:
 
 
 @pytest.mark.parametrize("page", MD_PAGES, ids=lambda p: str(p.relative_to(PAGES)))
-def test_every_page_declares_its_title_and_place(page: Path) -> None:
+def test_every_page_declares_its_title(page: Path) -> None:
     text = page.read_text()
-    # The matchup template is a route, not a nav entry.
-    if page.name.startswith("["):
-        return
     match = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     assert match, f"{page.name}: no frontmatter — the tab title falls back to 'Evidence'"
-    front = match.group(1)
-    assert re.search(r"^title:\s*\S", front, re.M), f"{page.name}: no title"
-    # A page inside a folder is ordered by its section, not the top-level nav.
-    if page.parent == PAGES:
-        assert re.search(r"^sidebar_position:\s*\d", front, re.M), (
-            f"{page.name}: no sidebar_position — unnumbered pages sort "
-            "alphabetically after the numbered ones, which is how the nav "
-            "ended up in the wrong order."
-        )
+    assert re.search(r"^title:\s*\S", match.group(1), re.M), f"{page.name}: no title"
 
 
-def test_the_nav_order_is_decision_first() -> None:
-    """Today, then the board, then the record, then the research."""
-    order = {}
-    for page in MD_PAGES:
-        if page.parent != PAGES or page.name.startswith("["):
-            continue
-        match = re.search(r"^sidebar_position:\s*(\d+)", page.read_text(), re.M)
-        if match:
-            order[page.stem] = int(match.group(1))
-    assert order["index"] == 1, "Today is the home page and sorts first"
-    # Props is a decision surface, so it sits with the board rather than
-    # behind the research pages.
-    assert order["board"] < order["props"] < order["performance"]
-    assert order["board"] < order["performance"] < order["health"]
-    assert order["health"] < order["ratings"]
-    # Positions are unique, or the tie falls back to filename order.
-    assert len(set(order.values())) == len(order), f"duplicate positions: {order}"
+def test_the_site_is_one_page() -> None:
+    """The whole premise of the rebuild, pinned.
+
+    The old site was ten pages, and the join between a projection, its price,
+    the DFS plays from the same game and what you had riding on it was
+    something the reader had to hold in their head across four tabs. The hub
+    is one route with four views switched client-side, and a second page would
+    quietly bring the tab switching back — so adding one has to be a decision,
+    not a drift.
+
+    If a second page is ever genuinely wanted, delete this test in the same
+    commit that adds it and say why in the message.
+    """
+    assert [p.name for p in MD_PAGES] == ["index.md"], (
+        "the hub is a single surface; a second page reintroduces navigation"
+    )
 
 
 # --- the board's typographic rules --------------------------------------
@@ -262,6 +250,12 @@ def test_every_table_a_page_queries_has_a_source_and_a_schema() -> None:
     sources = {path.stem for path in (site / "sources" / "velocity").glob("*.sql")}
     build = (site.parent / "scripts" / "build_site_data.py").read_text()
     schemas = set(re.findall(r'^\s{8}"(\w+)": \{', build, re.M))
+    # `site_meta` needs no sentinel because it is never derived from a slate
+    # family: `site_meta_frame` writes exactly one row unconditionally, even on
+    # a build with nothing stamped at all (tests/test_site_tier.py pins that).
+    # It is the one table that cannot be empty, so it is the one table exempt
+    # from needing a typed empty row.
+    unconditional = {"site_meta"}
 
     queried: dict[str, set[str]] = {}
     for page in MD_PAGES:
@@ -272,11 +266,42 @@ def test_every_table_a_page_queries_has_a_source_and_a_schema() -> None:
             f"{sorted(pages)} query velocity.{table}, but "
             f"site/sources/velocity/{table}.sql does not exist"
         )
-        assert table in schemas, (
+        assert table in schemas or table in unconditional, (
             f"velocity.{table} has a source but no schema in build_site_data.py, "
             "so an empty slate writes no sentinel row and "
             f"{sorted(pages)} hang instead of rendering an empty state"
         )
+
+
+HUB_COMPONENTS = sorted((PAGES.parent / "components").rglob("*.svelte"))
+
+
+@pytest.mark.parametrize(
+    "component", HUB_COMPONENTS,
+    ids=lambda p: p.name,
+)
+def test_a_displayed_number_goes_through_the_shared_formatters(component: Path) -> None:
+    """No component formats a number for display on its own.
+
+    The board's number rules — a real minus on negatives, a sign on anything
+    that carries a colour — live in `components/format.js` and are checked in
+    `site/tests/format.test.mjs`. A component that calls `toFixed` in its
+    markup bypasses both and renders an ASCII hyphen, which is the single
+    detail that most makes a board look like a spreadsheet.
+
+    Only the MARKUP is checked. Script-side `toFixed` is how SVG path
+    coordinates are built (Spark, the bankroll curve), and those are geometry,
+    not numbers anybody reads.
+    """
+    text = component.read_text()
+    _, _, markup = text.rpartition("</script>")
+    markup = markup or text
+    # The <style> block cannot contain an expression, so it only adds noise.
+    markup = markup.split("<style>")[0]
+    assert "toFixed(" not in markup, (
+        f"{component.name}: `toFixed` in the markup bypasses format.js and "
+        "renders an ASCII hyphen for negatives. Use num/pct/signed/american."
+    )
 
 
 def test_a_team_mark_falls_back_when_the_logo_does_not_arrive() -> None:

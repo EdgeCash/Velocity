@@ -28,6 +28,131 @@ import pandas as pd
 LEAGUES = ("nfl", "ncaaf", "mlb", "wnba", "ncaab", "nhl")
 _STAMP = r"(\d{8}T\d{6}Z)"
 
+# --------------------------------------------------------------------------
+# The public tier.
+#
+# docs/SITE.md's rule is that the site carries paid-odds-derived numbers, so it
+# deploys behind Access and is never public. That rule is enforced HERE rather
+# than in the site, and the distinction matters: a page that merely declines to
+# render a column still ships the column, sitting in a parquet the browser
+# downloads and anyone can open. The public tier drops those columns and whole
+# tables before anything is written, so the bytes do not exist to leak.
+#
+# What counts as private is one rule applied consistently: **anything derived
+# from a paid or licensed feed**. That is every sportsbook price, and
+# everything computed against one — a de-vigged fair probability, an edge, a
+# Kelly stake, closing-line value, the bankroll those stakes move.
+#
+# What survives is the model's own output: projections, simulated
+# distributions, ratings, the win/loss result of a graded bet, and the
+# exchanges. Kalshi and Polymarket prices are public market data and stay.
+#
+# The odd one out is the DraftKings salary. It is free to any account holder
+# rather than licensed, but it is DraftKings' data and the repo already
+# quarantines it to private artifacts, so it is treated the same way here. The
+# projected POINTS are ours and stay.
+PUBLIC_DROP_TABLES = (
+    "bankroll",       # every number in it is a staked-money number
+    "bankroll_curve",
+    "ledger_open",    # the open bets themselves
+    "exposure",
+    "portfolio",      # Kelly sizing
+    "units",          # profit and loss by day
+    "clv_by_market",  # CLV is measured against a paid closing price
+    "market_health",  # ROI and CLV per market
+    "line_moves",     # two paid snapshots, by construction
+    "props",          # priced off paid books
+    "parlays",
+)
+
+PUBLIC_DROP_COLUMNS = {
+    # The board keeps its PRICE. By the time this runs the sportsbook rows are
+    # gone (see the venue filter below) and what is left is Kalshi and
+    # Polymarket, whose prices are public market data — blanking those would
+    # strip the public tier of the one venue it is actually allowed to quote.
+    #
+    # What cannot stay is anything measured against the best price ACROSS
+    # venues: `edge` is the model's probability less the de-vigged fair one,
+    # and publishing it beside `p_model` would let the paid book's price be
+    # solved for exactly.
+    "board": ("p_fair", "edge", "stake", "stake_sized", "conviction"),
+    "publish": ("price", "stake", "stake_sized", "edge", "drift", "conviction",
+                "context"),
+    "record": ("price", "stake", "profit", "stake_sized", "profit_sized",
+               "price_clv", "line_clv", "close_source", "p_fair", "point"),
+    "cumulative_record": ("price", "stake", "profit", "stake_sized",
+                          "profit_sized", "price_clv", "line_clv",
+                          "close_source", "p_fair", "point"),
+    "dfs_lineup": ("salary",),
+    "dfs_showdown": ("salary",),
+    "dfs_tiered": ("salary",),
+    "dfs_gpp": ("total_salary",),
+}
+
+# A board row from a sportsbook is a paid quote even with its price stripped —
+# that FanDuel has a line on this game at all is the feed's information. The
+# exchanges are public venues and their rows stay whole.
+PUBLIC_VENUES = ("kalshi", "polymarket")
+
+
+def apply_tier(name: str, frame: pd.DataFrame, tier: str) -> pd.DataFrame:
+    """A table as the tier is allowed to see it.
+
+    A private table comes back **empty** and a private column comes back
+    **all-null**, rather than either being removed outright. That is not a
+    softer version of dropping them: an empty table and an all-null column
+    carry exactly zero information, which is the property that actually
+    matters. What it buys is one data contract — the site has a single page of
+    SQL that names these columns, and a build that deleted them would fail to
+    parse rather than render a public tier.
+
+
+    An emptied table then flows into the existing sentinel path below, so the
+    public build writes the same one typed row a quiet slate writes, and the
+    surface renders its ordinary empty state.
+    """
+    if tier != "public":
+        return frame
+    if name in PUBLIC_DROP_TABLES:
+        return frame.iloc[0:0]
+    # A sportsbook row is a paid quote even with its price nulled — that a book
+    # has a line on this game at all is the feed's information. Those rows go;
+    # the exchanges are public venues and theirs stay.
+    if name == "board" and not frame.empty and "venue" in frame.columns:
+        frame = frame[frame["venue"].astype(str).str.lower().isin(PUBLIC_VENUES)]
+    blank = PUBLIC_DROP_COLUMNS.get(name, ())
+    if blank and not frame.empty:
+        frame = frame.copy()
+        for column in blank:
+            if column in frame.columns:
+                # Null in place, keeping the column's dtype so the parquet
+                # schema — and every query written against it — is unchanged.
+                frame[column] = pd.Series(
+                    [None] * len(frame), index=frame.index,
+                ).astype(frame[column].dtype, errors="ignore")
+    return frame
+
+
+def site_meta_frame(tier: str, tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """One row naming the build: which tier it is, and the newest stamp in it.
+
+    The site reads `tier` to decide what it is allowed to show. It is a
+    belt-and-braces read — the columns are already gone by the time it runs —
+    but it is what lets the surface SAY which tier it is instead of silently
+    rendering a board with no prices.
+    """
+    stamps = []
+    for frame in tables.values():
+        if frame is None or frame.empty or "stamp" not in frame.columns:
+            continue
+        stamps.extend(str(s) for s in frame["stamp"].dropna().unique() if str(s))
+    stamp = max((s for s in stamps if re.fullmatch(_STAMP, s)), default="")
+    return pd.DataFrame([{
+        "tier": tier,
+        "stamp": stamp,
+        "built_at": pd.Timestamp.now("UTC").tz_localize(None),
+    }])
+
 # Evidence's source runner writes no parquet at all for a query that returns
 # zero rows, and the build then dies reading the missing extraction ("too
 # small to be a Parquet file"). So an absent family ships exactly one
@@ -695,6 +820,10 @@ def main() -> None:
                         help="skip the Open-Meteo forecast fetch")
     parser.add_argument("--ledger", default=None,
                         help="the bankroll ledger parquet (docs/WAGERING.md W1)")
+    parser.add_argument("--tier", choices=("private", "public"), default="private",
+                        help="private carries prices, edges, stakes and the "
+                             "bankroll; public carries the model's own output "
+                             "and the exchanges only (see PUBLIC_DROP_TABLES)")
     args = parser.parse_args()
 
     slate_dir = Path(args.slate_dir)
@@ -870,6 +999,11 @@ def main() -> None:
                         "placed_at": "datetime64[ns]"},
     }
     for name, frame in tables.items():
+        # The tier gate runs FIRST, before the schema backfill: backfilling a
+        # column the gate had just blanked would be harmless, but emptying a
+        # table after it had been given its columns would not, and doing the
+        # gate first keeps the order obvious rather than merely safe.
+        frame = apply_tier(name, frame, args.tier)
         if frame.empty:
             frame = sentinel_frame(schemas[name])
         else:
@@ -886,6 +1020,12 @@ def main() -> None:
                     )
         frame.to_parquet(out / f"{name}.parquet", index=False)
         print(f"{name}: {len(frame)} rows")
+
+    # Last, so it can report the newest stamp across everything actually
+    # written. It is never gated — naming the tier is the point of it.
+    meta = site_meta_frame(args.tier, tables)
+    meta.to_parquet(out / "site_meta.parquet", index=False)
+    print(f"site_meta: {args.tier}, stamp {meta.iloc[0]['stamp'] or '(none)'}")
 
 
 if __name__ == "__main__":
