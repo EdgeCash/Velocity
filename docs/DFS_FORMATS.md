@@ -69,6 +69,33 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 | 377 | Snake | QB,RB,WR/TE,WR/TE,FLEX,S-FLEX,BENCH | — | SnakeDraft | planned (draft advisor) |
 | 378 | Snake Showdown | S-FLEX x3, BENCH | — | SnakeDraft | planned (draft advisor) |
 
+### WNBA
+
+| Game type | Format | Roster | Cap | Draft | Velocity |
+|---|---|---|---|---|---|
+| 37 | WNBA | G,G,F,F,F,UTIL | $50,000 | SalaryCap | spec only (`WNBA_CLASSIC`) — no scorer |
+
+Read off the rules API on 2026-09-12, with **no WNBA board running**: the
+lobby (`getcontests?sport=WNBA`) returned 76 draft groups that day and not
+one of them was WNBA — the sport parameter is a tab, not a filter, so it
+serves whatever is live (NFL, MLB, CFB, LoL). The roster template is public
+whether or not a slate is, so the spec is DK's own: game type 37, lineup
+configuration 38, six players, ≥2 games, ≥2 teams, unique players, late swap
+allowed. Game type 72 carries the identical template under a different sport
+and is *not* this one — the Madden trap in reverse.
+
+Two things are still missing before a WNBA board can be priced, and neither
+is a guess away:
+
+1. **The scoring constants.** Unlike the roster template there is no JSON
+   endpoint for them; `/help/rules/4/37` renders client-side and every
+   scoring-shaped API path 404s. They have to be read off DK's published
+   rules by eye, as MLB's and the NFL's were.
+2. **Player rates.** `datasets/wnba/` holds `games` and `team_box` and no
+   player data at all, so a scorer would have nothing to score. wehoop
+   publishes a player-box release on the same CI-safe transport the team box
+   already uses, which is where that starts.
+
 ## Showdown Captain Mode
 
 The one format that applies identically across all three sports, and the

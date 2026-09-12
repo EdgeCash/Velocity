@@ -60,6 +60,21 @@ MLB_CLASSIC = RosterSpec(
     {"P": 2, "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3},
     (),
 )
+# DK's women's basketball game: six players, $50,000, at least two games and
+# two teams. Read off DK's own rules API (game type 37, lineup configuration
+# 38) rather than a live board — the lobby serves no WNBA draft group today,
+# and the roster template is public whether or not a slate is running.
+#
+# The spec is here and NOT in LEAGUE_SPECS on purpose: pricing a board needs
+# a scorer, a scorer needs per-player WNBA rates, and this repo banks only
+# team box scores (datasets/wnba/). A spec with no projections behind it
+# would build a lineup out of nothing.
+WNBA_CLASSIC = RosterSpec(
+    "wnba_classic",
+    ("G", "G", "F", "F", "F", "UTIL"),
+    {"G": 2, "F": 3},
+    (("UTIL", ("G", "F")),),
+)
 
 # NFL-classic aliases, kept for callers/tests that predate roster specs.
 SLOTS: tuple[str, ...] = NFL_CLASSIC.slots
