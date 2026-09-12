@@ -37,7 +37,12 @@ import pandas as pd
 
 from velocity.ingest import kalshi as kalshi_ingest
 from velocity.ingest import polymarket as pm_ingest
-from velocity.wagering.live import align_game_ids, apply_team_aliases, exchange_aliases
+from velocity.wagering.live import (
+    align_game_ids,
+    apply_team_aliases,
+    canonicalize_sides,
+    exchange_aliases,
+)
 
 # Our league → the series each venue lists it under.
 KALSHI_SERIES_BY_LEAGUE = {
@@ -64,7 +69,7 @@ def kalshi_board(
         None,
     )
     if winner is None:
-        return _empty_lines(), {"games": 0, "lines": 0}
+        return _empty_lines(), {"games": 0, "lines": 0, "unresolved_sides": 0}
 
     known = list(known_teams)
     frames = [
@@ -77,7 +82,7 @@ def kalshi_board(
     )
     lines, events = apply_team_aliases(lines, events, aliases)
     lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
-    return lines, {"games": len(events), "lines": len(lines)}
+    return _canonicalized(lines, events)
 
 
 def polymarket_board(
@@ -94,7 +99,33 @@ def polymarket_board(
     aliases = exchange_aliases(pm_ingest.team_names_by_code(events_payload), known)
     lines, events = apply_team_aliases(lines, events, aliases)
     lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
-    return lines, {"games": len(events), "lines": len(lines)}
+    return _canonicalized(lines, events)
+
+
+def _canonicalized(
+    lines: pd.DataFrame, events: pd.DataFrame
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Speak the slate's side language, in this venue's own scope.
+
+    A venue's spread and moneyline rows name a **team** in ``side``, and by
+    this point that name is a rating key, because :func:`apply_team_aliases`
+    rewrote it. The slate's own board still carries The Odds API's full names,
+    so the side mapping it runs later cannot match a rating key against a
+    provider name: left alone, every exchange spread and moneyline is dropped
+    without a word and only totals reach the card. Mapping here, against this
+    venue's own aliased events, is the fix; the later pass is idempotent and
+    leaves these rows alone.
+
+    The count of rows that still fail to resolve rides in the notes — a venue
+    board that quietly loses its two biggest market families is exactly the
+    failure this is closing.
+    """
+    kept = canonicalize_sides(lines, events)
+    return kept, {
+        "games": len(events),
+        "lines": len(kept),
+        "unresolved_sides": int(len(lines) - len(kept)),
+    }
 
 
 def canonical_base_events(
@@ -166,7 +197,7 @@ def fetch_exchange_board(  # pragma: no cover - network
             boards.append(board)
             notes["kalshi"] = note
         except Exception as exc:  # noqa: BLE001 - an optional venue
-            notes["kalshi"] = {"games": 0, "lines": 0}
+            notes["kalshi"] = {"games": 0, "lines": 0, "unresolved_sides": 0}
             print(f"kalshi board skipped: {exc}")
 
     if "polymarket" in venues and league in POLYMARKET_LEAGUE:
@@ -180,7 +211,7 @@ def fetch_exchange_board(  # pragma: no cover - network
             boards.append(board)
             notes["polymarket"] = note
         except Exception as exc:  # noqa: BLE001 - an optional venue
-            notes["polymarket"] = {"games": 0, "lines": 0}
+            notes["polymarket"] = {"games": 0, "lines": 0, "unresolved_sides": 0}
             print(f"polymarket board skipped: {exc}")
 
     combined = combine(_empty_lines(), *boards)

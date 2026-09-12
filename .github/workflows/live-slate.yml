@@ -313,20 +313,19 @@ jobs:
             # bought this data, so a second call spends credits on a board we
             # can read for free.
             #
-            # Only a payload younger than STALE_AFTER minutes is reused. Prices
-            # move, and betting a line that has already gone manufactures edge
-            # that was never available — the credits are worth far less than a
+            # Only a payload younger than the age limit is reused. Prices move,
+            # and betting a line that has already gone manufactures edge that
+            # was never available — the credits are worth far less than a
             # phantom bet. Anything older falls through to a live pull.
-            STALE_AFTER=${{ github.event.inputs.board_max_age_min || '75' }}
-            SNAP=$(find artifacts/odds -path "*/raw/odds_${league}_*.json" \
-                     -mmin "-${STALE_AFTER}" -printf '%T@ %p\n' 2>/dev/null \
-                   | sort -rn | head -1 | cut -d' ' -f2- || true)
-            if [ -n "$SNAP" ]; then
-              echo "board: reusing banked payload $SNAP (fresh, no credits spent)"
-              EXTRA="$EXTRA --snapshot-file $SNAP"
-            else
-              echo "board: no banked payload for ${league} under ${STALE_AFTER}min; pulling live"
-            fi
+            #
+            # The *runner* picks the file, keyed on the capture stamp in its
+            # name. Doing it here with `find -mmin` read the mtime of files we
+            # had just unzipped out of Actions artifacts, so every candidate
+            # looked equally new, the age filter never rejected anything, and
+            # the oldest download won the sort — two-day-old boards were priced
+            # and logged as fresh (see `newest_banked_board`).
+            EXTRA="$EXTRA --snapshot-dir artifacts/odds"
+            EXTRA="$EXTRA --board-max-age-min ${{ github.event.inputs.board_max_age_min || '75' }}"
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi

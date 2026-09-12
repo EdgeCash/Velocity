@@ -73,6 +73,10 @@ NFL_TEAM_ALIASES: dict[str, str] = {
 }
 
 _TOTAL_SIDES = {"over": "over", "under": "under"}
+# The labels the slate speaks. A frame already carrying them is left alone, so
+# canonicalizing twice is a no-op — which is what lets a venue board be
+# canonicalized in its own scope and then concatenated onto the sportsbook's.
+_CANONICAL_SIDES = {"home": "home", "away": "away", **_TOTAL_SIDES}
 
 
 def _normalize(name: str) -> str:
@@ -296,6 +300,14 @@ def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFram
     Spread/moneyline sides carry the team name; a total's sides are ``Over`` /
     ``Under``. Using each event's own home/away names (same snapshot), this is an
     exact per-game lookup. Rows whose side can't be mapped are dropped.
+
+    The mapping is **idempotent**: a side already spelled ``home``/``away``/
+    ``over``/``under`` passes straight through. That matters because an
+    exchange board is canonicalized in its own scope, against its own aliased
+    event names, before it is concatenated onto the sportsbook board — without
+    the passthrough this function would run a second time over those rows,
+    fail to match a rating key against a provider name, and silently drop every
+    exchange spread and moneyline on the card.
     """
     if lines.empty:
         return lines.copy()
@@ -305,8 +317,8 @@ def canonicalize_sides(lines: pd.DataFrame, events: pd.DataFrame) -> pd.DataFram
     def _side(row: Mapping[Any, Any]) -> str | None:
         raw = str(row["side"])
         low = raw.strip().lower()
-        if low in _TOTAL_SIDES:
-            return _TOTAL_SIDES[low]
+        if low in _CANONICAL_SIDES:
+            return _CANONICAL_SIDES[low]
         gid = str(row["game_id"])
         if raw == home_by_game.get(gid):
             return "home"

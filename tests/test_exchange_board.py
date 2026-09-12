@@ -13,13 +13,14 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.ingest.exchanges import (
+    _canonicalized,
     canonical_base_events,
     combine,
     kalshi_board,
     polymarket_board,
 )
 from velocity.ingest.odds import shop_best_prices
-from velocity.wagering.live import align_game_ids
+from velocity.wagering.live import align_game_ids, canonicalize_sides
 
 REPO = Path(__file__).resolve().parents[1]
 FIX = REPO / "tests" / "fixtures"
@@ -56,7 +57,7 @@ def test_a_venue_game_missing_from_the_base_board_is_dropped() -> None:
     lines, note = kalshi_board(
         {"KXNFLGAME": KALSHI}, NFL_TEAMS, BASE_EVENTS, STAMP
     )
-    assert note == {"games": 0, "lines": 0}
+    assert note == {"games": 0, "lines": 0, "unresolved_sides": 0}
     assert lines.empty
 
 
@@ -141,9 +142,11 @@ def test_prices_shop_across_venues_on_one_scale() -> None:
     # price for the same outcome compete in the same shop.
     exchange, _ = polymarket_board(PM_EVENTS, PM_BOOKS, NFL_TEAMS, BASE_EVENTS, STAMP)
     moneyline = exchange.query("market == 'moneyline' and game_id == 'evt-denkc'")
-    # KC's ask is $0.57, i.e. -133. Quote the same side at a clearly worse
-    # sportsbook number so the shop has an unambiguous winner.
-    kc = moneyline.query("side == 'KC'")
+    # A venue board leaves with canonical sides, so KC — the home team in this
+    # game — is "home" here rather than a rating key. Its ask is $0.57, i.e.
+    # -133. Quote the same side at a clearly worse sportsbook number so the
+    # shop has an unambiguous winner.
+    kc = moneyline.query("side == 'home'")
     assert len(kc) == 1 and kc.iloc[0]["price"] == -133
     sportsbook = kc.copy()
     sportsbook["book"] = "bookA"
@@ -155,8 +158,66 @@ def test_prices_shop_across_venues_on_one_scale() -> None:
     winner = best[
         (best["game_id"] == "evt-denkc")
         & (best["market"] == "moneyline")
-        & (best["side"] == "KC")
+        & (best["side"] == "home")
     ]
     assert len(winner) == 1
     # The exchange's better number wins the shop.
     assert winner.iloc[0]["book"] == "polymarket"
+
+
+def test_team_named_exchange_rows_survive_the_slates_own_side_pass() -> None:
+    """Spread and moneyline rungs must reach the card, not totals alone.
+
+    A venue board is canonicalized in its own scope, so its sides are already
+    ``home``/``away`` by the time the slate re-runs
+    :func:`~velocity.wagering.live.canonicalize_sides` over the combined board
+    against the sportsbook's provider-named events. Before that passthrough
+    existed the second pass compared a rating key to "Kansas City Chiefs",
+    matched nothing, and dropped every exchange spread and moneyline without a
+    word — leaving a card that could only ever hold totals.
+    """
+    provider_named = BASE_EVENTS.assign(
+        home_team=["Kansas City Chiefs", "Houston Texans"],
+        away_team=["Denver Broncos", "Buffalo Bills"],
+    )
+    lines, note = polymarket_board(
+        PM_EVENTS, PM_BOOKS, NFL_TEAMS, provider_named, STAMP
+    )
+    assert note["unresolved_sides"] == 0
+
+    team_markets = lines[lines["market"].isin(["moneyline", "spread"])]
+    assert not team_markets.empty, "the fixture must carry team-named markets"
+    assert set(team_markets["side"]) == {"home", "away"}
+
+    # The slate's pass over the concatenated board is a no-op on these rows.
+    assert len(canonicalize_sides(lines, provider_named)) == len(lines)
+
+
+def test_a_side_that_still_will_not_resolve_is_counted_not_hidden() -> None:
+    # A venue row naming a team that is not in the game it was aligned onto
+    # cannot be priced. It is dropped — but the note says how many, so a board
+    # that quietly loses a market family is visible in the run log.
+    events = pd.DataFrame(
+        {
+            "game_id": ["evt-denkc"],
+            "kickoff": [pd.Timestamp("2026-09-15 00:15:00")],
+            "home_team": ["KC"],
+            "away_team": ["DEN"],
+        }
+    )
+    lines = pd.DataFrame(
+        {
+            "game_id": ["evt-denkc", "evt-denkc"],
+            "line_id": ["a", "b"],
+            "book": ["kalshi", "kalshi"],
+            "market": ["moneyline", "moneyline"],
+            "side": ["KC", "SEA"],
+            "price": [-110, 150],
+            "point": [None, None],
+            "timestamp": [STAMP, STAMP],
+            "is_closing": [False, False],
+        }
+    )
+    kept, note = _canonicalized(lines, events)
+    assert list(kept["side"]) == ["home"]
+    assert note["unresolved_sides"] == 1

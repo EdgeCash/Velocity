@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,6 +73,79 @@ def _load_snapshot(args: argparse.Namespace) -> object:
 
     client = TheOddsAPIClient.from_env()
     return client.odds_payload(args.league)
+
+
+# A banked ``/odds`` payload is named ``odds_{league}_{YYYYmmdd}T{HHMMSS}Z.json``
+# by the collector (scripts/collect_theoddsapi.py). The stamp is the only honest
+# record of when the board was bought.
+_SNAPSHOT_RE = re.compile(r"^odds_(?P<league>[a-z]+)_(?P<stamp>\d{8}T\d{6}Z)\.json$")
+
+
+def parse_snapshot_stamp(name: str, league: str) -> pd.Timestamp | None:
+    """Capture time from a banked payload's filename, or ``None`` if not this league's."""
+    match = _SNAPSHOT_RE.match(name)
+    if match is None or match["league"] != league:
+        return None
+    return pd.Timestamp(datetime.strptime(match["stamp"], "%Y%m%dT%H%M%SZ"))
+
+
+def newest_banked_board(
+    root: Path, league: str, now: pd.Timestamp, max_age_minutes: float
+) -> tuple[Path | None, pd.Timestamp | None]:
+    """The freshest banked board for ``league`` → ``(path_if_fresh, newest_stamp)``.
+
+    Freshness is read from the **stamp in the filename**, never the file's
+    mtime. The workflow downloads these payloads out of Actions artifacts, so
+    every file is written at extraction time: mtime records when we unzipped
+    it, not when the board was bought. Selecting on mtime made the *oldest*
+    download win the sort (the loop extracts newest-first, so the oldest lands
+    last) and reported a two-day-old board as fresh — the slate then priced
+    every league against prices that had already moved, and leagues whose
+    games had all started produced an empty card.
+
+    The newest stamp is returned even when it is too old, so the caller can say
+    how stale the bank is instead of only that it missed.
+    """
+    best: tuple[Path, pd.Timestamp] | None = None
+    if not root.exists():
+        return None, None
+    for path in root.rglob("odds_*.json"):
+        stamp = parse_snapshot_stamp(path.name, league)
+        if stamp is None:
+            continue
+        if best is None or stamp > best[1]:
+            best = (path, stamp)
+    if best is None:
+        return None, None
+    age_minutes = (now - best[1]).total_seconds() / 60.0
+    return (best[0] if age_minutes <= max_age_minutes else None), best[1]
+
+
+def resolve_banked_board(args: argparse.Namespace, now: pd.Timestamp) -> None:
+    """Point ``--snapshot-file`` at the freshest banked board, when one qualifies.
+
+    An explicit ``--snapshot-file`` always wins. Otherwise a ``--snapshot-dir``
+    is searched, and the run falls through to a live pull when nothing in it is
+    recent enough — paying for credits beats pricing a board that has moved.
+    """
+    if args.snapshot_file or not getattr(args, "snapshot_dir", None):
+        return
+    path, stamp = newest_banked_board(
+        Path(args.snapshot_dir), args.league, now, args.board_max_age_min
+    )
+    if path is not None and stamp is not None:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"board: reusing banked payload {path} "
+              f"(captured {stamp:%Y-%m-%d %H:%M}Z, {age:.0f}min old; no credits spent)")
+        args.snapshot_file = str(path)
+        return
+    if stamp is None:
+        print(f"board: no banked payload for {args.league} under "
+              f"{args.snapshot_dir}; pulling live")
+    else:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"board: newest banked {args.league} payload is {age:.0f}min old "
+              f"(limit {args.board_max_age_min:g}); pulling live")
 
 
 def _find_plays(folder: Path) -> Path | None:
@@ -537,6 +611,16 @@ def build_parser() -> argparse.ArgumentParser:
                         required=True)
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
+    # The hourly collector already bought today's board, so re-reading it costs
+    # nothing where it is still current. Freshness is judged on the stamp in the
+    # filename — see ``newest_banked_board`` for why mtime is not usable here.
+    parser.add_argument("--snapshot-dir",
+                        help="folder of banked collect-theoddsapi artifacts; the freshest "
+                             "odds_{league}_{stamp}.json inside it is reused when it is "
+                             "younger than --board-max-age-min (ignored with --snapshot-file)")
+    parser.add_argument("--board-max-age-min", type=float, default=75.0,
+                        help="how old a banked board may be before the run pulls live "
+                             "instead (default: 75 minutes)")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--ncaaf-level", choices=["fit", "constant"], default=None,
                         help="the college blend's scores-half level: fitted on the trailing "
@@ -1078,6 +1162,10 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
+    # Resolve the banked board before anything reads --snapshot-file: every
+    # downstream "are we on a saved board" test keys on that one attribute.
+    resolve_banked_board(args, generated_at)
+
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
@@ -1116,7 +1204,9 @@ def main() -> None:
             args.league, known_teams, events, generated_at
         )
         for venue, note in venue_notes.items():
-            print(f"{venue}: {note['lines']} lines across {note['games']} board games")
+            unresolved = note.get("unresolved_sides", 0)
+            tail = f" ({unresolved} row(s) dropped — side unresolved)" if unresolved else ""
+            print(f"{venue}: {note['lines']} lines across {note['games']} board games{tail}")
         if not exchange_lines.empty:
             lines = pd.concat([lines, exchange_lines], ignore_index=True)
     elif args.exchanges:
