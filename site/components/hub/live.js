@@ -21,8 +21,12 @@
 //     ESPN also offers "PIT", "Steelers" and "Pittsburgh"). `indexGames`
 //     below registers every spelling we can derive so the match does not rest
 //     on one of them being right.
-
-import { writable } from 'svelte/store';
+//
+// **Nothing here imports Svelte.** The store that drives the UI lives next
+// door in `liveStore.js`, and the split is not tidiness: it is what lets
+// `site/tests/hub.test.mjs` run under bare `node --test` with no `npm ci` and
+// no node_modules at all. A single `svelte/store` import in this file takes
+// the whole suite out of CI, which is exactly how it first shipped.
 
 /** Our league codes → ESPN's sport/league path segment. */
 const ESPN_PATH = {
@@ -156,7 +160,7 @@ function trimEvent(league, event) {
 }
 
 /** Attach our game_id to an ESPN event, trying every spelling both sides offer. */
-function attachGameId(trimmed, index) {
+export function attachGameId(trimmed, index) {
   const lg = trimmed.league;
   const fields = ['display', 'abbr', 'short', 'location'];
   for (const field of fields) {
@@ -169,7 +173,7 @@ function attachGameId(trimmed, index) {
   return null;
 }
 
-async function fetchJson(url, signal) {
+export async function fetchJson(url, signal) {
   const res = await fetch(url, { headers: { accept: 'application/json' }, signal });
   if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
@@ -305,83 +309,3 @@ export async function fetchSummary(league, eventId, signal) {
     return { box: [], plays: [], ok: false };
   }
 }
-
-/* ------------------------------------------------------------------ *
- * The store.
- * ------------------------------------------------------------------ */
-
-const EMPTY = { games: [], byGame: {}, updated: null, ok: false, tried: false };
-
-function createLive() {
-  const { subscribe, set, update } = writable(EMPTY);
-  let timer = null;
-  let controller = null;
-  let plan = {};
-  let index = {};
-
-  async function load() {
-    controller?.abort();
-    controller = new AbortController();
-    const { signal } = controller;
-    try {
-      let { games, ok } = await fetchScoreboards(plan, index, signal);
-      if (!ok) {
-        // The viewer's own network blocks ESPN — fall back to the Worker,
-        // which carries a proxy for exactly this case. It answers for today
-        // only, which is the right trade: a blocked viewer gets live games
-        // rather than nothing.
-        try {
-          const data = await fetchJson('/api/scores', signal);
-          if (Array.isArray(data?.games)) {
-            games = data.games.map((g) => ({
-              league: String(g.lg ?? '').toLowerCase(),
-              event_id: '',
-              away: { abbr: g.away, display: '', short: g.away, location: '' },
-              home: { abbr: g.home, display: '', short: g.home, location: '' },
-              away_score: Number(g.as ?? 0),
-              home_score: Number(g.hs ?? 0),
-              state: g.state ?? 'pre',
-              detail: g.detail ?? '',
-              start: g.start ?? '',
-              game_id: null,
-            }));
-            for (const g of games) g.game_id = attachGameId(g, index);
-            ok = true;
-          }
-        } catch {
-          /* leave ok false; the hub shows its offline note */
-        }
-      }
-      const byGame = {};
-      for (const game of games) if (game.game_id) byGame[game.game_id] = game;
-      const order = { in: 0, pre: 1, post: 2 };
-      games.sort((a, b) => (order[a.state] ?? 3) - (order[b.state] ?? 3));
-      set({ games, byGame, updated: new Date(), ok, tried: true });
-    } catch (err) {
-      if (err?.name === 'AbortError') return;
-      update((s) => ({ ...s, tried: true }));
-    }
-  }
-
-  return {
-    subscribe,
-    /** Begin polling for the games we hold. Safe to call again on new data. */
-    start(games, teamIndex, everyMs = 45_000) {
-      plan = scoreboardPlan(games);
-      index = indexGames(games, teamIndex);
-      if (!Object.keys(plan).length) return;
-      load();
-      clearInterval(timer);
-      timer = setInterval(load, everyMs);
-    },
-    stop() {
-      clearInterval(timer);
-      timer = null;
-      controller?.abort();
-      controller = null;
-    },
-    refresh: load,
-  };
-}
-
-export const live = createLive();

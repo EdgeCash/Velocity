@@ -17,7 +17,7 @@
   // inside game cards alone would have buried it on exactly the days it
   // matters.
   import { onMount, onDestroy } from 'svelte';
-  import { live } from './live.js';
+  import { live } from './liveStore.js';
   import { hubState, VIEWS } from './state.js';
   import {
     buildGames, buildLineups, buildParlays, flaggedMarkets, leagueCounts,

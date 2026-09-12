@@ -93,6 +93,8 @@ site/
     hub/
       Shell.svelte        chrome, view routing, league filter, live wiring
       live.js             ESPN scoreboards + box scores, joined to our game_id
+                          (pure + fetch only — imports nothing, see below)
+      liveStore.js        the polling loop; the only live file importing Svelte
       model.js            the joins: flat rows -> game objects (pure, tested)
       state.js            view/league/game in the URL hash
       Ticker.svelte       the scores crawl, in the top bar
@@ -541,11 +543,20 @@ cd site && npm ci && npm run sources && npm run dev
 ```
 
 Add `--tier public` to the build step to see what a public surface would
-carry. The joins and the number rules are also testable without a browser:
+carry. The joins and the number rules are testable without a browser:
 
 ```bash
 node --test "site/tests/**/*.test.mjs"    # runs in CI
 ```
+
+That runs against the source files directly, with **no `npm ci` and no
+node_modules** — which is only true while every module the suite imports stays
+free of runtime dependencies. `live.js` therefore holds the pure parsing and
+planning functions and imports nothing, while `liveStore.js` holds the polling
+loop and is the only one of the two that imports Svelte. A single
+`svelte/store` import in `live.js` silently takes the whole suite out of CI
+(it passes locally, where node_modules exists), which is how it first shipped.
+To check the property, move `site/node_modules` aside and run the suite.
 
 (When iterating locally, `rm -rf site/.evidence/template/.evidence-queries`
 forces the sources step to re-read changed parquet — it caches by query

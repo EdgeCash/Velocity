@@ -46,8 +46,14 @@ jobs:
       # fails QUIETLY: a team-name match that misses drops a league's live
       # scores while the board still looks fine, and a box-score parser that
       # guesses column names mislabels a row of numbers rather than erroring.
-      # node's own runner, no dependencies — it needs neither `npm ci` nor a
-      # browser, so it costs seconds.
+      #
+      # node's own runner against the source files directly — no `npm ci`, no
+      # node_modules, no browser, so it costs seconds. That only holds while
+      # every module the suite imports stays free of runtime dependencies:
+      # `live.js` deliberately does NOT import Svelte (the store lives in
+      # `liveStore.js`) for exactly this reason, and a stray `svelte/store`
+      # import took the whole suite out of CI the first time it shipped.
+      # To check the property locally, move site/node_modules aside and run it.
       - name: Node (hub join + formatter tests)
         if: matrix.python-version == '3.12'
         run: node --test "site/tests/**/*.test.mjs"
