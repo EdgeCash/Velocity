@@ -353,6 +353,32 @@ def lineup_pool(salaries: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
         p[["_key", "points"]], on="_key", how="left", suffixes=("", "_proj")
     )
     is_dst = merged["position"].astype(str).str.upper().isin(["DST", "D", "DEF"])
+
+    # A defense is the one draftable whose name the two sides do not agree on.
+    # DraftKings lists it by nickname alone — "Chargers", "Jaguars" — while
+    # every projection source names the franchise ("Los Angeles Chargers"), so
+    # the name join cannot match and each defense fell through to the 0.0
+    # fallback below. That does not skip the slot: the optimizer still has to
+    # fill DST, so it took the cheapest defense on the board every week and
+    # ignored ten to fifteen points of the roster's variance. Team is the
+    # identity both sides do agree on, and a defense is one per team.
+    if is_dst.any() and "team" in p.columns and "team" in merged.columns:
+        def team_key(value: object) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+        dst_points = p[p["position"].astype(str).str.upper().isin(["DST", "D", "DEF"])]
+        by_team = {
+            team_key(row["team"]): row["points"]
+            for row in dst_points.to_dict("records")
+            if row.get("team") is not None and not pd.isna(row.get("team"))
+        }
+        if by_team:
+            from_team = pd.to_numeric(
+                merged.loc[is_dst, "team"].map(lambda v: by_team.get(team_key(v))),
+                errors="coerce",
+            )
+            merged.loc[is_dst, "points"] = merged.loc[is_dst, "points"].fillna(from_team)
+
     merged.loc[is_dst, "points"] = merged.loc[is_dst, "points"].fillna(0.0)
     merged.loc[is_dst, "position"] = "DST"
     merged = merged.dropna(subset=["points"])

@@ -181,6 +181,41 @@ def combine(base_lines: pd.DataFrame, *venue_lines: pd.DataFrame) -> pd.DataFram
     return pd.concat(frames, ignore_index=True)
 
 
+def board_from_payloads(
+    league: str,
+    known_teams: Sequence[str],
+    base_events: pd.DataFrame,
+    timestamp: Any,
+    *,
+    kalshi_payloads: Mapping[str, Any] | None = None,
+    polymarket_events: Any = None,
+    polymarket_books: Any = None,
+) -> tuple[pd.DataFrame, dict[str, dict[str, int]]]:
+    """One aligned board from payloads already in hand — no network.
+
+    The same assembly :func:`fetch_exchange_board` performs after fetching,
+    split out so a *banked* snapshot can be rebuilt exactly the way the live
+    slate built it. That is what lets grading find an exchange contract's own
+    close: the collectors bank the raw payloads hourly, and a close is simply
+    the last snapshot before the game started, re-keyed onto the slate's games.
+    """
+    boards: list[pd.DataFrame] = []
+    notes: dict[str, dict[str, int]] = {}
+    if kalshi_payloads:
+        board, note = kalshi_board(
+            kalshi_payloads, known_teams, base_events, timestamp, league=league
+        )
+        boards.append(board)
+        notes["kalshi"] = note
+    if polymarket_events is not None:
+        board, note = polymarket_board(
+            polymarket_events, polymarket_books or [], known_teams, base_events, timestamp
+        )
+        boards.append(board)
+        notes["polymarket"] = note
+    return combine(_empty_lines(), *boards), notes
+
+
 def fetch_exchange_board(  # pragma: no cover - network
     league: str,
     known_teams: Sequence[str],

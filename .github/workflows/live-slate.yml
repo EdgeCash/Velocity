@@ -126,6 +126,15 @@ jobs:
               --limit 6 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/props/$id" || true
           done
+          # The exchange collector's hourly snapshots. A ladder rung cannot be
+          # graded against the sportsbook's consensus close on the main number
+          # — a different strike is a different contract — so its own close has
+          # to be rebuilt from these. ~30 runs covers the last day and a half.
+          mkdir -p artifacts/exchanges
+          for id in $(gh run list --workflow collect-exchanges.yml --status success \
+              --limit 30 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/exchanges/$id" || true
+          done
 
       # The durable copy of the season chain. Previous slates live in 60-day
       # artifacts, so a failure streak or a retention gap used to lose the
@@ -201,6 +210,7 @@ jobs:
             if ! python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --props-dir artifacts/props \
+            --exchanges-dir artifacts/exchanges \
               --league "${league}" $LEDGER; then
               failed="$failed ${league}"
               echo "::warning title=Grading failed::${league} did not grade"
