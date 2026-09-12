@@ -98,7 +98,7 @@ slate before football arrives in September.
    attaches consensus closes from the hourly odds archive to every game
    bet (`closing_for_slate` in scripts/grade_yesterday.py — all five
    leagues snapshot hourly), and the record chain carries
-   `price_clv`/`line_clv` onto the site's Performance page. Still open:
+   `price_clv`/`line_clv` onto the site's Record view. Still open:
    closes for prop bets, and automated per-market decay alerts.
 5. **One global `min_edge`.** DESIGN §6.2 calls for thresholds sized to
    estimation error (higher for props/NCAAF); one number (0.02) used to serve
@@ -439,8 +439,10 @@ block's drawdown state, which the runner's ledger line now prints.
 ## 8. Addendum (2026-09): W3 landed — the monitor
 
 `velocity/report/monitor.py`, appended to the daily grade
-(`scripts/grade_yesterday.py`), on the site as **Market health**
-(`site/pages/health.md`; docs/STRATEGY_REVIEW.md S6).
+(`scripts/grade_yesterday.py`), on the site under **Record** as *Market
+health*, with the flag count pushed to the rail and each flag marked on the
+market it is about in the game sheet (docs/SITE.md, *Market health*;
+docs/STRATEGY_REVIEW.md S6).
 
 **What it reads.** The season chain the grader carries (S1's durable copy),
 which now also records what the model *claimed* on every play (`p_model`,

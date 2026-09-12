@@ -1,14 +1,74 @@
 # The Velocity Site
 
-The dashboard replacement for the Streamlit app (docs/DASHBOARD_RESEARCH.md):
-a static [Evidence](https://docs.evidence.dev) build over the daily run's
-parquet, deployed by the `live-slate` workflow to a Cloudflare Worker that
-sits behind Cloudflare Access. Total hosting cost: $0.
+A static [Evidence](https://docs.evidence.dev) build over the daily run's
+parquet, deployed by the `live-slate` workflow to a Cloudflare Worker behind
+Cloudflare Access. Total hosting cost: $0.
 
-**Privacy posture:** every page carries paid-odds-derived numbers (prices,
-edges, stakes), so the site deploys to ONE Access-gated host and is never
-public. A public model-facts site (projections, graded record, cards — no
-prices) is a later phase.
+It is **one page**. That is the whole design, and everything below is a
+consequence of it.
+
+## Why one page
+
+The site was ten pages, and it was the wrong shape for what it holds. A
+game's projection was on one page, the price on another, the DFS plays from
+that same game on a third, and what you actually had riding on it on a
+fourth — so the only thing that could put those four back together was the
+reader, with four tabs open. The data was never the problem; the
+information architecture was.
+
+The hub's unit is a **game**, and a game carries its own projection, its own
+prices across sportsbooks and exchanges, its own DFS players, its own open
+positions and its own live score. Opening one expands it in place. Nothing
+navigates.
+
+Four things are not games — the DFS slate, the position blotter, the graded
+record and the power ratings — and they are **views** on the same surface
+rather than pages. DFS in particular has to be a peer view rather than only
+living inside game cards, because the two genuinely do not line up: a Friday
+in September is an MLB and WNBA DFS slate against an NFL and college *board*,
+so a DFS surface nested only in game cards would be empty on exactly the days
+it has the most to say.
+
+Adding a view has to justify itself against that. Market health did not, and
+went inside Record; **ratings** did, because they are the only thing here
+that answers a question no game card can — a card shows two teams, and "who
+does the model think is good" is about all of them.
+
+View, league filter and opened game live in the URL hash, so "no tab
+switching" does not also mean "no back button" and a view is still something
+you can link to.
+
+## Tiers
+
+Every price, edge, stake and bankroll number on this site is derived from a
+**paid** odds feed, so the private tier deploys to ONE Access-gated host and
+is never public.
+
+The **public tier** is a build flag, not a second site:
+`scripts/build_site_data.py --tier public`. It is enforced in the DATA BUILD
+rather than in the pages, and that distinction is the whole point — a page
+that merely declines to render a column still ships the column, sitting in a
+parquet the browser downloads and anyone can open with DuckDB. The public
+tier empties the private tables and blanks the private columns before
+anything is written, so the bytes do not exist to leak.
+
+One rule decides what is private: **anything derived from a paid or licensed
+feed**. That is every sportsbook price and everything measured against one —
+a de-vigged fair probability, an edge, a Kelly stake, closing-line value, the
+bankroll those stakes move. What survives is the model's own output
+(projections, simulated distributions, ratings, the win/loss result of a
+graded bet) and the **exchanges**: Kalshi and Polymarket prices are public
+market data and stay, with their prices intact, because a public tier that
+stripped them would have no market on it at all.
+
+Sportsbook ROWS are dropped rather than merely blanked — that a book has a
+line on this game at all is the feed's information, and the row count alone
+would carry it. `edge` cannot stay even on an exchange row, because
+publishing it beside `p_model` lets the best paid price be solved for
+exactly.
+
+`tests/test_site_tier.py` checks all of this against the written frames, not
+against the rendering.
 
 ## Layout
 
@@ -19,28 +79,74 @@ site/
   sources/velocity/       DuckDB source; one .sql per table over data/*.parquet
     data/                 assembled per-run by scripts/build_site_data.py (gitignored)
   pages/
-    +layout.svelte        THE CHROME: wordmark, no Evidence footer, and the
-                          global design system every page is written against
-    index.md          (1) Today — the decision: bankroll, exposure, the card
-                          as PlayCards, and the held-back rows beneath it
-    board.md          (2) the whole priced board, exposure and parlays
-    performance.md    (3) the record: bankroll curve, per-market CLV, settled
-    health.md         (4) per-market trailing 7/30-day ROI, CLV and
-                          claimed-vs-realized, with the monitor's flags
-    ratings.md        (5) per-league power ratings with movement
-    dfs.md            (6) cash lineup + GPP set
-    methods.md        (7) what is live in each league's model
-    graphics/         (8) card room — per-league sheet galleries
-    matchup/[game_id].md  the game dossier: line movement, markets, sims,
-                          weather, injury report, the game's own cards
+    +layout.svelte        THE CHROME — and almost nothing else now: Evidence's
+                          sidebar, header, breadcrumbs and TOC are all off,
+                          because they are navigation for a thing with nothing
+                          to navigate. What is left is the vendored numeral
+                          face and the design tokens.
+    index.md              THE WHOLE SITE: every query, then <Hub />.
   components/
-    PageHead / StatRow / StatCard / PlayCard / SectionBar / EmptyNote
-                          the design system's own pieces (format.js holds the
-                          number rules); LiveTicker / CardGallery / WeatherLine
+    format.js             the number rules (a real minus, a sign on anything
+                          coloured) — every component formats through it
+    TeamMark.svelte       club logo on a plate, with the code chip beneath
+    Hub.svelte            the one auto-imported name; wraps hub/Shell
+    hub/
+      Shell.svelte        chrome, view routing, league filter, live wiring
+      live.js             ESPN scoreboards + box scores, joined to our game_id
+                          (pure + fetch only — imports nothing, see below)
+      liveStore.js        the polling loop; the only live file importing Svelte
+      model.js            the joins: flat rows -> game objects (pure, tested)
+      state.js            view/league/game in the URL hash
+      Ticker.svelte       the scores crawl, in the top bar
+      GamesPanel.svelte   the feed, grouped by day, live games first
+      GameCard.svelte     a game row and its expand-in-place dossier
+      Spark.svelte        one simulated distribution, drawn small
+      BoxScore.svelte     live player stats, rendered from ESPN's own labels
+      DfsPanel.svelte     lineups as a peer view
+      PositionsPanel.svelte  the bet tracker, read against the live score
+      RecordPanel.svelte  graded results, CLV first
+      HealthPanel.svelte  the monitor's trailing per-market flags
+      RatingsPanel.svelte every rated team, searchable, grouped by league
+      ParlayBlock.svelte  cross-game parlays; a leg opens its own game
+      CardShelf.svelte    the rendered PNGs, with their post captions
+      Rail.svelte         bankroll, what is riding, what is live, what is flagged
+  tests/                  node --test; the joins and the formatters
   static/                 favicon + icon set (the V drawn as a bankroll curve)
     cards/                newest-stamp card PNGs (gitignored, per-run)
   worker.js + wrangler.toml + deploy.sh   Cloudflare deploy + /api/scores
 ```
+
+## Live scores and box scores
+
+ESPN's public JSON sends `access-control-allow-origin: *` but its Akamai edge
+**403s datacenter IPs** — Cloudflare Worker egress included. So the browser
+fetches ESPN directly (viewer IPs are served fine) and the Worker's
+`/api/scores` proxy is only a fallback for a viewer whose own network blocks
+it. `site/components/hub/live.js` holds all of it, as one store, so a score in
+the ticker and a score on a card cannot disagree.
+
+Three things it does that the old marquee ticker did not:
+
+- **The right dates.** The scoreboard defaults to today in US/Eastern, so a
+  Friday board carrying Sunday's NFL slate would come back empty. The dates
+  are driven by the games we hold.
+- **The whole college board.** College football and men's college basketball
+  default to the top 25; `groups=80` / `groups=50` opens them to every FBS /
+  D-I game, which is most of our board.
+- **A join back to `game_id`.** A score is only useful here if it can be
+  attached to the projection and to an open position, and the two sides name
+  teams differently. `indexGames` registers every spelling we can derive
+  (our own team strings and the identity table's codes) and ESPN is tried
+  against all of them, so the match never rests on one being right.
+
+The **box score names no columns**. ESPN's summary endpoint returns each stat
+block with its own `labels` array and this renders those — so it works for
+baseball's AB/R/H/RBI and basketball's MIN/PTS/REB with no per-sport table,
+and a column ESPN renames shows up renamed rather than silently mislabelling
+a row of numbers. It fetches only while a game is open, and polls only while
+that game is actually in progress: a college Saturday is eighty games, and
+one summary request each on load would be eighty requests to a public
+endpoint.
 
 ## Venues
 
@@ -115,28 +221,34 @@ across four columns of market/side/line.
    a fault. True red (`--v-alert`) is spent on the kill switch alone.
 4. **One lit object.** Depth is a five-step near-black ladder inside a 20-value
    luminance range with white-alpha hairlines, so almost everything is
-   dark-on-dark; exactly one thing per list gets the inverted brand pill.
-   `PlayCard` takes a `lead` prop for precisely this. A list where every price
-   is filled is the genre's clearest cheap tell — if everything is lit,
-   nothing is.
+   dark-on-dark; exactly one thing per list gets the inverted brand pill — the
+   best-priced venue on a market, the live game in the feed. A list where
+   every price is filled is the genre's clearest cheap tell: if everything is
+   lit, nothing is.
 5. **Nothing clips.** The content column and its wrapper are flex children
    with `min-width: 0`, and every table scrolls inside its own box, so a wide
    blotter never steals the page's width — which is exactly what made the old
    board show two columns on a phone.
-6. **Empty is a designed state, and so is low confidence.** Half the site is
+6. **Empty is a designed state, and so is low confidence.** Half the surface is
    fed by the morning grade, so most of the day something is legitimately
-   empty; pages carry `<EmptyNote>` and the framework's red error boxes are
-   suppressed. Output the model declined to fund is **desaturated, never
-   hidden** — a paper row is a real opinion and still has to be legible next
-   to the ones that cleared.
+   empty; every panel carries its own empty state that says *why* it is empty,
+   and the framework's red error boxes are suppressed. Output the model
+   declined to fund is **desaturated, never hidden** — a paper row is a real
+   opinion and still has to be legible next to the ones that cleared.
 
 ### The bet object
 
-`PlayCard` is a card carrying a **nested ticket** one elevation step lighter.
-The nesting is what separates "the game" from "the bet" without a rule or a
-heading, and it is the move the whole genre shares. Inside the ticket: the
-call on the left, the price on the right, and a four-up strip of
-edge / model / fair / stake, each value over its own micro-label.
+A market inside a game sheet is a **nested block** one elevation step lighter
+than the card holding it. The nesting is what separates "the game" from "the
+bet" without a rule or a heading, and it is the move the whole genre shares.
+Inside it: the call and its tier, then a strip of model / market / best price
+/ edge / sized, each value over its own micro-label, then the venue row.
+
+The venue row is where the exchanges earn their place. A Kalshi contract and
+a FanDuel line on the same total are the **same bet at two venues**, so they
+sit side by side on one market rather than being filed apart, with the
+best-priced one lit and the exchanges carrying a lighter edge to say they are
+not sportsbook lines.
 
 The venue rides in the price pill as a **two-letter monogram in the venue's
 own colour** (`venueMark` / `venueColor` in `components/format.js`). No board
@@ -169,16 +281,23 @@ the wrong thing about your own system.
 
 `distributions` is ~80 bins per game of simulated totals and margins — the
 richest thing the model produces, and for a long time it reached only two bare
-`BarChart`s on the matchup page with no line drawn on them. A distribution
-without the number marked on it is decoration.
+bare `BarChart`s on a per-game page, with no line drawn on them. A
+distribution without the number marked on it is decoration.
 
-`DistStrip.svelte` puts it on the bet object itself: the covered side lit, the
-market's number as a rule, and the exact covered mass printed beneath. The cut
-point comes from `distThreshold()` in `components/format.js`, which is the
-fiddly part — a home bet at −1.5 covers when the margin clears **+1.5**, so the
-cut is the negated handicap, while an away bet at +1.5 covers *below* its own
-handicap. Moneylines are the same object cut at zero; team totals have no
-matching distribution and return `null` rather than guess.
+`Spark.svelte` draws it inside the game sheet — margin and total side by side,
+with the leading market's own number struck through it as a dashed rule, so
+the disagreement between the model and the price is *visible* rather than
+asserted. The cut point is the fiddly part: a home bet at −1.5 covers when the
+margin clears **+1.5**, so the cut is the negated handicap, while an away bet
+at +1.5 covers *below* its own handicap. Moneylines are the same object cut at
+zero; team totals have no matching distribution and draw no rule rather than
+guess at one.
+
+Two things about it are deliberate. It trims the empty tails to the central
+mass but always keeps the marked line in frame — a number sitting outside the
+plotted range is exactly the case worth seeing. And it is **one SVG path with
+no charting runtime**: Evidence ships ECharts, but an ECharts instance per
+game card on an eighty-game college Saturday is a page that janks on scroll.
 
 The page hands each card both of the game's distributions and the card picks
 the one it is struck against, because Evidence's queries live on the page and
@@ -225,7 +344,7 @@ a different route. Anything a producer writes has to be listed in the schema.
 
 `tier` and `rationale` are written by the intel layer, which does not run on
 every slate. When a board carries none of them, pandas writes the column as
-all-NaN `float64`, and the Board page's `coalesce(tier, '')` then dies with
+all-NaN `float64`, and a `coalesce(tier, '')` in the page SQL then dies with
 `Could not convert string '' to DOUBLE` — a red box where the board should
 be, for a slate that is otherwise perfectly good. `board.sql` casts both to
 `varchar` so an untiered board renders as an untiered board. Any optional
@@ -266,35 +385,35 @@ empty states still render.
 The same script copies the newest-stamp card PNGs per (kind, league) —
 social, deepdive, simcheck, recordcard — into `site/static/cards/` with a
 `cards` manifest table (matchup + post caption parsed from the captions
-files), which the Graphics page galleries with save/copy-caption actions.
+files). The hub does not surface these yet — see *Deliberately not carried
+over* below.
 
 **Live scoreboard:** the Worker also serves `/api/scores` — a fan-out to
-ESPN's public scoreboard JSON for the five leagues, trimmed to ticker
-fields and edge-cached ~45s. `LiveTicker.svelte` polls it every 60s and
-renders the scrolling crawl on the Today page; it hides itself when the
-endpoint is unreachable (local preview) or all leagues are dark.
+ESPN's public scoreboard JSON for the five leagues, trimmed to ticker fields
+and edge-cached ~45s. It is the **fallback**, not the primary: see *Live
+scores and box scores* above for why the browser fetches ESPN directly.
 
-## The matchup sheet
+## The game sheet
 
-`MatchupSheet.svelte` is the research object: two team blocks, one
-saturated context band, and a mirrored head-to-head with the advantage
-marked down the middle. The shape is the genre's, and the middle column is
-the point — a list of markets says what to bet, the sheet says why.
+Opening a game expands it in place — no route, no navigation, and the feed
+you were reading is still where you left it when it closes. Inside, in order:
 
-Two things it has to get right, both of which were wrong first:
+- **Model.** The two expected scores, the home win probability, the fair
+  spread and total, and the simulation count. Then the two distributions.
+- **Markets.** One block per market rather than one per quote. The board
+  carries a row per venue per market and on a typical slate ~68 of 88 rows
+  are exchange contracts, so the flat list is mostly the same six markets
+  quoted over and over; collapsing them is what makes it readable and is also
+  the only way to say the thing a bettor actually wants — **who is best on
+  this line right now**. Sorted by tier, then by the model's own conviction:
+  sorting by edge alone leads with whatever is noisiest.
+- **Your position**, when there is one, and **DFS plays from this game**, when
+  the sport has a slate.
+- **Live**, once the game is under way: the box score and recent scoring.
 
-- **`net = off − def`, so a lower defensive number is the better one**, and
-  a lower power rank is better. A naive "higher wins" marks the wrong side
-  on two of five rows. `row()` takes `lowerWins` per statistic.
-- **`fair_spread` is already the home side's line.** Negative means the
-  home team lays points. Negating it put the favourite on the wrong side
-  of the band — `SEA +7.0` for a team the model had winning 71% of the
-  time.
-
-It also joins ratings through **`projections`, not `games`**: projections
-carry the team abbreviations (`NE`, `SEA`) that ratings are keyed by, while
-games carry full names. Joining ratings to games matches nothing and the
-sheet silently renders one row.
+One thing it gets right that is easy to get wrong: **`fair_spread` is already
+the home side's line**, so a negative number means the home team lays points.
+Negating it puts the favourite on the wrong side.
 
 ## Team marks and colours
 
@@ -383,13 +502,13 @@ down rather than read.
 
 ## What moved
 
-`line_moves` reached only the matchup pages, one game at a time. The Board now
-carries a **Moved since open** section: every market the hourly archive has
-seen change, across every game, so a number running away is visible without
-opening sixteen pages.
+Every game sheet carries a **Moved since open** block: the markets the hourly
+archive has seen change, with the opening number and price beside the current
+one. A market that did not move is left out — an unmoved line is not news, and
+a block full of unchanged numbers trains you to stop reading it.
 
 It deliberately makes **no claim about whether a move helped or hurt**. That
-judgement is the closing-line calculation on Performance, which measures
+judgement is the closing-line calculation under Record, which measures
 against the actual close rather than inferring from the direction of travel —
 and getting the sign right depends on the side and the market's own
 convention, which is exactly the sort of thing that reads plausibly and is
@@ -422,6 +541,22 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
 python scripts/build_site_data.py --slate-dir /tmp/demo_slate
 cd site && npm ci && npm run sources && npm run dev
 ```
+
+Add `--tier public` to the build step to see what a public surface would
+carry. The joins and the number rules are testable without a browser:
+
+```bash
+node --test "site/tests/**/*.test.mjs"    # runs in CI
+```
+
+That runs against the source files directly, with **no `npm ci` and no
+node_modules** — which is only true while every module the suite imports stays
+free of runtime dependencies. `live.js` therefore holds the pure parsing and
+planning functions and imports nothing, while `liveStore.js` holds the polling
+loop and is the only one of the two that imports Svelte. A single
+`svelte/store` import in `live.js` silently takes the whole suite out of CI
+(it passes locally, where node_modules exists), which is how it first shipped.
+To check the property, move `site/node_modules` aside and run the suite.
 
 (When iterating locally, `rm -rf site/.evidence/template/.evidence-queries`
 forces the sources step to re-read changed parquet — it caches by query
@@ -459,9 +594,160 @@ wasm in R2, `wrangler deploy`). Both site steps are gated on
 artifact and email are delivered — so a site failure marks the run red
 (the honest signal the site didn't publish) without costing the slate.
 
-## Retirement plan for the Streamlit app
+## Where the ten pages went
 
-The app (`app/streamlit_app.py`) keeps running untouched until the site
-has covered its surfaces (board, pick'em, cards gallery, performance) for
-a couple of weeks of real slates; then docs/LAUNCH.md's app section gets
-swapped for this page.
+The rebuild moved four surfaces into the game sheet where they belong — player
+props, line movement, the injury report and the weather — because each is a
+fact *about a game*, and the old site's separation of them from the game was
+the thing being fixed. The rest followed the same rule.
+
+Nothing was dropped. Every surface the ten pages carried is on the hub, and most
+of them are no longer surfaces at all — they are facts attached to the game
+they are about:
+
+| Was a page | Is now |
+|---|---|
+| Board, props, line movement, injuries, weather | The game sheet |
+| Matchup dossier | The game sheet, expanded in place |
+| Performance | Record |
+| Market health | Inside Record — same question, shorter horizon |
+| Ratings | A view, **and** the head-to-head in every game sheet |
+| Card room | Each game's own card, in its sheet; the record cards in Record |
+| DFS | A view |
+| Methods | The rail's model block |
+
+The two that had nowhere obvious to go are **parlays** and the **record
+cards**, and both are below.
+
+## Market health
+
+The monitor (`velocity/report/monitor.py`) reads the season chain back as a
+per-market trailing table over 7- and 30-day windows and flags a market that
+is losing to its close, losing money, or claiming more than it earns. It
+reaches the surface in three places, all off one index (`flaggedMarkets`), so
+they cannot disagree:
+
+1. **Inside Record**, not as a view of its own. It is the same question at a
+   shorter horizon — Record says what happened, this says whether one of the
+   markets producing it has gone bad.
+2. **In the rail**, as a count and the first few flags. A market that has
+   stopped working is the one thing on this surface nobody would think to go
+   and look for, so it is pushed rather than waited for; clicking it switches
+   to Record, which on a single surface is a view switch rather than a page
+   load.
+3. **On the market itself**, in the game sheet — the strongest form it can
+   take, because it is the moment you would act on it.
+
+Three things it is careful about:
+
+- **Only the 30-day window flags.** The 7-day is an early warning, and
+  treating it as a flag puts an amber mark on a market the monitor has not
+  called. What the 7-day *is* used for is the line under each flag saying
+  whether it agrees — the monitor wants the same flag in two review windows
+  before an exclusion, so a market flagged in both is further along than one
+  flagged in one.
+- **A thin market is never flagged.** `thin` is under twenty bets, the
+  monitor suppresses every other flag on one, and the string it writes
+  ("thin (1 bets)") is a statement that it *cannot judge* — the opposite of a
+  warning. A truthy-`flags` test alone would surface those beside real ones,
+  which is how a warning stops meaning anything. Thin rows stay in the table,
+  desaturated, because they are real markets with real records.
+- **A flag is a question, not a verdict.** The monitor names exclusion
+  candidates; the operator decides, and the language keeps it that way.
+
+## Power ratings
+
+Two surfaces, and the split is the point:
+
+- **In the game sheet**, as a head-to-head — the two teams mirrored with the
+  advantage marked down the middle. This is the one the old matchup page
+  existed for: a list of markets says *what* the model thinks, the
+  head-to-head says *why*.
+- **As a view**, for the question a game card structurally cannot answer.
+  A card shows two teams; "who does the model think is good" is about all of
+  them.
+
+Three things it has to get right, all of which were wrong somewhere first:
+
+- **The join key.** Ratings are keyed by the string each league's fit uses —
+  `PIT` for the NFL, `Alabama` for college, `Minnesota Lynx` for the WNBA —
+  and the `games` table carries none of those, only full club names. The
+  `projections` table carries the fit's own spelling and matches ratings on
+  every team in all three live leagues. Joining ratings to **games** matches
+  almost nothing and renders a head-to-head with both sides blank.
+- **Which way is better.** `net = off − def`, so a **lower Def is the better
+  one**, and a lower rank is better. A naive "higher wins" marks the wrong
+  side on two of the five rows. Pace is neither — it is context, and marking
+  a side on it would invent a claim the model does not make.
+- **A column the fit does not report.** The football and baseball fits have
+  no pace and the column arrives as NULL, which `Number()` turns into a
+  perfectly finite 0 — so the head-to-head printed "Pace 0.0 / 0.0" for two
+  teams that play a normal number of possessions. Everything numeric on this
+  surface guards with `isNum` for exactly that reason.
+
+The view carries leagues the board does not — the model rates college
+basketball and hockey without pricing them today — because that is honest
+about what the model knows rather than only what it is betting. Each league
+gets only the columns its own fit reports: pace where the fit is per
+possession, movement where a previous run exists to compare against.
+
+Team names are resolved through the identity table, so the NFL's `PIT` shows
+and searches as "Pittsburgh Steelers" with the fit's own spelling kept beside
+it. A team the identity table has not seen — college, or a club not playing
+this week — keeps the fit's spelling rather than being guessed at with a
+prefix match that would confidently map "Miami" to the wrong school.
+
+## Parlays
+
+A parlay is the one row on the board that is not about a single game, so it
+has nowhere to sit inside one. It goes above the feed, **collapsed**: on most
+slates it is a handful of rows and it must not be the thing between you and
+the board.
+
+What makes it more than a table is that `legs_json` carries a `game_id` per
+leg. So a leg is a control — clicking it opens that game in the feed below —
+and the reverse join gives every game card a count of the parlays it has a
+leg in. That is the single-surface argument in miniature: on the old site,
+reading a parlay meant writing down three matchups and going to find them.
+
+One thing it is careful about: **`same_game` means two or more legs share a
+game, not that the whole parlay is one game.** A three-leg parlay with two
+MIA@LV legs and one WAS@PHI leg is flagged true. Reading it as "all one game"
+would file cross-game parlays inside a single game's sheet, so the label says
+*correlated legs* instead.
+
+A row whose JSON will not parse keeps its rendered one-line string and gets
+no leg links — degraded, not dropped, because the price and the model's
+probability are still true. The source carries both `legs` (the string) and
+`legs_json` (the structure); the parsed array takes the name and the string
+is kept under `legs_string`, or the degraded path prints `[object Object]`.
+
+## Cards
+
+The rendered PNGs are made to be **posted** — that is the only reason they
+exist as images rather than as the numbers already on the page — so the shelf
+is built around the two things anyone does with one: open it full size, and
+take the caption. Everything else is chrome.
+
+They split by whether they belong to a game:
+
+- **Per-matchup** (the pre-game sheet, the sim check) carry a `game_id` and
+  live in that game's sheet, last — they are the takeaway, not the analysis,
+  and everything on them is already above in numbers.
+- **Record cards** are one per league and carry no `game_id` at all. They are
+  a picture of exactly the Record view, so they sit in it.
+
+There is no gallery, because a room full of ninety-eight matchup graphics is
+a browsing surface for a thing nobody browses: you want the card for the game
+you are looking at, and that is where it now is.
+
+A card whose file did not make it into the build drops out of the shelf
+rather than leaving a broken frame.
+
+## The Streamlit app
+
+`app/streamlit_app.py` is superseded — the hub covers every surface it had —
+but it is still on disk, because `build_site_data.py` imports
+`app/format_plays.py` for the `MODEL_CONFIG` fallback used when a slate
+artifact predates the runner writing its own config frame. Deleting the app
+means moving that table first; it is not worth coupling to this change.

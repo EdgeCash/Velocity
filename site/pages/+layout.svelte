@@ -1,9 +1,11 @@
 <script>
-  // The Velocity chrome. Evidence's default layout does the routing, the
-  // sidebar tree and the query plumbing; everything visible is re-dressed
-  // here. Two props do the branding — a text wordmark instead of the
-  // Evidence logo, and no "Built with Evidence" footer — and the global
-  // style block below is the design system the pages are written against.
+  // The chrome — or what is left of it.
+  //
+  // The site is one page now, so Evidence's sidebar, header, breadcrumbs and
+  // table of contents are all navigation for a thing there is nothing to
+  // navigate. They are off, and the hub draws its own top bar. What remains
+  // here is the part that is genuinely global: the vendored numeral face and
+  // the design tokens every component is written against.
   //
   // The design is written down in docs/SITE.md. The short version: this is a
   // board, not a BI tool. Numbers wear a condensed athletic face, prices are
@@ -13,12 +15,6 @@
   import '../app.css';
   import { EvidenceDefaultLayout } from '@evidence-dev/core-components';
   export let data;
-
-  // The stub. Every real book prints the boring line — jurisdiction, time,
-  // slip id — at the bottom of the ticket, and that bureaucratic texture is
-  // what makes a page read as a book's rather than a chart's. The site is
-  // prerendered, so this is the moment the board was built.
-  const built = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 </script>
 
 <svelte:head>
@@ -29,18 +25,14 @@
   {data}
   title="VELOCITY"
   builtWithEvidence={false}
-  homePageName="Today"
+  hideSidebar={true}
+  hideHeader={true}
   hideTOC={true}
   hideBreadcrumbs={true}
   fullWidth={true}
 >
   <div slot="content" class="shell">
     <slot />
-    <footer class="stub">
-      <span>Velocity</span>
-      <span>Private board · not advice · no order is ever placed from here</span>
-      <span class="built">Built {built}</span>
-    </footer>
   </div>
 </EvidenceDefaultLayout>
 
@@ -132,14 +124,10 @@
 
     --v-radius: 12px;
     --v-radius-sm: 8px;
-    /* The lit-edge inset: one line that makes a pill read as glass. */
-    --v-lift: inset 0 -1px 3px rgba(255, 255, 255, 0.07),
-      inset 0 -1px 1px rgba(255, 255, 255, 0.22);
     --v-glow: 0 0 18px rgba(61, 218, 208, 0.22);
 
     --v-board: "Saira Condensed", "Inter", ui-sans-serif, system-ui, sans-serif;
     --v-num: "Inter", ui-sans-serif, system-ui, sans-serif;
-    --header-height: 3.25rem;
   }
 
   :global(body),
@@ -148,233 +136,27 @@
     background: var(--v-bg);
     color: var(--v-ink);
   }
-  /* A table's own scroller inflates the document's scroll width, which lets
-     a phone pan sideways into empty space. Every wide thing on the site
-     scrolls inside its own box, so the page itself never needs to. */
-  :global(body) {
-    overflow-x: hidden;
-  }
+  /* Every wide thing on the surface scrolls inside its own box, so the page
+     itself never pans sideways on a phone. */
+  :global(body) { overflow-x: hidden; }
 
-  /* ---- chrome -------------------------------------------------------- */
-  :global(header) {
-    background: rgba(6, 9, 13, 0.82) !important;
-    backdrop-filter: saturate(140%) blur(10px);
-    border-bottom: 1px solid var(--v-line) !important;
-  }
-  /* The wordmark. Evidence renders `title` as plain text, so dress it — in
-     the board face, tracked out, because that is what a wordmark on a
-     scoreboard looks like. */
-  :global(header a[href="/"]),
-  :global(nav a[href="/"] .capitalize) {
-    font-family: var(--v-board);
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    font-size: 0.95rem !important;
-    color: var(--v-brand) !important;
-  }
-  :global(aside),
-  :global(nav#sidebar) {
-    background: var(--v-bg) !important;
-    border-right: 1px solid var(--v-line) !important;
-  }
-  /* Sidebar links: quiet until they matter. */
-  :global(#sidebar a),
-  :global(aside a) {
-    border-radius: var(--v-radius-sm);
-    font-size: 0.82rem;
-    letter-spacing: 0.005em;
-    transition: background 120ms ease, color 120ms ease;
-  }
-  :global(#sidebar a:hover),
-  :global(aside a:hover) {
-    background: var(--v-lvl-1);
-    color: var(--v-ink) !important;
-  }
-  /* Section headers in the sidebar (folder labels). */
-  :global(#sidebar .font-semibold),
-  :global(aside .font-semibold) {
-    font-size: 0.62rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--v-ink-3) !important;
-  }
-
-  /* The content column. Wide enough for a ten-column blotter, capped so
-     the prose does not run to 2000px on an ultrawide monitor. */
+  /* The hub sets its own width and gutters; Evidence's article wrapper must
+     not re-impose a prose column on it. */
   :global(article.markdown) {
-    max-width: 1240px;
+    max-width: none;
     width: 100%;
     min-width: 0;
-    padding-right: 1.25rem;
+    padding: 0;
   }
   /* The content column is a flex child. Without min-width:0 a flex item is
-     sized by its widest content, so one wide table stretched the whole page
-     and the phone view lost every column after the matchup. */
-  :global(.flex-grow.overflow-x-hidden) {
-    min-width: 0;
-  }
+     sized by its widest content, so one wide row stretches the whole page and
+     the phone view loses everything past it. */
+  :global(.flex-grow.overflow-x-hidden) { min-width: 0; }
 
-  /* ---- typography ---------------------------------------------------- */
-  :global(.markdown h1.title) {
-    font-size: 1.55rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: #f2f7fb;
-    margin-bottom: 0.15rem;
-  }
-  :global(.markdown h2) {
-    font-size: 0.72rem !important;
-    font-weight: 700 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.13em;
-    color: var(--v-ink-3) !important;
-    border: 0 !important;
-    margin: 2.1rem 0 0.7rem !important;
-    padding: 0 !important;
-  }
-  :global(.markdown h3) {
-    font-size: 0.95rem !important;
-    font-weight: 650 !important;
-    color: var(--v-ink) !important;
-    margin: 1.4rem 0 0.5rem !important;
-  }
-  :global(.markdown p) {
-    font-size: 0.85rem;
-    line-height: 1.6;
-    color: var(--v-ink-2);
-  }
-  /* A paragraph that is nothing but emphasis is a footnote — the small grey
-     line under a table or a chart. Emphasis *inside* a sentence stays
-     inline and keeps its size. */
-  :global(.markdown p > em:only-child) {
-    color: var(--v-ink-3);
-    font-style: normal;
-    font-size: 0.78rem;
-    line-height: 1.55;
-    display: inline-block;
-  }
-  :global(.markdown li em),
-  :global(.markdown p em:not(:only-child)) {
-    font-style: normal;
-    color: var(--v-ink-2);
-  }
-  :global(.markdown a) {
-    color: var(--v-brand);
-    text-decoration: none;
-    border-bottom: 1px solid rgba(61, 218, 208, 0.28);
-  }
-  :global(.markdown a:hover) {
-    border-bottom-color: var(--v-brand);
-  }
-  :global(.markdown code) {
-    background: var(--v-lvl-2);
-    border: 1px solid var(--v-line);
-    border-radius: 5px;
-    padding: 0.08em 0.36em;
-    font-size: 0.78em;
-    color: var(--v-ink-2);
-  }
-  :global(.markdown ul) {
-    font-size: 0.85rem;
-    color: var(--v-ink-2);
-  }
-
-  /* ---- tables --------------------------------------------------------
-     Evidence's DataTable is a BI table: light rules, roomy rows, and it
-     overflows its container rather than scrolling. Re-dressed as a
-     blotter — hairline rules, tight rows, uppercase micro headers — and
-     wrapped in its own scroller so a wide table never clips its last
-     columns or pushes the page sideways on a phone.
-     -------------------------------------------------------------------- */
-  :global(.markdown table) {
-    font-size: 0.86rem;
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-  :global(.markdown thead th) {
-    font-size: 0.63rem !important;
-    font-weight: 700 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.11em;
-    color: var(--v-ink-3) !important;
-    border-bottom: 1px solid var(--v-line-2) !important;
-    padding-top: 0.6rem !important;
-    padding-bottom: 0.6rem !important;
-    background: transparent !important;
-    white-space: nowrap;
-  }
-  /* Row height is the single biggest lever on how a board reads. These
-     were 0.42rem and the tables felt like a spreadsheet squint; the boards
-     this is measured against run roughly double that. Legibility first —
-     a dense row nobody wants to read is not density, it is just small. */
-  :global(.markdown tbody td) {
-    border-bottom: 1px solid var(--v-line) !important;
-    padding-top: 0.78rem !important;
-    padding-bottom: 0.78rem !important;
-    padding-right: 1.1rem !important;
-    color: var(--v-ink);
-    vertical-align: middle;
-    line-height: 1.35;
-  }
-  /* Every quantity on the site wears the board face. Evidence tags each
-     cell with its column type, so this reaches every number in every
-     table without a page having to ask for it. Condensed runs narrow at
-     a given size, so it is set a shade larger than the prose around it
-     and the digits are widened back out very slightly. */
-  :global(.markdown td.number) {
-    font-family: var(--v-board);
-    font-size: 1.02rem;
-    font-weight: 600;
-    letter-spacing: 0.015em;
-    font-variant-numeric: tabular-nums;
-  }
-  :global(.markdown tbody tr:hover td) {
-    background: var(--v-hover);
-  }
-  :global(.markdown tbody tr:last-child td) {
-    border-bottom: 0 !important;
-  }
-  /* The scroller. Evidence wraps every table in .table-container >
-     .scrollbox; without a width ceiling on the container the table simply
-     grows past the content column and its last columns are lost off the
-     right edge — which is what made the old board unreadable on a laptop
-     and useless on a phone. Cap the container, let the box scroll. */
-  :global(.table-container) {
-    max-width: 100%;
-    width: 100%;
-    min-width: 0;
-    overflow: hidden;
-  }
-  :global(.table-container .scrollbox) {
-    overflow-x: auto;
-    width: 100%;
-    max-width: 100%;
-    scrollbar-width: thin;
-    scrollbar-color: var(--v-line-2) transparent;
-  }
-  :global(.table-container .scrollbox::-webkit-scrollbar) { height: 7px; }
-  :global(.table-container .scrollbox::-webkit-scrollbar-thumb) {
-    background: var(--v-line-2);
-    border-radius: 999px;
-  }
-  /* A cell of prose never gets to set the table's width. */
-  :global(.markdown tbody td) { max-width: 26rem; }
-  /* Pagination + the table's own controls, quieted. */
-  :global(.markdown table + div),
-  :global(.pagination) {
-    font-size: 0.7rem !important;
-    color: var(--v-ink-3) !important;
-  }
-
-  /* ---- Evidence value + chart surfaces -------------------------------- */
-  :global(.markdown .chart-container),
-  :global(.echarts-container) {
-    background: transparent !important;
-  }
-  /* Evidence renders a red box when a BigValue's dataset is empty. On a
-     dashboard that is fed by yesterday's grade, "no data yet" is a normal
-     state, not an error — the pages carry their own empty states, so the
-     framework's error chrome is suppressed to a quiet line. */
+  /* Evidence renders a red box when a query's dataset is empty. On a surface
+     fed by yesterday's grade, "no data yet" is a normal state and every panel
+     carries its own empty state, so the framework's error chrome is quieted
+     to a line. */
   :global(.markdown .error),
   :global(.markdown .inline-error) {
     background: var(--v-lvl-1) !important;
@@ -385,78 +167,8 @@
     padding: 0.5rem 0.7rem !important;
   }
 
-  /* ---- inputs -------------------------------------------------------- */
-  :global(.markdown button),
-  :global(.markdown select) {
-    font-size: 0.75rem !important;
-  }
-  /* The league filter reads as a segmented control, not a row of buttons.
-     The genre is consistent about this: a filled segmented pill means a
-     mode switch, and the active segment is the only lit object in it. */
-  :global(.button-group) {
-    background: var(--v-lvl-1);
-    border: 1px solid var(--v-line);
-    border-radius: 999px;
-    padding: 2px;
-    display: inline-flex;
-    gap: 2px;
-  }
-  :global(.button-group button) {
-    border: 0 !important;
-    border-radius: 999px !important;
-    padding: 0.24rem 0.78rem !important;
-    color: var(--v-ink-2) !important;
-    background: transparent !important;
-    font-family: var(--v-board);
-    font-size: 0.82rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.08em;
-    transition: background 130ms ease, color 130ms ease;
-  }
-  :global(.button-group button[aria-checked="true"]),
-  :global(.button-group button.selected) {
-    background: var(--v-brand-deep) !important;
-    color: var(--v-brand) !important;
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.3);
-  }
-
-  /* The content wrapper is a flex child of Evidence's column. Without
-     min-width:0 it is sized by its widest content, which is how one wide
-     table pushed the phone view sideways again after the stub was added. */
   .shell {
     min-width: 0;
     width: 100%;
-  }
-
-  /* ---- the stub ------------------------------------------------------- */
-  .stub {
-    max-width: 1240px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem 1rem;
-    margin: 3rem 0 1.6rem;
-    padding-top: 0.7rem;
-    border-top: 1px solid var(--v-line);
-    font-family: var(--v-board);
-    font-size: 0.66rem;
-    font-weight: 600;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--v-ink-3);
-  }
-  .stub span:first-child { color: var(--v-brand); letter-spacing: 0.22em; }
-  .built { margin-left: auto; }
-
-  /* ---- print / phone -------------------------------------------------- */
-  @media (max-width: 640px) {
-    :global(.markdown h1.title) {
-      font-size: 1.3rem;
-    }
-    :global(.markdown h2) {
-      margin-top: 1.6rem !important;
-    }
-    :global(.markdown td.number) {
-      font-size: 0.88rem;
-    }
   }
 </style>
