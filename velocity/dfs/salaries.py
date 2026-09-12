@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -216,6 +216,40 @@ def normalize_draft_groups(lobby: Mapping[str, Any]) -> pd.DataFrame:
         start = pd.to_datetime(df["start"], errors="coerce", utc=True)
         df["start"] = start.dt.tz_localize(None)
     return df
+
+
+def assign_draft_groups(
+    groups_by_league: Mapping[str, Iterable[str]],
+) -> dict[str, set[str]]:
+    """Give each draft group to exactly one league — the most specific lobby.
+
+    ``getcontests?sport=X`` does not reliably honour its own filter. Asked for
+    WNBA on a night the league had a couple of playoff games, the lobby came
+    back with 75 draft groups and 13,192 draftables — NFL and MLB boards, which
+    the collector then stamped ``league="wnba"`` and banked as women's
+    basketball salary history. NBA, entirely out of season, banked 2,826 tiered
+    rows the same way. Downstream that is not merely noise: the salary archive
+    is the DFS analogue of the closing-line archive, and a lineup built from it
+    would price the wrong sport.
+
+    No field in the payload says which sport a group belongs to, so ownership is
+    decided by specificity instead: a lobby that lists a group *and* few others
+    is a better claim than one that lists it among hundreds. A sport whose
+    filter works keeps everything it returned; a sport whose lobby is really
+    somebody else's keeps only what is unique to it. Ties break on the league
+    name so the result never depends on iteration order.
+    """
+    ids_by_league = {league: set(ids) for league, ids in groups_by_league.items()}
+    owner: dict[str, str] = {}
+    for league, ids in ids_by_league.items():
+        for group_id in ids:
+            held = owner.get(group_id)
+            if held is None or (len(ids), league) < (len(ids_by_league[held]), held):
+                owner[group_id] = league
+    out: dict[str, set[str]] = {league: set() for league in ids_by_league}
+    for group_id, league in owner.items():
+        out[league].add(group_id)
+    return out
 
 
 @dataclass

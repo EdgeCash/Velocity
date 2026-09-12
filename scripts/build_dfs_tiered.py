@@ -34,6 +34,17 @@ _SUPPORTED = {
     "Single Stat - Total Yards": "nfl_single_stat_total_yards",
 }
 
+# What each card's footer credits for its numbers. Keyed by the same names as
+# _SUPPORTED, and kept beside it so a format can never be supported without one.
+_SOURCE_NOTES = {
+    "Tiers": "contextual model (docs/DFS_MODEL.md) scored as DK points",
+    "Single Stat - Home Runs": "empirical-Bayes home-run model (docs/PROPS_HR.md)",
+    "Single Stat - Touchdowns": "FantasyPros consensus rushing + receiving touchdowns",
+    "Single Stat - Total Yards":
+        "FantasyPros consensus passing + rushing + receiving yards",
+}
+assert set(_SOURCE_NOTES) == set(_SUPPORTED)
+
 
 def _mlb_dk_points() -> pd.DataFrame:
     """Today's contextual MLB DK projections (the same input Tiers wants)."""
@@ -155,7 +166,12 @@ def main() -> None:
     args = parser.parse_args()
 
     from velocity.dfs.optimizer import lineup_pool
-    from velocity.dfs.pipeline import eligible_board, game_time_ct, normalize_positions
+    from velocity.dfs.pipeline import (
+        eligible_board,
+        game_time_ct,
+        is_season_long,
+        normalize_positions,
+    )
     from velocity.dfs.tiered import TIER_SPECS, build_tier_entry, tier_frame
     from velocity.report.dfs_png import render_tier_card, tier_caption
 
@@ -174,6 +190,14 @@ def main() -> None:
     fp = pd.read_parquet(args.fp) if args.fp else pd.DataFrame()
     if not fp.empty and "league" in fp.columns:
         fp = fp[fp["league"] == args.league]
+    # Season totals are not a weekly projection. Every other consumer already
+    # refuses them; this one did not, and printed a Single Stat card offering a
+    # running back at seventeen touchdowns and a receiver at 1,366 yards.
+    if not fp.empty and is_season_long(fp):
+        print("FP snapshot carries season-long (week 0) projections — "
+              "a weekly board can't be priced from season totals; "
+              "football formats will skip")
+        fp = fp.iloc[0:0]
 
     points_cache: dict[str, pd.DataFrame] = {}
 
@@ -224,15 +248,21 @@ def main() -> None:
             game_time=lambda f: f["kickoff"].map(game_time_ct)))
 
         label = f"DK {game_type.upper()}"
+        # The football formats are shared — DK runs Single Stat Touchdowns for
+        # NFL and CFB alike — and their specs are named for one of the two, so
+        # both leagues' cards and captions landed on the same filename and
+        # overwrote each other. Name the file for the league being built.
         slug = spec.name
+        for prefix in ("cfb_", "nfl_"):
+            if slug.startswith(prefix):
+                slug = f"{args.league}_{slug[len(prefix):]}"
+                break
         when = datetime.now(UTC).strftime("%A, %b %-d").upper()
-        source = {
-            "Tiers": "contextual model (docs/DFS_MODEL.md) scored as DK points",
-            "Single Stat - Home Runs":
-                "empirical-Bayes home-run model (docs/PROPS_HR.md)",
-            "Single Stat - Touchdowns":
-                "FantasyPros consensus rushing + receiving touchdowns",
-        }[game_type]
+        # Every supported format needs an entry: indexing this with a format
+        # that was added to _SUPPORTED but not here raised a KeyError that
+        # killed the run before the tiered parquet was written, so the whole
+        # NFL board — cards, captions and data — silently produced nothing.
+        source = _SOURCE_NOTES[game_type]
         card = out / f"dfs_{slug}_{stamp}.png"
         render_tier_card(entry, card, when=when, slate_label=label, unit=unit,
                          source_note=source)

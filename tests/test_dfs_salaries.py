@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 from velocity.dfs.salaries import (
     Salaries,
+    assign_draft_groups,
     normalize_draft_groups,
     normalize_draftables,
 )
@@ -143,3 +144,46 @@ def test_normalize_draftables_extracts_the_probable_flag() -> None:
     assert bool(frame.loc["Real Probable", "probable"])
     assert not bool(frame.loc["Bench Arm", "probable"])
     assert not bool(frame.loc["A Hitter", "probable"])
+
+
+def test_a_lobby_that_ignores_its_sport_filter_keeps_only_its_own_boards() -> None:
+    """The contamination that banked 13,192 NFL and MLB rows as WNBA salaries.
+
+    ``getcontests?sport=WNBA`` came back with 75 draft groups on a night the
+    league played twice, against 34 for a full NFL Sunday — it was serving
+    everybody's boards. Ownership goes to the lobby with the most specific
+    claim, so the sports whose filter works are untouched and the one whose
+    lobby is really everybody's keeps only what is unique to it.
+    """
+    owned = assign_draft_groups(
+        {
+            "nfl": ["101", "102"],
+            "mlb": ["201"],
+            # The unfiltered lobby: everyone else's groups plus two of its own.
+            "wnba": ["101", "102", "201", "301", "302"],
+        }
+    )
+    assert owned["nfl"] == {"101", "102"}
+    assert owned["mlb"] == {"201"}
+    assert owned["wnba"] == {"301", "302"}
+
+
+def test_a_sport_with_no_boards_of_its_own_ends_up_empty() -> None:
+    # NBA in September: one group in the lobby, and it belongs to baseball.
+    owned = assign_draft_groups({"mlb": ["201"], "nba": ["201"]})
+    assert owned["mlb"] == {"201"}
+    assert owned["nba"] == set()
+
+
+def test_ownership_does_not_depend_on_iteration_order() -> None:
+    # Two lobbies of the same size claiming one group: the tie breaks on the
+    # league name, so two runs of the same day agree.
+    first = assign_draft_groups({"mlb": ["9"], "nhl": ["9"]})
+    second = assign_draft_groups({"nhl": ["9"], "mlb": ["9"]})
+    assert first == second
+    assert first["mlb"] == {"9"}
+
+
+def test_an_uncontested_lobby_is_left_exactly_as_it_came() -> None:
+    owned = assign_draft_groups({"nfl": ["1", "2", "3"]})
+    assert owned["nfl"] == {"1", "2", "3"}

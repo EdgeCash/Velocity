@@ -29,6 +29,7 @@ from pathlib import Path
 import pandas as pd
 from velocity.dfs.salaries import (
     SPORT_CODES,
+    assign_draft_groups,
     normalize_draft_groups,
     normalize_draftables,
 )
@@ -125,6 +126,13 @@ def main() -> None:
 
     client = DraftKingsClient()
     print(f"DK salary snapshot @ {now.isoformat()}")
+
+    # Every lobby first, then ownership, then the draftables. The lobby does
+    # not reliably honour its sport filter, so a league's own boards can only
+    # be told apart by which lobby claims them most specifically
+    # (:func:`assign_draft_groups`). Resolving before fetching also stops the
+    # collector pulling — and banking — another sport's whole board.
+    lobbies: dict[str, pd.DataFrame] = {}
     for league in args.leagues.split():
         sport = SPORT_CODES.get(league)
         if sport is None:
@@ -136,8 +144,17 @@ def main() -> None:
             print(f"  {league}: lobby fetch failed ({exc}); skipping")
             continue
         (raw_dir / f"{league}_lobby_{tag}.json").write_text(json.dumps(lobby))
-        groups = normalize_draft_groups(lobby)
-        print(f"  {league}: {len(groups)} draft group(s) in the lobby")
+        lobbies[league] = normalize_draft_groups(lobby)
+
+    owned = assign_draft_groups(
+        {league: frame["draft_group_id"].tolist() for league, frame in lobbies.items()}
+    )
+    for league, groups in lobbies.items():
+        mine = owned.get(league, set())
+        borrowed = len(groups) - len(mine)
+        groups = groups[groups["draft_group_id"].isin(mine)].reset_index(drop=True)
+        note = f" ({borrowed} belonged to another sport)" if borrowed else ""
+        print(f"  {league}: {len(groups)} draft group(s) in the lobby{note}")
 
         frames: list[pd.DataFrame] = []
         tiered: list[pd.DataFrame] = []

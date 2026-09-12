@@ -56,6 +56,15 @@ GAME_TYPE_TO_SEASON_TYPE = {
 }
 
 # Canonical play columns pulled from nflverse play-by-play (it has hundreds more).
+# ``passer_player_id`` is the QB-adjustment feature: which quarterback was under
+# center for a dropback, so the ratings fit can separate the passer's effect
+# from the offense's and price a team with the quarterback it is actually
+# starting (velocity/features/team.py). It has to be here, not only in the
+# one-off backfill: the daily refresh normalizes through this list, so leaving
+# it out wrote every current-season play with a null passer. The QB
+# decomposition then saw no 2026 dropbacks at all, and starter detection —
+# "the primary passer in the team's latest game" — could never advance past
+# the 2025 finale, which is the Week-18-rest mispricing in a different guise.
 _PBP_COLUMNS: Sequence[str] = (
     "play_id",
     "game_id",
@@ -68,6 +77,7 @@ _PBP_COLUMNS: Sequence[str] = (
     "yards_gained",
     "epa",
     "success",
+    "passer_player_id",
 )
 
 

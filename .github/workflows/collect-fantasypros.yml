@@ -9,8 +9,22 @@ name: Collect FantasyPros projections
 
 on:
   schedule:
-    # Weekly (Tue 12:00 UTC): projections refresh on a weekly cadence, not hourly.
+    # Tuesday is the weekly refresh: consensus projections settle after the
+    # previous week finishes, and this is the snapshot the props model treats
+    # as its external prior.
     - cron: "0 12 * * 2"
+    # ...but Tuesday alone is not enough to run on. The whole NFL weekly
+    # surface — player props, the DFS classic and showdown builds, the GPP
+    # portfolio and the pick'em board — refuses a season-long (week 0)
+    # snapshot, correctly, and takes the previous one otherwise. So a single
+    # bad Tuesday leaves every one of them dark until the *following* Tuesday,
+    # which lands after Sunday's games: exactly what happened in Week 1, when
+    # the Tuesday run predated the week resolver's fix and answered week 0.
+    # Thursday, Saturday and Sunday mornings give the week three more chances
+    # to be right before it matters, and cost one small request each.
+    - cron: "0 12 * * 4"
+    - cron: "0 12 * * 6"
+    - cron: "0 12 * * 0"
   workflow_dispatch:
     inputs:
       season:
