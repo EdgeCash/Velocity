@@ -81,7 +81,7 @@ logged and graded for CLV, but staked at zero.
 | NCAAB | N3: **null after FDR**, 0 of 90 segment cells; raw model ties the close | content + CLV on posted prices; no filter | Correct posture. Bets that clear the EV gate are still staked — confirm that is intended, or paper it like the exchanges. |
 | NHL | lab-gated Brier; **no closes-joined backtest yet** (sbro archive exists) | content + CLV; goalie-neutral pricing | Same question as NCAAB. Closes backtest is the open item. |
 | WNBA | 55.4% flat ATS on 504 bets (~2.4σ) — "worth tracking live before anyone stakes on it" | **paper end to end** — priced, logged, graded, staked at zero | **Decided 2026-09: stays paper.** Nothing in the evidence changed; the market still forecasts better on the headline metric. Revisit if the live CLV record says otherwise. |
-| MLB | **live, and the best-functioning sport here** — the only chain that fills, the only measured DFS edge, its own count sim (docs/BUILD_MLB.md §8) | staked, market-anchored at 0.2 since 2026-09 | **Decided 2026-09: anchored.** It had been raw with no shrink on the largest exposure, against a lab that put it at parity with the close. 0.2 is a holding position until the weight sweep runs on the private closing-moneyline archive — and that sweep must be re-run, because its prior evidence came from the replaced sim. |
+| MLB | **live, and the best-functioning sport here** — the only chain that fills, the only measured DFS edge, its own count sim (docs/BUILD_MLB.md §8) | staked, market-anchored at 0.2 since 2026-09 | **Decided 2026-09, and now measured.** The sweep confirms 0.2 (fitted 0.245 ± 0.137 over 4,212 closes) and says the old raw posture claimed ~2.4× what it earned. Two uncomfortable findings ride along: the raw model is *worse* than the close on Brier (0.24475 vs 0.24319), and the anchored blend beats it by only 0.00018 — the game-market edge here is thin. At the live gate this stakes ~7% of games rather than 72%. |
 
 ### 1.4 The derivative products
 
@@ -124,7 +124,7 @@ The constitutional caps (`WAGERING.md` §3): ¼-Kelly, 5% per bet, 10% per game,
 |---|---|---|---|
 | NFL | 1.0 | 0.2 (Round 3 select-chosen) | Brier/close tests, yes; a staking sweep, no — "tuning w from live paper CLV" is still open |
 | NCAAF | 1.0 | 0.13 | **No.** The totals filter was swept; the anchor was not. |
-| MLB | 1.0 | **0.2 (2026-09)** | **No — and this is the open one.** Set as a holding position, not fitted. The sweep needs banked closing moneylines, which live in the private historical-odds artifact rather than in `datasets/`, and it has to be re-run rather than read off the record: the evidence that MLB sits at parity with the close was produced by the rounded-normal sim that `velocity/models/counts.py` replaced. |
+| MLB | 1.0 | **0.2 (2026-09)** | **Yes — done 2026-09-12.** The calibration slope over 4,212 banked closing moneylines (2025+2026) is **w = 0.245 ± 0.137**, so the shipped 0.2 is right and the previous `w = 1.0` was 5.5 standard errors wrong. Re-scored with the sim `counts.py` replaced it would have been 0.160 — the better sim earns the higher anchor, which is why re-running mattered (docs/MODEL_LAB.md MLB Round 4). |
 | NCAAB / NHL / WNBA | 1.0 | 1.0 | No — all three are paper, so the anchor never reaches money |
 
 The historical MLB shrink (0.35 game / 0.5 props, `WAGERING.md` §1.3) was a

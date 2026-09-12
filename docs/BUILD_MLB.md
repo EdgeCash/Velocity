@@ -342,6 +342,12 @@ the sampler differs:
 | count sim | **0.22735** | — | **0.00693** | 0.6462 | |
 
 Every metric improves and the calibration errors fall by half to sevenfold.
+(Those figures are a paired comparison — both sims drew on the same per-game
+seed within one run — so the direction and magnitude hold, but the run itself
+predates the switch to reproducible seeding and will not reproduce to the last
+decimal. The anchoring sweep re-confirms the direction deterministically: on
+4,212 banked closes the count sim's raw Brier is 0.24475 against the rounded
+normal's 0.24605, docs/MODEL_LAB.md MLB Round 4.)
 The run-line numbers are the ones that cost money: the old sim was **3.8 points
 low** on every home −1.5 and **4.8 points high** on every home +1.5, in the
 same direction every time. A slate priced off it systematically recommended the

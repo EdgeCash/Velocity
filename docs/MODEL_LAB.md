@@ -772,3 +772,89 @@ from the promoted model's projections.
 plays rebuilt with win probability and score state (1.3); the fitted home
 edge and the pace-aware EPA half stay in the lab as variants, measured and
 unpromoted.
+
+## MLB Round 4 — the anchoring sweep (2025–2026, 4,212 games with closes)
+
+The number MLB was missing. It ran at anchoring `w = 1.0` — the raw model
+price, no pull toward the market — with no probability shrink either, on the
+league carrying the largest real exposure, and the sweep that should have
+chosen it had never been run because the closes live in the private
+historical-odds artifact rather than in `datasets/`.
+
+**Data.** Every banked MLB closing moneyline from the 2025 and 2026 seasons
+(runs 8 and 12 of `collect-historical-odds.yml`; 786 snapshot files). Each
+book's own pair is de-vigged *first* and the fair probabilities medianed
+across books — de-vigging after a price median would fold a lopsided book's
+overround into the consensus instead of removing it. 4,452 provider games
+carry a close; 4,212 join the committed games frame by teams and nearest
+kickoff, one-shot so a doubleheader's halves each get their own.
+
+**Model.** Walk-forward: ratings fitted only on games played before each day
+(scores, ridge λ=100), projected through the **count sim**
+(`velocity/models/counts.py`). Re-running was the point — the previous
+verdict was produced by the rounded normal that sim replaced.
+
+### The weight, estimated on every game
+
+The blend is `p_belief = p_fair + w·(p_model − p_fair)`, so regressing what
+happened *over the close* on the model's disagreement *with the close*,
+through the origin, estimates `w` itself. That uses all 4,212 games rather
+than the few hundred a 0.02 edge gate selects at a low weight.
+
+| | n | **w** | market Brier | raw model | blend @ w | blend @ 0.20 |
+|---|---|---|---|---|---|---|
+| all | 4,212 | **0.245 ± 0.137** | 0.24319 | 0.24475 | 0.24301 | 0.24302 |
+| 2025 | 2,310 | 0.212 ± 0.179 | 0.24114 | 0.24301 | 0.24099 | 0.24099 |
+| 2026 | 1,902 | 0.292 ± 0.214 | 0.24569 | 0.24687 | 0.24545 | 0.24548 |
+
+**The shipped 0.2 is right, and `w = 1.0` was decisively wrong** — 5.5
+standard errors above the estimate. The two seasons agree. Blending at 0.2
+rather than at the fitted 0.245 costs 0.00001 of Brier: indistinguishable, so
+the holding position set before this sweep needs no change.
+
+### The sim replacement earned weight
+
+Re-scored with the rounded normal it replaced, the same regression gives
+**w = 0.153 ± 0.119** and a raw-model Brier of 0.24605 against the count
+sim's 0.24475. The better sim is both more informative *and* earns a higher
+anchor — which is exactly why the sweep had to be re-run rather than read off
+the record: the old sim would have argued for ≈0.15, a 39% smaller claim on
+every MLB bet. Both seasons move the same way (2025: 0.123 → 0.212; 2026:
+0.185 → 0.292).
+
+### Two things the sweep says that are less comfortable
+
+1. **The raw model is worse than the close.** Brier 0.24475 against the
+   market's 0.24319. The lab's earlier "at the market's accuracy on winners"
+   was generous to us; on two seasons of banked closes the model loses
+   outright, and only the anchored blend edges ahead — by 0.00018.
+2. **The edge is real but thin.** At the live 0.02 gate the gate-selected
+   sweep corroborates the slope (below), with a realized edge over the
+   de-vigged close of about +2.2% ± 0.9% that is roughly flat in the
+   selection, while the claim at `w = 1.0` is +5.8% — the model claimed
+   **2.6× what it earned**.
+
+| w | bets | claimed | realized | ROI | |
+|---|---|---|---|---|---|
+| 0.20 | 310 | 0.0240 | 0.0040 | −3.35% | |
+| 0.30 | 1,003 | 0.0278 | 0.0113 | −1.67% | |
+| 0.50 | 1,953 | 0.0365 | 0.0263 | +1.71% | |
+| 0.70 | 2,561 | 0.0446 | 0.0243 | +1.32% | |
+| 1.00 | 3,018 | 0.0577 | 0.0242 | +1.55% | claims 2.4× |
+
+**Read the gate table as corroboration only — it cannot decide the weight,
+and running it twice proves that.** Before the per-game seeds were made
+reproducible (they went through Python's own `hash`, which is randomized per
+process), the `w = 0.20` row read n=303, realized +0.0256, ROI +2.50%; the
+identical analysis with fixed seeds reads n=310, realized +0.0040, ROI
+−3.35%. Monte Carlo noise alone moved the realized edge by two points,
+because a 0.02 gate at a low weight selects only ~300 of 4,212 games and
+which ones it selects is itself noisy. The calibration slope moved from 0.252
+to 0.245 over the same re-run: that is the estimator to trust, and it is why
+it uses every game.
+
+**Practical consequence.** At `w = 0.2` and the live 0.02 gate MLB stakes
+about **7% of games** (310 of 4,212) rather than the 72% raw was staking.
+That is the exposure change the anchor buys, and it is the point.
+
+Re-run with `scripts/sweep_mlb_anchoring.py --archive <artifact folder>`.
