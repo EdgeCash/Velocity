@@ -129,8 +129,12 @@ export function buildGames({
   lineMoves = [],
   injuries = [],
   ratings = [],
+  cards = [],
+  parlays = [],
 } = {}) {
   const rated = ratingsIndex(ratings);
+  const cardsByGame = splitCards(cards).byGame;
+  const inParlays = parlayCounts(parlays);
   const projByGame = new Map(realRows(projections).map((p) => [p.game_id, p]));
   const boardByGame = groupBy(realRows(board), 'game_id');
   const publishByGame = groupBy(realRows(publish), 'game_id');
@@ -203,6 +207,13 @@ export function buildGames({
           home: rated.get(`${league}|${String(proj.home ?? '')}`) ?? null,
         }
         : { away: null, home: null },
+      // The rendered graphic of this exact matchup — a thing about the game,
+      // so it lives with the game rather than in a room of its own.
+      cards: cardsByGame.get(id) ?? [],
+      // The reverse of the parlay block's own join: a game says how many
+      // parlays have a leg on it, so the relationship is visible from both
+      // ends rather than only from the parlay's.
+      n_parlays: inParlays.get(id) ?? 0,
       weather: weatherByGame.get(id) ?? null,
       // Filled in by the live store at render time; kept on the object so a
       // card has one place to look.
@@ -229,6 +240,88 @@ export function leagueCounts(games) {
   return [...counts.entries()]
     .map(([league, n]) => ({ league, n }))
     .sort((a, b) => b.n - a.n || a.league.localeCompare(b.league));
+}
+
+/* ------------------------------------------------------------------ *
+ * Parlays and cards — the two things on this surface that are not about
+ * one game, and are not about no game either.
+ * ------------------------------------------------------------------ */
+
+/** Parlays with their legs parsed and the games they touch resolved.
+ *
+ * `legs_json` carries a `game_id` per leg, which is what lets a parlay be a
+ * first-class citizen here rather than a string in a table: the block can
+ * jump you to the game a leg is on, and a game can say how many parlays it
+ * is part of. Without that join a parlay is just prose.
+ *
+ * A row whose JSON will not parse keeps its rendered `legs` string and gets
+ * no game links — degraded, not dropped, because the price and the edge are
+ * still true.
+ */
+export function buildParlays(rows) {
+  const out = [];
+  for (const row of realRows(rows)) {
+    let legs = [];
+    try {
+      const parsed = JSON.parse(String(row.legs_json ?? '[]'));
+      if (Array.isArray(parsed)) legs = parsed;
+    } catch {
+      legs = [];
+    }
+    const gameIds = [...new Set(
+      legs.map((l) => String(l?.game_id ?? '')).filter(Boolean),
+    )];
+    out.push({
+      ...row,
+      // The source carries BOTH: `legs` is a rendered one-line string and
+      // `legs_json` the structured version. The parsed array takes the name,
+      // and the string is kept under its own so the degraded path (JSON that
+      // will not parse) still has something true to print.
+      legs_string: String(row.legs ?? ''),
+      legs,
+      gameIds,
+      // `same_game` is the producer's own flag and means "two or more legs
+      // share a game", NOT "every leg is the same game" — a three-leg parlay
+      // with two MIA@LV legs and one WAS@PHI leg is flagged true. Reading it
+      // as the latter would put cross-game parlays inside one game's sheet.
+      correlated: Boolean(row.same_game),
+    });
+  }
+  out.sort((a, b) => Number(b.ev ?? 0) - Number(a.ev ?? 0));
+  return out;
+}
+
+/** `game_id` → how many parlays have a leg on it. */
+export function parlayCounts(parlays) {
+  const counts = new Map();
+  for (const parlay of parlays ?? []) {
+    for (const id of parlay.gameIds ?? []) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/** The rendered graphics, split by whether they belong to a game or a league.
+ *
+ * Most are per-matchup sheets. The record cards are one per league and carry
+ * no `game_id` at all, so they have no game to sit in and belong with the
+ * record they are a picture of.
+ */
+export function splitCards(rows) {
+  const byGame = new Map();
+  const byLeague = [];
+  for (const row of realRows(rows)) {
+    const id = String(row?.game_id ?? '').trim();
+    if (!id) {
+      byLeague.push(row);
+      continue;
+    }
+    const bucket = byGame.get(id) ?? [];
+    bucket.push(row);
+    byGame.set(id, bucket);
+  }
+  return { byGame, byLeague };
 }
 
 /* ------------------------------------------------------------------ *

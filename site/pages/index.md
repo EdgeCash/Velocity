@@ -170,6 +170,19 @@ from velocity.ratings
 where league != '__none__'
 ```
 
+```sql cards
+select kind, league, stamp, file, away, home, caption, game_id
+from velocity.cards
+where league != '__none__'
+```
+
+```sql parlays
+select legs, n_legs, price, decimal, p_win, ev, same_game, stake,
+  legs_json, league, stamp
+from velocity.parlays
+where league != '__none__'
+```
+
 ```sql model_config
 select league, label, detail from velocity.model_config
 where league != '__none__'
@@ -198,6 +211,8 @@ where league != '__none__'
   modelConfig={model_config}
   health={health}
   ratings={ratings}
+  cards={cards}
+  parlays={parlays}
   stamp={meta[0]?.stamp ?? ''}
   tier={meta[0]?.tier ?? 'private'}
 />

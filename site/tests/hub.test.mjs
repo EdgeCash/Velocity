@@ -21,16 +21,19 @@ import {
 import {
   buildGames,
   buildLineups,
+  buildParlays,
   collapseMarkets,
   dailyCurve,
   flaggedMarkets,
   healthRows,
   impliedProb,
   leagueCounts,
+  parlayCounts,
   ratingAliases,
   ratingRows,
   ratingsIndex,
   realRows,
+  splitCards,
   toTime,
 } from '../components/hub/model.js';
 
@@ -281,6 +284,94 @@ test('DFS rows group into one lineup per slate, with its totals', () => {
   const turbo = lineups.find((l) => l.slate === 'Turbo');
   assert.equal(turbo.salary, 16700);
   assert.ok(Math.abs(turbo.points - 30.29) < 1e-9);
+});
+
+/* ---- parlays and cards ------------------------------------------------ */
+
+const PARLAY = {
+  league: 'nfl', n_legs: 3, price: 849, p_win: 0.3787, ev: 2.665,
+  same_game: true, stake: 1.0695,
+  legs: 'MIA@LV moneyline away (+157) + MIA@LV spread away 3.5 (−109) + WAS@PHI spread home −4.5 (−108)',
+  legs_json: JSON.stringify([
+    { game_id: 'mialv', market: 'moneyline', side: 'away', price: 157, label: 'MIA@LV' },
+    { game_id: 'mialv', market: 'spread', side: 'away', price: -109, point: 3.5, label: 'MIA@LV' },
+    { game_id: 'wasphi', market: 'spread', side: 'home', price: -108, point: -4.5, label: 'WAS@PHI' },
+  ]),
+};
+
+test('a parlay resolves the games its legs are on', () => {
+  // This is what makes a parlay a first-class object here rather than a
+  // string in a table: the block can jump to the game a leg is on, and the
+  // game can say it is in a parlay.
+  const [parlay] = buildParlays([PARLAY]);
+  assert.equal(parlay.legs.length, 3);
+  assert.deepEqual(parlay.gameIds, ['mialv', 'wasphi']);
+});
+
+test('same_game means correlated legs, not a one-game parlay', () => {
+  // The producer's flag means two or more legs SHARE a game. Reading it as
+  // "every leg is this game" would file a cross-game parlay inside one
+  // game's sheet — this parlay touches two.
+  const [parlay] = buildParlays([PARLAY]);
+  assert.equal(parlay.correlated, true);
+  assert.equal(parlay.gameIds.length, 2, 'it is not a one-game parlay');
+});
+
+test('a parlay whose legs JSON is broken keeps its price and its prose', () => {
+  const [parlay] = buildParlays([{ ...PARLAY, legs_json: '{not json' }]);
+  assert.deepEqual(parlay.legs, []);
+  assert.deepEqual(parlay.gameIds, []);
+  assert.equal(parlay.price, 849, 'the price is still true');
+  assert.ok(parlay.legs_string.startsWith('MIA@LV'), 'the rendered string survives');
+});
+
+test('the rendered legs string is not overwritten by the parsed array', () => {
+  // Both live on the source row under different names; the parsed array takes
+  // `legs` and the string has to be kept somewhere or the degraded path above
+  // renders "[object Object]".
+  const [parlay] = buildParlays([PARLAY]);
+  assert.ok(Array.isArray(parlay.legs));
+  assert.equal(typeof parlay.legs_string, 'string');
+});
+
+test('parlays sort by EV, best first', () => {
+  const out = buildParlays([
+    { ...PARLAY, ev: 1.4 }, { ...PARLAY, ev: 2.6 }, { ...PARLAY, ev: 2.0 },
+  ]);
+  assert.deepEqual(out.map((p) => p.ev), [2.6, 2.0, 1.4]);
+});
+
+test('a game knows how many parlays have a leg on it', () => {
+  const parlays = buildParlays([PARLAY, { ...PARLAY, legs_json: JSON.stringify([
+    { game_id: 'mialv', market: 'total', side: 'over', price: -110, label: 'MIA@LV' },
+  ]) }]);
+  const counts = parlayCounts(parlays);
+  // Two legs on one game inside one parlay still counts that parlay ONCE.
+  assert.equal(counts.get('mialv'), 2);
+  assert.equal(counts.get('wasphi'), 1);
+});
+
+test('cards split by whether they belong to a game or a league', () => {
+  // The record card is one per league and carries no game_id, so it has no
+  // game to sit in; the matchup sheets do.
+  const { byGame, byLeague } = splitCards([
+    { kind: 'sheet', league: 'nfl', game_id: 'g1', file: 'a.png' },
+    { kind: 'simcheck', league: 'nfl', game_id: 'g1', file: 'b.png' },
+    { kind: 'recordcard', league: 'nfl', game_id: '', file: 'c.png' },
+    { kind: 'recordcard', league: 'mlb', game_id: '   ', file: 'd.png' },
+  ]);
+  assert.equal(byGame.get('g1').length, 2);
+  assert.deepEqual(byLeague.map((c) => c.file), ['c.png', 'd.png']);
+});
+
+test("a game carries its own cards and its own parlay count", () => {
+  const built = buildGames({
+    games: [{ game_id: 'mialv', league: 'nfl', home_team: 'LV', away_team: 'MIA' }],
+    cards: [{ kind: 'sheet', league: 'nfl', game_id: 'mialv', file: 'a.png' }],
+    parlays: buildParlays([PARLAY]),
+  });
+  assert.equal(built[0].cards.length, 1);
+  assert.equal(built[0].n_parlays, 1);
 });
 
 /* ---- power ratings --------------------------------------------------- */

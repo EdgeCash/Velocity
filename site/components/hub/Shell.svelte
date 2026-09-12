@@ -20,7 +20,8 @@
   import { live } from './live.js';
   import { hubState, VIEWS } from './state.js';
   import {
-    buildGames, buildLineups, flaggedMarkets, leagueCounts, realRows,
+    buildGames, buildLineups, buildParlays, flaggedMarkets, leagueCounts,
+    realRows, splitCards,
   } from './model.js';
   import { teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
@@ -53,6 +54,8 @@
   export let modelConfig = [];
   export let health = [];
   export let ratings = [];
+  export let cards = [];
+  export let parlays = [];
   export let stamp = '';
   /** 'private' carries prices, edges, stakes and the bankroll; 'public' does not. */
   export let tier = 'private';
@@ -64,6 +67,9 @@
   // game cards mark the market they are about, and Record explains them.
   // One source so the three can never disagree.
   $: flagged = flaggedMarkets(health);
+  $: parlayRows = buildParlays(parlays);
+  // Record cards carry no game_id and belong with the record they picture.
+  $: leagueCards = splitCards(cards).byLeague;
   $: openPositions = realRows(ledgerOpen);
   $: allDfs = [...realRows(dfsLineup), ...realRows(dfsShowdown), ...realRows(dfsTiered)];
 
@@ -71,7 +77,8 @@
     games, projections, board, publish,
     positions: openPositions,
     dfs: allDfs,
-    weather, lineMoves, injuries, ratings, props: playerProps,
+    weather, lineMoves, injuries, ratings, cards, props: playerProps,
+    parlays: parlayRows,
   });
 
   $: lineups = [
@@ -188,6 +195,7 @@
       {#if view === 'games'}
         <GamesPanel
           games={scored} {identity} {distributions} {openGame} {isPrivate} {flagged}
+          parlays={parlayRows} league={activeLeague}
         />
       {:else if view === 'dfs'}
         <DfsPanel {lineups} league={activeLeague} />
@@ -201,7 +209,8 @@
         />
       {:else if view === 'record'}
         <RecordPanel
-          {record} {units} {clv} {health} league={activeLeague} {isPrivate}
+          {record} {units} {clv} {health} cards={leagueCards}
+          league={activeLeague} {isPrivate}
         />
       {:else}
         <RatingsPanel {ratings} {teams} league={activeLeague} />

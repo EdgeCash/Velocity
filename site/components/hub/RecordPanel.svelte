@@ -10,11 +10,14 @@
   import { num, pct, signed, marketLabel, tone } from '../format.js';
   import { dailyCurve } from './model.js';
   import HealthPanel from './HealthPanel.svelte';
+  import CardShelf from './CardShelf.svelte';
 
   export let record = [];
   export let units = [];
   export let clv = [];
   export let health = [];
+  /** League-level graphics — the record cards. They picture this view. */
+  export let cards = [];
   export let league = 'all';
   export let isPrivate = true;
 
@@ -24,6 +27,8 @@
     (r) => ['win', 'loss', 'push'].includes(String(r.result ?? '')),
   );
   $: scoped = league === 'all' ? graded : graded.filter((r) => r.league === league);
+  $: scopedCards = league === 'all'
+    ? real(cards) : real(cards).filter((c) => c.league === league);
   $: clvScoped = league === 'all'
     ? real(clv) : real(clv).filter((r) => r.league === league);
   $: unitsScoped = league === 'all'
@@ -204,6 +209,16 @@
   {#if isPrivate}
     <HealthPanel {health} {league} />
   {/if}
+
+  <!-- The record card is a picture of exactly this view, so it belongs in it
+       rather than in a gallery of its own. It carries no game_id, which is
+       what separates it from the per-matchup sheets in the game sheets. -->
+  {#if scopedCards.length}
+    <section class="cardsec">
+      <h4>Record cards</h4>
+      <CardShelf cards={scopedCards} />
+    </section>
+  {/if}
 {/if}
 
 <style>
@@ -252,6 +267,11 @@
   .curve { display: block; width: 100%; height: auto; }
   .cap { margin: 0.35rem 0 0; font-size: 0.7rem; color: var(--v-ink-3); line-height: 1.55; }
 
+  .cardsec {
+    margin-top: 1.6rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--v-line);
+  }
   .scroller { overflow-x: auto; scrollbar-width: thin; max-width: 100%; }
   table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.82rem; }
   th {

@@ -8,6 +8,7 @@
   import TeamMark from '../TeamMark.svelte';
   import Spark from './Spark.svelte';
   import BoxScore from './BoxScore.svelte';
+  import CardShelf from './CardShelf.svelte';
   import {
     american, isNum, kickoffLabel, marketLabel, num, pct, signed,
     sideLabel, teamMark, venueColor, venueMark,
@@ -162,6 +163,11 @@
       {/if}
       {#if game.props.length}
         <span class="flag prop">{game.props.length}&nbsp;props</span>
+      {/if}
+      {#if game.n_parlays}
+        <span class="flag parlay" title="legs on this game in today's parlays">
+          {game.n_parlays}&nbsp;parlay{game.n_parlays === 1 ? '' : 's'}
+        </span>
       {/if}
       {#if game.dfs.length}
         <span class="flag dfs">{game.dfs.length}&nbsp;DFS</span>
@@ -500,6 +506,17 @@
         </section>
       {/if}
 
+      <!-- ---- the rendered graphic ---------------------------------------
+           The shareable picture of this exact matchup. It sits last because
+           it is the takeaway, not the analysis — everything it shows is
+           already above it in numbers. -->
+      {#if game.cards.length}
+        <section class="cards">
+          <h4>Cards</h4>
+          <CardShelf cards={game.cards} />
+        </section>
+      {/if}
+
       <!-- ---- live detail ------------------------------------------------ -->
       {#if score?.event_id && score.state !== 'pre'}
         <section class="boxsec">
@@ -629,6 +646,7 @@
   .flag.staked { background: var(--v-pos-tint); color: var(--v-pos); }
   .flag.dfs { background: var(--v-brand-tint); color: var(--v-brand-dim); }
   .flag.prop { background: var(--v-warn-tint); color: var(--v-warn); }
+  .flag.parlay { background: var(--v-info-tint); color: var(--v-info); }
   .chev {
     font-family: var(--v-board);
     font-size: 1rem;

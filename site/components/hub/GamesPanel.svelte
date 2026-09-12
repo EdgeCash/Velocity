@@ -8,6 +8,7 @@
   // navigates: the list you were reading is still where you left it when the
   // sheet closes.
   import GameCard from './GameCard.svelte';
+  import ParlayBlock from './ParlayBlock.svelte';
   import { groupBy } from './model.js';
 
   export let games = [];
@@ -16,6 +17,8 @@
   export let openGame = '';
   export let isPrivate = true;
   export let flagged = new Map();
+  export let parlays = [];
+  export let league = 'all';
 
   import { hubState } from './state.js';
 
@@ -58,6 +61,11 @@
 
   $: days = [...groupBy(ordered, dayLabel)];
 </script>
+
+<!-- Above the feed, collapsed: a parlay is the one board row that is not
+     about a single game, so it has nowhere to sit inside one — but it must
+     not be the thing between you and the board either. -->
+<ParlayBlock {parlays} {league} {isPrivate} />
 
 {#if !games.length}
   <div class="none">

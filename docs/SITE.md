@@ -105,6 +105,8 @@ site/
       RecordPanel.svelte  graded results, CLV first
       HealthPanel.svelte  the monitor's trailing per-market flags
       RatingsPanel.svelte every rated team, searchable, grouped by league
+      ParlayBlock.svelte  cross-game parlays; a leg opens its own game
+      CardShelf.svelte    the rendered PNGs, with their post captions
       Rail.svelte         bankroll, what is riding, what is live, what is flagged
   tests/                  node --test; the joins and the formatters
   static/                 favicon + icon set (the V drawn as a bankroll curve)
@@ -581,25 +583,30 @@ wasm in R2, `wrangler deploy`). Both site steps are gated on
 artifact and email are delivered — so a site failure marks the run red
 (the honest signal the site didn't publish) without costing the slate.
 
-## Deliberately not carried over
+## Where the ten pages went
 
 The rebuild moved four surfaces into the game sheet where they belong — player
-props, line movement, the injury report and the weather — because each of them
-is a fact *about a game*, and the old site's separation of them from the game
-was the thing being fixed.
+props, line movement, the injury report and the weather — because each is a
+fact *about a game*, and the old site's separation of them from the game was
+the thing being fixed. The rest followed the same rule.
 
-**Market health** came back as part of Record, and **ratings** as a view of
-their own — both below.
+Nothing was dropped. Every surface the ten pages carried is on the hub, and most
+of them are no longer surfaces at all — they are facts attached to the game
+they are about:
 
-Two are still out. They are listed here rather than quietly lost:
-
-| Was | Status |
+| Was a page | Is now |
 |---|---|
-| **Card room** — per-league galleries of the rendered PNGs | Still copied to `static/cards/` with its `cards` manifest, not rendered |
-| **Parlays** | Still built (`parlays`), not rendered |
+| Board, props, line movement, injuries, weather | The game sheet |
+| Matchup dossier | The game sheet, expanded in place |
+| Performance | Record |
+| Market health | Inside Record — same question, shorter horizon |
+| Ratings | A view, **and** the head-to-head in every game sheet |
+| Card room | Each game's own card, in its sheet; the record cards in Record |
+| DFS | A view |
+| Methods | The rail's model block |
 
-Both still have their data assembled by `build_site_data.py`, so each is a
-panel away rather than a pipeline away.
+The two that had nowhere obvious to go are **parlays** and the **record
+cards**, and both are below.
 
 ## Market health
 
@@ -678,6 +685,53 @@ and searches as "Pittsburgh Steelers" with the fit's own spelling kept beside
 it. A team the identity table has not seen — college, or a club not playing
 this week — keeps the fit's spelling rather than being guessed at with a
 prefix match that would confidently map "Miami" to the wrong school.
+
+## Parlays
+
+A parlay is the one row on the board that is not about a single game, so it
+has nowhere to sit inside one. It goes above the feed, **collapsed**: on most
+slates it is a handful of rows and it must not be the thing between you and
+the board.
+
+What makes it more than a table is that `legs_json` carries a `game_id` per
+leg. So a leg is a control — clicking it opens that game in the feed below —
+and the reverse join gives every game card a count of the parlays it has a
+leg in. That is the single-surface argument in miniature: on the old site,
+reading a parlay meant writing down three matchups and going to find them.
+
+One thing it is careful about: **`same_game` means two or more legs share a
+game, not that the whole parlay is one game.** A three-leg parlay with two
+MIA@LV legs and one WAS@PHI leg is flagged true. Reading it as "all one game"
+would file cross-game parlays inside a single game's sheet, so the label says
+*correlated legs* instead.
+
+A row whose JSON will not parse keeps its rendered one-line string and gets
+no leg links — degraded, not dropped, because the price and the model's
+probability are still true. The source carries both `legs` (the string) and
+`legs_json` (the structure); the parsed array takes the name and the string
+is kept under `legs_string`, or the degraded path prints `[object Object]`.
+
+## Cards
+
+The rendered PNGs are made to be **posted** — that is the only reason they
+exist as images rather than as the numbers already on the page — so the shelf
+is built around the two things anyone does with one: open it full size, and
+take the caption. Everything else is chrome.
+
+They split by whether they belong to a game:
+
+- **Per-matchup** (the pre-game sheet, the sim check) carry a `game_id` and
+  live in that game's sheet, last — they are the takeaway, not the analysis,
+  and everything on them is already above in numbers.
+- **Record cards** are one per league and carry no `game_id` at all. They are
+  a picture of exactly the Record view, so they sit in it.
+
+There is no gallery, because a room full of ninety-eight matchup graphics is
+a browsing surface for a thing nobody browses: you want the card for the game
+you are looking at, and that is where it now is.
+
+A card whose file did not make it into the build drops out of the shelf
+rather than leaving a broken frame.
 
 ## The Streamlit app
 
