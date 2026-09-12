@@ -912,12 +912,21 @@ banked games, because basketball plays overtime. Its margin dispersion is also
 short — 12.5 against a realized 14.0 — and it prices the home team at 56.2%
 against a realized 54.9%.
 
-None of that explains a zero weight on its own, but it does mean this round
-scored a sim that is known to be mis-shaped. The baseball fix
-(`velocity/models/counts.py`) is the template: resolve the tie mass into
-overtime and widen the dispersion to the league's own. **Re-run this round
-after that lands** — for MLB the same repair moved the fitted weight from
-0.153 to 0.245.
+That was written as a caveat with an expectation attached — that repairing it
+might move the weight the way baseball's repair did (0.153 → 0.245).
+**The repair landed the same day, and the expectation was wrong**
+([`docs/BUILD_WNBA_SIM.md`](BUILD_WNBA_SIM.md)). Re-scored on the corrected
+sim the weight is 0.262 ± 0.159 pooled, 0.425 in 2025 and −0.023 in 2026 —
+every number within noise of the ones above, and the ATS record identical at
+54.2%.
+
+Nothing moved because nothing should have: the sweep measures the moneyline,
+and the tie mass was never really costing the moneyline (`p_home_win` split
+ties evenly and an extra period is close to a coin flip, so the split was
+right by accident). The repair bought what it was aimed at — the total's
+dispersion, which was a fifth too narrow, and the short spreads, where an
+impossible outcome had been worth a full 3.2 points — and the verdict here is
+unchanged, now measured against a correctly-shaped sim.
 
 ### The decision
 

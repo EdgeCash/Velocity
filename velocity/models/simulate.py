@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from velocity.models.counts import CountSimConfig, simulate_counts
+from velocity.models.overtime import OvertimeConfig, resolve_ties
 from velocity.models.residuals import ResidualPool
 
 # Calibrated to real NFL residuals — the standard deviation of (actual − model)
@@ -102,6 +103,13 @@ class SimConfig:
     # scores ties that cannot happen, is a third under-dispersed, and is
     # symmetric where the unbatted ninth inning is not.
     counts: CountSimConfig | None = None
+    # Sports that cannot end level (velocity/models/overtime.py). When set, a
+    # sample whose rounded scores come out tied plays the extra period the
+    # real game would have played — both sides scoring, so the total rises as
+    # well as the margin moving off zero. Basketball needs this and nothing
+    # else from the baseball rebuild: eighty-odd points is normal enough, and
+    # both teams play all forty minutes whatever the score.
+    overtime: OvertimeConfig | None = None
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -239,5 +247,7 @@ def simulate_game(
     if config.round_scores:
         home = np.rint(home)
         away = np.rint(away)
+        if config.overtime is not None:
+            home, away = resolve_ties(home, away, rng, config.overtime)
 
     return GameSim(home_score=home, away_score=away)

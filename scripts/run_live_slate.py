@@ -41,6 +41,7 @@ from velocity.intel.publish import (
 from velocity.models.counts import MLB_COUNTS
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
+from velocity.models.overtime import WNBA_OVERTIME
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
     DEFAULT_SD_TOTAL,
@@ -426,7 +427,13 @@ def _build_projection(
         # unused on that path and kept only because the config requires them.
         "mlb": SimConfig(sd_margin=4.5, sd_total=4.5, n_sims=args.n_sims,
                          counts=MLB_COUNTS),
-        "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
+        # Basketball cannot end level either, and its own defect was the
+        # TOTAL: 15.0 against a walk-forward residual sd of 18.15, a fifth too
+        # narrow, while the margin was nearly right. sd_total below is the
+        # PRE-overtime number that lands the finished distribution on 18.15
+        # (docs/BUILD_WNBA_SIM.md).
+        "wnba": SimConfig(sd_margin=12.93, sd_total=17.6, n_sims=args.n_sims,
+                          overtime=WNBA_OVERTIME),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
         "ncaab": SimConfig(sd_margin=13.0, sd_total=18.5, n_sims=args.n_sims),
         # NHL: empirical outcome sds from the banked 2023–25 seasons

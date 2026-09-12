@@ -159,11 +159,12 @@ def attach_closes(games: pd.DataFrame, closes: pd.DataFrame,
 # it scored — a sweep that silently tracks a config change is unreadable later.
 LEAGUES = {
     "mlb": {"ridge": 100.0, "half_life": None, "sd_margin": 4.5, "sd_total": 4.5,
-            "counts": True, "min_train": 400},
+            "counts": True, "overtime": False, "min_train": 400},
     # The promoted WNBA configuration: pace×efficiency, λ=10, recency-8
-    # (docs/MODEL_LAB.md WNBA Round 2), on the rounded normal it still uses.
-    "wnba": {"ridge": 10.0, "half_life": 8.0, "sd_margin": 12.5, "sd_total": 15.0,
-             "counts": False, "min_train": 150},
+    # (docs/MODEL_LAB.md WNBA Round 2), on the REPAIRED sim: residual dispersion
+    # and overtime resolution (docs/BUILD_WNBA_SIM.md).
+    "wnba": {"ridge": 10.0, "half_life": 8.0, "sd_margin": 12.93, "sd_total": 17.6,
+             "counts": False, "overtime": True, "min_train": 150},
 }
 
 
@@ -213,6 +214,7 @@ def walk_forward_probabilities(  # pragma: no cover - slow, exercised by the CLI
     games: pd.DataFrame, *, ridge_lambda: float = 100.0, n_sims: int = 20_000,
     min_train: int = 400, counts: bool = True, pace: pd.DataFrame | None = None,
     half_life: float | None = None, sd_margin: float = 4.5, sd_total: float = 4.5,
+    overtime: bool = False,
 ) -> pd.DataFrame:
     """P(home win) per game, fitted only on games played before its own day.
 
@@ -225,11 +227,13 @@ def walk_forward_probabilities(  # pragma: no cover - slow, exercised by the CLI
     scores fit — the sweep has to score what production actually prices.
     """
     from velocity.models.counts import MLB_COUNTS
+    from velocity.models.overtime import WNBA_OVERTIME
     from velocity.models.simulate import SimConfig, simulate_game
     from velocity.util.seed import make_rng
 
-    config = SimConfig(sd_margin=sd_margin, sd_total=sd_total,
-                       n_sims=n_sims, counts=MLB_COUNTS if counts else None)
+    config = SimConfig(sd_margin=sd_margin, sd_total=sd_total, n_sims=n_sims,
+                       counts=MLB_COUNTS if counts else None,
+                       overtime=WNBA_OVERTIME if overtime else None)
     frame = games.dropna(subset=["home_score", "away_score"]).copy()
     frame["_day"] = pd.to_datetime(frame["kickoff"]).dt.normalize()
     rows = []
@@ -433,7 +437,8 @@ def main() -> None:  # pragma: no cover - CLI over private data
             n_sims=args.n_sims, min_train=int(cfg["min_train"]),
             counts=cfg["counts"] and not args.old_sim, pace=pace,
             half_life=cfg["half_life"], sd_margin=cfg["sd_margin"],
-            sd_total=cfg["sd_total"])
+            sd_total=cfg["sd_total"],
+            overtime=bool(cfg["overtime"]) and not args.old_sim)
         fit = ("pace×efficiency" if pace is not None else "scores")
         sim_name = ("count sim" if cfg["counts"] and not args.old_sim
                     else "rounded normal")
