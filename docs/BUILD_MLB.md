@@ -252,3 +252,102 @@ fixtures + green tests, then manually dispatch `collect-odds.yml --leagues mlb`
 to capture a live board and confirm the key end-to-end. That single PR delivers
 the in-season pipeline test *and* lays the foundation every later MLB phase
 builds on.
+
+---
+
+## 8. The count sim — promoted 2026-09
+
+The plan above (§6) predicted this piece: *"seed M3 with a calibrated
+run-distribution approximation (e.g., a Poisson/negative-binomial on projected
+team runs)"*. Until now the live path did not have it. MLB was priced by the
+shared football sim — a bivariate normal on (margin, total), rounded — at
+`sd_margin=3.2, sd_total=4.6`. That is wrong about a baseball game in three
+independent ways, and all three land on markets this system trades.
+
+### What the normal got wrong
+
+| | rounded normal | the 7,149 banked games |
+|---|---|---|
+| P(tie) | **0.135** | **0.000** |
+| P(home win) | 0.509 (ties split) | 0.531 |
+| margin sd | 3.09 | 4.52 |
+| P(home −1.5) | 0.318 | 0.356 |
+
+1. **It scored ties.** 13.5% of the probability mass sat on a final score
+   baseball cannot produce. Splitting it evenly, as `p_home_win` does, is how
+   that turns into a moneyline error.
+2. **It was under-dispersed by a third.** The walk-forward residual sd of the
+   margin, measured against the shipped ratings over 4,695 games, is **4.53**,
+   not 3.2. Every alternate line and every exchange ladder rung was compressed
+   toward the middle.
+3. **It was symmetric, and baseball is not.** The home team does not bat in the
+   bottom of the ninth when it already leads, and a walk-off ends the instant
+   the lead is taken, so its runs are **censored by winning**. The banked games
+   say so plainly: the home team wins by exactly one in **32.7%** of its wins
+   against the away team's **23.1%**, and its run total has the *smaller*
+   spread (3.11 vs 3.26) despite the slightly higher mean. A normal on the
+   margin has no way to express that.
+
+Point 3 also resolves an apparent paradox. Home teams out-score away teams by
+only **0.04 runs a game**, yet win **53.1%**. Drawing independently from the
+two observed marginals gives a home win rate of 46.1% with a 9.8% tie rate —
+nowhere near. The missing advantage is not in the run differential; it is in
+the innings the home team never bats.
+
+### What replaced it
+
+`velocity/models/counts.py` simulates the thing itself. Each side's runs are a
+negative binomial (real team-games are overdispersed against Poisson: mean
+4.46, variance 9.65); the home team's last inning is dropped when it is already
+ahead; a lead taken in the ninth ends the rally where it stands; and a game
+level after nine goes to extra innings, which cannot stay level.
+
+Five constants, fitted on the 4,949 games of 2024–25 by matching the full
+signed-margin profile plus the per-side and total moments:
+
+| constant | value | what it is |
+|---|---|---|
+| `dispersion` | 3.25 | the negative binomial's *k*; var = μ + μ²/k |
+| `home_uncensored` | 1.05 | inflates the censored input mean back to a full nine innings (~0.22 runs a game) |
+| `walkoff_spill` | 0.3 | the share of a cut-short rally's surplus that still crosses on the deciding play |
+| `extra_home_win` | 0.55 | the home team's share of extra-inning games |
+| `extra_margin_tail` | 0.35 | how heavy the tail is on an extra-inning winning margin |
+
+**Held out on the 2,200 games of 2026**, which the fit never saw: simulated
+home win rate 0.5285 against an actual 0.5277, margin sd 4.56 against 4.58, and
+the signed-margin profile tracking bucket by bucket from −8 to +8.
+
+### What it is worth
+
+Walk-forward over **5,636 games**, same ratings, same games, same seeds — only
+the sampler differs:
+
+| | Brier ↓ | log-loss ↓ | calib. err ↓ | mean p | actual |
+|---|---|---|---|---|---|
+| **moneyline** | | | | | 0.5311 |
+| rounded normal | 0.24529 | 0.68356 | 0.02842 | 0.5029 | |
+| count sim | **0.24459** | **0.68219** | **0.01254** | 0.5248 | |
+| **home −1.5** | | | | | 0.3561 |
+| rounded normal | 0.22721 | — | 0.03776 | 0.3183 | |
+| count sim | **0.22576** | — | **0.00560** | 0.3517 | |
+| **home +1.5** | | | | | 0.6393 |
+| rounded normal | 0.22970 | — | 0.04773 | 0.6870 | |
+| count sim | **0.22735** | — | **0.00693** | 0.6462 | |
+
+Every metric improves and the calibration errors fall by half to sevenfold.
+The run-line numbers are the ones that cost money: the old sim was **3.8 points
+low** on every home −1.5 and **4.8 points high** on every home +1.5, in the
+same direction every time. A slate priced off it systematically recommended the
+home team taking the run line and faded it laying one.
+
+### Still open
+
+The MLB **market-anchoring weight** resolves to 1.0 — raw model price, no pull
+toward the market, no probability shrink — while NFL sits at 0.2 and NCAAF at
+0.13. The lab's MLB rounds put the promoted model at Brier 0.2485 against the
+de-vigged closing moneyline's 0.2491, i.e. at parity rather than ahead, which
+argues for an anchor. Choosing the weight properly is a sweep against banked
+closing moneylines, and those live in the private historical-odds artifact
+rather than in `datasets/`, so it is a lab round and not a code change. It
+should be re-run *after* this promotion in any case: the numbers above were
+produced by the sim this section replaces.

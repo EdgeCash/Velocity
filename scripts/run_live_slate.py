@@ -38,6 +38,7 @@ from velocity.intel.publish import (
     DEFAULT_MIN_CONTEXT,
     DEFAULT_MIN_CONVICTION,
 )
+from velocity.models.counts import MLB_COUNTS
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
 from velocity.models.simulate import (
@@ -417,7 +418,14 @@ def _build_projection(
     # not yet lab-tuned (their datasets carry no closing lines to tune on).
     sims = {
         "ncaaf": football_sim_config("ncaaf", args),
-        "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
+        # Baseball is simulated as COUNTS, not as a rounded normal on the
+        # margin (velocity/models/counts.py). The normal scored a tie in 13.5%
+        # of games — baseball has none in 7,149 banked — was a third
+        # under-dispersed against a 4.53 walk-forward residual sd, and was
+        # symmetric where the unbatted ninth inning is not. The sds below are
+        # unused on that path and kept only because the config requires them.
+        "mlb": SimConfig(sd_margin=4.5, sd_total=4.5, n_sims=args.n_sims,
+                         counts=MLB_COUNTS),
         "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
         "ncaab": SimConfig(sd_margin=13.0, sd_total=18.5, n_sims=args.n_sims),
