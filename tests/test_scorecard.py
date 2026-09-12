@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from velocity.report.scorecard import (
+    bets_from_slate,
     calibration_table,
     clv_by_market,
     expected_calibration_error,
@@ -108,3 +109,76 @@ def test_summarize_reports_record_and_roi() -> None:
     assert s["n_bets"] == 3
     assert s["wins"] == 2 and s["losses"] == 1
     assert "roi" in s and "mean_price_clv" in s and "ece" in s
+
+
+def test_an_exchange_rung_is_never_scored_against_the_main_line_close() -> None:
+    """The fabricated-CLV defect, in one case.
+
+    A Kalshi spread rung bought 17 points off the main number was looked up on
+    ``(game, market, side)`` alone, matched the sportsbook's consensus close on
+    the main number, and booked the whole distance as line value earned. A rung
+    can only be compared with its own contract; with no exchange close banked
+    it carries none.
+    """
+    slate = pd.DataFrame(
+        {
+            "game_id": ["g1", "g1"],
+            "market": ["spread", "spread"],
+            "side": ["home", "home"],
+            "point": [-20.5, -3.5],
+            "book": ["kalshi", "fanduel"],
+            "price": [900.0, -110.0],
+            "stake": [1.0, 1.0],
+            "p_model": [0.2, 0.55],
+        }
+    )
+    closing = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "market": ["spread"],
+            "side": ["home"],
+            "point": [-3.0],
+            "price": [-110.0],
+            "book": ["consensus"],
+        }
+    )
+    bets = {b.book: b for b in bets_from_slate(slate, closing)}
+    # The exchange rung gets no close, so no CLV of any kind.
+    assert bets["kalshi"].closing_price is None
+    assert bets["kalshi"].closing_point is None
+    assert bets["kalshi"].line_clv() is None
+    assert bets["kalshi"].price_clv() is None
+    # The sportsbook bet still scores against the consensus close, and its
+    # line CLV is the half point it actually beat.
+    assert bets["fanduel"].closing_point == -3.0
+    assert bets["fanduel"].line_clv() == -0.5
+
+
+def test_an_exchange_rung_scores_against_its_own_contracts_close() -> None:
+    # Same venue, same strike: that is the same contract, so it does carry CLV.
+    slate = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "market": ["total"],
+            "side": ["over"],
+            "point": [50.5],
+            "book": ["kalshi"],
+            "price": [138.0],
+            "stake": [1.0],
+            "p_model": [0.45],
+        }
+    )
+    closing = pd.DataFrame(
+        {
+            "game_id": ["g1"],
+            "market": ["total"],
+            "side": ["over"],
+            "point": [50.5],
+            "price": [110.0],
+            "book": ["kalshi"],
+        }
+    )
+    bet = bets_from_slate(slate, closing)[0]
+    assert bet.closing_price == 110.0
+    # Bought at +138 and it closed at +110: a real, earned price edge.
+    assert bet.price_clv() is not None and bet.price_clv() > 0

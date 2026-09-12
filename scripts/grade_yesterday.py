@@ -1,9 +1,9 @@
 """Grade the most recent prior day's slate → the email's model-status record.
 
 The workflow downloads previous runs' private artifacts into a folder; this
-script finds the **latest slate from the most recent prior date** (US/Central —
-the operator's day, so both game-day runs report the same finished day), grades
-it against the league's schedule feed, and writes
+script finds **every slate from before today** (US/Central — the operator's
+day), merges the day's cards so each play is graded once, grades them against
+the league's schedule feed, and writes
 ``record_<league>_<stamp>.parquet`` into the slate output folder, where the
 email renderer picks it up.
 
@@ -37,6 +37,15 @@ _STAMP = r"(\d{8}T\d{6}Z)"
 SHARP_BOOKS = frozenset({"pinnacle"})
 _OPERATOR_TZ = ZoneInfo("America/Chicago")
 
+# Schedule feeds that write a LOCAL clock rather than UTC. nflverse builds its
+# kickoff by pasting the game date onto ``gametime``, which is Eastern, while
+# the slate's kickoff is The Odds API's UTC ``commence_time``. Undeclared, that
+# gap put every prime-time game on the next UTC day and it could never be
+# graded (docs: velocity/report/results.py). Every other feed here reports UTC:
+# CFBD's start_date, statsapi's gameDate, the NHL API and the hoopR/wehoop
+# release parquets all do.
+SCHEDULE_TZ_BY_LEAGUE = {"nfl": "America/New_York"}
+
 
 def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
     """All persisted frames under ``prev_dir``, grouped by run stamp.
@@ -66,13 +75,60 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
 
 def _pick_prior_stamp(stamps: dict[str, dict[str, Path]], now_utc: datetime) -> str | None:
     """The latest stamp whose operator-local date precedes today's."""
+    prior = prior_stamps(stamps, now_utc)
+    return prior[-1] if prior else None
+
+
+def prior_stamps(stamps: dict[str, dict[str, Path]], now_utc: datetime) -> list[str]:
+    """Every stamp from before today, oldest first.
+
+    The slate runs twice a day. Grading only the newest of them — which is what
+    taking ``max`` did — meant the earlier card was never settled: its bets
+    stayed pending forever, its closing-line value was never measured, and the
+    games it uniquely covered (the ones already under way by the time the later
+    run built its board, so dropped from that board) left the record entirely.
+    Both cards are graded now, and the day's frames merged before grading.
+    """
     today = now_utc.astimezone(_OPERATOR_TZ).date()
-    prior = [
+    return sorted(
         s for s in stamps
         if datetime.strptime(s, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         .astimezone(_OPERATOR_TZ).date() < today
-    ]
-    return max(prior) if prior else None
+    )
+
+
+# What makes two rows the same play, per persisted frame kind. A bet quoted on
+# both of the day's cards is one bet, not two, and must not be graded twice.
+_MERGE_KEYS: dict[str, tuple[str, ...]] = {
+    "slate": ("game_id", "market", "side", "point", "book"),
+    "props": ("game_id", "market", "side", "point", "book", "player"),
+    "portfolio": ("game_id", "market", "side", "point", "book", "player"),
+    "parlays": ("legs_json",),
+    "games": ("game_id",),
+    "projections": ("game_id",),
+    "distributions": ("game_id",),
+}
+
+
+def merge_stamped(frames: list[pd.DataFrame], kind: str) -> pd.DataFrame | None:
+    """Concatenate one day's frames of a kind, keeping each play once.
+
+    The **earliest** appearance wins, which is the one the ledger actually
+    placed: a bet first recommended on the afternoon card and repeated in the
+    evening is booked at the afternoon price, so it has to be graded at that
+    price too.
+    """
+    present = [f for f in frames if f is not None and not f.empty]
+    if not present:
+        return None
+    out = pd.concat(present, ignore_index=True)
+    keys = [k for k in _MERGE_KEYS.get(kind, ()) if k in out.columns]
+    if not keys:
+        return out.drop_duplicates().reset_index(drop=True)
+    # ``point`` and ``player`` are nullable; a null must compare equal to a
+    # null or every such row would survive as its own play.
+    filled = out[keys].astype(object).where(out[keys].notna(), "\x00")
+    return out[~filled.duplicated(keep="first")].reset_index(drop=True)
 
 
 def _load(paths: dict[str, Path], kind: str) -> pd.DataFrame | None:
@@ -269,8 +325,12 @@ def closing_for_slate(
     # rung of a ladder, not a two-way sportsbook quote on a main line — so
     # folding them into this cross-book median would silently shift the
     # sportsbook CLV benchmark and median a point across a whole ladder
-    # (docs/BUILD_EXCHANGES.md E7). They are graded on their own contract via
-    # the slate's stored closing price instead.
+    # (docs/BUILD_EXCHANGES.md E7). An exchange row is scored only against its
+    # OWN contract — same venue, same strike — which the scorecard's ladder
+    # close index enforces; with no exchange close banked here yet it simply
+    # carries no CLV. That is the honest answer, and it replaces scoring the
+    # rung against this consensus, which invented the whole distance between
+    # a far-off rung and the main number as line value earned.
     from velocity.store.schema import LADDER_BOOKS
 
     per_book = per_book[~per_book["book"].astype(str).str.lower().isin(LADDER_BOOKS)]
@@ -649,20 +709,27 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
 
     now = datetime.now(UTC)
     stamps = _stamps(Path(args.prev_dir), args.league)
-    stamp = _pick_prior_stamp(stamps, now)
-    if stamp is None:
+    graded_stamps = prior_stamps(stamps, now)
+    if not graded_stamps:
         print("no prior-day slate found in the downloaded artifacts; skipping record")
         return
-    paths = stamps[stamp]
-    slate = _load(paths, "slate")
-    props = _load(paths, "props")
-    parlays = _load(paths, "parlays")
-    games_map = _load(paths, "games")
-    portfolio = _load(paths, "portfolio")
+    stamp = graded_stamps[-1]
+
+    def _merged(kind: str) -> pd.DataFrame | None:
+        return merge_stamped(
+            [f for s in graded_stamps if (f := _load(stamps[s], kind)) is not None], kind
+        )
+
+    slate = _merged("slate")
+    props = _merged("props")
+    parlays = _merged("parlays")
+    games_map = _merged("games")
+    portfolio = _merged("portfolio")
     slate = attach_sized_stakes(slate, portfolio, "game")
     props = attach_sized_stakes(props, portfolio, "prop")
     n_plays = sum(0 if f is None else len(f) for f in (slate, props, parlays))
-    print(f"grading slate {stamp}: {n_plays} play(s)")
+    which = stamp if len(graded_stamps) == 1 else f"{len(graded_stamps)} runs → {stamp}"
+    print(f"grading slate {which}: {n_plays} play(s)")
 
     slate_date = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
     record = None
@@ -682,7 +749,10 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                 provider_names=set(games_map["home_team"].astype(str))
                 | set(games_map["away_team"].astype(str)),
             )
-            finals = finals_for_slate(games_map, schedule, aliases=aliases)
+            finals = finals_for_slate(
+                games_map, schedule, aliases=aliases,
+                schedule_tz=SCHEDULE_TZ_BY_LEAGUE.get(args.league),
+            )
             # The closing lines from the hourly odds archive — best-effort;
             # bets with no matched close grade normally with CLV left null.
             closing = None
@@ -736,8 +806,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     # Season chain: fold the day's SETTLED plays into the newest cumulative
     # record and carry it forward in this run's artifact (the next run downloads
     # it and continues). Pending rows never enter the chain: a bet the chain
-    # can't settle today is never revisited (only the latest prior-date slate is
-    # ever graded), so a pending row would be permanent noise — the first live
+    # can't settle today is never revisited (every prior-day run is graded, but
+    # only the prior day), so a pending row would be permanent noise — the first live
     # run proved it by folding 715 stale future-game bets into the season line.
     # Filtering the downloaded chain too heals any history that already
     # carries them.
@@ -781,8 +851,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         from velocity.report.sim_check import build_sim_checks
         from velocity.report.social_png import render_record_card, render_sim_checks
 
-        projections_frame = _load(paths, "projections")
-        distributions = _load(paths, "distributions")
+        projections_frame = _merged("projections")
+        distributions = _merged("distributions")
         if (
             projections_frame is not None
             and distributions is not None
