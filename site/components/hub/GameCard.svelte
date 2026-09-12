@@ -12,7 +12,7 @@
     american, isNum, kickoffLabel, marketLabel, num, pct, signed,
     sideLabel, teamMark, venueColor, venueMark,
   } from '../format.js';
-  import { impliedProb } from './model.js';
+  import { impliedProb, ratingRows } from './model.js';
 
   export let game;
   export let identity = {};
@@ -91,6 +91,12 @@
   }
 
   $: headMark = markFor(topMarket);
+
+  $: h2h = ratingRows(game.ratings?.away, game.ratings?.home);
+  // Every league's fit has its own natural unit — points per game for the
+  // football fits, runs per game for baseball, points per 100 possessions for
+  // basketball — so the block has to say which one these numbers are in.
+  $: scale = String(game.ratings?.home?.scale ?? game.ratings?.away?.scale ?? '');
 </script>
 
 <article class="card" class:open class:live={isLive}>
@@ -230,6 +236,50 @@
           <p class="empty">No projection for this game on the current build.</p>
         {/if}
       </section>
+
+      <!-- ---- the head-to-head ------------------------------------------
+           The ratings behind the projection, mirrored with the advantage
+           marked down the middle. A list of markets says what the model
+           thinks; this says why — and it is the one thing the old site's
+           matchup page did that a list of numbers cannot. -->
+      {#if h2h.length}
+        <section class="h2h">
+          <h4>
+            Power ratings
+            {#if scale}<span class="sub">{scale}</span>{/if}
+          </h4>
+          <div class="h2hgrid">
+            <span class="hcorner"></span>
+            <span class="hteam">
+              <TeamMark code={away.code} logo={away.logo} color={away.color}
+                        label={game.away_team} size={18} />
+              {away.code}
+            </span>
+            <span class="hteam right">
+              {home.code}
+              <TeamMark code={home.code} logo={home.logo} color={home.color}
+                        label={game.home_team} size={18} />
+            </span>
+            {#each h2h as row (row.key)}
+              <span class="hlab">{row.label}</span>
+              <span class="hval" class:lead={row.edge === 'away'}>
+                {row.key === 'rank' ? `#${num(row.away, 0)}` : signed(row.away, row.dp)}
+                {#if row.edge === 'away'}<span class="harrow" aria-label="advantage">◂</span>{/if}
+              </span>
+              <span class="hval right" class:lead={row.edge === 'home'}>
+                {#if row.edge === 'home'}<span class="harrow" aria-label="advantage">▸</span>{/if}
+                {row.key === 'rank' ? `#${num(row.home, 0)}` : signed(row.home, row.dp)}
+              </span>
+            {/each}
+          </div>
+          <p class="h2hnote">
+            Off and Def are deviations from league average, so a
+            <strong>negative Def is the good one</strong>; Net is the expected
+            margin against an average opponent on a neutral floor. Pace is
+            context, not an advantage, and is left unmarked.
+          </p>
+        </section>
+      {/if}
 
       <!-- ---- the markets ---------------------------------------------- -->
       {#if game.markets.length}
@@ -650,6 +700,60 @@
     gap: 0.5rem;
   }
   .cut { color: var(--v-warn); }
+
+  /* ---- the head-to-head ------------------------------------------------
+     Three columns: the statistic in the middle-left, each side's value out
+     to its own edge, and the advantage arrow pointing at the side that has
+     it. The arrow is the second channel — the lit value alone would rest on
+     colour, which nothing on this board is allowed to do. */
+  .h2hgrid {
+    display: grid;
+    grid-template-columns: minmax(0, auto) 1fr 1fr;
+    gap: 0.28rem 0.8rem;
+    align-items: center;
+    padding: 0.55rem 0.7rem;
+    background: var(--v-lvl-2);
+    border-radius: var(--v-radius-sm);
+  }
+  .hteam {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--v-board);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--v-ink-2);
+  }
+  .hteam.right { justify-content: flex-end; }
+  .hlab {
+    font-size: 0.58rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--v-ink-3);
+    white-space: nowrap;
+  }
+  .hval {
+    display: flex;
+    align-items: baseline;
+    gap: 0.3em;
+    font-family: var(--v-board);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--v-ink-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .hval.right { justify-content: flex-end; }
+  .hval.lead { color: var(--v-ink); font-weight: 700; }
+  .harrow { font-size: 0.7em; color: var(--v-brand); }
+  .h2hnote {
+    margin: 0.45rem 0 0;
+    font-size: 0.7rem;
+    line-height: 1.5;
+    color: var(--v-ink-3);
+  }
+  .h2hnote strong { color: var(--v-ink-2); font-weight: 600; }
 
   .mlist { display: grid; gap: 0.5rem; }
   .m {

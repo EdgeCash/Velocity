@@ -28,6 +28,7 @@
   import DfsPanel from './DfsPanel.svelte';
   import PositionsPanel from './PositionsPanel.svelte';
   import RecordPanel from './RecordPanel.svelte';
+  import RatingsPanel from './RatingsPanel.svelte';
   import Rail from './Rail.svelte';
 
   export let games = [];
@@ -51,6 +52,7 @@
   export let exposure = [];
   export let modelConfig = [];
   export let health = [];
+  export let ratings = [];
   export let stamp = '';
   /** 'private' carries prices, edges, stakes and the bankroll; 'public' does not. */
   export let tier = 'private';
@@ -69,7 +71,7 @@
     games, projections, board, publish,
     positions: openPositions,
     dfs: allDfs,
-    weather, lineMoves, injuries, props: playerProps,
+    weather, lineMoves, injuries, ratings, props: playerProps,
   });
 
   $: lineups = [
@@ -131,12 +133,14 @@
 
   const VIEW_LABEL = {
     games: 'Games', dfs: 'DFS', positions: 'Positions', record: 'Record',
+    ratings: 'Ratings',
   };
   $: viewCount = {
     games: hub.length,
     dfs: lineups.length,
     positions: openPositions.length,
     record: realRows(record).length,
+    ratings: realRows(ratings).length,
   };
 
   function setView(next) { hubState.set({ view: next, game: '' }); }
@@ -195,10 +199,12 @@
           live={$live}
           {isPrivate}
         />
-      {:else}
+      {:else if view === 'record'}
         <RecordPanel
           {record} {units} {clv} {health} league={activeLeague} {isPrivate}
         />
+      {:else}
+        <RatingsPanel {ratings} {teams} league={activeLeague} />
       {/if}
     </main>
 

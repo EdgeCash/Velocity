@@ -21,13 +21,18 @@ prices across sportsbooks and exchanges, its own DFS players, its own open
 positions and its own live score. Opening one expands it in place. Nothing
 navigates.
 
-Three things are not games — the DFS slate, the position blotter and the
-graded record — and they are **views** on the same surface rather than pages.
-DFS in particular has to be a peer view rather than only living inside game
-cards, because the two genuinely do not line up: a Friday in September is an
-MLB and WNBA DFS slate against an NFL and college *board*, so a DFS surface
-nested only in game cards would be empty on exactly the days it has the most
-to say.
+Four things are not games — the DFS slate, the position blotter, the graded
+record and the power ratings — and they are **views** on the same surface
+rather than pages. DFS in particular has to be a peer view rather than only
+living inside game cards, because the two genuinely do not line up: a Friday
+in September is an MLB and WNBA DFS slate against an NFL and college *board*,
+so a DFS surface nested only in game cards would be empty on exactly the days
+it has the most to say.
+
+Adding a view has to justify itself against that. Market health did not, and
+went inside Record; **ratings** did, because they are the only thing here
+that answers a question no game card can — a card shows two teams, and "who
+does the model think is good" is about all of them.
 
 View, league filter and opened game live in the URL hash, so "no tab
 switching" does not also mean "no back button" and a view is still something
@@ -99,6 +104,7 @@ site/
       PositionsPanel.svelte  the bet tracker, read against the live score
       RecordPanel.svelte  graded results, CLV first
       HealthPanel.svelte  the monitor's trailing per-market flags
+      RatingsPanel.svelte every rated team, searchable, grouped by league
       Rail.svelte         bankroll, what is riding, what is live, what is flagged
   tests/                  node --test; the joins and the formatters
   static/                 favicon + icon set (the V drawn as a bankroll curve)
@@ -582,22 +588,18 @@ props, line movement, the injury report and the weather — because each of them
 is a fact *about a game*, and the old site's separation of them from the game
 was the thing being fixed.
 
-**Market health** came back as part of Record rather than as a fifth view —
-see below.
+**Market health** came back as part of Record, and **ratings** as a view of
+their own — both below.
 
-Three others are still out. They are listed here rather than quietly lost:
+Two are still out. They are listed here rather than quietly lost:
 
 | Was | Status |
 |---|---|
-| **Ratings** — per-league power ratings with movement | Still built (`ratings` table, `ratings.sql`), not rendered |
 | **Card room** — per-league galleries of the rendered PNGs | Still copied to `static/cards/` with its `cards` manifest, not rendered |
 | **Parlays** | Still built (`parlays`), not rendered |
 
-All three still have their data assembled by `build_site_data.py`, so each is
-a panel away rather than a pipeline away. They were left out because each
-would be a fifth, sixth, seventh view, and the argument for this surface is
-that there are few enough views to hold in your head — adding one should have
-to justify itself against that.
+Both still have their data assembled by `build_site_data.py`, so each is a
+panel away rather than a pipeline away.
 
 ## Market health
 
@@ -634,6 +636,48 @@ Three things it is careful about:
   desaturated, because they are real markets with real records.
 - **A flag is a question, not a verdict.** The monitor names exclusion
   candidates; the operator decides, and the language keeps it that way.
+
+## Power ratings
+
+Two surfaces, and the split is the point:
+
+- **In the game sheet**, as a head-to-head — the two teams mirrored with the
+  advantage marked down the middle. This is the one the old matchup page
+  existed for: a list of markets says *what* the model thinks, the
+  head-to-head says *why*.
+- **As a view**, for the question a game card structurally cannot answer.
+  A card shows two teams; "who does the model think is good" is about all of
+  them.
+
+Three things it has to get right, all of which were wrong somewhere first:
+
+- **The join key.** Ratings are keyed by the string each league's fit uses —
+  `PIT` for the NFL, `Alabama` for college, `Minnesota Lynx` for the WNBA —
+  and the `games` table carries none of those, only full club names. The
+  `projections` table carries the fit's own spelling and matches ratings on
+  every team in all three live leagues. Joining ratings to **games** matches
+  almost nothing and renders a head-to-head with both sides blank.
+- **Which way is better.** `net = off − def`, so a **lower Def is the better
+  one**, and a lower rank is better. A naive "higher wins" marks the wrong
+  side on two of the five rows. Pace is neither — it is context, and marking
+  a side on it would invent a claim the model does not make.
+- **A column the fit does not report.** The football and baseball fits have
+  no pace and the column arrives as NULL, which `Number()` turns into a
+  perfectly finite 0 — so the head-to-head printed "Pace 0.0 / 0.0" for two
+  teams that play a normal number of possessions. Everything numeric on this
+  surface guards with `isNum` for exactly that reason.
+
+The view carries leagues the board does not — the model rates college
+basketball and hockey without pricing them today — because that is honest
+about what the model knows rather than only what it is betting. Each league
+gets only the columns its own fit reports: pace where the fit is per
+possession, movement where a previous run exists to compare against.
+
+Team names are resolved through the identity table, so the NFL's `PIT` shows
+and searches as "Pittsburgh Steelers" with the fit's own spelling kept beside
+it. A team the identity table has not seen — college, or a club not playing
+this week — keeps the fit's spelling rather than being guessed at with a
+prefix match that would confidently map "Miami" to the wrong school.
 
 ## The Streamlit app
 

@@ -13,7 +13,7 @@
 
 import { writable } from 'svelte/store';
 
-export const VIEWS = ['games', 'dfs', 'positions', 'record'];
+export const VIEWS = ['games', 'dfs', 'positions', 'record', 'ratings'];
 
 const DEFAULTS = { view: 'games', league: 'all', game: '' };
 

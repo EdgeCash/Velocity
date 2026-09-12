@@ -163,6 +163,13 @@ from velocity.market_health
 where league != '__none__'
 ```
 
+```sql ratings
+select team, off, "def", net, pace, scale, rank, rank_prev, net_prev,
+  league, stamp
+from velocity.ratings
+where league != '__none__'
+```
+
 ```sql model_config
 select league, label, detail from velocity.model_config
 where league != '__none__'
@@ -190,6 +197,7 @@ where league != '__none__'
   clv={clv}
   modelConfig={model_config}
   health={health}
+  ratings={ratings}
   stamp={meta[0]?.stamp ?? ''}
   tier={meta[0]?.tier ?? 'private'}
 />

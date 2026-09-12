@@ -27,6 +27,9 @@ import {
   healthRows,
   impliedProb,
   leagueCounts,
+  ratingAliases,
+  ratingRows,
+  ratingsIndex,
   realRows,
   toTime,
 } from '../components/hub/model.js';
@@ -278,6 +281,139 @@ test('DFS rows group into one lineup per slate, with its totals', () => {
   const turbo = lineups.find((l) => l.slate === 'Turbo');
   assert.equal(turbo.salary, 16700);
   assert.ok(Math.abs(turbo.points - 30.29) < 1e-9);
+});
+
+/* ---- power ratings --------------------------------------------------- */
+
+test('ratings join through the projection, not the game', () => {
+  // The trap: ratings are keyed by each fit's own team spelling — `PIT` for
+  // the NFL, `Alabama` for college — and the GAMES table carries neither
+  // ("Pittsburgh Steelers", "Alabama Crimson Tide"). Projections carry the
+  // fit's spelling. Joining to games matches nothing and renders a
+  // head-to-head with both sides blank.
+  const built = buildGames({
+    games: [{ game_id: 'g1', league: 'nfl',
+      home_team: 'Pittsburgh Steelers', away_team: 'Atlanta Falcons' }],
+    projections: [{ game_id: 'g1', league: 'nfl', home: 'PIT', away: 'ATL' }],
+    ratings: [
+      { league: 'nfl', team: 'PIT', net: 2.1, off: 1.0, def: -1.1, rank: 7 },
+      { league: 'nfl', team: 'ATL', net: -0.4, off: 0.6, def: 1.0, rank: 19 },
+    ],
+  });
+  assert.equal(built[0].ratings.home.rank, 7);
+  assert.equal(built[0].ratings.away.rank, 19);
+});
+
+test('a game with no projection has no rating join rather than a wrong one', () => {
+  const built = buildGames({
+    games: [{ game_id: 'g1', league: 'nfl', home_team: 'PIT', away_team: 'ATL' }],
+    ratings: [{ league: 'nfl', team: 'PIT', net: 2.1, rank: 7 }],
+  });
+  assert.equal(built[0].ratings.home, null);
+  assert.equal(built[0].ratings.away, null);
+});
+
+test('ratings do not cross leagues', () => {
+  // College and the WNBA both have an "Atlanta"; an unkeyed index would rate
+  // one with the other's numbers.
+  const index = ratingsIndex([
+    { league: 'wnba', team: 'Atlanta Dream', net: 4.76 },
+    { league: 'nfl', team: 'ATL', net: -0.4 },
+  ]);
+  assert.equal(index.get('wnba|Atlanta Dream').net, 4.76);
+  assert.equal(index.get('nfl|Atlanta Dream'), undefined);
+});
+
+test('a code-keyed rating resolves to the club name it is searchable by', () => {
+  // The NFL fit rates `PIT`; typing "steel" found nothing until the identity
+  // table was reversed onto it.
+  const alias = ratingAliases([
+    { league: 'nfl', team: 'Pittsburgh Steelers', code: 'PIT' },
+    { league: 'wnba', team: 'Atlanta Dream', code: 'ATL' },
+  ]);
+  assert.equal(alias.get('nfl|PIT'), 'Pittsburgh Steelers');
+  // A fit that already uses the full name resolves to itself.
+  assert.equal(alias.get('wnba|Atlanta Dream'), 'Atlanta Dream');
+  // ...and the two leagues' ATL do not collide.
+  assert.equal(alias.get('wnba|ATL'), 'Atlanta Dream');
+  assert.equal(alias.get('nfl|ATL'), undefined);
+});
+
+test('a college spelling with no identity match is left as the fit wrote it', () => {
+  // The fit says "Alabama", the identity table says "Alabama Crimson Tide",
+  // and they share no key. Falling back is right; a prefix match would
+  // confidently map "Miami" to the wrong school.
+  const alias = ratingAliases([
+    { league: 'ncaaf', team: 'Alabama Crimson Tide', code: 'ALA' },
+  ]);
+  assert.equal(alias.get('ncaaf|Alabama'), undefined);
+});
+
+test('a lower defensive number is the BETTER one', () => {
+  // The bug the old matchup sheet shipped: a naive "higher wins" marks the
+  // wrong side on Def and on Rank — two of the five rows.
+  const rows = ratingRows(
+    { rank: 19, net: -0.4, off: 0.6, def: 1.0 },
+    { rank: 7, net: 2.1, off: 1.0, def: -1.1 },
+  );
+  const by = Object.fromEntries(rows.map((r) => [r.key, r.edge]));
+  assert.equal(by.def, 'home', 'home allows 1.1 fewer than average and wins Def');
+  assert.equal(by.rank, 'home', 'rank 7 beats rank 19');
+  assert.equal(by.net, 'home');
+  assert.equal(by.off, 'home');
+});
+
+test('the away side can win a row too', () => {
+  const rows = ratingRows(
+    { rank: 3, net: 8.0, off: 5.0, def: -3.0 },
+    { rank: 40, net: 1.0, off: 4.0, def: 3.0 },
+  );
+  assert.deepEqual(rows.map((r) => r.edge), ['away', 'away', 'away', 'away']);
+});
+
+test('pace is context and is never marked as an advantage', () => {
+  // Marking a side on pace would invent a claim the model does not make:
+  // fast is not better than slow.
+  const rows = ratingRows(
+    { rank: 1, net: 6.8, off: 4.47, def: -2.34, pace: 81.33 },
+    { rank: 2, net: 6.74, off: 0.22, def: -6.51, pace: 78.73 },
+  );
+  const pace = rows.find((r) => r.key === 'pace');
+  assert.ok(pace, 'pace is still shown');
+  assert.equal(pace.edge, null);
+});
+
+test('a tied row marks neither side', () => {
+  const rows = ratingRows({ net: 2.0, rank: 5 }, { net: 2.0, rank: 5 });
+  assert.deepEqual(rows.map((r) => r.edge), [null, null]);
+});
+
+test('a statistic the fit does not report is dropped, not printed as zero', () => {
+  // The football and baseball fits report no pace, and the column arrives as
+  // an explicit NULL — which `Number()` turns into a perfectly finite 0. The
+  // first version of this test used a MISSING key (undefined → NaN) and so
+  // passed while the real data rendered "Pace 0.0 / 0.0" for two teams that
+  // play a normal number of possessions. Both spellings are pinned now.
+  const nulled = ratingRows(
+    { rank: 1, net: 7.51, off: 2.16, def: -5.35, pace: null },
+    { rank: 2, net: 4.83, off: 5.6, def: 0.77, pace: null },
+  );
+  assert.ok(!nulled.some((r) => r.key === 'pace'), 'an explicit null drops the row');
+
+  const missing = ratingRows(
+    { rank: 1, net: 7.51, off: 2.16, def: -5.35 },
+    { rank: 2, net: 4.83, off: 5.6, def: 0.77 },
+  );
+  assert.deepEqual(missing.map((r) => r.key), ['rank', 'net', 'off', 'def']);
+});
+
+test('a statistic one side has and the other does not is dropped', () => {
+  // Half a row reads as a team with zero of something, not as missing data.
+  const rows = ratingRows(
+    { rank: 1, net: 6.8, pace: 81.33 },
+    { rank: 2, net: 6.74, pace: null },
+  );
+  assert.ok(!rows.some((r) => r.key === 'pace'));
 });
 
 /* ---- market health --------------------------------------------------- */

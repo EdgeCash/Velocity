@@ -9,7 +9,9 @@
 // own DFS players and its own open positions as nested lists.
 //
 // Everything below is pure. No fetches, no stores, no Svelte — so the joins
-// can be tested without a browser (tests/live.test.mjs).
+// can be tested without a browser (site/tests/hub.test.mjs).
+
+import { isNum } from '../format.js';
 
 /** Rows grouped by a key, preserving input order within each group. */
 export function groupBy(rows, key) {
@@ -126,7 +128,9 @@ export function buildGames({
   props = [],
   lineMoves = [],
   injuries = [],
+  ratings = [],
 } = {}) {
+  const rated = ratingsIndex(ratings);
   const projByGame = new Map(realRows(projections).map((p) => [p.game_id, p]));
   const boardByGame = groupBy(realRows(board), 'game_id');
   const publishByGame = groupBy(realRows(publish), 'game_id');
@@ -190,6 +194,15 @@ export function buildGames({
           || Number(m.price_open) !== Number(m.price_now),
       ),
       injuries: injured.filter((row) => row.is_out),
+      // Through the PROJECTION's team strings, never the game's — see
+      // `ratingsIndex`. A game with no projection has no rating join, which
+      // is correct: there is nothing to rate it against.
+      ratings: proj
+        ? {
+          away: rated.get(`${league}|${String(proj.away ?? '')}`) ?? null,
+          home: rated.get(`${league}|${String(proj.home ?? '')}`) ?? null,
+        }
+        : { away: null, home: null },
       weather: weatherByGame.get(id) ?? null,
       // Filled in by the live store at render time; kept on the object so a
       // card has one place to look.
@@ -216,6 +229,94 @@ export function leagueCounts(games) {
   return [...counts.entries()]
     .map(([league, n]) => ({ league, n }))
     .sort((a, b) => b.n - a.n || a.league.localeCompare(b.league));
+}
+
+/* ------------------------------------------------------------------ *
+ * Power ratings.
+ *
+ * The join key is the trap. Ratings are keyed by the string each league's fit
+ * uses — `SEA` for the NFL, `Alabama` for college, `Minnesota Lynx` for the
+ * WNBA — and the GAMES table carries none of those: it has full club names
+ * ("Seattle Seahawks", "Alabama Crimson Tide"). The PROJECTIONS table is the
+ * one that carries the fit's own spelling, and it matches ratings on every
+ * team in all three live leagues. Joining ratings to games instead matches
+ * almost nothing and renders a head-to-head with one side blank — which is
+ * exactly what it did the first time anyone tried.
+ * ------------------------------------------------------------------ */
+
+/** `league|team` → the rating row, keyed by the fit's own team spelling. */
+export function ratingsIndex(rows) {
+  const out = new Map();
+  for (const row of realRows(rows)) {
+    const team = String(row?.team ?? '');
+    if (!team) continue;
+    out.set(`${String(row.league).toLowerCase()}|${team}`, row);
+  }
+  return out;
+}
+
+/** `league|<fit spelling>` → the club name a reader would recognise.
+ *
+ * The fits name teams the way their own data does, and for the NFL that is a
+ * three-letter code: the ratings table says `PIT` where every other surface
+ * says "Pittsburgh Steelers". That is fine to read in a row of numbers and
+ * useless to SEARCH — typing "steel" matched nothing. The identity table
+ * already maps full name to code, so reversing it gives the ratings table a
+ * name to show and a second string to match on.
+ *
+ * College is the one it cannot fix: the fit says "Alabama" and the identity
+ * table says "Alabama Crimson Tide", which share no key. Those fall back to
+ * the fit's own spelling — still searchable as "Alabama", just not as
+ * "Crimson Tide" — rather than being guessed at with a prefix match that
+ * would confidently map "Miami" to the wrong school.
+ */
+export function ratingAliases(teams) {
+  const out = new Map();
+  for (const row of realRows(teams)) {
+    const league = String(row?.league ?? '').toLowerCase();
+    const name = String(row?.team ?? '');
+    const code = String(row?.code ?? '');
+    if (!league || !name) continue;
+    if (code) out.set(`${league}|${code}`, name);
+    out.set(`${league}|${name}`, name);
+  }
+  return out;
+}
+
+/* Which way is better, per statistic.
+ *
+ * `net = off − def`, so a LOWER defensive number is the better one, and a
+ * LOWER power rank is better. A naive "higher wins" marks the wrong side on
+ * two of the five rows. Pace is neither — it is context, not an advantage,
+ * and marking a side on it would invent a claim the model does not make. */
+export const RATING_STATS = [
+  { key: 'rank', label: 'Rank', lowerWins: true, dp: 0 },
+  { key: 'net', label: 'Net', lowerWins: false, dp: 2 },
+  { key: 'off', label: 'Off', lowerWins: false, dp: 2 },
+  { key: 'def', label: 'Def', lowerWins: true, dp: 2 },
+  { key: 'pace', label: 'Pace', lowerWins: null, dp: 1 },
+];
+
+/** The head-to-head rows for one game, with the advantage resolved per stat. */
+export function ratingRows(away, home) {
+  if (!away || !home) return [];
+  const rows = [];
+  for (const stat of RATING_STATS) {
+    // `isNum`, not `Number.isFinite(Number(...))`: the football and baseball
+    // fits report no pace at all and the column arrives as NULL, which
+    // `Number()` turns into a perfectly finite 0 — printing "Pace 0.0 / 0.0"
+    // for two teams that play a normal number of possessions.
+    if (!isNum(away[stat.key]) || !isNum(home[stat.key])) continue;
+    const a = Number(away[stat.key]);
+    const h = Number(home[stat.key]);
+    let edge = null; // 'away' | 'home' | null
+    if (stat.lowerWins !== null && a !== h) {
+      const awayBetter = stat.lowerWins ? a < h : a > h;
+      edge = awayBetter ? 'away' : 'home';
+    }
+    rows.push({ ...stat, away: a, home: h, edge });
+  }
+  return rows;
 }
 
 /* ------------------------------------------------------------------ *
