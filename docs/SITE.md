@@ -98,7 +98,8 @@ site/
       DfsPanel.svelte     lineups as a peer view
       PositionsPanel.svelte  the bet tracker, read against the live score
       RecordPanel.svelte  graded results, CLV first
-      Rail.svelte         bankroll, what is riding, what is live
+      HealthPanel.svelte  the monitor's trailing per-market flags
+      Rail.svelte         bankroll, what is riding, what is live, what is flagged
   tests/                  node --test; the joins and the formatters
   static/                 favicon + icon set (the V drawn as a bankroll curve)
     cards/                newest-stamp card PNGs (gitignored, per-run)
@@ -581,26 +582,58 @@ props, line movement, the injury report and the weather — because each of them
 is a fact *about a game*, and the old site's separation of them from the game
 was the thing being fixed.
 
-Four others were dropped and have **not** come back. They are listed here
-rather than quietly lost:
+**Market health** came back as part of Record rather than as a fifth view —
+see below.
+
+Three others are still out. They are listed here rather than quietly lost:
 
 | Was | Status |
 |---|---|
 | **Ratings** — per-league power ratings with movement | Still built (`ratings` table, `ratings.sql`), not rendered |
-| **Market health** — trailing ROI/CLV per market with the monitor's flags | Still built (`market_health`), not rendered |
 | **Card room** — per-league galleries of the rendered PNGs | Still copied to `static/cards/` with its `cards` manifest, not rendered |
 | **Parlays** | Still built (`parlays`), not rendered |
 
-All four still have their data assembled by `build_site_data.py`, so any of
-them is a panel away rather than a pipeline away. They were left out because
-each would be a fifth, sixth, seventh view, and the argument for this surface
-is that there are few enough views to hold in your head — adding one should
-have to justify itself against that.
+All three still have their data assembled by `build_site_data.py`, so each is
+a panel away rather than a pipeline away. They were left out because each
+would be a fifth, sixth, seventh view, and the argument for this surface is
+that there are few enough views to hold in your head — adding one should have
+to justify itself against that.
 
-The two with the strongest case for coming back are **market health** (it is
-the check on whether a market has gone bad, which is a trust question rather
-than a browsing one) and **ratings** (it is model output, which is half of
-what the surface is for).
+## Market health
+
+The monitor (`velocity/report/monitor.py`) reads the season chain back as a
+per-market trailing table over 7- and 30-day windows and flags a market that
+is losing to its close, losing money, or claiming more than it earns. It
+reaches the surface in three places, all off one index (`flaggedMarkets`), so
+they cannot disagree:
+
+1. **Inside Record**, not as a view of its own. It is the same question at a
+   shorter horizon — Record says what happened, this says whether one of the
+   markets producing it has gone bad.
+2. **In the rail**, as a count and the first few flags. A market that has
+   stopped working is the one thing on this surface nobody would think to go
+   and look for, so it is pushed rather than waited for; clicking it switches
+   to Record, which on a single surface is a view switch rather than a page
+   load.
+3. **On the market itself**, in the game sheet — the strongest form it can
+   take, because it is the moment you would act on it.
+
+Three things it is careful about:
+
+- **Only the 30-day window flags.** The 7-day is an early warning, and
+  treating it as a flag puts an amber mark on a market the monitor has not
+  called. What the 7-day *is* used for is the line under each flag saying
+  whether it agrees — the monitor wants the same flag in two review windows
+  before an exclusion, so a market flagged in both is further along than one
+  flagged in one.
+- **A thin market is never flagged.** `thin` is under twenty bets, the
+  monitor suppresses every other flag on one, and the string it writes
+  ("thin (1 bets)") is a statement that it *cannot judge* — the opposite of a
+  warning. A truthy-`flags` test alone would surface those beside real ones,
+  which is how a warning stops meaning anything. Thin rows stay in the table,
+  desaturated, because they are real markets with real records.
+- **A flag is a question, not a verdict.** The monitor names exclusion
+  candidates; the operator decides, and the language keeps it that way.
 
 ## The Streamlit app
 

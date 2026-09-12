@@ -154,6 +154,15 @@ from velocity.clv_by_market
 where league != '__none__'
 ```
 
+```sql health
+select market, window_days, since, n_bets, n_decided, staked, profit, roi,
+  clv_trusted, n_clv, mean_line_clv, mean_price_clv, pct_beat_close,
+  claimed, realized, drift, flag_negative_clv, flag_negative_roi,
+  flag_overclaims, flag_exclusion, thin, flags, league, as_of
+from velocity.market_health
+where league != '__none__'
+```
+
 ```sql model_config
 select league, label, detail from velocity.model_config
 where league != '__none__'
@@ -180,6 +189,7 @@ where league != '__none__'
   record={record}
   clv={clv}
   modelConfig={model_config}
+  health={health}
   stamp={meta[0]?.stamp ?? ''}
   tier={meta[0]?.tier ?? 'private'}
 />

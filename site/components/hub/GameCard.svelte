@@ -9,7 +9,7 @@
   import Spark from './Spark.svelte';
   import BoxScore from './BoxScore.svelte';
   import {
-    american, kickoffLabel, marketLabel, num, pct, signed,
+    american, isNum, kickoffLabel, marketLabel, num, pct, signed,
     sideLabel, teamMark, venueColor, venueMark,
   } from '../format.js';
   import { impliedProb } from './model.js';
@@ -20,7 +20,15 @@
   export let dists = { margin: [], total: [] };
   export let open = false;
   export let isPrivate = true;
+  /** `league|market` → the monitor's flagged health row, from `flaggedMarkets`. */
+  export let flagged = new Map();
   export let onToggle = () => {};
+
+  // The strongest form market health can take: not a table you go and read,
+  // but a mark on the market itself, at the moment you are looking at it. The
+  // monitor's own framing is preserved — a flag is a question, not a verdict —
+  // so this says what is flagged and leaves the decision alone.
+  const flagFor = (league, market) => flagged.get(`${league}|${market}`) ?? null;
 
   $: home = teamMark(identity, game.home_team, game.league);
   $: away = teamMark(identity, game.away_team, game.league);
@@ -239,6 +247,18 @@
                   <span class="mname">{marketPhrase(m)}</span>
                   <span class="mkind">{marketLabel(m.market)}</span>
                   {#if m.tier}<span class="tier t{m.tier}">{m.tier}</span>{/if}
+                  {#if isPrivate}
+                    {@const flag = flagFor(game.league, m.market)}
+                    {#if flag}
+                      <span
+                        class="health"
+                        class:bad={flag.flag_exclusion}
+                        title={`${flag.n_bets} bets over ${flag.window_days} days — see Market health under Record`}
+                      >
+                        {flag.flags}
+                      </span>
+                    {/if}
+                  {/if}
                 </div>
 
                 <div class="mnums">
@@ -255,7 +275,7 @@
                       <span class="k">Best</span>
                       <span class="v">{american(m.best.price)}</span>
                     </span>
-                    {#if Number.isFinite(Number(m.best.edge))}
+                    {#if isNum(m.best.edge)}
                       <span class="pair">
                         <span class="k">Edge</span>
                         <span class="v" class:pos={m.best.edge > 0} class:neg={m.best.edge < 0}>
@@ -314,14 +334,14 @@
                 <span class="pmkt">{marketLabel(p.market)}</span>
                 <span class="pcall">
                   {sideLabel(p.side)}
-                  {#if Number.isFinite(Number(p.point))}
+                  {#if isNum(p.point)}
                     {num(p.point, 1).replace('.0', '')}
                   {/if}
                 </span>
                 <span class="pmodel">{pct(p.p_model, 1)}</span>
                 {#if isPrivate}
                   <span class="pprice2">{american(p.price)}</span>
-                  {#if Number.isFinite(Number(p.edge))}
+                  {#if isNum(p.edge)}
                     <span class="pedge" class:pos={p.edge > 0} class:neg={p.edge < 0}>
                       {pct(p.edge, 1, true)}
                     </span>
@@ -366,13 +386,13 @@
           <h4>Context</h4>
           {#if game.weather && game.weather.covered === false}
             <p class="wx">
-              {#if Number.isFinite(Number(game.weather.temp_f))}
+              {#if isNum(game.weather.temp_f)}
                 {num(game.weather.temp_f, 0)}°F
               {/if}
-              {#if Number.isFinite(Number(game.weather.wind_mph))}
+              {#if isNum(game.weather.wind_mph)}
                 · wind {num(game.weather.wind_mph, 0)} mph
               {/if}
-              {#if Number.isFinite(Number(game.weather.precip_pct))}
+              {#if isNum(game.weather.precip_pct)}
                 · {pct(game.weather.precip_pct, 0)} precip
               {/if}
             </p>
@@ -658,6 +678,18 @@
   .tA { background: var(--v-pos-tint); color: var(--v-pos); }
   .tB { background: var(--v-info-tint); color: var(--v-info); }
   .tC { background: var(--v-thin-tint); color: var(--v-thin); }
+  /* The monitor's flag, on the market it is about. Amber because it is a
+     question; the exclusion candidate — a confirmed 30-day loser — is the
+     one that gets the loss colour. */
+  .health {
+    padding: 0.05rem 0.38rem;
+    border-radius: 999px;
+    font-size: 0.64rem;
+    font-weight: 600;
+    background: var(--v-warn-tint);
+    color: var(--v-warn);
+  }
+  .health.bad { background: var(--v-neg-tint); color: var(--v-neg); }
 
   .mnums { display: flex; flex-wrap: wrap; gap: 0.9rem; }
   .pair { display: grid; gap: 0.02rem; }

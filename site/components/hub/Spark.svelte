@@ -17,6 +17,8 @@
   export let height = 44;
   export let label = '';
 
+  import { isNum } from '../format.js';
+
   // The tails of a simulated distribution are long and empty; drawing them
   // wastes most of the width on nothing. Trim to the central mass, but always
   // keep the mark in frame — a line sitting outside the plotted range is
@@ -37,7 +39,7 @@
     acc = 0;
     while (hi > lo && acc + clean[hi].prob < TAIL) acc += clean[hi--].prob;
     const slice = clean.slice(lo, hi + 1);
-    if (mark === null || mark === undefined || !Number.isFinite(Number(mark))) return slice;
+    if (!isNum(mark)) return slice;
     // Widen rather than clip when the line sits outside the kept range.
     const m = Number(mark);
     const first = slice[0]?.value ?? m;
@@ -61,8 +63,7 @@
       + ` L ${x(maxValue)} ${height - PAD} Z`
     : '';
 
-  $: markX = mark !== null && mark !== undefined && Number.isFinite(Number(mark))
-    && Number(mark) >= minValue && Number(mark) <= maxValue
+  $: markX = isNum(mark) && Number(mark) >= minValue && Number(mark) <= maxValue
     ? x(Number(mark))
     : null;
 

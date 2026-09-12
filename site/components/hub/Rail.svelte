@@ -6,8 +6,9 @@
   // collapsed panel makes both of those a deliberate act. On a phone it stops
   // being a column and becomes a strip of the same chips above the panel,
   // which keeps them visible without stealing the width.
-  import { num, pct, signed, tone, stampLabel } from '../format.js';
-  import { realRows, toTime } from './model.js';
+  import { num, pct, signed, tone, stampLabel, marketLabel } from '../format.js';
+  import { flaggedMarkets, realRows, toTime } from './model.js';
+  import { hubState } from './state.js';
 
   export let bankroll = [];
   export let exposure = [];
@@ -16,6 +17,7 @@
   export let games = [];
   export let live = { games: [], updated: null, ok: true, tried: false };
   export let modelConfig = [];
+  export let health = [];
   export let isPrivate = true;
   export let stamp = '';
 
@@ -54,6 +56,11 @@
   // A league that is on the board but whose games are all unpriced is worth
   // saying out loud — it is the quiet failure the health check exists for.
   $: unpriced = games.filter((g) => g.n_markets === 0).length;
+
+  // The monitor's long window only — thin markets excluded, because "cannot
+  // judge" is not a warning and putting it beside real ones is how a warning
+  // stops meaning anything.
+  $: flagged = flaggedMarkets(health);
 </script>
 
 <aside class="rail">
@@ -150,6 +157,34 @@
       <p class="quiet">No games in progress.</p>
     {/if}
   </section>
+
+  <!-- A market that has stopped working is the one thing on this surface you
+       would never think to go and look for, so it is pushed here rather than
+       waiting under Record. Clicking it goes to the detail — which on a
+       single surface is a view switch, not a page load. -->
+  {#if isPrivate && flagged.size}
+    <section class="warn flagbox">
+      <span class="lab">Market health</span>
+      <button class="flagbtn" on:click={() => hubState.set({ view: 'record' })}>
+        <span class="big warnbig">{flagged.size}</span>
+        <span class="flagwhat">
+          {flagged.size === 1 ? 'market needs a look' : 'markets need a look'}
+        </span>
+      </button>
+      <ul class="flaglist">
+        {#each [...flagged.values()].slice(0, 4) as row (`${row.league}-${row.market}`)}
+          <li class:bad={row.flag_exclusion}>
+            <span class="fl">{String(row.league).toUpperCase()}</span>
+            <span class="fm">{marketLabel(row.market)}</span>
+            <span class="ff">{row.flags}</span>
+          </li>
+        {/each}
+      </ul>
+      {#if flagged.size > 4}
+        <p class="quiet">and {flagged.size - 4} more</p>
+      {/if}
+    </section>
+  {/if}
 
   {#if unpriced > 0}
     <section class="warn">
@@ -282,6 +317,36 @@
   }
 
   .cfg { margin: 0.25rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.2rem; }
+  .flagbox { border-color: rgba(245, 179, 66, 0.32); }
+  .flagbtn {
+    display: grid;
+    gap: 0.02rem;
+    justify-items: start;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+  }
+  .flagbtn:hover .flagwhat { color: var(--v-ink-2); }
+  .flagbtn:focus-visible { outline: 2px solid var(--v-warn); outline-offset: 2px; }
+  .warnbig { color: var(--v-warn); }
+  .flagwhat { font-size: 0.68rem; color: var(--v-ink-3); }
+  .flaglist { margin: 0.35rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.22rem; }
+  .flaglist li { display: grid; gap: 0.01rem; }
+  .flaglist .fl {
+    font-family: var(--v-board);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--v-ink-3);
+  }
+  .flaglist .fm { font-size: 0.74rem; color: var(--v-ink); }
+  .flaglist .ff { font-size: 0.66rem; color: var(--v-warn); line-height: 1.35; }
+  .flaglist li.bad .ff { color: var(--v-neg); }
+
   .cfg li { display: grid; gap: 0.02rem; }
   .ck {
     font-family: var(--v-board);

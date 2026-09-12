@@ -11,7 +11,7 @@
   // does NOT do is price a live position — the model prices pre-game games,
   // not in-progress ones, and printing a live win probability it did not
   // compute would be making a number up.
-  import { american, marketLabel, num, sideLabel, teamMark } from '../format.js';
+  import { american, isNum, marketLabel, num, sideLabel, teamMark } from '../format.js';
   import TeamMark from '../TeamMark.svelte';
 
   export let positions = [];
@@ -148,7 +148,7 @@
           <span class="market">{marketLabel(p.market)}</span>
           <span class="side">
             {p.player ? p.player : sideLabel(p.side)}
-            {#if p.point !== null && p.point !== undefined && Number.isFinite(Number(p.point))}
+            {#if isNum(p.point)}
               <span class="point">{num(p.point, 1).replace('.0', '')}</span>
             {/if}
           </span>

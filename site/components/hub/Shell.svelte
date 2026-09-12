@@ -19,7 +19,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { live } from './live.js';
   import { hubState, VIEWS } from './state.js';
-  import { buildGames, buildLineups, leagueCounts, realRows } from './model.js';
+  import {
+    buildGames, buildLineups, flaggedMarkets, leagueCounts, realRows,
+  } from './model.js';
   import { teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
   import GamesPanel from './GamesPanel.svelte';
@@ -48,6 +50,7 @@
   export let clv = [];
   export let exposure = [];
   export let modelConfig = [];
+  export let health = [];
   export let stamp = '';
   /** 'private' carries prices, edges, stakes and the bankroll; 'public' does not. */
   export let tier = 'private';
@@ -55,6 +58,10 @@
   $: isPrivate = tier !== 'public';
 
   $: identity = teamIndex(teams);
+  // The monitor's flagged markets, resolved once: the rail counts them, the
+  // game cards mark the market they are about, and Record explains them.
+  // One source so the three can never disagree.
+  $: flagged = flaggedMarkets(health);
   $: openPositions = realRows(ledgerOpen);
   $: allDfs = [...realRows(dfsLineup), ...realRows(dfsShowdown), ...realRows(dfsTiered)];
 
@@ -175,7 +182,9 @@
   <div class="body">
     <main class="main">
       {#if view === 'games'}
-        <GamesPanel games={scored} {identity} {distributions} {openGame} {isPrivate} />
+        <GamesPanel
+          games={scored} {identity} {distributions} {openGame} {isPrivate} {flagged}
+        />
       {:else if view === 'dfs'}
         <DfsPanel {lineups} league={activeLeague} />
       {:else if view === 'positions'}
@@ -188,14 +197,14 @@
         />
       {:else}
         <RecordPanel
-          {record} {units} {clv} league={activeLeague} {isPrivate}
+          {record} {units} {clv} {health} league={activeLeague} {isPrivate}
         />
       {/if}
     </main>
 
     <Rail
       {bankroll} {exposure} {units} positions={openPositions}
-      games={hub} live={$live} {modelConfig} {isPrivate} {stamp}
+      games={hub} live={$live} {modelConfig} {health} {isPrivate} {stamp}
     />
   </div>
 

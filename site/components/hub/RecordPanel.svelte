@@ -9,10 +9,12 @@
   // beside it, honestly, as the thing with the wider error bar.
   import { num, pct, signed, marketLabel, tone } from '../format.js';
   import { dailyCurve } from './model.js';
+  import HealthPanel from './HealthPanel.svelte';
 
   export let record = [];
   export let units = [];
   export let clv = [];
+  export let health = [];
   export let league = 'all';
   export let isPrivate = true;
 
@@ -193,6 +195,14 @@
       closing price to mean anything; an untrusted mean is a small sample, not
       a verdict.
     </p>
+  {/if}
+
+  <!-- The table above is the whole record; this is the trailing window, which
+       is the one that can tell you a market has STOPPED working. Same question
+       at a shorter horizon, so it belongs here rather than in a view of its
+       own. -->
+  {#if isPrivate}
+    <HealthPanel {health} {league} />
   {/if}
 {/if}
 

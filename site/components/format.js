@@ -25,6 +25,20 @@ function minus(text) {
   return text.replace('-', '−');
 }
 
+/** Is this a value worth printing as a number at all?
+ *
+ * `Number.isFinite(Number(x))` is the obvious guard and it is WRONG for the
+ * two values that actually turn up: `Number(null)` is 0 and `Number('')` is 0,
+ * both perfectly finite. A component guarding with it therefore decides to
+ * render a field it has no value for, and the formatter then prints an
+ * em-dash — a labelled "Real − claim: —" where the field should simply not
+ * have been there. Every such guard on this surface goes through here.
+ */
+export function isNum(value) {
+  if (value === null || value === undefined || value === '') return false;
+  return Number.isFinite(Number(value));
+}
+
 /** Plain fixed-point, em-dash for missing. */
 export function num(value, dp = 2) {
   const n = Number(value);

@@ -218,6 +218,56 @@ export function leagueCounts(games) {
     .sort((a, b) => b.n - a.n || a.league.localeCompare(b.league));
 }
 
+/* ------------------------------------------------------------------ *
+ * Market health.
+ *
+ * The monitor (velocity/report/monitor.py) reads the season chain back as a
+ * per-market trailing table over 7- and 30-day windows, and flags a market
+ * that is losing to its close, losing money, or claiming more than it earns.
+ *
+ * The long window is the one that decides — the 7-day is an early warning —
+ * so the index below is keyed on the 30-day rows, and every consumer that
+ * asks "is this market in trouble?" gets the same answer.
+ * ------------------------------------------------------------------ */
+
+/** The window the monitor treats as deciding, as opposed to warning. */
+export const LONG_WINDOW = 30;
+
+/** `league|market` → the long-window health row, for markets actually flagged.
+ *
+ * Thin markets are left out on purpose. `thin` means fewer than twenty bets
+ * in the window, the monitor suppresses every other flag on them, and the
+ * string it writes ("thin (1 bets)") is a statement that it cannot judge —
+ * not a warning. Surfacing those beside real flags is how a warning stops
+ * meaning anything.
+ */
+export function flaggedMarkets(rows, window = LONG_WINDOW) {
+  const out = new Map();
+  for (const row of realRows(rows)) {
+    if (Number(row.window_days) !== window) continue;
+    if (row.thin) continue;
+    const flags = String(row.flags ?? '');
+    if (!flags) continue;
+    out.set(`${row.league}|${row.market}`, row);
+  }
+  return out;
+}
+
+/** The health table for one league filter, long window first, flagged first. */
+export function healthRows(rows, league = 'all', window = LONG_WINDOW) {
+  return realRows(rows)
+    .filter((r) => Number(r.window_days) === window)
+    .filter((r) => league === 'all' || r.league === league)
+    .sort((a, b) => {
+      // Flagged first, then thin last, then by size — the order the operator
+      // reads in: what needs a decision, what is fine, what cannot be judged.
+      const rank = (r) => (r.thin ? 2 : String(r.flags ?? '') ? 0 : 1);
+      const d = rank(a) - rank(b);
+      if (d) return d;
+      return Number(b.n_bets ?? 0) - Number(a.n_bets ?? 0);
+    });
+}
+
 /** A date-ish value → epoch ms, or null if it does not name a moment.
  *
  * `new Date(null)` is the EPOCH, not an invalid date — so a null timestamp

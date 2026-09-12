@@ -23,6 +23,8 @@ import {
   buildLineups,
   collapseMarkets,
   dailyCurve,
+  flaggedMarkets,
+  healthRows,
   impliedProb,
   leagueCounts,
   realRows,
@@ -276,6 +278,72 @@ test('DFS rows group into one lineup per slate, with its totals', () => {
   const turbo = lineups.find((l) => l.slate === 'Turbo');
   assert.equal(turbo.salary, 16700);
   assert.ok(Math.abs(turbo.points - 30.29) < 1e-9);
+});
+
+/* ---- market health --------------------------------------------------- */
+
+const HEALTH = [
+  // Flagged on the long window — the one that decides.
+  { league: 'mlb', market: 'spread', window_days: 30, thin: false,
+    flags: 'negative CLV', n_bets: 203, flag_exclusion: false },
+  // Flagged, but only on the short window: an early warning, not a verdict.
+  { league: 'mlb', market: 'total', window_days: 7, thin: false,
+    flags: 'negative ROI', n_bets: 39, flag_exclusion: false },
+  { league: 'mlb', market: 'total', window_days: 30, thin: false,
+    flags: '', n_bets: 194, flag_exclusion: false },
+  // Thin: the monitor cannot judge it, and says so in the flags string.
+  { league: 'ncaaf', market: 'total', window_days: 30, thin: true,
+    flags: 'thin (1 bets)', n_bets: 1, flag_exclusion: false },
+  // Clean.
+  { league: 'mlb', market: 'moneyline', window_days: 30, thin: false,
+    flags: '', n_bets: 179, flag_exclusion: false },
+  { league: '__none__', market: 'x', window_days: 30, thin: false, flags: 'nope' },
+];
+
+test('only the long window decides which markets are flagged', () => {
+  // The 7-day window is an early warning; treating it as a flag would put an
+  // amber mark on a market the monitor has not actually called.
+  const flagged = flaggedMarkets(HEALTH);
+  assert.deepEqual([...flagged.keys()], ['mlb|spread']);
+});
+
+test('a thin market is never flagged, however alarming its string looks', () => {
+  // "thin (1 bets)" is the monitor saying it CANNOT judge — the opposite of a
+  // warning. Surfacing it beside real flags is how a warning stops meaning
+  // anything, and a truthy `flags` string alone would do exactly that.
+  const flagged = flaggedMarkets(HEALTH);
+  assert.ok(!flagged.has('ncaaf|total'));
+});
+
+test('the flag index is keyed by league and market together', () => {
+  // Two leagues both run a market called `total`; a key without the league
+  // would put MLB's flag on every college total on the board.
+  const flagged = flaggedMarkets([
+    { league: 'mlb', market: 'total', window_days: 30, thin: false, flags: 'negative CLV' },
+    { league: 'ncaaf', market: 'total', window_days: 30, thin: false, flags: '' },
+  ]);
+  assert.ok(flagged.has('mlb|total'));
+  assert.ok(!flagged.has('ncaaf|total'));
+});
+
+test('health rows read flagged first, then clean, then what cannot be judged', () => {
+  const rows = healthRows(HEALTH, 'all');
+  assert.deepEqual(
+    rows.map((r) => `${r.league}|${r.market}`),
+    ['mlb|spread', 'mlb|total', 'mlb|moneyline', 'ncaaf|total'],
+  );
+});
+
+test('the health table honours the league filter', () => {
+  assert.deepEqual(
+    healthRows(HEALTH, 'ncaaf').map((r) => r.market),
+    ['total'],
+  );
+});
+
+test('the sentinel row never reaches the health table', () => {
+  assert.ok(!healthRows(HEALTH, 'all').some((r) => r.league === '__none__'));
+  assert.ok(!flaggedMarkets(HEALTH).has('__none__|x'));
 });
 
 /* ---- the bankroll curve --------------------------------------------- */

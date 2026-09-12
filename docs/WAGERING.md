@@ -439,11 +439,10 @@ block's drawdown state, which the runner's ledger line now prints.
 ## 8. Addendum (2026-09): W3 landed — the monitor
 
 `velocity/report/monitor.py`, appended to the daily grade
-(`scripts/grade_yesterday.py`), and written to the site's `market_health`
-table. It is **not currently rendered** — the hub rebuild did not carry the
-health page over (docs/SITE.md, *Deliberately not carried over*); the flags
-are still produced and banked, and reading them means querying the table
-(docs/STRATEGY_REVIEW.md S6).
+(`scripts/grade_yesterday.py`), on the site under **Record** as *Market
+health*, with the flag count pushed to the rail and each flag marked on the
+market it is about in the game sheet (docs/SITE.md, *Market health*;
+docs/STRATEGY_REVIEW.md S6).
 
 **What it reads.** The season chain the grader carries (S1's durable copy),
 which now also records what the model *claimed* on every play (`p_model`,

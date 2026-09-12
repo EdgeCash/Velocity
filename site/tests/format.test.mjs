@@ -16,7 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  american, marketLabel, num, pct, signed, venueMark,
+  american, isNum, marketLabel, num, pct, signed, venueMark,
 } from '../components/format.js';
 
 const MINUS = '−';
@@ -57,6 +57,24 @@ test('a missing number is an em-dash, never a zero', () => {
     assert.equal(fn(undefined), '—');
     assert.equal(fn(NaN), '—');
   }
+});
+
+test('isNum rejects the two values that pass a naive finiteness check', () => {
+  // This is the whole reason it exists. `Number(null)` is 0 and `Number('')`
+  // is 0 — both finite — so `Number.isFinite(Number(x))` says YES to a value
+  // there is nothing to print for, the component renders the field, and the
+  // formatter fills it with an em-dash. A labelled "Real − claim: —" where
+  // the field should not have been there at all.
+  assert.equal(Number.isFinite(Number(null)), true, 'the trap being closed');
+  assert.equal(isNum(null), false);
+  assert.equal(isNum(''), false);
+  assert.equal(isNum(undefined), false);
+  assert.equal(isNum(NaN), false);
+  assert.equal(isNum(0), true, 'zero is a real number and must print');
+  assert.equal(isNum(-3.5), true);
+  assert.equal(isNum('48.5'), true, 'a numeric string from the feed still counts');
+  assert.equal(isNum('not a number'), false);
+  assert.equal(isNum(Infinity), false);
 });
 
 test('a prop market from the feed is cased like every other market', () => {

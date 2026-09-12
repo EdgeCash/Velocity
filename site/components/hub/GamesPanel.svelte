@@ -15,6 +15,7 @@
   export let distributions = [];
   export let openGame = '';
   export let isPrivate = true;
+  export let flagged = new Map();
 
   import { hubState } from './state.js';
 
@@ -80,6 +81,7 @@
             {game}
             {identity}
             {isPrivate}
+            {flagged}
             dists={distIndex.get(game.game_id) ?? EMPTY_DIST}
             open={openGame === game.game_id}
             onToggle={(id) => hubState.toggleGame(id)}
