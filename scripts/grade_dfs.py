@@ -19,10 +19,10 @@ Actuals are free and keyless in every league that has them:
   :mod:`velocity.models.dfs_nfl`, with kickoffs off the schedule.
 * **WNBA** — the wehoop player-box release, scored by
   :mod:`velocity.models.dfs_wnba`.
-
-NCAAF builds entries but cannot be graded: there is no free college
-player-box-score feed in this repo, and a grade against guessed actuals would
-be worse than no grade. Those boards report ungraded and say why.
+* **NCAAF** — the cfbfastR player-stats release, folded to player-games by
+  :mod:`velocity.ingest.cfb_players`. That release fills progressively, so a
+  freshly played week can grade thin; the record says how many players it
+  found rather than pretending the lineup scored nothing.
 
 Only entries whose projection is in **DK points** are graded. DK's Single
 Stat formats project touchdowns or home runs, which are not the same unit and
@@ -50,8 +50,8 @@ _OPERATOR_TZ = ZoneInfo("America/Chicago")
 # The banked entry frames. All three carry one row per roster slot with the
 # build's projection in ``points`` and the player's game in ``kickoff``.
 ENTRY_KINDS = ("dfs_lineup", "dfs_showdown", "dfs_tiered")
-# Leagues with a free player-level actuals feed. NCAAF is absent on purpose.
-GRADEABLE = ("mlb", "nfl", "wnba")
+# Leagues with a free, keyless player-level actuals feed.
+GRADEABLE = ("mlb", "nfl", "wnba", "ncaaf")
 
 
 def entry_paths(prev_dir: Path, league: str) -> dict[str, list[Path]]:
@@ -200,6 +200,30 @@ def wnba_day_index(slate_date: datetime) -> _Index:  # pragma: no cover - networ
     }
 
 
+def ncaaf_day_index(slate_date: datetime) -> _Index:  # pragma: no cover - network
+    """(name, date) → realized DK points, from the cfbfastR player release.
+
+    College has no kickoff on the player frame, only a season and a week, so
+    the key is built from the SCHEDULE's kickoff for the game each row names.
+    """
+    from velocity.dfs.backtest import norm
+    from velocity.ingest.cfb_players import fetch_player_games
+
+    season = slate_date.year if slate_date.month >= 8 else slate_date.year - 1
+    games, _covered = fetch_player_games(season)
+    if games.empty:
+        return {}
+    # Every college game is played on one calendar day, and the slate's own
+    # day is the one being graded, so the board's kickoff supplies the date.
+    day = slate_date.date()
+    return {
+        (norm(row["player_name"]), day): {
+            "actual": float(row["dk_points"]), "game_id": str(row["game_id"]),
+            "team": str(row.get("team") or "")}
+        for row in games.to_dict("records")
+    }
+
+
 def day_index_for(  # pragma: no cover - network
     league: str, slate_date: datetime
 ) -> tuple[_Index, _Index]:
@@ -209,6 +233,8 @@ def day_index_for(  # pragma: no cover - network
             return mlb_day_index(slate_date), {}
         if league == "wnba":
             return wnba_day_index(slate_date), {}
+        if league == "ncaaf":
+            return ncaaf_day_index(slate_date), {}
         if league == "nfl":
             return nfl_day_index(slate_date)
     except Exception as exc:  # noqa: BLE001 - a feed down never blocks the slate

@@ -108,6 +108,9 @@ jobs:
             # service serves the league for free, so the committed player box
             # IS the projection input (velocity/models/dfs_wnba.py).
             if [ "${league}" = "wnba" ]; then PROJ_FILE="datasets/wnba/player_box.parquet"; fi
+            # College too: FantasyPros serves no college players at all, so the
+            # board never built (velocity/models/dfs_ncaaf.py).
+            if [ "${league}" = "ncaaf" ]; then PROJ_FILE="datasets/ncaaf/player_games.parquet"; fi
             if [ -n "$PROJ_FILE" ] && [ -n "$DK_FILE" ]; then
               # Tournaments pay the right tail of a huge field, so the DFS
               # unit is a diversified, stacked PORTFOLIO rather than one

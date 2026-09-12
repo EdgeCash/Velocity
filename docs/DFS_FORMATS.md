@@ -63,7 +63,7 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 
 | Game type | Format | Roster | Cap | Draft | Velocity |
 |---|---|---|---|---|---|
-| 94 | Classic | QB,RB,RB,WR,WR,WR,FLEX,S-FLEX | $50,000 | SalaryCap | **built** (`CFB_CLASSIC`) |
+| 94 | Classic | QB,RB,RB,WR,WR,WR,FLEX,S-FLEX | $50,000 | SalaryCap | **built** (`CFB_CLASSIC` + `velocity.models.dfs_ncaaf`) |
 | 95 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
 | 364 | Single Stat - Touchdowns | FLEX x3 | — | Tiered | **built** (`velocity.dfs.tiered`) |
 | 377 | Snake | QB,RB,WR/TE,WR/TE,FLEX,S-FLEX,BENCH | — | SnakeDraft | planned (draft advisor) |

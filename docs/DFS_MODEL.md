@@ -196,3 +196,90 @@ publishes its own fantasy-points-per-game on any live board, so the first
 WNBA slate DK posts will confirm or refute the constants against the same box
 scores. Until then it is the one assumption in this vertical, and it is
 written down rather than buried.
+
+---
+
+## 8. The college model (`velocity/models/dfs_ncaaf.py`) — 2026-09
+
+NCAAF was the last empty cell, and the audit called it the largest build on
+the list. It turned out to be a **data** problem rather than a modelling one:
+the repo had a college roster spec (`CFB_CLASSIC`), collected college salaries
+daily, and pointed the builder at the FantasyPros scorer — which serves no
+college players at all, so the projection frame filtered to zero rows and the
+builder exited cleanly every single run.
+
+### The feed
+
+CFBD serves college player statistics behind an API key. **cfbfastR publishes
+the same substrate keyless**, on the identical raw-CDN transport the WNBA
+(wehoop) and NCAAB (hoopR) verticals already use, so it needs no secret and
+works from CI. It is play-level — one row per play with a column per role —
+and `velocity/ingest/cfb_players.py` folds it to one row per player-game in
+the **NFL DFS vocabulary**, which is also the correct scoring line: DK's
+college scoring is its NFL scoring. Banked: **101,121 player-games across
+11,885 players**, 2023–2026.
+
+Three things about the source, each verified against it rather than assumed:
+
+* **Touchdown attribution is inconsistent.** On a passing touchdown the
+  `touchdown_player` column names the passer 57% of the time and the receiver
+  43% — whichever ESPN's play text put first. So the fold never reads that
+  column to decide *whose* touchdown it was. A completion on a scoring play is
+  a passing touchdown for the passer and a receiving one for the receiver;
+  a rush on a scoring play is a rushing touchdown. Verified safe: an
+  interception play never carries a completion (so a pick-six cannot become a
+  passing touchdown) and a fumble play never carries a touchdown.
+* **The passer/receiver assignment itself is sound**, which is worth checking
+  before trusting any of it: the top passer holds **91%** of a team-game's
+  passing yards (median 100%, 1.66 distinct passers per team-game) while
+  receptions spread across ~7 receivers with the top at 40%. Exactly the
+  shape football has.
+* **Coverage fills progressively, and that is the thing to watch.** Scoring a
+  team-game as covered when 7×TD + 3×FG lands within a point of the final
+  score the frame itself carries: **2023 at 82%, 2024 at 75%, 2025 at 46%
+  (good only through week 8), 2026 at 24%.** An unfilled season looks exactly
+  like a season in which nobody scored, so `season_coverage()` measures it and
+  the build script refuses below half rather than banking a frame that would
+  price every player at nothing.
+
+Positions are read off usage rather than a second feed: a player who throws is
+a quarterback, one who is handed the ball is a back, one who is thrown to is a
+receiver, judged on his whole sample so a wildcat snap reclassifies nobody.
+Interceptions come in light (~1.3 a game against a real ~2.4 — the text names
+the interceptor reliably on a return touchdown and less so otherwise) and
+fumbles are skipped entirely, because the frame names the fumbler but not the
+recovering team. Both leave projections high by a fraction of a point, which
+is why the walk-forward below projects 8.9 against an actual 9.2.
+
+### The model, and the window
+
+The model is deliberately the football one the repo already fitted and tested
+(`DfsNflModel`): per-player DK points per game shrunk toward **his own
+position's** mean. What is college-specific is the window. A professional's
+career is one long sample; a college player's is a roster that turns over
+every August and a depth chart that moves under him.
+
+Swept walk-forward across the whole 2024 season — **29,217 player-games**:
+
+| window | corr ↑ | RMSE ↓ | within-slate rank ↑ |
+|---|---|---|---|
+| 2 | 0.4969 | 8.324 | 0.4322 |
+| 4 | 0.5201 | 8.012 | 0.4551 |
+| **6** | **0.5216** | **7.937** | **0.4561** |
+| 8 | 0.5194 | 7.921 | 0.4535 |
+| 16 | 0.5082 | 7.961 | 0.4381 |
+| 40 | 0.5058 | 7.973 | 0.4356 |
+
+A real interior optimum rather than a sweep running to an endpoint — two
+games is noise, forty is stale, six is the peak. Half a college season, which
+is about what a roster that turns over annually should be worth.
+
+Against baselines on the same 29,217 rows: a league-mean constant scores RMSE
+9.224 and an *in-sample* positional mean 8.908, so the model's 7.937 is 14%
+and 11% better respectively. Position alone carries a **negative** within-slate
+rank correlation, so all of the model's 0.456 is player-level signal.
+
+The within-slate number is lower than the WNBA's 0.698, and honestly so: a
+college board's pool is far deeper in fringe players and the game is higher
+variance. It is nonetheless the first college projection this repo has ever
+had, against a surface that previously produced nothing at all.

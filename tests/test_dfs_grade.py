@@ -256,8 +256,9 @@ def test_a_single_stat_board_is_refused_rather_than_graded(tmp_path: Path) -> No
     assert list(entries["player_name"]) == ["Ronald Acuna"]
 
 
-def test_a_college_board_is_reported_ungraded_rather_than_guessed() -> None:
-    # There is no free college player box score in this repo. A grade against
-    # invented actuals would be worse than the honest silence.
+def test_every_league_that_builds_a_board_can_now_be_graded() -> None:
+    # College was the hold-out: there was no free college player box score
+    # here, so those boards reported ungraded rather than being scored against
+    # invented actuals. cfbfastR closed it (velocity/ingest/cfb_players.py).
     grader = _grader()
-    assert "ncaaf" not in grader.GRADEABLE
+    assert set(grader.GRADEABLE) == {"mlb", "nfl", "wnba", "ncaaf"}

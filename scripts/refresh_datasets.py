@@ -287,6 +287,18 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
                 )
             except Exception as exc:  # noqa: BLE001 - additive surface
                 print(f"  mlb starters top-up skipped ({exc})")
+    if league == "ncaaf":
+        # Player-games ride along — the DFS board prices from this bank, and
+        # cfbfastR fills the current season progressively, so a stale copy is
+        # a board that cannot be built. Best-effort like every top-up here.
+        player_games = out / "player_games.parquet"
+        if player_games.exists():
+            try:
+                from build_cfb_player_games import bank_player_games
+
+                bank_player_games([season], player_games)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  ncaaf player-games top-up skipped ({exc})")
     if league == "wnba":
         # Team boxes ride along (one release-parquet request for the current
         # season). Best-effort like the starters top-up.

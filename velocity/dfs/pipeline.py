@@ -26,6 +26,7 @@ from velocity.dfs.optimizer import (
 from velocity.dfs.scoring import (
     dk_expected_points,
     dk_expected_points_mlb,
+    dk_expected_points_ncaaf,
     dk_expected_points_wnba,
 )
 
@@ -36,7 +37,10 @@ from velocity.dfs.scoring import (
 # same arrangement MLB has with its statsapi snapshot.
 LEAGUE_SPECS = {
     "nfl": (NFL_CLASSIC, dk_expected_points),
-    "ncaaf": (CFB_CLASSIC, dk_expected_points),
+    # College prices from its own banked player-games: FantasyPros serves no
+    # college players at all, so the previous scorer filtered its frame to
+    # zero rows and the builder exited cleanly every run.
+    "ncaaf": (CFB_CLASSIC, dk_expected_points_ncaaf),
     "mlb": (MLB_CLASSIC, dk_expected_points_mlb),
     "wnba": (WNBA_CLASSIC, dk_expected_points_wnba),
 }
