@@ -5,7 +5,7 @@ record as the receipt. The picks (owner-researched, model-confirmed):
 
 | Sport | Headline prop | Why it models | Status |
 |---|---|---|---|
-| MLB | **Pitcher strikeouts** | BF × K-rate × opponent-K decomposition; our own decommissioned backtest measured it the best MLB prop (ROI ≈ +3–4% at shrink 0.5; docs/WAGERING.md §74) | **Live** (this PR) |
+| MLB | **Pitcher strikeouts** | BF × K-rate × opponent-K decomposition; our own 2026 MLB backtest measured it the best MLB prop (ROI ≈ +3–4% at shrink 0.5; docs/WAGERING.md §74) | **Live** (this PR) |
 | NFL | **Receptions** | Stable target shares, discrete counts, NegBin-friendly | Next (season start) |
 | NHL | **Shots on goal** | TOI × shot-rate is the most stable NHL skater stat; boxscore `sog` banked per game | After puck drop (Oct) |
 | NBA | **Rebounds** | Minutes × pace × position matchup; softer than points markets | Needs the NBA vertical first — the lab will arbitrate rebounds vs assists |

@@ -1,6 +1,10 @@
 # Velocity
 
-NFL & NCAAF game and player-prop projection and wagering system.
+Game and player-prop projection and wagering system for the four in-season
+sports — **NFL, NCAAF, MLB and WNBA** — across three products: game markets
+(spread, moneyline, total, team totals), DraftKings DFS, and the prediction
+exchanges (Kalshi, Polymarket). NCAAB and NHL ride along in a content-and-CLV
+posture.
 
 Velocity projects the full distribution of every game and market — spreads,
 totals, moneylines, team totals, and player props — from a shared Monte Carlo

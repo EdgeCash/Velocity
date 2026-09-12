@@ -1,10 +1,17 @@
 # Velocity — MLB Build Plan
 
-> **DECOMMISSIONED (2026-08).** MLB served its purpose — proving the full
-> ingest → model → wager → grade → report pipeline on a live daily board — and
-> was retired per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md). The last
-> commit with the complete working MLB system is tagged **`mlb-final`**. This
-> document is kept as the historical record of what was built and learned.
+> **LIVE (2026-09).** This document said "decommissioned" for a month while
+> production said otherwise, and production was right. MLB was retired in
+> August per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md) — and then it
+> came back, because it kept working: it is in the slate's league list on
+> every run, it is the only sport whose season record chain actually fills
+> (695 settled rows against the NFL's 0 before the grading fixes), it carries
+> the only measured DFS edge in the repo, and §8 below gives it a sim built
+> for baseball rather than borrowed from football. The tag `mlb-final` still
+> marks the end of the *original* MLB build; everything after §7 postdates it.
+>
+> Whatever the strategic posture, the documents should stop contradicting the
+> crons — see [`docs/STRATEGY_REVIEW.md`](STRATEGY_REVIEW.md) §1.3.
 
 **Status:** Build/execution plan (v0.1)
 **Companion to:** [`docs/BUILD.md`](BUILD.md) (the safe build loop and per-phase

@@ -80,8 +80,8 @@ logged and graded for CLV, but staked at zero.
 |---|---|---|---|
 | NCAAB | N3: **null after FDR**, 0 of 90 segment cells; raw model ties the close | content + CLV on posted prices; no filter | Correct posture. Bets that clear the EV gate are still staked — confirm that is intended, or paper it like the exchanges. |
 | NHL | lab-gated Brier; **no closes-joined backtest yet** (sbro archive exists) | content + CLV; goalie-neutral pricing | Same question as NCAAB. Closes backtest is the open item. |
-| WNBA | 55.4% flat ATS on 504 bets (~2.4σ) — "worth tracking live before anyone stakes on it" | staked through the EV gate like every league | Tracking ≠ staking. Off-season now; decide before May. |
-| MLB | decommissioned (tag `mlb-final`) | still in the cron league list; empty board | Remove from the default list, or leave as a free no-op — but the Methods page still describes it as live. |
+| WNBA | 55.4% flat ATS on 504 bets (~2.4σ) — "worth tracking live before anyone stakes on it" | **paper end to end** — priced, logged, graded, staked at zero | **Decided 2026-09: stays paper.** Nothing in the evidence changed; the market still forecasts better on the headline metric. Revisit if the live CLV record says otherwise. |
+| MLB | **live, and the best-functioning sport here** — the only chain that fills, the only measured DFS edge, its own count sim (docs/BUILD_MLB.md §8) | staked, market-anchored at 0.2 since 2026-09 | **Decided 2026-09: anchored.** It had been raw with no shrink on the largest exposure, against a lab that put it at parity with the close. 0.2 is a holding position until the weight sweep runs on the private closing-moneyline archive — and that sweep must be re-run, because its prior evidence came from the replaced sim. |
 
 ### 1.4 The derivative products
 
@@ -123,9 +123,14 @@ The constitutional caps (`WAGERING.md` §3): ¼-Kelly, 5% per bet, 10% per game,
 | League | Shrink | Anchoring w | Sweep on the *wagering* path? |
 |---|---|---|---|
 | NFL | 1.0 | 0.2 (Round 3 select-chosen) | Brier/close tests, yes; a staking sweep, no — "tuning w from live paper CLV" is still open |
-| NCAAF | 1.0 | 1.0 (raw) | **No.** The totals filter was swept; nothing else was. The league with the most exposure has the least calibration. |
-| NCAAB / NHL / WNBA | 1.0 | 1.0 | No |
-| MLB (retired) | 0.35 game / 0.5 props | — | Yes — the only league that ever had one, and it found the raw model over-confident. |
+| NCAAF | 1.0 | 0.13 | **No.** The totals filter was swept; the anchor was not. |
+| MLB | 1.0 | **0.2 (2026-09)** | **No — and this is the open one.** Set as a holding position, not fitted. The sweep needs banked closing moneylines, which live in the private historical-odds artifact rather than in `datasets/`, and it has to be re-run rather than read off the record: the evidence that MLB sits at parity with the close was produced by the rounded-normal sim that `velocity/models/counts.py` replaced. |
+| NCAAB / NHL / WNBA | 1.0 | 1.0 | No — all three are paper, so the anchor never reaches money |
+
+The historical MLB shrink (0.35 game / 0.5 props, `WAGERING.md` §1.3) was a
+*probability* shrink toward 0.5, a different lever from the anchoring `w`
+above, and it is not currently applied to any league's game slate — the game
+path runs `prob_shrink = 1.0` everywhere and only props expose a flag.
 
 The MLB lesson (`WAGERING.md` §1.3) was that a raw sim over-stakes and shrink
 toward 0.5 pulled ROI positive. Football kept shrink 1.0 "until its own sweep
@@ -251,6 +256,19 @@ CLV grades the ceiling itself. NCAAF moneylines sit out by default; team
 totals are paper on every league; NCAAB, NHL and WNBA run in an explicit
 paper posture; parlay legs come only from staked sportsbook rows; the
 publish gate refuses paper rows first.
+
+**Amended 2026-09-12: the college sides are papered, not excluded.** S2 put
+NCAAF `spread` and `moneyline` in `exclude_markets`, which short-circuits
+before any pricing — so those markets produced no row at all: no price, no
+edge, no closing-line value, nothing to grade. That is a stronger statement
+than the evidence needs. The evidence says *do not stake them* (spreads 50.1%
+ATS flat; moneylines −4.8% over 2,807 bets with the model's Brier 0.217
+against the market's 0.183), and `paper_markets` says exactly that while still
+pricing and grading every row at stake zero. Exposure is unchanged; what
+changes is that the exclusion now accrues a record instead of resting on one.
+On the S3 numbers most of those rows should keep confirming it — which is the
+point, since a standing record beats an assumption nobody can check. Nothing
+is excluded outright any more.
 
 The **exchanges are no longer papered**. S2's rule is that money does not
 follow a market whose evidence is not in yet, and for Kalshi and Polymarket
