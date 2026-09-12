@@ -129,3 +129,70 @@ Paired with the box-score banks (which now carry actual DK points), that
 gives both halves of a full lineup backtest: what a lineup would have cost,
 and what it would have scored. Third-party archives (RotoGuru and friends)
 are unnecessary.
+
+---
+
+## 7. The WNBA model (`velocity/models/dfs_wnba.py`) — 2026-09
+
+The league had a DraftKings roster spec and nothing to put in it: the repo
+banked six team-level columns for the WNBA and no player rows at all
+(docs/DFS_FORMATS.md). `scripts/build_wnba_player_box.py` fixes the input —
+the sibling wehoop release to the team box already in use, on the same CI-safe
+transport — banking **16,896 player-games across 878 games and 299 players**
+for 2024–2026 with the full DK scoring line, minutes, and the starter flag.
+
+### The model is two factors on purpose
+
+    player DK  =  dk_per_minute(player)  x  E[minutes | her recent games]
+
+A WNBA roster runs eight or nine deep, so the minute split is the largest
+single term in any projection: a starter's 32 minutes against a reserve's 11
+separates two players of identical per-minute value by a factor of three.
+Both factors shrink toward a **positional** prior — guards, wings and posts
+bank DK points differently when assists pay 1.5 against rebounds at 1.25 and
+blocks at 2.0 — so a player with four games prices near her position rather
+than off a four-game fluke.
+
+### The sweep says: do not smooth the minutes
+
+Walk-forward over **11,668 player-games**, sweeping the two prior strengths
+and the minutes window:
+
+| rate prior | minutes prior | window | RMSE ↓ | corr ↑ | within-slate rank ↑ |
+|---|---|---|---|---|---|
+| 60 | 0 | 5 | **9.050** | **0.7412** | **0.7161** |
+| 60 | 1 | 5 | 9.131 | 0.7412 | 0.7157 |
+| 60 | 2 | 10 | 9.203 | 0.7377 | 0.7054 |
+| 180 | 4 | 10 | 9.508 | 0.7190 | 0.6839 |
+
+**Monotone toward no minute prior at all and the shortest window tried**, and
+the mechanism is obvious in hindsight: a rotation change is exactly what a
+longer window and a league-mean prior are slowest to see. The promoted point
+is the second row, not the first — the endpoint is a limit rather than a bar,
+and the two are four ten-thousandths apart on the within-slate rank
+correlation, which is the metric a lineup is actually built on. Keeping a
+one-game prior means a single appearance can never *fully* determine what a
+player is projected to play.
+
+### Promoted, full daily walk-forward
+
+| | value |
+|---|---|
+| correlation with realized DK points | **0.727** |
+| within-slate rank correlation (600 slates) | **0.698** |
+| RMSE | **9.19** against 13.30 for the league-mean constant (−31%) |
+| mean projection | 18.36 against an actual 18.38 |
+
+For contrast, the MLB hitter model's first live slate correlated **+0.03**.
+
+### The one input that is not machine-verified
+
+DK's basketball scoring constants (`DK_WNBA_POINTS`) were hand-entered from
+DraftKings' published rules, and unlike the roster template there is no
+machine-readable source: the rules endpoint carries the template and no
+scoring, `/help/rules/4/37` renders client-side, and every scoring-shaped API
+path 404s. `scoring_disagreement()` is the check that closes this — DK
+publishes its own fantasy-points-per-game on any live board, so the first
+WNBA slate DK posts will confirm or refute the constants against the same box
+scores. Until then it is the one assumption in this vertical, and it is
+written down rather than buried.

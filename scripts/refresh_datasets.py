@@ -298,6 +298,16 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
                 bank_team_boxes([season], box)
             except Exception as exc:  # noqa: BLE001 - additive surface
                 print(f"  wnba team-box top-up skipped ({exc})")
+        # Player boxes too — the DFS projection is a per-minute rate times
+        # expected minutes, and both go stale within days of a rotation change.
+        player_box = out / "player_box.parquet"
+        if player_box.exists():
+            try:
+                from build_wnba_player_box import bank_player_boxes
+
+                bank_player_boxes([season], player_box)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  wnba player-box top-up skipped ({exc})")
 
 
 def main() -> None:  # pragma: no cover - network orchestration

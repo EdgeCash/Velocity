@@ -354,3 +354,23 @@ def nfl_sim_points(
     frame = (pd.DataFrame(rows)[[*_ID_COLUMNS, "points"]] if rows
              else pd.DataFrame(columns=[*_ID_COLUMNS, "points"]))
     return frame, arrays
+
+
+def dk_expected_points_wnba(player_box: pd.DataFrame) -> pd.DataFrame:
+    """WNBA banked player boxes → expected DK points per game.
+
+    The WNBA's counterpart to :func:`dk_expected_points_mlb`, and it takes the
+    same kind of input: not a projection service's frame (none serves this
+    league for free) but the league's own banked box scores, which
+    ``scripts/build_wnba_player_box.py`` commits. The model behind it is a
+    per-minute DK rate times expected minutes, both shrunk toward a positional
+    prior (:mod:`velocity.models.dfs_wnba`).
+
+    Returns the usual ``[player_id, player_name, team, position, points]``, so
+    the pool join and the optimizer consume it unchanged.
+    """
+    from velocity.models.dfs_wnba import WnbaDfsModel
+
+    if player_box.empty:
+        return pd.DataFrame(columns=[*_ID_COLUMNS, "points"])
+    return WnbaDfsModel.fit(player_box).projections(player_box)

@@ -10,13 +10,15 @@ record parquet beside them.
     python scripts/grade_dfs.py --prev-dir artifacts/previous \
         --out-dir artifacts/slate --league mlb
 
-Actuals are free and keyless in both leagues that have them:
+Actuals are free and keyless in every league that has them:
 
 * **MLB** — statsapi boxscores for the graded day, through the same two
   extractors that bank the datasets (batters and starting pitchers), scored
   by :mod:`velocity.models.dfs_mlb`.
 * **NFL** — the nflverse weekly release, scored by
   :mod:`velocity.models.dfs_nfl`, with kickoffs off the schedule.
+* **WNBA** — the wehoop player-box release, scored by
+  :mod:`velocity.models.dfs_wnba`.
 
 NCAAF builds entries but cannot be graded: there is no free college
 player-box-score feed in this repo, and a grade against guessed actuals would
@@ -49,7 +51,7 @@ _OPERATOR_TZ = ZoneInfo("America/Chicago")
 # build's projection in ``points`` and the player's game in ``kickoff``.
 ENTRY_KINDS = ("dfs_lineup", "dfs_showdown", "dfs_tiered")
 # Leagues with a free player-level actuals feed. NCAAF is absent on purpose.
-GRADEABLE = ("mlb", "nfl")
+GRADEABLE = ("mlb", "nfl", "wnba")
 
 
 def entry_paths(prev_dir: Path, league: str) -> dict[str, list[Path]]:
@@ -173,6 +175,31 @@ def nfl_day_index(slate_date: datetime) -> tuple[_Index, _Index]:  # pragma: no 
     return players, defenses
 
 
+def wnba_day_index(slate_date: datetime) -> _Index:  # pragma: no cover - network
+    """(name, date) → realized DK points, from the wehoop player-box release.
+
+    The same release the committed dataset is banked from, fetched fresh so a
+    grade the morning after a slate sees that night's box scores rather than
+    whatever the last dataset commit happened to hold.
+    """
+    from build_wnba_player_box import fetch_player_box
+    from velocity.dfs.backtest import norm
+    from velocity.models.dfs_wnba import wnba_dk_points
+
+    box = fetch_player_box(slate_date.year)
+    if box.empty:
+        return {}
+    box = box.assign(actual=wnba_dk_points(box))
+    return {
+        (norm(row["athlete_display_name"]),
+         pd.Timestamp(row["game_date"]).normalize().date()): {
+            "actual": float(row["actual"]), "game_id": str(row["game_id"]),
+            "team": str(row.get("team_abbreviation") or "")}
+        for row in box.to_dict("records")
+        if pd.notna(row["game_date"])
+    }
+
+
 def day_index_for(  # pragma: no cover - network
     league: str, slate_date: datetime
 ) -> tuple[_Index, _Index]:
@@ -180,6 +207,8 @@ def day_index_for(  # pragma: no cover - network
     try:
         if league == "mlb":
             return mlb_day_index(slate_date), {}
+        if league == "wnba":
+            return wnba_day_index(slate_date), {}
         if league == "nfl":
             return nfl_day_index(slate_date)
     except Exception as exc:  # noqa: BLE001 - a feed down never blocks the slate
@@ -214,7 +243,7 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     parser.add_argument("--prev-dir", required=True, help="downloaded previous DFS artifacts")
     parser.add_argument("--out-dir", required=True, help="folder to write the record parquet")
     parser.add_argument("--league", default="mlb",
-                        choices=["mlb", "nfl", "ncaaf"])
+                        choices=["mlb", "nfl", "ncaaf", "wnba"])
     args = parser.parse_args()
 
     if args.league not in GRADEABLE:

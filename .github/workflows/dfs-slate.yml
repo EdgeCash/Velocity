@@ -32,7 +32,7 @@ on:
       leagues:
         description: "Leagues to build (space-separated)"
         required: false
-        default: "mlb nfl ncaaf"
+        default: "mlb nfl ncaaf wnba"
 
 concurrency:
   group: dfs-slate
@@ -66,7 +66,7 @@ jobs:
       - name: Snapshot DraftKings boards
         run: |
           python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
-            --leagues "${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}"
+            --leagues "${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}"
 
       # Football prices from the FantasyPros consensus; MLB from the free
       # statsapi season stats (the FP public tier serves no MLB players).
@@ -99,11 +99,15 @@ jobs:
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
           MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}; do
+          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}; do
             echo "::group::${league} DFS"
             DK_FILE=$(ls -t artifacts/dk_salaries/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
             PROJ_FILE="$FP_FILE"
             if [ "${league}" = "mlb" ]; then PROJ_FILE="$MLB_STATS"; fi
+            # The WNBA prices from its own banked box scores: no projection
+            # service serves the league for free, so the committed player box
+            # IS the projection input (velocity/models/dfs_wnba.py).
+            if [ "${league}" = "wnba" ]; then PROJ_FILE="datasets/wnba/player_box.parquet"; fi
             if [ -n "$PROJ_FILE" ] && [ -n "$DK_FILE" ]; then
               # Tournaments pay the right tail of a huge field, so the DFS
               # unit is a diversified, stacked PORTFOLIO rather than one
@@ -142,7 +146,7 @@ jobs:
               --limit 14 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/dfs_prev/$id" || true
           done
-          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}; do
+          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}; do
             echo "::group::grade ${league} DFS"
             python scripts/grade_dfs.py --prev-dir artifacts/dfs_prev \
               --out-dir artifacts/slate --league "${league}" || true

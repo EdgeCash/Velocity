@@ -73,7 +73,7 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 
 | Game type | Format | Roster | Cap | Draft | Velocity |
 |---|---|---|---|---|---|
-| 37 | WNBA | G,G,F,F,F,UTIL | $50,000 | SalaryCap | spec only (`WNBA_CLASSIC`) — no scorer |
+| 37 | WNBA | G,G,F,F,F,UTIL | $50,000 | SalaryCap | **built** (`WNBA_CLASSIC` + `velocity.models.dfs_wnba`) |
 
 Read off the rules API on 2026-09-12, with **no WNBA board running**: the
 lobby (`getcontests?sport=WNBA`) returned 76 draft groups that day and not
@@ -84,17 +84,25 @@ configuration 38, six players, ≥2 games, ≥2 teams, unique players, late swap
 allowed. Game type 72 carries the identical template under a different sport
 and is *not* this one — the Madden trap in reverse.
 
-Two things are still missing before a WNBA board can be priced, and neither
-is a guess away:
+Two things stood between the spec and a priced board when it landed. One is
+closed and one is narrowed:
 
-1. **The scoring constants.** Unlike the roster template there is no JSON
-   endpoint for them; `/help/rules/4/37` renders client-side and every
-   scoring-shaped API path 404s. They have to be read off DK's published
-   rules by eye, as MLB's and the NFL's were.
-2. **Player rates.** `datasets/wnba/` holds `games` and `team_box` and no
-   player data at all, so a scorer would have nothing to score. wehoop
-   publishes a player-box release on the same CI-safe transport the team box
-   already uses, which is where that starts.
+1. **Player rates — done.** `datasets/wnba/` held `games` and `team_box` and
+   no player data at all, so a scorer had nothing to score.
+   `scripts/build_wnba_player_box.py` banks the sibling wehoop release on the
+   same CI-safe transport: 16,896 player-games, 878 games, 299 players for
+   2024–2026, with the full DK line, minutes and the starter flag. The model
+   on top of it is a per-minute rate times expected minutes, validated
+   walk-forward at a 0.698 within-slate rank correlation
+   (docs/DFS_MODEL.md §7).
+2. **The scoring constants — still the one unverified input.** Unlike the
+   roster template there is no JSON endpoint for them; `/help/rules/4/37`
+   renders client-side and every scoring-shaped API path 404s. They are
+   hand-entered from DK's published rules, which is the same provenance MLB's
+   and the NFL's have. `velocity.models.dfs_wnba.scoring_disagreement()` is
+   the check that closes it: DK publishes its own fantasy-points-per-game on
+   any live board, so the first WNBA slate DK posts confirms or refutes them
+   against the same box scores.
 
 ## Showdown Captain Mode
 
