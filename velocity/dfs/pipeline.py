@@ -17,19 +17,32 @@ from velocity.dfs.optimizer import (
     MLB_CLASSIC,
     NFL_CLASSIC,
     SALARY_CAP,
+    WNBA_CLASSIC,
     Lineup,
     RosterSpec,
     build_lineup,
     lineup_pool,
 )
-from velocity.dfs.scoring import dk_expected_points, dk_expected_points_mlb
+from velocity.dfs.scoring import (
+    dk_expected_points,
+    dk_expected_points_mlb,
+    dk_expected_points_ncaaf,
+    dk_expected_points_wnba,
+)
 
 # The leagues the optimizer can price: roster spec + projections scorer.
 # Other leagues bank salary history (SPORT_CODES) but build no lineup yet.
+# WNBA's scorer takes the league's own banked player boxes rather than a
+# projection service's frame — none serves the league for free — which is the
+# same arrangement MLB has with its statsapi snapshot.
 LEAGUE_SPECS = {
     "nfl": (NFL_CLASSIC, dk_expected_points),
-    "ncaaf": (CFB_CLASSIC, dk_expected_points),
+    # College prices from its own banked player-games: FantasyPros serves no
+    # college players at all, so the previous scorer filtered its frame to
+    # zero rows and the builder exited cleanly every run.
+    "ncaaf": (CFB_CLASSIC, dk_expected_points_ncaaf),
     "mlb": (MLB_CLASSIC, dk_expected_points_mlb),
+    "wnba": (WNBA_CLASSIC, dk_expected_points_wnba),
 }
 
 
@@ -245,22 +258,35 @@ def main_slate_group(salaries: pd.DataFrame) -> str | None:
 
 
 def normalize_positions(board: pd.DataFrame, spec: object) -> pd.DataFrame:
-    """Map DK position strings onto the spec's slot vocabulary (MLB only today).
+    """Map DK position strings onto the spec's slot vocabulary.
 
     DK's MLB board spells pitchers ``SP``/``RP`` (both fill the P slots) and
     multi-eligible fielders as alphabetical combos (``2B/SS``, ``OF/SS``);
     those price at the first listed position — every listed position is DK-
-    legal, so the lineup stays valid, occasionally sub-optimal. Football
-    boards pass through untouched.
+    legal, so the lineup stays valid, occasionally sub-optimal.
+
+    DK's WNBA board runs two positions, guard and forward, and lists dual
+    eligibility the same combo way (``G/F``). A centre is a forward there, so
+    the box scores' ``C`` — which is ESPN's vocabulary, not DK's — folds into
+    ``F`` rather than falling out of the pool. Football boards pass through
+    untouched.
     """
-    if not str(getattr(spec, "name", "")).startswith("mlb"):
-        return board
-    pos = (
-        board["position"].astype(str).str.upper().str.strip()
-        .str.split("/").str[0]
-        .replace({"SP": "P", "RP": "P"})
-    )
-    return board.assign(position=pos)
+    name = str(getattr(spec, "name", ""))
+    if name.startswith("mlb"):
+        pos = (
+            board["position"].astype(str).str.upper().str.strip()
+            .str.split("/").str[0]
+            .replace({"SP": "P", "RP": "P"})
+        )
+        return board.assign(position=pos)
+    if name.startswith("wnba"):
+        pos = (
+            board["position"].astype(str).str.upper().str.strip()
+            .str.split("/").str[0]
+            .replace({"C": "F"})
+        )
+        return board.assign(position=pos)
+    return board
 
 
 # DK MLB classic legality: at most 5 HITTERS from one team (pitchers exempt).

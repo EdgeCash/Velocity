@@ -637,7 +637,11 @@ class BonusAdjustedModel:
 
 INSEASON_CALIBRATION: dict[str, dict[str, float]] = {
     "mlb": {"sd_margin": 3.2, "sd_total": 4.6, "sigma": 3.2, "ridge": 100.0},
-    "wnba": {"sd_margin": 12.5, "sd_total": 15.0, "sigma": 12.5, "ridge": 10.0},
+    # WNBA: walk-forward residuals of the promoted pace×efficiency fit over
+    # 718 games — margin 12.93 (the shipped 12.5 was nearly right), total
+    # 18.15 (the shipped 15.0 was a fifth too narrow). sd_total here is the
+    # pre-overtime number that finishes on 18.15 (docs/BUILD_WNBA_SIM.md).
+    "wnba": {"sd_margin": 12.93, "sd_total": 17.6, "sigma": 12.93, "ridge": 10.0},
     # 2026 walk-forward, pace×efficiency (docs/BUILD_NCAAB.md N2): residual
     # sds from the calibration diagnostic. Ridge is *near-zero* — 360
     # conference-clustered teams leave the fit compressed at football-scale

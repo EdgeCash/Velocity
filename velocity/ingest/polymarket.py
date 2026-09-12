@@ -62,9 +62,11 @@ _FETCH_TIMEOUT = 60
 _USER_AGENT = "velocity-research/0.1 (odds research; contact via repo)"
 _BOOK_BATCH = 500
 
-# League tag ids on Gamma, and the leagues they map to in our schema.
-TAG_IDS = {"nfl": 450, "cfb": 100351}
-LEAGUE_BY_SLUG_PREFIX = {"nfl": "nfl", "cfb": "ncaaf"}
+# League tag ids on Gamma, and the leagues they map to in our schema. Read from
+# ``/tags/slug/{slug}`` on 2026-09-12; Gamma's own slug is the key we ask under
+# ("cfb" for college football), our league is what the row is stamped with.
+TAG_IDS = {"nfl": 450, "cfb": 100351, "mlb": 100381, "wnba": 100254}
+LEAGUE_BY_SLUG_PREFIX = {"nfl": "nfl", "cfb": "ncaaf", "mlb": "mlb", "wnba": "wnba"}
 
 # Gamma ``sportsMarketType`` → canonical Lines market. ``team_totals`` resolves
 # to ``team_total_home``/``team_total_away`` from the slug's team code. Halves,
@@ -91,8 +93,13 @@ PROP_MARKET_BY_TYPE = {
 _BOOK = "polymarket"
 
 # Game event slug: {league}-{away}-{home}-{YYYY-MM-DD}, dates in UTC.
+# Every sport uses the same shape — verified live 2026-09-12 on
+# ``mlb-phi-atl-2026-09-11`` and ``wnba-conn-atl-2026-09-17`` as well as the
+# football pair. A league missing from the alternation does not fail loudly: the
+# slug simply stops parsing and the whole board is skipped.
 _SLUG_RE = re.compile(
-    r"^(?P<league>nfl|cfb)-(?P<away>[a-z0-9]+)-(?P<home>[a-z0-9]+)-(?P<date>\d{4}-\d{2}-\d{2})$"
+    r"^(?P<league>nfl|cfb|mlb|wnba)-(?P<away>[a-z0-9]+)-(?P<home>[a-z0-9]+)"
+    r"-(?P<date>\d{4}-\d{2}-\d{2})$"
 )
 _PROPS_SUFFIX = "-player-props"
 # Spread slugs name the side the line belongs to: …-spread-home-1pt5.

@@ -19,24 +19,70 @@ and CLV themselves are reused from :mod:`velocity.wagering.bet_log`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
+from velocity.store.schema import LADDER_BOOKS
 from velocity.wagering.bet_log import Bet, BetLog
 
 _CLOSE_KEYS = ["game_id", "market", "side"]
+# An exchange quote is an executable ask on ONE rung of a ladder, not a two-way
+# quote on a main line, so it can only be compared against its own contract:
+# same venue, same strike. Keyed on (game, market, side) like a sportsbook row,
+# a Kalshi rung bought far off the main number was scored against the main
+# number's consensus close and the whole distance between them was booked as
+# line value earned — CLV, the one metric the system is judged on, invented out
+# of a key that was too short. A rung with no close of its own now simply
+# carries no CLV, which is the honest answer.
+_LADDER_CLOSE_KEYS = ["game_id", "market", "side", "book", "point"]
 
 
-def _closing_index(closing: pd.DataFrame | None) -> dict[tuple[str, str, str], tuple]:
-    """Map ``(game_id, market, side)`` → ``(closing_price, closing_point)``."""
+def _round_point(point: Any) -> float | None:
+    return None if point is None or pd.isna(point) else float(point)
+
+
+def _closing_index(
+    closing: pd.DataFrame | None,
+) -> tuple[dict[tuple, tuple], dict[tuple, tuple]]:
+    """Closing quotes split by price basis → ``(sportsbook, ladder)`` indexes.
+
+    The sportsbook index is keyed ``(game_id, market, side)``: its point is the
+    consensus close, and the gap between it and ours is exactly what line CLV
+    measures, so the number must not be part of the key. The ladder index adds
+    the venue and the strike, because there a different strike is a different
+    contract rather than the same bet at a moved number.
+    """
+    book_index: dict[tuple, tuple] = {}
+    ladder_index: dict[tuple, tuple] = {}
     if closing is None or closing.empty:
-        return {}
-    index: dict[tuple[str, str, str], tuple] = {}
+        return book_index, ladder_index
     for row in closing.to_dict("records"):
-        key = (str(row["game_id"]), str(row["market"]), str(row["side"]))
-        point = row.get("point")
-        index[key] = (row.get("price"), None if point is None or pd.isna(point) else float(point))
-    return index
+        book = str(row.get("book", "")).lower()
+        point = _round_point(row.get("point"))
+        value = (row.get("price"), point)
+        if book in LADDER_BOOKS:
+            ladder_index[
+                (str(row["game_id"]), str(row["market"]), str(row["side"]), book, point)
+            ] = value
+        else:
+            book_index[(str(row["game_id"]), str(row["market"]), str(row["side"]))] = value
+    return book_index, ladder_index
+
+
+def _closing_for(
+    row: Mapping[Any, Any],
+    point: float | None,
+    book_index: dict[tuple, tuple],
+    ladder_index: dict[tuple, tuple],
+) -> tuple:
+    """The close this bet is allowed to be scored against."""
+    key3 = (str(row["game_id"]), str(row["market"]), str(row["side"]))
+    if str(row.get("book", "")).lower() in LADDER_BOOKS:
+        return ladder_index.get((*key3, str(row.get("book", "")).lower(), point), (None, None))
+    return book_index.get(key3, (None, None))
 
 
 def bets_from_slate(slate: pd.DataFrame, closing: pd.DataFrame | None = None) -> list[Bet]:
@@ -46,14 +92,11 @@ def bets_from_slate(slate: pd.DataFrame, closing: pd.DataFrame | None = None) ->
     each bet's closing price/point for CLV; a bet with no matching close simply has
     ``None`` there and contributes to grading but not to CLV.
     """
-    close = _closing_index(closing)
+    book_index, ladder_index = _closing_index(closing)
     bets: list[Bet] = []
     for row in slate.to_dict("records"):
-        point = row.get("point")
-        point_f = None if point is None or pd.isna(point) else float(point)
-        c_price, c_point = close.get(
-            (str(row["game_id"]), str(row["market"]), str(row["side"])), (None, None)
-        )
+        point_f = _round_point(row.get("point"))
+        c_price, c_point = _closing_for(row, point_f, book_index, ladder_index)
         bets.append(
             Bet(
                 game_id=str(row["game_id"]),

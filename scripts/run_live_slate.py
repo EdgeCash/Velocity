@@ -21,14 +21,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from velocity.eval.ladders import default_relative_tolerance
+from velocity.eval.ladders import default_relative_tolerance, has_ladder_calibration
 from velocity.features.scores import fit_scores_ratings
+from velocity.ingest.exchanges import EXCHANGE_LEAGUES
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
 from velocity.intel.publish import (
@@ -36,8 +38,10 @@ from velocity.intel.publish import (
     DEFAULT_MIN_CONTEXT,
     DEFAULT_MIN_CONVICTION,
 )
+from velocity.models.counts import MLB_COUNTS
 from velocity.models.game_nfl import GameProjection
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
+from velocity.models.overtime import WNBA_OVERTIME
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
     DEFAULT_SD_TOTAL,
@@ -72,6 +76,79 @@ def _load_snapshot(args: argparse.Namespace) -> object:
 
     client = TheOddsAPIClient.from_env()
     return client.odds_payload(args.league)
+
+
+# A banked ``/odds`` payload is named ``odds_{league}_{YYYYmmdd}T{HHMMSS}Z.json``
+# by the collector (scripts/collect_theoddsapi.py). The stamp is the only honest
+# record of when the board was bought.
+_SNAPSHOT_RE = re.compile(r"^odds_(?P<league>[a-z]+)_(?P<stamp>\d{8}T\d{6}Z)\.json$")
+
+
+def parse_snapshot_stamp(name: str, league: str) -> pd.Timestamp | None:
+    """Capture time from a banked payload's filename, or ``None`` if not this league's."""
+    match = _SNAPSHOT_RE.match(name)
+    if match is None or match["league"] != league:
+        return None
+    return pd.Timestamp(datetime.strptime(match["stamp"], "%Y%m%dT%H%M%SZ"))
+
+
+def newest_banked_board(
+    root: Path, league: str, now: pd.Timestamp, max_age_minutes: float
+) -> tuple[Path | None, pd.Timestamp | None]:
+    """The freshest banked board for ``league`` → ``(path_if_fresh, newest_stamp)``.
+
+    Freshness is read from the **stamp in the filename**, never the file's
+    mtime. The workflow downloads these payloads out of Actions artifacts, so
+    every file is written at extraction time: mtime records when we unzipped
+    it, not when the board was bought. Selecting on mtime made the *oldest*
+    download win the sort (the loop extracts newest-first, so the oldest lands
+    last) and reported a two-day-old board as fresh — the slate then priced
+    every league against prices that had already moved, and leagues whose
+    games had all started produced an empty card.
+
+    The newest stamp is returned even when it is too old, so the caller can say
+    how stale the bank is instead of only that it missed.
+    """
+    best: tuple[Path, pd.Timestamp] | None = None
+    if not root.exists():
+        return None, None
+    for path in root.rglob("odds_*.json"):
+        stamp = parse_snapshot_stamp(path.name, league)
+        if stamp is None:
+            continue
+        if best is None or stamp > best[1]:
+            best = (path, stamp)
+    if best is None:
+        return None, None
+    age_minutes = (now - best[1]).total_seconds() / 60.0
+    return (best[0] if age_minutes <= max_age_minutes else None), best[1]
+
+
+def resolve_banked_board(args: argparse.Namespace, now: pd.Timestamp) -> None:
+    """Point ``--snapshot-file`` at the freshest banked board, when one qualifies.
+
+    An explicit ``--snapshot-file`` always wins. Otherwise a ``--snapshot-dir``
+    is searched, and the run falls through to a live pull when nothing in it is
+    recent enough — paying for credits beats pricing a board that has moved.
+    """
+    if args.snapshot_file or not getattr(args, "snapshot_dir", None):
+        return
+    path, stamp = newest_banked_board(
+        Path(args.snapshot_dir), args.league, now, args.board_max_age_min
+    )
+    if path is not None and stamp is not None:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"board: reusing banked payload {path} "
+              f"(captured {stamp:%Y-%m-%d %H:%M}Z, {age:.0f}min old; no credits spent)")
+        args.snapshot_file = str(path)
+        return
+    if stamp is None:
+        print(f"board: no banked payload for {args.league} under "
+              f"{args.snapshot_dir}; pulling live")
+    else:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"board: newest banked {args.league} payload is {age:.0f}min old "
+              f"(limit {args.board_max_age_min:g}); pulling live")
 
 
 def _find_plays(folder: Path) -> Path | None:
@@ -342,8 +419,21 @@ def _build_projection(
     # not yet lab-tuned (their datasets carry no closing lines to tune on).
     sims = {
         "ncaaf": football_sim_config("ncaaf", args),
-        "mlb": SimConfig(sd_margin=3.2, sd_total=4.6, n_sims=args.n_sims),
-        "wnba": SimConfig(sd_margin=12.5, sd_total=15.0, n_sims=args.n_sims),
+        # Baseball is simulated as COUNTS, not as a rounded normal on the
+        # margin (velocity/models/counts.py). The normal scored a tie in 13.5%
+        # of games — baseball has none in 7,149 banked — was a third
+        # under-dispersed against a 4.53 walk-forward residual sd, and was
+        # symmetric where the unbatted ninth inning is not. The sds below are
+        # unused on that path and kept only because the config requires them.
+        "mlb": SimConfig(sd_margin=4.5, sd_total=4.5, n_sims=args.n_sims,
+                         counts=MLB_COUNTS),
+        # Basketball cannot end level either, and its own defect was the
+        # TOTAL: 15.0 against a walk-forward residual sd of 18.15, a fifth too
+        # narrow, while the margin was nearly right. sd_total below is the
+        # PRE-overtime number that lands the finished distribution on 18.15
+        # (docs/BUILD_WNBA_SIM.md).
+        "wnba": SimConfig(sd_margin=12.93, sd_total=17.6, n_sims=args.n_sims,
+                          overtime=WNBA_OVERTIME),
         # NCAAB: walk-forward residual sds (docs/BUILD_NCAAB.md N2).
         "ncaab": SimConfig(sd_margin=13.0, sd_total=18.5, n_sims=args.n_sims),
         # NHL: empirical outcome sds from the banked 2023–25 seasons
@@ -537,6 +627,16 @@ def build_parser() -> argparse.ArgumentParser:
                         required=True)
     parser.add_argument("--data", help="folder with a games file to fit the model")
     parser.add_argument("--snapshot-file", help="saved Odds API /odds JSON (offline mode)")
+    # The hourly collector already bought today's board, so re-reading it costs
+    # nothing where it is still current. Freshness is judged on the stamp in the
+    # filename — see ``newest_banked_board`` for why mtime is not usable here.
+    parser.add_argument("--snapshot-dir",
+                        help="folder of banked collect-theoddsapi artifacts; the freshest "
+                             "odds_{league}_{stamp}.json inside it is reused when it is "
+                             "younger than --board-max-age-min (ignored with --snapshot-file)")
+    parser.add_argument("--board-max-age-min", type=float, default=75.0,
+                        help="how old a banked board may be before the run pulls live "
+                             "instead (default: 75 minutes)")
     parser.add_argument("--n-sims", type=int, default=10_000)
     parser.add_argument("--ncaaf-level", choices=["fit", "constant"], default=None,
                         help="the college blend's scores-half level: fitted on the trailing "
@@ -807,7 +907,22 @@ def build_parser() -> argparse.ArgumentParser:
 # against +0.218 raw, so the claim matches the realization at w ≈ 0.12–0.13
 # at every threshold from 6 to 10; the live 0.2 claimed 1.7× what it earned
 # (docs/BACKTEST_NCAAF.md, the staking sweep).
-DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.13}
+# Market anchoring: p_belief = p_market + w·(p_model − p_market). A league
+# absent here resolves to 1.0 — the raw model price, no pull toward the market.
+#
+# MLB joined this table in 2026-09. It had been running at 1.0 with no
+# probability shrink either, both levers raw, on the league carrying the
+# largest real exposure — and the lab's own MLB rounds put the model at Brier
+# 0.2485 against the de-vigged closing moneyline's 0.2491, which is parity
+# rather than an edge. It sits at the NFL's 0.2 as a deliberately conservative
+# holding position, not a fitted one: choosing it properly is a sweep against
+# banked closing moneylines, and those live in the private historical-odds
+# artifact rather than in datasets/. That sweep also has to be re-run rather
+# than read off the record, because the evidence above was produced by the
+# rounded-normal sim that velocity/models/counts.py replaced — a sim that
+# priced every home moneyline 2.8 points low and the run line 4-5 points off
+# (docs/BUILD_MLB.md §8). Until it runs, the exposure is anchored.
+DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.13, "mlb": 0.2}
 
 
 # Leagues in the content + CLV posture: their labs found no promoted edge
@@ -1002,16 +1117,57 @@ def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
     """The markets this run prices but never stakes (docs/STRATEGY_REVIEW.md S2)."""
     if resolve_paper(args.paper, args.league):
         return frozenset(GAME_MARKETS) | frozenset({"__all__"})
-    return frozenset(_TEAM_TOTALS) if args.team_totals_paper else frozenset()
+    markets = frozenset(_TEAM_TOTALS) if args.team_totals_paper else frozenset()
+    return markets | ncaaf_side_paper(args)
+
+
+def ncaaf_side_paper(args: argparse.Namespace) -> frozenset[str]:
+    """NCAAF spreads and moneylines, papered rather than dropped.
+
+    Both sit out on real evidence, and papering does **not** reopen that:
+    spreads walk-forward at 50.1% ATS flat with no edge at any disagreement
+    threshold, and the moneyline round was worse still — raw −4.8% over 2,807
+    bets, −36% at ≥+1000, the model's Brier 0.217 against the market's 0.183
+    (docs/STRATEGY_REVIEW.md S3). Neither is staked here.
+
+    What changes is that they were sitting out by being **excluded**, which
+    produced no row at all — no price, no edge, no closing-line value, nothing
+    to grade. Papering costs no exposure and buys the measurement: every side
+    is priced, logged and graded for CLV at stake zero. On that evidence most
+    of those rows should keep confirming the exclusion, and a standing record
+    saying so is worth more than an assumption nobody can check.
+
+    The ``--ncaaf-spreads`` / ``--ncaaf-moneylines`` flags still stake them.
+    """
+    if args.league != "ncaaf":
+        return frozenset()
+    paper = set()
+    if not args.ncaaf_spreads:
+        paper.add("spread")
+    if not args.ncaaf_moneylines:
+        paper.add("moneyline")
+    return frozenset(paper)
 
 
 def resolve_paper_venues(args: argparse.Namespace) -> frozenset[str]:
-    """The venues this run prices but never stakes — the exchanges, by default."""
+    """The venues this run prices but never stakes.
+
+    Two reasons an exchange venue sits at stake zero. The operator can ask for
+    it with ``--exchange-paper``. And a league whose ladder shape table has not
+    been fitted is held there whatever the flag says, because the E8b gate is
+    asymmetric in exactly the wrong direction when it has nothing to read: a
+    spread or total rung gets no bias and is refused, while a moneyline — the
+    one market with no number to be miscalibrated about — passes ungated. So
+    the half of a new league's board that would ship first is the half nothing
+    is checking. Paper until measured.
+    """
     from velocity.store.schema import LADDER_BOOKS
 
     if not getattr(args, "exchanges", False):
         return frozenset()
-    return frozenset(LADDER_BOOKS) if args.exchange_paper else frozenset()
+    if args.exchange_paper or not has_ladder_calibration(args.league):
+        return frozenset(LADDER_BOOKS)
+    return frozenset()
 
 
 def _prop_paper_markets(args: argparse.Namespace) -> frozenset[str]:
@@ -1078,6 +1234,10 @@ def main() -> None:
     now = datetime.now(UTC)
     generated_at = pd.Timestamp(now).tz_localize(None)
 
+    # Resolve the banked board before anything reads --snapshot-file: every
+    # downstream "are we on a saved board" test keys on that one attribute.
+    resolve_banked_board(args, generated_at)
+
     if args.out:
         Path(args.out).mkdir(parents=True, exist_ok=True)
 
@@ -1109,14 +1269,16 @@ def main() -> None:
     # A banked sportsbook board does not imply an offline run: both exchanges
     # are free and keyless, so they are pulled even when --snapshot-file
     # supplies the book side. --offline is the switch that means "no network".
-    if args.exchanges and not args.offline and args.league in ("nfl", "ncaaf"):
+    if args.exchanges and not args.offline and args.league in EXCHANGE_LEAGUES:
         from velocity.ingest.exchanges import fetch_exchange_board
 
         exchange_lines, venue_notes = fetch_exchange_board(
             args.league, known_teams, events, generated_at
         )
         for venue, note in venue_notes.items():
-            print(f"{venue}: {note['lines']} lines across {note['games']} board games")
+            unresolved = note.get("unresolved_sides", 0)
+            tail = f" ({unresolved} row(s) dropped — side unresolved)" if unresolved else ""
+            print(f"{venue}: {note['lines']} lines across {note['games']} board games{tail}")
         if not exchange_lines.empty:
             lines = pd.concat([lines, exchange_lines], ignore_index=True)
     elif args.exchanges:
@@ -1138,22 +1300,43 @@ def main() -> None:
     game_log = None
     if events.empty:
         print("no games on the board (off-season or empty snapshot)")
+        # ...which of the two it is, the committed schedule can say. A league
+        # that was playing on this date in the seasons already banked and has
+        # published nothing for a week is a stalled feed, not an off-season
+        # (velocity/report/league_health.py). Best-effort: a health line never
+        # blocks a run that has nothing to price anyway.
+        try:
+            from velocity.report.league_health import league_health
+
+            health = league_health(
+                schedule if schedule is not None else pd.DataFrame(),
+                pd.Timestamp(generated_at), args.league)
+            print(f"  {health.describe()}")
+            if health.suspicious:
+                print("::warning title=League dark::"
+                      f"{args.league}: {health.describe()}")
+        except Exception as exc:  # noqa: BLE001 - a health line never blocks
+            print(f"  league health unavailable ({exc})")
     else:
         # NCAAF bets totals on points of disagreement (the backtested cut); NFL
         # leaves it off and gates on probability edge alone.
         total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
         model_weight = resolve_model_weight(args.model_weight, args.league)
-        game_excludes: frozenset[str] = frozenset()
+        # The college sides are PAPER, not excluded (docs/STRATEGY_REVIEW.md
+        # S2): staked at zero on the same evidence as before, but priced and
+        # graded so the record can eventually re-test the verdicts that put
+        # them there. No game market is excluded outright any more — an
+        # excluded market produces no row, and a market with no record can
+        # never earn its way back.
         if args.league == "ncaaf" and not args.ncaaf_spreads:
-            game_excludes |= {"spread"}
-            print("NCAAF spreads: sitting out (50.1% ATS flat, no edge at any "
-                  "disagreement threshold — docs/BACKTEST_NCAAF.md); "
-                  "--ncaaf-spreads re-enables")
+            print("NCAAF spreads: paper — priced and graded, staked at zero "
+                  "(50.1% ATS flat, no edge at any disagreement threshold — "
+                  "docs/BACKTEST_NCAAF.md); --ncaaf-spreads stakes them")
         if args.league == "ncaaf" and not args.ncaaf_moneylines:
-            game_excludes |= {"moneyline"}
-            print("NCAAF moneylines: sitting out (never backtested; 60% of the first "
-                  "live card's exposure — docs/STRATEGY_REVIEW.md §1.2); "
-                  "--ncaaf-moneylines re-enables")
+            print("NCAAF moneylines: paper — priced and graded, staked at zero "
+                  "(negative in every price bucket 2021–2025, and 60% of the "
+                  "first live card's exposure — docs/STRATEGY_REVIEW.md §1.2); "
+                  "--ncaaf-moneylines stakes them")
         paper_markets = resolve_paper_markets(args)
         if "__all__" in paper_markets:
             print(f"{args.league.upper()}: paper posture — every market priced and "
@@ -1163,8 +1346,10 @@ def main() -> None:
                   "posted closes calibrate the gate (--no-team-totals-paper to stake)")
         paper_venues = resolve_paper_venues(args)
         if paper_venues:
+            why = ("--exchange-paper" if args.exchange_paper
+                   else f"no ladder shape table fitted for {args.league}")
             print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
-                  "board, staked at zero (--no-exchange-paper to stake them)")
+                  f"board, staked at zero ({why})")
         elif getattr(args, "exchanges", False):
             from velocity.store.schema import LADDER_BOOKS
 
@@ -1185,7 +1370,7 @@ def main() -> None:
             league=args.league,
             model_weight=model_weight,
             min_edge_by_market=parse_market_edges(args.min_edge_market),
-            exclude_markets=game_excludes,
+            exclude_markets=frozenset(),  # nothing is dropped; see paper_markets
             min_total_disagreement=total_edge,
             min_team_total_disagreement=args.team_total_edge,
             paper_markets=paper_markets,

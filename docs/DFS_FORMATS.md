@@ -63,11 +63,46 @@ tier pick or by snake draft, so there is nothing for a knapsack to solve.
 
 | Game type | Format | Roster | Cap | Draft | Velocity |
 |---|---|---|---|---|---|
-| 94 | Classic | QB,RB,RB,WR,WR,WR,FLEX,S-FLEX | $50,000 | SalaryCap | **built** (`CFB_CLASSIC`) |
+| 94 | Classic | QB,RB,RB,WR,WR,WR,FLEX,S-FLEX | $50,000 | SalaryCap | **built** (`CFB_CLASSIC` + `velocity.models.dfs_ncaaf`) |
 | 95 | Showdown Captain Mode | CPT (1.5x), UTIL x5 | $50,000 | SalaryCap | **built** (`velocity.dfs.showdown`) |
 | 364 | Single Stat - Touchdowns | FLEX x3 | — | Tiered | **built** (`velocity.dfs.tiered`) |
 | 377 | Snake | QB,RB,WR/TE,WR/TE,FLEX,S-FLEX,BENCH | — | SnakeDraft | planned (draft advisor) |
 | 378 | Snake Showdown | S-FLEX x3, BENCH | — | SnakeDraft | planned (draft advisor) |
+
+### WNBA
+
+| Game type | Format | Roster | Cap | Draft | Velocity |
+|---|---|---|---|---|---|
+| 37 | WNBA | G,G,F,F,F,UTIL | $50,000 | SalaryCap | **built** (`WNBA_CLASSIC` + `velocity.models.dfs_wnba`) |
+
+Read off the rules API on 2026-09-12, with **no WNBA board running**: the
+lobby (`getcontests?sport=WNBA`) returned 76 draft groups that day and not
+one of them was WNBA — the sport parameter is a tab, not a filter, so it
+serves whatever is live (NFL, MLB, CFB, LoL). The roster template is public
+whether or not a slate is, so the spec is DK's own: game type 37, lineup
+configuration 38, six players, ≥2 games, ≥2 teams, unique players, late swap
+allowed. Game type 72 carries the identical template under a different sport
+and is *not* this one — the Madden trap in reverse.
+
+Two things stood between the spec and a priced board when it landed. One is
+closed and one is narrowed:
+
+1. **Player rates — done.** `datasets/wnba/` held `games` and `team_box` and
+   no player data at all, so a scorer had nothing to score.
+   `scripts/build_wnba_player_box.py` banks the sibling wehoop release on the
+   same CI-safe transport: 16,896 player-games, 878 games, 299 players for
+   2024–2026, with the full DK line, minutes and the starter flag. The model
+   on top of it is a per-minute rate times expected minutes, validated
+   walk-forward at a 0.698 within-slate rank correlation
+   (docs/DFS_MODEL.md §7).
+2. **The scoring constants — still the one unverified input.** Unlike the
+   roster template there is no JSON endpoint for them; `/help/rules/4/37`
+   renders client-side and every scoring-shaped API path 404s. They are
+   hand-entered from DK's published rules, which is the same provenance MLB's
+   and the NFL's have. `velocity.models.dfs_wnba.scoring_disagreement()` is
+   the check that closes it: DK publishes its own fantasy-points-per-game on
+   any live board, so the first WNBA slate DK posts confirms or refutes them
+   against the same box scores.
 
 ## Showdown Captain Mode
 
@@ -500,6 +535,56 @@ private artifact. The betting-slate workflow pulls the newest one in before
 it publishes the site, so the DFS page shows the entries built closest to
 lock. Every input is free and unauthenticated, so the extra runs cost
 nothing but minutes.
+
+## The receipt
+
+Every other surface in this system states what it scored against a settled
+number. The DFS boards went out six times a day and, until 2026-09, were the
+one thing never graded — the optimizers are exact and the projections are
+backtested, but nothing asked what the lineups that actually shipped were
+worth.
+
+```bash
+python scripts/grade_dfs.py --prev-dir artifacts/dfs_prev \
+    --out-dir artifacts/slate --league mlb
+```
+
+Runs as a step in the DFS workflow itself, on the previous **operator day's**
+banked entries — all six runs of it, since each one banks its own boards.
+Writes two private parquets beside the day's lineups:
+
+| File | One row per | Carries |
+|---|---|---|
+| `dfs_record_{league}_{stamp}` | entry (format × slate × draft group) | `n_slots`, `n_matched`, `projected`, `realized`, `error` |
+| `dfs_players_{league}_{stamp}` | roster slot | the banked lineup row plus `actual` and `matched` |
+
+Four rules keep the number honest, and each is the unflattering reading:
+
+* a rostered player with **no box-score row scores 0.0** — what DK pays
+  someone who never appears — and `matched` says so, so a scratch is never
+  read as a bad projection;
+* the **captain multiplier applies to the realized points too**, because the
+  banked projection for a `CPT` slot already carries its 1.5x;
+* every slot keys on **its own game's date**, so a board spanning UTC
+  midnight grades each half against the right day;
+* a **DST is graded by team, never by name**. DK writes a club ("Falcons"),
+  the box score writes players, and the nflverse *player*-week release has no
+  DST row at all — so a defense used to book zero every week, a ninth of
+  every classic roster written off. The realized line comes off the nflverse
+  **team**-week release (sacks, takeaways, defensive and return touchdowns,
+  safeties, blocked kicks) plus the points-allowed bracket of the opponent's
+  final score, through the same brackets the projection prices.
+
+Actuals are free and keyless in both graded leagues: statsapi boxscores for
+MLB, through the same two extractors that bank `datasets/mlb`; the nflverse
+weekly releases for football. **NCAAF builds entries and cannot be graded** —
+there is no free college player box score in this repo, and a grade against
+guessed actuals is worse than none, so those boards report ungraded and say
+why.
+
+DK's **Single Stat** formats are skipped by name rather than graded: they
+project touchdowns or home runs, which are not DK points, and summing the
+two together would describe nothing.
 
 To re-run either backtest:
 

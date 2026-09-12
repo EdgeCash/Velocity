@@ -17,10 +17,11 @@ turning it on, verifying it, and running it week to week.
 | `collect-football-props.yml` | daily 15:00/22:00 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → private artifact |
 | `collect-dk-salaries.yml` | daily 15:00 UTC | — | DK salary snapshots → private artifact |
 
-> **Note (2026-08):** the MLB workflows referenced below were decommissioned per
-> [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md) (code at tag `mlb-final`);
-> their daily-loop features (grading, email, cards) move onto `live-slate.yml`
-> in Phase 4 of that plan.
+> **Note (2026-09):** the MLB-specific workflows referenced below were folded
+> into `live-slate.yml` per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md)
+> Phase 4 — that consolidation happened. The *sport* was not retired with
+> them: MLB runs in the shared slate on every cron, and the same grading,
+> email and card features run for it there.
 
 Everything paid is written **only to private Actions artifacts**, never to this
 public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.

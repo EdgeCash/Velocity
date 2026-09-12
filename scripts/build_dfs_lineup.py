@@ -488,13 +488,16 @@ def main() -> None:
     import dataclasses
 
     kind = {"nfl": "DK CLASSIC", "ncaaf": "DK CFB CLASSIC",
-            "mlb": "DK MLB CLASSIC"}.get(args.league, "DK CLASSIC")
+            "mlb": "DK MLB CLASSIC",
+            "wnba": "DK WNBA CLASSIC"}.get(args.league, "DK CLASSIC")
     label = f"{kind} · {run.n_games} GAMES"
     # Lock time + grouping only — the game count is already stated.
     lock = slate_label_ct(dataclasses.replace(slate, n_games=0))
     if lock:
         label = f"{label} · {lock.upper()}"
     source = ("statsapi season rates scored as DK points" if args.league == "mlb"
+              else "wehoop box-score rates scored as DK points"
+              if args.league == "wnba"
               else "FantasyPros consensus, simulated and scored as DK points"
               if samples else "FantasyPros consensus scored as DK points")
     when = datetime.now(UTC).strftime("%A, %b %-d").upper()

@@ -1,9 +1,9 @@
 """Grade the most recent prior day's slate → the email's model-status record.
 
 The workflow downloads previous runs' private artifacts into a folder; this
-script finds the **latest slate from the most recent prior date** (US/Central —
-the operator's day, so both game-day runs report the same finished day), grades
-it against the league's schedule feed, and writes
+script finds **every slate from before today** (US/Central — the operator's
+day), merges the day's cards so each play is graded once, grades them against
+the league's schedule feed, and writes
 ``record_<league>_<stamp>.parquet`` into the slate output folder, where the
 email renderer picks it up.
 
@@ -24,10 +24,12 @@ must never block the slate email.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -36,6 +38,15 @@ _STAMP = r"(\d{8}T\d{6}Z)"
 # Books whose close is a sharp yardstick when it is on the board.
 SHARP_BOOKS = frozenset({"pinnacle"})
 _OPERATOR_TZ = ZoneInfo("America/Chicago")
+
+# Schedule feeds that write a LOCAL clock rather than UTC. nflverse builds its
+# kickoff by pasting the game date onto ``gametime``, which is Eastern, while
+# the slate's kickoff is The Odds API's UTC ``commence_time``. Undeclared, that
+# gap put every prime-time game on the next UTC day and it could never be
+# graded (docs: velocity/report/results.py). Every other feed here reports UTC:
+# CFBD's start_date, statsapi's gameDate, the NHL API and the hoopR/wehoop
+# release parquets all do.
+SCHEDULE_TZ_BY_LEAGUE = {"nfl": "America/New_York"}
 
 
 def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
@@ -66,13 +77,60 @@ def _stamps(prev_dir: Path, league: str) -> dict[str, dict[str, Path]]:
 
 def _pick_prior_stamp(stamps: dict[str, dict[str, Path]], now_utc: datetime) -> str | None:
     """The latest stamp whose operator-local date precedes today's."""
+    prior = prior_stamps(stamps, now_utc)
+    return prior[-1] if prior else None
+
+
+def prior_stamps(stamps: dict[str, dict[str, Path]], now_utc: datetime) -> list[str]:
+    """Every stamp from before today, oldest first.
+
+    The slate runs twice a day. Grading only the newest of them — which is what
+    taking ``max`` did — meant the earlier card was never settled: its bets
+    stayed pending forever, its closing-line value was never measured, and the
+    games it uniquely covered (the ones already under way by the time the later
+    run built its board, so dropped from that board) left the record entirely.
+    Both cards are graded now, and the day's frames merged before grading.
+    """
     today = now_utc.astimezone(_OPERATOR_TZ).date()
-    prior = [
+    return sorted(
         s for s in stamps
         if datetime.strptime(s, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         .astimezone(_OPERATOR_TZ).date() < today
-    ]
-    return max(prior) if prior else None
+    )
+
+
+# What makes two rows the same play, per persisted frame kind. A bet quoted on
+# both of the day's cards is one bet, not two, and must not be graded twice.
+_MERGE_KEYS: dict[str, tuple[str, ...]] = {
+    "slate": ("game_id", "market", "side", "point", "book"),
+    "props": ("game_id", "market", "side", "point", "book", "player"),
+    "portfolio": ("game_id", "market", "side", "point", "book", "player"),
+    "parlays": ("legs_json",),
+    "games": ("game_id",),
+    "projections": ("game_id",),
+    "distributions": ("game_id",),
+}
+
+
+def merge_stamped(frames: list[pd.DataFrame], kind: str) -> pd.DataFrame | None:
+    """Concatenate one day's frames of a kind, keeping each play once.
+
+    The **earliest** appearance wins, which is the one the ledger actually
+    placed: a bet first recommended on the afternoon card and repeated in the
+    evening is booked at the afternoon price, so it has to be graded at that
+    price too.
+    """
+    present = [f for f in frames if f is not None and not f.empty]
+    if not present:
+        return None
+    out = pd.concat(present, ignore_index=True)
+    keys = [k for k in _MERGE_KEYS.get(kind, ()) if k in out.columns]
+    if not keys:
+        return out.drop_duplicates().reset_index(drop=True)
+    # ``point`` and ``player`` are nullable; a null must compare equal to a
+    # null or every such row would survive as its own play.
+    filled = out[keys].astype(object).where(out[keys].notna(), "\x00")
+    return out[~filled.duplicated(keep="first")].reset_index(drop=True)
 
 
 def _load(paths: dict[str, Path], kind: str) -> pd.DataFrame | None:
@@ -228,6 +286,104 @@ def attach_prop_closes(props: pd.DataFrame, consensus: pd.DataFrame | None) -> p
     return out.drop(columns=["_player"])
 
 
+def exchange_closing_for_slate(
+    exchanges_dir: Path, games_map: pd.DataFrame, league: str
+) -> pd.DataFrame | None:
+    """Each exchange contract's OWN close, rebuilt from the banked snapshots.
+
+    An exchange quote cannot be compared with a sportsbook's consensus close on
+    the main number — a rung is a different contract, not the same bet at a
+    moved line — so it needs its own. The hourly collector banks both venues'
+    raw payloads; a close is the last snapshot taken before the game started,
+    re-keyed onto this slate's game ids by exactly the assembly the live board
+    used (:func:`~velocity.ingest.exchanges.board_from_payloads`).
+
+    Returns ``[game_id, market, side, book, point, price]`` — the ladder key
+    :func:`velocity.report.scorecard.bets_from_slate` matches on — or ``None``
+    when nothing is banked. Best-effort by design: a venue or a stamp that
+    cannot be rebuilt is skipped, and the rows that do resolve still grade.
+    """
+    from velocity.ingest.exchanges import POLYMARKET_LEAGUE, board_from_payloads
+
+    if games_map is None or games_map.empty or not exchanges_dir.exists():
+        return None
+    kickoffs = {
+        str(r["game_id"]): pd.Timestamp(r["kickoff"])
+        for r in games_map.to_dict("records")
+        if pd.notna(r.get("kickoff"))
+    }
+    if not kickoffs:
+        return None
+    known = sorted(
+        set(games_map["home_team"].astype(str)) | set(games_map["away_team"].astype(str))
+    )
+    gamma = POLYMARKET_LEAGUE.get(league, league)
+
+    by_stamp: dict[str, dict[str, Any]] = {}
+    for path in exchanges_dir.rglob("*.json"):
+        name = path.name
+        match = re.search(_STAMP + r"\.json$", name)
+        if match is None:
+            continue
+        stamp = match.group(1)
+        slot = by_stamp.setdefault(stamp, {"kalshi": {}, "events": None, "books": None})
+        if name.startswith("kalshi_"):
+            series = name[len("kalshi_"):-len(f"_{stamp}.json")]
+            if series in kalshi_series_for(league):
+                slot["kalshi"][series] = path
+        elif name.startswith(f"polymarket_events_{gamma}_"):
+            slot["events"] = path
+        elif name.startswith(f"polymarket_books_{gamma}_"):
+            slot["books"] = path
+    if not by_stamp:
+        return None
+
+    frames: list[pd.DataFrame] = []
+    for stamp in sorted(by_stamp):
+        taken = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
+        slot = by_stamp[stamp]
+        try:
+            payloads = {k: json.loads(v.read_text()) for k, v in slot["kalshi"].items()}
+            events = json.loads(slot["events"].read_text()) if slot["events"] else None
+            books = json.loads(slot["books"].read_text()) if slot["books"] else None
+            if not payloads and events is None:
+                continue
+            board, _notes = board_from_payloads(
+                league, known, games_map, pd.Timestamp(taken),
+                kalshi_payloads=payloads, polymarket_events=events,
+                polymarket_books=books,
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad stamp never blocks the rest
+            print(f"exchange closes: snapshot {stamp} skipped ({exc})")
+            continue
+        if board.empty:
+            continue
+        # A close is a PRE-kickoff observation. A snapshot taken after the
+        # first pitch is a live price, not the number anyone could have closed
+        # at, so it cannot be the benchmark.
+        when = pd.Timestamp(taken)
+        ahead = board["game_id"].astype(str).map(
+            lambda gid, when=when: gid in kickoffs and when < kickoffs[gid]
+        )
+        board = board[ahead.fillna(False).astype(bool)]
+        if not board.empty:
+            frames.append(board.assign(_stamp=stamp))
+    if not frames:
+        return None
+
+    closes = pd.concat(frames, ignore_index=True).sort_values("_stamp")
+    keys = ["game_id", "market", "side", "book", "point"]
+    filled = closes[keys].astype(object).where(closes[keys].notna(), "\x00")
+    closes = closes[~filled.duplicated(keep="last")]
+    return closes[[*keys, "price"]].reset_index(drop=True)
+
+
+def kalshi_series_for(league: str) -> tuple[str, ...]:
+    from velocity.ingest.exchanges import KALSHI_SERIES_BY_LEAGUE
+
+    return tuple(KALSHI_SERIES_BY_LEAGUE.get(league, ()))
+
+
 def closing_for_slate(
     odds_dir: Path, slate: pd.DataFrame, games_map: pd.DataFrame, league: str
 ) -> pd.DataFrame | None:
@@ -269,8 +425,12 @@ def closing_for_slate(
     # rung of a ladder, not a two-way sportsbook quote on a main line — so
     # folding them into this cross-book median would silently shift the
     # sportsbook CLV benchmark and median a point across a whole ladder
-    # (docs/BUILD_EXCHANGES.md E7). They are graded on their own contract via
-    # the slate's stored closing price instead.
+    # (docs/BUILD_EXCHANGES.md E7). An exchange row is scored only against its
+    # OWN contract — same venue, same strike — which the scorecard's ladder
+    # close index enforces; with no exchange close banked here yet it simply
+    # carries no CLV. That is the honest answer, and it replaces scoring the
+    # rung against this consensus, which invented the whole distance between
+    # a far-off rung and the main number as line value earned.
     from velocity.store.schema import LADDER_BOOKS
 
     per_book = per_book[~per_book["book"].astype(str).str.lower().isin(LADDER_BOOKS)]
@@ -632,6 +792,10 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                         help="the props collector's banked snapshots (prop closes)")
     parser.add_argument("--odds-dir", default="artifacts/odds",
                         help="downloaded odds-lines snapshots (the CLV close source)")
+    parser.add_argument("--exchanges-dir", default="artifacts/exchanges",
+                        help="downloaded Kalshi/Polymarket snapshots — where an exchange "
+                             "contract's OWN close comes from (a ladder rung cannot be "
+                             "graded against the sportsbook's main-line consensus)")
     parser.add_argument("--ledger", default=None,
                         help="bankroll ledger parquet: settle its open bets from the grade "
                              "(docs/WAGERING.md W1)")
@@ -649,25 +813,34 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
 
     now = datetime.now(UTC)
     stamps = _stamps(Path(args.prev_dir), args.league)
-    stamp = _pick_prior_stamp(stamps, now)
-    if stamp is None:
+    graded_stamps = prior_stamps(stamps, now)
+    if not graded_stamps:
         print("no prior-day slate found in the downloaded artifacts; skipping record")
         return
-    paths = stamps[stamp]
-    slate = _load(paths, "slate")
-    props = _load(paths, "props")
-    parlays = _load(paths, "parlays")
-    games_map = _load(paths, "games")
-    portfolio = _load(paths, "portfolio")
+    stamp = graded_stamps[-1]
+
+    def _merged(kind: str) -> pd.DataFrame | None:
+        return merge_stamped(
+            [f for s in graded_stamps if (f := _load(stamps[s], kind)) is not None], kind
+        )
+
+    slate = _merged("slate")
+    props = _merged("props")
+    parlays = _merged("parlays")
+    games_map = _merged("games")
+    portfolio = _merged("portfolio")
     slate = attach_sized_stakes(slate, portfolio, "game")
     props = attach_sized_stakes(props, portfolio, "prop")
     n_plays = sum(0 if f is None else len(f) for f in (slate, props, parlays))
-    print(f"grading slate {stamp}: {n_plays} play(s)")
+    which = stamp if len(graded_stamps) == 1 else f"{len(graded_stamps)} runs → {stamp}"
+    print(f"grading slate {which}: {n_plays} play(s)")
 
     slate_date = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ")
     record = None
     finals = None
     games_graded = props_graded = None
+    venue_closes = None
+    closing_book = None
     if n_plays == 0 or games_map is None or games_map.empty:
         record = empty_record()
         record["slate_date"] = pd.Timestamp(slate_date)
@@ -682,7 +855,10 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                 provider_names=set(games_map["home_team"].astype(str))
                 | set(games_map["away_team"].astype(str)),
             )
-            finals = finals_for_slate(games_map, schedule, aliases=aliases)
+            finals = finals_for_slate(
+                games_map, schedule, aliases=aliases,
+                schedule_tz=SCHEDULE_TZ_BY_LEAGUE.get(args.league),
+            )
             # The closing lines from the hourly odds archive — best-effort;
             # bets with no matched close grade normally with CLV left null.
             closing = None
@@ -694,6 +870,22 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
                     print(f"closing lines: {matched} (game, market, side) keys matched")
                 except Exception as exc:  # noqa: BLE001 - CLV never blocks grading
                     print(f"closing lines skipped ({exc})")
+            # Exchange rows need their own contract's close; the sportsbook
+            # consensus above deliberately excludes the venues, so without this
+            # every ladder rung grades with no CLV at all.
+            venue_closes = None
+            if slate is not None and not slate.empty:
+                try:
+                    venue_closes = exchange_closing_for_slate(
+                        Path(args.exchanges_dir), games_map, args.league)
+                    matched = 0 if venue_closes is None else len(venue_closes)
+                    print(f"exchange closes: {matched} contract(s) matched")
+                except Exception as exc:  # noqa: BLE001 - CLV never blocks grading
+                    print(f"exchange closes skipped ({exc})")
+            closing_book = closing
+            if venue_closes is not None and not venue_closes.empty:
+                closing = (venue_closes if closing is None else
+                           pd.concat([closing, venue_closes], ignore_index=True))
             games_graded = (None if slate is None or slate.empty
                             else grade_slate(slate, finals, closing))
             games_graded = sized_profit(_carry_sized(games_graded, slate))
@@ -736,8 +928,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     # Season chain: fold the day's SETTLED plays into the newest cumulative
     # record and carry it forward in this run's artifact (the next run downloads
     # it and continues). Pending rows never enter the chain: a bet the chain
-    # can't settle today is never revisited (only the latest prior-date slate is
-    # ever graded), so a pending row would be permanent noise — the first live
+    # can't settle today is never revisited (every prior-day run is graded, but
+    # only the prior day), so a pending row would be permanent noise — the first live
     # run proved it by folding 715 stale future-game bets into the season line.
     # Filtering the downloaded chain too heals any history that already
     # carries them.
@@ -752,6 +944,33 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         out / f"cumulative_record_{args.league}_{out_stamp}.parquet", index=False
     )
     print(f"season record: {len(cumulative)} settled row(s) accumulated")
+
+    # Cross-venue sharpness (docs/BUILD_EXCHANGES.md E7) — the question the
+    # exchange build exists to answer: does a venue close sharper than the
+    # sportsbook consensus, or softer? Softer is where an origination edge can
+    # survive; sharper makes it a benchmark rather than a bet. Needs both
+    # closing frames and the day's finals, so it rides the grade. Best-effort
+    # like every surface after the record itself.
+    if venue_closes is not None and not venue_closes.empty and finals is not None:
+        try:
+            from velocity.eval.venues import compare_closes, fair_closing_probabilities
+
+            book_fair = fair_closing_probabilities(
+                closing_book if closing_book is not None else pd.DataFrame()
+            )
+            venue_fair = fair_closing_probabilities(venue_closes)
+            gaps = compare_closes(book_fair, venue_fair)
+            if not gaps.empty:
+                gaps.assign(league=args.league, as_of=pd.Timestamp(slate_date)).to_parquet(
+                    out / f"venues_{args.league}_{out_stamp}.parquet", index=False
+                )
+                mean_gap = float(gaps["disagreement"].mean())
+                print(f"cross-venue: {len(gaps)} contract(s) quoted at both; "
+                      f"the exchange closed the side {mean_gap:+.4f} vs the book")
+            else:
+                print("cross-venue: no contract closed at both a book and a venue")
+        except Exception as exc:  # noqa: BLE001 - a report never blocks the record
+            print(f"cross-venue report skipped ({exc})")
 
     # The market monitor (docs/WAGERING.md W3): per-market trailing CLV and
     # ROI over 7/30 days with flags, read off the chain just written. One
@@ -781,8 +1000,8 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
         from velocity.report.sim_check import build_sim_checks
         from velocity.report.social_png import render_record_card, render_sim_checks
 
-        projections_frame = _load(paths, "projections")
-        distributions = _load(paths, "distributions")
+        projections_frame = _merged("projections")
+        distributions = _merged("distributions")
         if (
             projections_frame is not None
             and distributions is not None

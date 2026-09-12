@@ -94,3 +94,60 @@ def test_opponent_scores_come_from_the_runs_projections() -> None:
     assert scores["KC"].mean() == pytest.approx(20.0, abs=1.0)
     assert scores["BUF"].mean() == pytest.approx(27.0, abs=1.0)
     assert opponent_scores_from_projections(pd.DataFrame(), 100, np.random.default_rng(1)) == {}
+
+
+def test_a_defense_joins_the_board_by_team_not_by_name() -> None:
+    """DraftKings names a defense by nickname alone; nobody else does.
+
+    Verified against a live main-slate board: DK lists "Chargers", "Jaguars",
+    "Steelers" while every projection source names the franchise. The name join
+    therefore matched no defense at all, and because the optimizer still has to
+    fill the DST slot it took the cheapest one on the board every week.
+    """
+    from velocity.dfs.optimizer import lineup_pool
+
+    salaries = pd.DataFrame(
+        {
+            "draft_group_id": ["1", "1"],
+            "player_id": ["d1", "d2"],
+            "player_name": ["Chargers", "Jaguars"],
+            "position": ["DST", "DST"],
+            "team": ["LAC", "JAX"],
+            "salary": [3500, 3400],
+        }
+    )
+    points = pd.DataFrame(
+        {
+            "player_id": ["fp1", "fp2"],
+            "player_name": ["Los Angeles Chargers", "Jacksonville Jaguars"],
+            "team": ["LAC", "JAX"],
+            "position": ["DST", "DST"],
+            "points": [8.4, 6.1],
+        }
+    )
+    pool = lineup_pool(salaries, points).set_index("player_name")
+    assert pool.loc["Chargers", "points"] == 8.4
+    assert pool.loc["Jaguars", "points"] == 6.1
+
+
+def test_a_defense_with_no_projection_still_reaches_the_pool_at_zero() -> None:
+    # The slot has to be fillable even when a team is missing a projection —
+    # but that is now the rare case rather than every defense on the board.
+    from velocity.dfs.optimizer import lineup_pool
+
+    salaries = pd.DataFrame(
+        {
+            "draft_group_id": ["1"],
+            "player_id": ["d1"],
+            "player_name": ["Chargers"],
+            "position": ["DST"],
+            "team": ["LAC"],
+            "salary": [3500],
+        }
+    )
+    points = pd.DataFrame(
+        {"player_id": ["fp9"], "player_name": ["Chicago Bears"], "team": ["CHI"],
+         "position": ["DST"], "points": [7.0]}
+    )
+    pool = lineup_pool(salaries, points)
+    assert len(pool) == 1 and pool.iloc[0]["points"] == 0.0

@@ -60,6 +60,21 @@ MLB_CLASSIC = RosterSpec(
     {"P": 2, "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3},
     (),
 )
+# DK's women's basketball game: six players, $50,000, at least two games and
+# two teams. Read off DK's own rules API (game type 37, lineup configuration
+# 38) rather than a live board — the lobby serves no WNBA draft group today,
+# and the roster template is public whether or not a slate is running.
+#
+# The spec is here and NOT in LEAGUE_SPECS on purpose: pricing a board needs
+# a scorer, a scorer needs per-player WNBA rates, and this repo banks only
+# team box scores (datasets/wnba/). A spec with no projections behind it
+# would build a lineup out of nothing.
+WNBA_CLASSIC = RosterSpec(
+    "wnba_classic",
+    ("G", "G", "F", "F", "F", "UTIL"),
+    {"G": 2, "F": 3},
+    (("UTIL", ("G", "F")),),
+)
 
 # NFL-classic aliases, kept for callers/tests that predate roster specs.
 SLOTS: tuple[str, ...] = NFL_CLASSIC.slots
@@ -353,6 +368,32 @@ def lineup_pool(salaries: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
         p[["_key", "points"]], on="_key", how="left", suffixes=("", "_proj")
     )
     is_dst = merged["position"].astype(str).str.upper().isin(["DST", "D", "DEF"])
+
+    # A defense is the one draftable whose name the two sides do not agree on.
+    # DraftKings lists it by nickname alone — "Chargers", "Jaguars" — while
+    # every projection source names the franchise ("Los Angeles Chargers"), so
+    # the name join cannot match and each defense fell through to the 0.0
+    # fallback below. That does not skip the slot: the optimizer still has to
+    # fill DST, so it took the cheapest defense on the board every week and
+    # ignored ten to fifteen points of the roster's variance. Team is the
+    # identity both sides do agree on, and a defense is one per team.
+    if is_dst.any() and "team" in p.columns and "team" in merged.columns:
+        def team_key(value: object) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+        dst_points = p[p["position"].astype(str).str.upper().isin(["DST", "D", "DEF"])]
+        by_team = {
+            team_key(row["team"]): row["points"]
+            for row in dst_points.to_dict("records")
+            if row.get("team") is not None and not pd.isna(row.get("team"))
+        }
+        if by_team:
+            from_team = pd.to_numeric(
+                merged.loc[is_dst, "team"].map(lambda v: by_team.get(team_key(v))),
+                errors="coerce",
+            )
+            merged.loc[is_dst, "points"] = merged.loc[is_dst, "points"].fillna(from_team)
+
     merged.loc[is_dst, "points"] = merged.loc[is_dst, "points"].fillna(0.0)
     merged.loc[is_dst, "position"] = "DST"
     merged = merged.dropna(subset=["points"])

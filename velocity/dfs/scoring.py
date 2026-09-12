@@ -354,3 +354,38 @@ def nfl_sim_points(
     frame = (pd.DataFrame(rows)[[*_ID_COLUMNS, "points"]] if rows
              else pd.DataFrame(columns=[*_ID_COLUMNS, "points"]))
     return frame, arrays
+
+
+def dk_expected_points_wnba(player_box: pd.DataFrame) -> pd.DataFrame:
+    """WNBA banked player boxes → expected DK points per game.
+
+    The WNBA's counterpart to :func:`dk_expected_points_mlb`, and it takes the
+    same kind of input: not a projection service's frame (none serves this
+    league for free) but the league's own banked box scores, which
+    ``scripts/build_wnba_player_box.py`` commits. The model behind it is a
+    per-minute DK rate times expected minutes, both shrunk toward a positional
+    prior (:mod:`velocity.models.dfs_wnba`).
+
+    Returns the usual ``[player_id, player_name, team, position, points]``, so
+    the pool join and the optimizer consume it unchanged.
+    """
+    from velocity.models.dfs_wnba import WnbaDfsModel
+
+    if player_box.empty:
+        return pd.DataFrame(columns=[*_ID_COLUMNS, "points"])
+    return WnbaDfsModel.fit(player_box).projections(player_box)
+
+
+def dk_expected_points_ncaaf(player_games: pd.DataFrame) -> pd.DataFrame:
+    """College banked player-games → expected DK points per game.
+
+    Like the WNBA scorer, its input is the league's own banked box scores
+    rather than a projection service's frame — FantasyPros serves no college
+    players, which is why the college board never built. The model is the
+    football rate model on a six-game window (:mod:`velocity.models.dfs_ncaaf`).
+    """
+    from velocity.models.dfs_ncaaf import dk_expected_points_ncaaf as _project
+
+    if player_games.empty:
+        return pd.DataFrame(columns=[*_ID_COLUMNS, "points"])
+    return _project(player_games)

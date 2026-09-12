@@ -96,6 +96,29 @@ def test_pbp_fills_missing_optional_column(raw_pbp: pd.DataFrame) -> None:
     Plays.validate(plays)
 
 
+def test_pbp_carries_the_passer_id_the_qb_fit_needs(raw_pbp: pd.DataFrame) -> None:
+    """The daily refresh normalizes through this list, so the column must be in it.
+
+    Left out, every current-season play was written with a null passer: the QB
+    decomposition saw no dropbacks at all for the season it was pricing, and
+    starter detection — the primary passer in a team's latest game — could
+    never move past the previous season's finale.
+    """
+    passers = ["00-0033873", None, "00-0033873", None, None]
+    plays = normalize_pbp(raw_pbp.assign(passer_player_id=passers))
+    assert "passer_player_id" in plays.columns
+    assert plays["passer_player_id"].notna().sum() == 2
+    Plays.validate(plays)
+
+
+def test_pbp_without_a_passer_column_still_validates(raw_pbp: pd.DataFrame) -> None:
+    # A provider extract that carries no passer at all is still a valid plays
+    # frame — the column goes null rather than the load failing.
+    plays = normalize_pbp(raw_pbp)
+    assert plays["passer_player_id"].isna().all()
+    Plays.validate(plays)
+
+
 def test_rosters_validate_against_players(raw_rosters: pd.DataFrame) -> None:
     players = normalize_rosters(raw_rosters)
     Players.validate(players)

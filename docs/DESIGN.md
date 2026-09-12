@@ -1,7 +1,13 @@
-# Velocity — NFL & NCAAF Projection and Wagering System
+# Velocity — Multi-Sport Projection and Wagering System
+
+> The title said "NFL & NCAAF" while the crons ran four sports. The design
+> below is league-agnostic and always was — the shared Monte Carlo, the
+> de-vig, the edge gate and the Kelly staking are the same machinery for
+> every sport; only the ratings fit and the sim's own shape differ (MLB draws
+> counts rather than a rounded normal, `velocity/models/counts.py`).
 
 **Status:** Design outline (v0.1)
-**Scope:** Project game outcomes and player props for NFL and NCAAF, then convert projections into disciplined, positive-expected-value wagers.
+**Scope:** Project game outcomes and player props for the in-season sports — NFL, NCAAF, MLB and WNBA, with NCAAB and NHL in a content-and-CLV posture — then convert projections into disciplined, positive-expected-value wagers.
 **Stack:** Python (pandas, numpy, scikit-learn, PyMC), free public data first (nflverse, CollegeFootballData), paid odds feed added later for live lines.
 
 ---

@@ -1,5 +1,12 @@
 # Velocity — MLB Decommission & Football Cutover Plan
 
+> **The decommission half of this plan was reversed (2026-09).** The football
+> cutover happened and stands; the MLB retirement did not stick. MLB is in the
+> slate's league list on every run, it is the sport whose record chain
+> actually fills, it carries the only measured DFS edge here, and it now has a
+> purpose-built count simulation ([`docs/BUILD_MLB.md`](BUILD_MLB.md) §8).
+> Read §1c below as the history of a decision, not as the current state.
+
 **Status:** Cutover plan (v0.1)
 **Companion to:** [`docs/BUILD.md`](BUILD.md) (the safe build loop every phase
 below follows), [`docs/BUILD_MLB.md`](BUILD_MLB.md) (the plan this one retires),

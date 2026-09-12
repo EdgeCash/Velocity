@@ -30,7 +30,13 @@ def test_model_weight_resolves_per_league() -> None:
     # edge at sd 16.7 while the backtest realizes ~0.03; 0.2 maps one onto
     # the other and the points filter stays the selector.
     assert runner.resolve_model_weight(None, "ncaaf") == 0.13  # the S3 staking sweep
-    for league in ("mlb", "wnba", "ncaab", "nhl"):
+    # MLB joined in 2026-09. It had been raw with no shrink on the largest
+    # exposure, against a lab that put it at parity with the close; 0.2 is a
+    # holding position until the weight sweep runs on the private closing-
+    # moneyline archive (docs/STRATEGY_REVIEW.md §3).
+    assert runner.resolve_model_weight(None, "mlb") == 0.2
+    # The paper leagues stake nothing, so an anchor would never reach money.
+    for league in ("wnba", "ncaab", "nhl"):
         assert runner.resolve_model_weight(None, league) == 1.0
     # An explicit flag always wins, 1.0 (raw) included.
     assert runner.resolve_model_weight(0.5, "nfl") == 0.5
@@ -95,8 +101,10 @@ def test_ncaaf_spreads_sit_out_by_default() -> None:
 
 
 def test_ncaaf_moneylines_sit_out_by_default() -> None:
-    # Never backtested, and 60% of the first live card's solo-Kelly exposure
-    # (docs/STRATEGY_REVIEW.md §1.2). Off until the backtest says otherwise.
+    # Backtested in 2026-09 and it failed: raw -4.8% over 2,807 bets, -36% at
+    # >= +1000, the model's Brier 0.217 against the market's 0.183. Not staked
+    # — but papered rather than excluded now, so the record keeps accruing
+    # (docs/STRATEGY_REVIEW.md S2, amended).
     args = _runner().build_parser().parse_args(["--league", "ncaaf"])
     assert args.ncaaf_moneylines is False
     on = _runner().build_parser().parse_args(["--league", "ncaaf", "--ncaaf-moneylines"])

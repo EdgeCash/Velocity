@@ -132,7 +132,10 @@ HISTORICAL_NOTES: Mapping[tuple[str, str], float] = {
     ("ncaaf", "spread x total, favourite 3-7"): +0.001,
     ("ncaaf", "spread x total, favourite 14-21"): +0.102,
     ("ncaaf", "spread x total, favourite 21-28"): +0.185,
-    ("ncaaf", "spread x total, favourite 28+"): +0.260,
+    # Refreshed 2026-09-12: main's current-season dataset top-up moved this
+    # one entry from +0.260, which is exactly the drift this cache's test
+    # exists to catch. Every other NCAAF and NFL entry re-measured unchanged.
+    ("ncaaf", "spread x total, favourite 28+"): +0.262,
     ("ncaaf", "moneyline x spread"): +0.568,
     ("ncaaf", "total same-side 2p"): +0.912,
     ("ncaaf", "total same-side 4p"): +0.815,

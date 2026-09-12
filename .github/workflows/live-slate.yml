@@ -44,7 +44,7 @@ on:
         required: false
         default: "false"
       exchanges:
-        description: "Price the Kalshi and Polymarket boards alongside the sportsbooks (football only; priced and graded at stake zero unless the runner is told otherwise)"
+        description: "Price the Kalshi and Polymarket boards alongside the sportsbooks (NFL, NCAAF, MLB and WNBA; a league with no fitted ladder table is priced and graded at stake zero)"
         required: false
         default: "true"
       board_max_age_min:
@@ -126,6 +126,15 @@ jobs:
               --limit 6 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/props/$id" || true
           done
+          # The exchange collector's hourly snapshots. A ladder rung cannot be
+          # graded against the sportsbook's consensus close on the main number
+          # — a different strike is a different contract — so its own close has
+          # to be rebuilt from these. ~30 runs covers the last day and a half.
+          mkdir -p artifacts/exchanges
+          for id in $(gh run list --workflow collect-exchanges.yml --status success \
+              --limit 30 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/exchanges/$id" || true
+          done
 
       # The durable copy of the season chain. Previous slates live in 60-day
       # artifacts, so a failure streak or a retention gap used to lose the
@@ -201,6 +210,7 @@ jobs:
             if ! python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
               --odds-dir artifacts/odds --props-dir artifacts/props \
+            --exchanges-dir artifacts/exchanges \
               --league "${league}" $LEDGER; then
               failed="$failed ${league}"
               echo "::warning title=Grading failed::${league} did not grade"
@@ -313,20 +323,19 @@ jobs:
             # bought this data, so a second call spends credits on a board we
             # can read for free.
             #
-            # Only a payload younger than STALE_AFTER minutes is reused. Prices
-            # move, and betting a line that has already gone manufactures edge
-            # that was never available — the credits are worth far less than a
+            # Only a payload younger than the age limit is reused. Prices move,
+            # and betting a line that has already gone manufactures edge that
+            # was never available — the credits are worth far less than a
             # phantom bet. Anything older falls through to a live pull.
-            STALE_AFTER=${{ github.event.inputs.board_max_age_min || '75' }}
-            SNAP=$(find artifacts/odds -path "*/raw/odds_${league}_*.json" \
-                     -mmin "-${STALE_AFTER}" -printf '%T@ %p\n' 2>/dev/null \
-                   | sort -rn | head -1 | cut -d' ' -f2- || true)
-            if [ -n "$SNAP" ]; then
-              echo "board: reusing banked payload $SNAP (fresh, no credits spent)"
-              EXTRA="$EXTRA --snapshot-file $SNAP"
-            else
-              echo "board: no banked payload for ${league} under ${STALE_AFTER}min; pulling live"
-            fi
+            #
+            # The *runner* picks the file, keyed on the capture stamp in its
+            # name. Doing it here with `find -mmin` read the mtime of files we
+            # had just unzipped out of Actions artifacts, so every candidate
+            # looked equally new, the age filter never rejected anything, and
+            # the oldest download won the sort — two-day-old boards were priced
+            # and logged as fresh (see `newest_banked_board`).
+            EXTRA="$EXTRA --snapshot-dir artifacts/odds"
+            EXTRA="$EXTRA --board-max-age-min ${{ github.event.inputs.board_max_age_min || '75' }}"
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi
@@ -339,14 +348,16 @@ jobs:
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"
             fi
-            # Exchange boards ride alongside the sportsbooks for football only
-            # (docs/BUILD_EXCHANGES.md E6). On by default now: both venues are
-            # free and keyless, and a Kalshi contract can genuinely be the best
-            # number on a game, so the board should show it. The money is a
-            # separate decision — the runner papers the exchange venues until
-            # the E8 ladder tolerance is fitted from banked closes.
-            if [ "${{ github.event.inputs.exchanges || 'true' }}" = "true" ] \
-               && { [ "${league}" = "nfl" ] || [ "${league}" = "ncaaf" ]; }; then
+            # Exchange boards ride alongside the sportsbooks (BUILD_EXCHANGES
+            # E6). On by default: both venues are free and keyless, and a
+            # Kalshi contract can genuinely be the best number on a game, so
+            # the board should show it. Which leagues the venues actually
+            # quote is the runner's business now (EXCHANGE_LEAGUES) rather
+            # than a list repeated here; a league with no board just reports
+            # that it skipped. The money stays a separate decision — a league
+            # whose ladder shape table is not fitted is priced and graded at
+            # stake zero however this flag is set.
+            if [ "${{ github.event.inputs.exchanges || 'true' }}" = "true" ]; then
               EXTRA="$EXTRA --exchanges"
             fi
             # The ledger, when the R2 round trip is configured: the bankroll

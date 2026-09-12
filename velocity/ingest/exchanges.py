@@ -37,14 +37,28 @@ import pandas as pd
 
 from velocity.ingest import kalshi as kalshi_ingest
 from velocity.ingest import polymarket as pm_ingest
-from velocity.wagering.live import align_game_ids, apply_team_aliases, exchange_aliases
+from velocity.wagering.live import (
+    align_game_ids,
+    apply_team_aliases,
+    canonicalize_sides,
+    exchange_aliases,
+)
 
-# Our league → the series each venue lists it under.
+# Our league → the series each venue lists it under. Every sport files the same
+# four full-game series; the halves, quarters and inning markets beside them
+# have no sim support and stay out (docs/BUILD_EXCHANGES.md §4). Verified
+# against Kalshi's own sports catalogue on 2026-09-12.
 KALSHI_SERIES_BY_LEAGUE = {
     "nfl": ("KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL"),
     "ncaaf": ("KXNCAAFGAME", "KXNCAAFSPREAD", "KXNCAAFTOTAL", "KXNCAAFTEAMTOTAL"),
+    "mlb": ("KXMLBGAME", "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL"),
+    "wnba": ("KXWNBAGAME", "KXWNBASPREAD", "KXWNBATOTAL", "KXWNBATEAMTOTAL"),
 }
-POLYMARKET_LEAGUE = {"nfl": "nfl", "ncaaf": "cfb"}
+POLYMARKET_LEAGUE = {"nfl": "nfl", "ncaaf": "cfb", "mlb": "mlb", "wnba": "wnba"}
+
+# The leagues either venue can quote at all — what the runner asks before it
+# bothers fetching a board.
+EXCHANGE_LEAGUES = frozenset(KALSHI_SERIES_BY_LEAGUE) | frozenset(POLYMARKET_LEAGUE)
 
 
 def kalshi_board(
@@ -52,6 +66,7 @@ def kalshi_board(
     known_teams: Iterable[str],
     base_events: pd.DataFrame,
     timestamp: Any,
+    league: str = "nfl",
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Kalshi's markets → lines re-keyed onto ``base_events``' game ids.
 
@@ -64,7 +79,7 @@ def kalshi_board(
         None,
     )
     if winner is None:
-        return _empty_lines(), {"games": 0, "lines": 0}
+        return _empty_lines(), {"games": 0, "lines": 0, "unresolved_sides": 0}
 
     known = list(known_teams)
     frames = [
@@ -73,11 +88,12 @@ def kalshi_board(
     lines = pd.concat(frames, ignore_index=True) if frames else _empty_lines()
     events = kalshi_ingest.extract_kalshi_events(winner)
     aliases = exchange_aliases(
-        kalshi_ingest.team_names_by_code(winner), known, kalshi_ingest.NFL_CODE_FIXUPS
+        kalshi_ingest.team_names_by_code(winner), known,
+        kalshi_ingest.CODE_FIXUPS_BY_LEAGUE.get(league, {}),
     )
     lines, events = apply_team_aliases(lines, events, aliases)
     lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
-    return lines, {"games": len(events), "lines": len(lines)}
+    return _canonicalized(lines, events)
 
 
 def polymarket_board(
@@ -94,7 +110,33 @@ def polymarket_board(
     aliases = exchange_aliases(pm_ingest.team_names_by_code(events_payload), known)
     lines, events = apply_team_aliases(lines, events, aliases)
     lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
-    return lines, {"games": len(events), "lines": len(lines)}
+    return _canonicalized(lines, events)
+
+
+def _canonicalized(
+    lines: pd.DataFrame, events: pd.DataFrame
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Speak the slate's side language, in this venue's own scope.
+
+    A venue's spread and moneyline rows name a **team** in ``side``, and by
+    this point that name is a rating key, because :func:`apply_team_aliases`
+    rewrote it. The slate's own board still carries The Odds API's full names,
+    so the side mapping it runs later cannot match a rating key against a
+    provider name: left alone, every exchange spread and moneyline is dropped
+    without a word and only totals reach the card. Mapping here, against this
+    venue's own aliased events, is the fix; the later pass is idempotent and
+    leaves these rows alone.
+
+    The count of rows that still fail to resolve rides in the notes — a venue
+    board that quietly loses its two biggest market families is exactly the
+    failure this is closing.
+    """
+    kept = canonicalize_sides(lines, events)
+    return kept, {
+        "games": len(events),
+        "lines": len(kept),
+        "unresolved_sides": int(len(lines) - len(kept)),
+    }
 
 
 def canonical_base_events(
@@ -139,6 +181,41 @@ def combine(base_lines: pd.DataFrame, *venue_lines: pd.DataFrame) -> pd.DataFram
     return pd.concat(frames, ignore_index=True)
 
 
+def board_from_payloads(
+    league: str,
+    known_teams: Sequence[str],
+    base_events: pd.DataFrame,
+    timestamp: Any,
+    *,
+    kalshi_payloads: Mapping[str, Any] | None = None,
+    polymarket_events: Any = None,
+    polymarket_books: Any = None,
+) -> tuple[pd.DataFrame, dict[str, dict[str, int]]]:
+    """One aligned board from payloads already in hand — no network.
+
+    The same assembly :func:`fetch_exchange_board` performs after fetching,
+    split out so a *banked* snapshot can be rebuilt exactly the way the live
+    slate built it. That is what lets grading find an exchange contract's own
+    close: the collectors bank the raw payloads hourly, and a close is simply
+    the last snapshot before the game started, re-keyed onto the slate's games.
+    """
+    boards: list[pd.DataFrame] = []
+    notes: dict[str, dict[str, int]] = {}
+    if kalshi_payloads:
+        board, note = kalshi_board(
+            kalshi_payloads, known_teams, base_events, timestamp, league=league
+        )
+        boards.append(board)
+        notes["kalshi"] = note
+    if polymarket_events is not None:
+        board, note = polymarket_board(
+            polymarket_events, polymarket_books or [], known_teams, base_events, timestamp
+        )
+        boards.append(board)
+        notes["polymarket"] = note
+    return combine(_empty_lines(), *boards), notes
+
+
 def fetch_exchange_board(  # pragma: no cover - network
     league: str,
     known_teams: Sequence[str],
@@ -162,11 +239,13 @@ def fetch_exchange_board(  # pragma: no cover - network
                 series: kalshi_client.markets(series)
                 for series in KALSHI_SERIES_BY_LEAGUE[league]
             }
-            board, note = kalshi_board(payloads, known_teams, base_events, timestamp)
+            board, note = kalshi_board(
+                payloads, known_teams, base_events, timestamp, league=league
+            )
             boards.append(board)
             notes["kalshi"] = note
         except Exception as exc:  # noqa: BLE001 - an optional venue
-            notes["kalshi"] = {"games": 0, "lines": 0}
+            notes["kalshi"] = {"games": 0, "lines": 0, "unresolved_sides": 0}
             print(f"kalshi board skipped: {exc}")
 
     if "polymarket" in venues and league in POLYMARKET_LEAGUE:
@@ -180,7 +259,7 @@ def fetch_exchange_board(  # pragma: no cover - network
             boards.append(board)
             notes["polymarket"] = note
         except Exception as exc:  # noqa: BLE001 - an optional venue
-            notes["polymarket"] = {"games": 0, "lines": 0}
+            notes["polymarket"] = {"games": 0, "lines": 0, "unresolved_sides": 0}
             print(f"polymarket board skipped: {exc}")
 
     combined = combine(_empty_lines(), *boards)

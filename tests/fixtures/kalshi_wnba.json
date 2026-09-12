@@ -1,0 +1,22 @@
+{
+ "markets": [
+  {
+   "ticker": "KXWNBAGAME-26AUG23WSHPDX-WSH",
+   "event_ticker": "KXWNBAGAME-26AUG23WSHPDX",
+   "title": "Washington wins",
+   "yes_sub_title": "Washington",
+   "status": "finalized",
+   "yes_ask_dollars": "1.0000",
+   "no_ask_dollars": "1.0000"
+  },
+  {
+   "ticker": "KXWNBAGAME-26AUG23WSHPDX-PDX",
+   "event_ticker": "KXWNBAGAME-26AUG23WSHPDX",
+   "title": "Portland wins",
+   "yes_sub_title": "Portland",
+   "status": "finalized",
+   "yes_ask_dollars": "1.0000",
+   "no_ask_dollars": "1.0000"
+  }
+ ]
+}

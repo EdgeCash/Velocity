@@ -191,8 +191,19 @@ def refresh_ncaaf(out: Path, season: int) -> None:  # pragma: no cover - network
     key = os.environ.get("CFBD_API_KEY", "")
     if not key:
         raise SystemExit("CFBD_API_KEY is required for the NCAAF refresh")
-    games_json = _cfbd_get("games", key, year=season, seasonType="both")
-    lines_json = _cfbd_get("lines", key, year=season, seasonType="both")
+    # ``classification=fbs`` matches the plays top-up below and the historical
+    # build. Without it CFBD returns every division it covers: the 2026 season
+    # had already collected 676 teams across 459 games against 263 and 267 in
+    # the two full seasons before it, so Division II and III games were
+    # entering the frame the college scores fit and the level calibration are
+    # built from — and the refresh replaces the whole season each day, so the
+    # pollution came back however often it was cleaned.
+    games_json = _cfbd_get(
+        "games", key, year=season, seasonType="both", classification="fbs"
+    )
+    lines_json = _cfbd_get(
+        "lines", key, year=season, seasonType="both", classification="fbs"
+    )
     games = ncaaf_games_from_cfbd(games_json, lines_json, season)
     if games.empty:
         print(f"  ncaaf: no played {season} games yet — nothing to refresh")
@@ -256,16 +267,38 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
         return
     _refresh_file(path, fresh, season, f"{league} games")
     if league == "mlb":
-        # Starters ride along (incremental — only unseen game ids are
-        # fetched). Best-effort: a statsapi hiccup never sinks the refresh.
+        # Starters and batters ride along (incremental — only unseen game ids
+        # are fetched, and one boxscore call feeds both banks). Best-effort: a
+        # statsapi hiccup never sinks the refresh.
+        #
+        # The batter bank is not optional here: it is what the contextual DFS
+        # projection and the home-run model are fit on, and leaving it out of
+        # this call froze it at the last manual backfill while the lineups
+        # those models priced moved on without it.
         starters = out / "starters.parquet"
+        batters = out / "batters.parquet"
         if starters.exists():
             try:
                 from build_mlb_pitching import bank_starters
 
-                bank_starters(path, starters)
+                bank_starters(
+                    path, starters,
+                    batters_out=batters if batters.exists() else None,
+                )
             except Exception as exc:  # noqa: BLE001 - additive surface
                 print(f"  mlb starters top-up skipped ({exc})")
+    if league == "ncaaf":
+        # Player-games ride along — the DFS board prices from this bank, and
+        # cfbfastR fills the current season progressively, so a stale copy is
+        # a board that cannot be built. Best-effort like every top-up here.
+        player_games = out / "player_games.parquet"
+        if player_games.exists():
+            try:
+                from build_cfb_player_games import bank_player_games
+
+                bank_player_games([season], player_games)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  ncaaf player-games top-up skipped ({exc})")
     if league == "wnba":
         # Team boxes ride along (one release-parquet request for the current
         # season). Best-effort like the starters top-up.
@@ -277,6 +310,16 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
                 bank_team_boxes([season], box)
             except Exception as exc:  # noqa: BLE001 - additive surface
                 print(f"  wnba team-box top-up skipped ({exc})")
+        # Player boxes too — the DFS projection is a per-minute rate times
+        # expected minutes, and both go stale within days of a rotation change.
+        player_box = out / "player_box.parquet"
+        if player_box.exists():
+            try:
+                from build_wnba_player_box import bank_player_boxes
+
+                bank_player_boxes([season], player_box)
+            except Exception as exc:  # noqa: BLE001 - additive surface
+                print(f"  wnba player-box top-up skipped ({exc})")
 
 
 def main() -> None:  # pragma: no cover - network orchestration

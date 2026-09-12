@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from velocity.models.counts import CountSimConfig, simulate_counts
+from velocity.models.overtime import OvertimeConfig, resolve_ties
 from velocity.models.residuals import ResidualPool
 
 # Calibrated to real NFL residuals — the standard deviation of (actual − model)
@@ -93,6 +95,21 @@ class SimConfig:
     # two configs with the same numbers are the same config; the pool is
     # data, not a knob.
     residuals: ResidualPool | None = field(default=None, compare=False)
+    # The discrete path (velocity/models/counts.py). When set, the game is
+    # sampled as two run/goal COUNTS rather than a rounded normal on the
+    # margin, and the sds, slopes, correlation and residual pool above are all
+    # unused — a low-scoring sport's dispersion is a property of the count
+    # distribution, not a separate knob. Baseball needs it because the normal
+    # scores ties that cannot happen, is a third under-dispersed, and is
+    # symmetric where the unbatted ninth inning is not.
+    counts: CountSimConfig | None = None
+    # Sports that cannot end level (velocity/models/overtime.py). When set, a
+    # sample whose rounded scores come out tied plays the extra period the
+    # real game would have played — both sides scoring, so the total rises as
+    # well as the margin moving off zero. Basketball needs this and nothing
+    # else from the baseball rebuild: eighty-odd points is normal enough, and
+    # both teams play all forty minutes whatever the score.
+    overtime: OvertimeConfig | None = None
 
     def __post_init__(self) -> None:
         if self.n_sims <= 0:
@@ -191,6 +208,16 @@ def simulate_game(
     floored at zero, and (by default) rounded to integers.
     """
     config = config or SimConfig()
+    if config.counts is not None:
+        # A low-scoring count sport. (mu_margin, mu_total) carries exactly the
+        # two expected scores, so recovering them loses nothing.
+        home, away = simulate_counts(
+            mu_home=(mu_total + mu_margin) / 2.0,
+            mu_away=(mu_total - mu_margin) / 2.0,
+            rng=rng, config=config.counts, n_sims=config.n_sims,
+        )
+        return GameSim(home_score=home, away_score=away)
+
     sd_margin, sd_total = config.effective_sds(mu_total)
 
     if config.residuals is None:
@@ -220,5 +247,7 @@ def simulate_game(
     if config.round_scores:
         home = np.rint(home)
         away = np.rint(away)
+        if config.overtime is not None:
+            home, away = resolve_ties(home, away, rng, config.overtime)
 
     return GameSim(home_score=home, away_score=away)
