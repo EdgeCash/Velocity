@@ -39,6 +39,8 @@ from velocity.ingest.kalshi import (
 SERIES_BY_LEAGUE = {
     "nfl": ("KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL"),
     "ncaaf": ("KXNCAAFGAME", "KXNCAAFSPREAD", "KXNCAAFTOTAL", "KXNCAAFTEAMTOTAL"),
+    "mlb": ("KXMLBGAME", "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL"),
+    "wnba": ("KXWNBAGAME", "KXWNBASPREAD", "KXWNBATOTAL", "KXWNBATEAMTOTAL"),
 }
 # The exchange caps one request at this many candles across all its markets.
 CANDLE_CAP = 10_000

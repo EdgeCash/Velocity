@@ -18,7 +18,7 @@ on:
       leagues:
         description: "Kalshi leagues to snapshot (space-separated)"
         required: false
-        default: "nfl ncaaf"
+        default: "nfl ncaaf mlb wnba"
 
 concurrency:
   group: collect-exchanges
@@ -50,7 +50,7 @@ jobs:
         run: |
           python scripts/collect_kalshi.py \
             --out artifacts/exchanges \
-            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba' }}
 
       - name: Snapshot Polymarket board (raw + normalized)
         run: python scripts/collect_polymarket.py --out artifacts/exchanges

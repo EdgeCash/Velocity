@@ -144,6 +144,39 @@ def nickname_aliases(
     return out
 
 
+def known_by_prefix(
+    provider_names: Iterable[str], known_teams: Iterable[str]
+) -> dict[str, str]:
+    """Venue names → the one known team each is a **prefix of**, when unique.
+
+    The mirror of :func:`nickname_aliases`, and the case the exchanges actually
+    present outside football. College boards write *more* than the model does
+    ("Georgia Bulldogs" for "Georgia"), so that function matches a known name
+    inside a longer provider one. Every other sport writes *less*: Kalshi calls
+    the Marlins "Miami" and the Dodgers "Los Angeles D" while the board names
+    them "Miami Marlins" and "Los Angeles Dodgers". Prefix-matching in one
+    direction only left all thirty baseball clubs unresolved, which reads as an
+    exchange with no markets rather than as a lookup pointed backwards.
+
+    A name that prefixes several known teams resolves to none of them: "Los
+    Angeles" is two baseball clubs, and guessing between them silently prices
+    the wrong game. Kalshi's own labels already disambiguate the pairs it has
+    ("Los Angeles A" / "Los Angeles D", "Chicago C" / "Chicago WS"), so
+    requiring uniqueness costs nothing real and refuses exactly the ambiguous
+    case.
+    """
+    known = list(known_teams)
+    out: dict[str, str] = {}
+    for name in provider_names:
+        norm = _normalize(str(name))
+        if not norm:
+            continue
+        matches = [team for team in known if _normalize(team).startswith(norm)]
+        if len(matches) == 1:
+            out[str(name)] = matches[0]
+    return out
+
+
 _ST_SUFFIX = re.compile(r"\bSt\.?\b")
 
 
@@ -161,26 +194,38 @@ def exchange_aliases(
     venues must never be merged.
 
     Resolution tries, in order: an explicit ``fixups`` entry, the code itself
-    (NFL codes are already our rating keys), the venue's display name, and a
+    (NFL codes are already our rating keys), the venue's display name, a
     school-prefix match on that name (the college case, where the model keys by
-    school and the venue writes "San Jose St."). A code that resolves to
+    school and the venue writes "San Jose St."), and finally the reverse — the
+    venue name as a prefix of one known team (every other sport, where the
+    venue writes "Miami" and the board says "Miami Marlins"). A code that resolves to
     nothing is simply absent, and the caller skips and reports it rather than
     guessing — a wrong team silently mis-prices a game.
     """
     known = list(known_teams)
     fixups = fixups or {}
-    expanded = {code: _ST_SUFFIX.sub("State", str(name)) for code, name in names_by_code.items()}
-    prefix_matched = nickname_aliases(expanded.values(), known)
+    # "St." expands to "State" for the college boards, where the venue writes
+    # "San Jose St." and the model keys "San Jose State" — but the same rewrite
+    # turns the Cardinals' "St. Louis" into "State Louis". Both spellings are
+    # tried, so each sport gets the one that resolves.
+    raw = {code: str(name) for code, name in names_by_code.items()}
+    expanded = {code: _ST_SUFFIX.sub("State", name) for code, name in raw.items()}
+    spellings = set(raw.values()) | set(expanded.values())
+    prefix_matched = nickname_aliases(spellings, known)
+    shorter_matched = known_by_prefix(spellings, known)
 
     out: dict[str, str] = {}
-    for code, name in expanded.items():
+    for code in raw:
         fixed = fixups.get(code)
-        team = (
-            (fixed if fixed in known else None)
-            or resolve_team(code, known)
-            or resolve_team(name, known)
-            or prefix_matched.get(name)
-        )
+        team = (fixed if fixed in known else None) or resolve_team(code, known)
+        for name in (raw[code], expanded[code]):
+            if team is not None:
+                break
+            team = (
+                resolve_team(name, known)
+                or prefix_matched.get(name)
+                or shorter_matched.get(name)
+            )
         if team is not None:
             out[code] = team
     return out
@@ -246,6 +291,14 @@ def align_game_ids(
     so a prime-time game legitimately lands a day apart across venues. A venue
     game matching no base game is dropped — an unshoppable duplicate is worse
     than a missing row.
+
+    Inside the window the **closest** pairing wins, one-to-one: each base game
+    is claimed by at most one venue game and vice versa. Ordering by the venue's
+    own clock instead, as this did, picked an arbitrary base game whenever a
+    pair met twice inside the window — which football never does and baseball
+    does most weeks, so a venue's Tuesday board could be priced onto Monday's
+    game. A tolerance cannot separate those; only preferring the nearer match
+    can.
     """
     if events.empty or base_events.empty:
         return lines.iloc[0:0].copy(), events.iloc[0:0].copy()
@@ -272,8 +325,13 @@ def align_game_ids(
     if merged.empty:
         return lines.iloc[0:0].copy(), events.iloc[0:0].copy()
 
-    # Keep the closest base game when a pair somehow meets twice in the window.
-    merged = merged.sort_values("_when").drop_duplicates("game_id", keep="first")
+    # Closest first, then one-to-one: a base game already claimed cannot be
+    # claimed again, so the second meeting of a pair takes the second game
+    # rather than both rows landing on the same one.
+    merged = merged.assign(_gap=gap[within].fillna(pd.Timedelta.max))
+    merged = (merged.sort_values(["_gap", "game_id"])
+              .drop_duplicates("game_id", keep="first")
+              .drop_duplicates("_base_game_id", keep="first"))
     id_map = dict(
         zip(
             merged["game_id"].astype(str),

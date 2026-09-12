@@ -2,7 +2,8 @@
 
 **Status: E1-E8 done and merged (PR #163 carried E1-E7), except
 E4's `prices-history` close and E7's graded week, which both wait on
-banked snapshots. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
+banked snapshots. MLB and WNBA joined the board 2026-09-12 (§3b), priced
+and graded at stake zero until their ladder tables are fitted. Companions: [BUILD.md](BUILD.md) §1 (the safe loop),
 [WAGERING.md](WAGERING.md) (W1 ledger prerequisite), [DATA_PROVIDERS.md](DATA_PROVIDERS.md)
 (secrets & artifact discipline), [EDGE_RESEARCH.md](EDGE_RESEARCH.md) §1.3 + §7.13
 (venue strategy).**
@@ -718,6 +719,51 @@ constant answers to — the residual sd is 18.2, so the sim was
 under-dispersed. The market is simply much sharper than our model.
 Fixed in docs/MODEL_LAB.md "NCAAF Round 3"; the same caveat is why this
 gate's own table is conservative rather than permissive.
+
+## 3b. The other two sports (probed live 2026-09-12)
+
+The build was football-only by scope, not by obstacle. Every unknown §5 listed
+was answered by a keyless read of the two venues, and all four in-season sports
+now ride the same path.
+
+| | MLB | WNBA |
+|---|---|---|
+| Kalshi series | `KXMLBGAME`, `KXMLBSPREAD`, `KXMLBTOTAL`, `KXMLBTEAMTOTAL` | `KXWNBAGAME`, `KXWNBASPREAD`, `KXWNBATOTAL`, `KXWNBATEAMTOTAL` |
+| Ticker grammar | `{SERIES}-{YYMONDD}{HHMM}{TEAMS}-{SUFFIX}` — **a four-digit start time**, e.g. `KXMLBGAME-26SEP142140MIAAZ-MIA` | `{SERIES}-{YYMONDD}{TEAMS}-{SUFFIX}`, the football shape, e.g. `KXWNBAGAME-26AUG30CONNDAL-DAL` |
+| Polymarket tag | 100381 | 100254 |
+| Slug grammar | `mlb-{away}-{home}-{YYYY-MM-DD}` | `wnba-{away}-{home}-{YYYY-MM-DD}` |
+| Board on the day | 46 winner games, ladders on 17 | none open — the regular season ended Aug 30 and Kalshi had not yet listed the playoffs (Polymarket had, from Sep 17) |
+
+Three things this changed beyond the maps:
+
+* **The ticker pattern admits an optional time**, and the time is part of the
+  game key, so a doubleheader stays two games. Baseball is the sport that needs
+  it: the same pair meets twice on a date often enough that the date alone does
+  not name a game. Without it `parse_market_ticker` returned `None` and every
+  baseball market was dropped in silence.
+* **Team resolution learned to match the other way round.** College boards
+  write more than the model does ("Georgia Bulldogs" for "Georgia"); every
+  other sport writes less ("Miami" for "Miami Marlins"). Matching only the
+  college direction left all thirty baseball clubs unresolved, which reads as
+  an exchange with no markets rather than as a lookup pointed backwards. Two
+  clubs still need a fixup — "Chicago WS" is not a prefix of "Chicago White
+  Sox", and "A's" is not a prefix of "Athletics" — and women's basketball needs
+  none at all.
+* **Venue-to-board alignment is nearest-first and one-to-one.** Ordering by the
+  venue's own clock picked an arbitrary base game whenever a pair met twice
+  inside the 36-hour window, which football never does and baseball does most
+  weeks.
+
+**A new league is paper until its ladder table is fitted.** `OFFSET_BIAS`
+covers football only, and the E8b gate is asymmetric where it has nothing to
+read: a spread or total rung gets no bias and is refused, while a moneyline —
+which has no number to be miscalibrated about — passes ungated. So the half of
+a new league's board that would ship first is the half nothing is checking.
+`resolve_paper_venues` now holds any league without a fitted table at stake
+zero regardless of `--exchange-paper`, and `has_ladder_calibration` is what it
+asks. Fitting those tables needs closing spreads and totals, which the
+committed baseball and basketball game files do not carry — that is the next
+piece of work, not a flag to flip.
 
 ## 4. Explicitly out of scope
 

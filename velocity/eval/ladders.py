@@ -268,6 +268,20 @@ def residual_threshold(market: str, point: float, fair: float) -> float:
     return (fair - point) if market == "spread" else (point - fair)
 
 
+def has_ladder_calibration(league: str) -> bool:
+    """Whether the rung gate has a measured shape table for this league.
+
+    The gate is asymmetric where it has nothing to read. A spread or total rung
+    in an unmeasured league gets ``None`` from :func:`rung_bias` and is refused,
+    but a **moneyline** carries no number to be miscalibrated about, so it
+    returns 0.0 and sails through. Wiring a new league's exchange board without
+    checking this would therefore ship exactly one market — the only one nothing
+    is checking — straight to a live stake. Callers use this to keep a league's
+    venues on paper until its table is fitted.
+    """
+    return any(key == str(league).lower() for key, _market in OFFSET_BIAS)
+
+
 def rung_bias(league: str, market: str, side: str, threshold: float) -> float | None:
     """Signed error in ``P(this side wins)``, or ``None`` if unmeasured.
 

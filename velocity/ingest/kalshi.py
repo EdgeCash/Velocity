@@ -61,12 +61,20 @@ _USER_AGENT = "velocity-research/0.1 (odds research; contact via repo)"
 GAME_MARKET_BY_SERIES = {
     "KXNFLGAME": "moneyline",
     "KXNCAAFGAME": "moneyline",
+    "KXMLBGAME": "moneyline",
+    "KXWNBAGAME": "moneyline",
     "KXNFLSPREAD": "spread",
     "KXNCAAFSPREAD": "spread",
+    "KXMLBSPREAD": "spread",
+    "KXWNBASPREAD": "spread",
     "KXNFLTOTAL": "total",
     "KXNCAAFTOTAL": "total",
+    "KXMLBTOTAL": "total",
+    "KXWNBATOTAL": "total",
     "KXNFLTEAMTOTAL": "team_total",
     "KXNCAAFTEAMTOTAL": "team_total",
+    "KXMLBTEAMTOTAL": "team_total",
+    "KXWNBATEAMTOTAL": "team_total",
 }
 
 # Kalshi prop series → canonical PropLines stat. The player is named in the
@@ -83,10 +91,21 @@ PROP_MARKET_BY_SERIES = {
 
 _BOOK = "kalshi"
 
-# Market ticker grammar: {SERIES}-{YY}{MON}{DD}{TEAMS}-{SUFFIX}. Football team
-# blobs are letters only (MLB inserts a start time — out of scope here).
+# Market ticker grammar: {SERIES}-{YY}{MON}{DD}[{HHMM}]{TEAMS}-{SUFFIX}.
+#
+# Baseball inserts a four-digit start time between the date and the teams —
+# ``KXMLBGAME-26SEP142140MIAAZ-MIA`` — because two teams meet twice on one date
+# often enough that the date alone does not name a game. Football and women's
+# basketball do not: ``KXNFLGAME-26SEP21NYGLAR-NYG`` and
+# ``KXWNBAGAME-26AUG30CONNDAL-DAL`` (both verified live, 2026-09-12). The time
+# group is therefore optional, and it is part of the game key when present, so
+# the two halves of a doubleheader stay separate games.
+#
+# Leaving it out did not raise: the pattern simply failed, `parse_market_ticker`
+# returned None, and every baseball market was dropped in silence.
 _TICKER_RE = re.compile(
-    r"^(?P<series>KX[A-Z0-9]+?)-(?P<date>\d{2}[A-Z]{3}\d{2})(?P<teams>[A-Z]+)-(?P<suffix>.+)$"
+    r"^(?P<series>KX[A-Z0-9]+?)-(?P<date>\d{2}[A-Z]{3}\d{2})(?P<time>\d{4})?"
+    r"(?P<teams>[A-Z]+)-(?P<suffix>.+)$"
 )
 _SUFFIX_TEAM_RE = re.compile(r"^([A-Z]+)")
 
@@ -123,11 +142,12 @@ class ParsedTicker:
     date_part: str  # e.g. "26SEP21"
     teams: str  # away+home codes concatenated, e.g. "NYGLAR"
     suffix: str  # outcome part, e.g. "NYG", "KC8", "64", "ATLTTAGOVAILOA1-300"
+    time_part: str = ""  # "2140" on the sports that carry a start time; else ""
 
     @property
     def event_ticker(self) -> str:
         """Kalshi's own event id — series-scoped, so it differs per market type."""
-        return f"{self.series}-{self.date_part}{self.teams}"
+        return f"{self.series}-{self.date_part}{self.time_part}{self.teams}"
 
     @property
     def game_key(self) -> str:
@@ -140,7 +160,7 @@ class ParsedTicker:
         series has no winner market to name teams from, would be dropped
         wholesale. The date-and-teams blob is what every series shares.
         """
-        return f"{self.date_part}{self.teams}"
+        return f"{self.date_part}{self.time_part}{self.teams}"
 
     @property
     def date(self) -> pd.Timestamp | None:
@@ -161,6 +181,7 @@ def parse_market_ticker(ticker: str) -> ParsedTicker | None:
         date_part=match["date"],
         teams=match["teams"],
         suffix=match["suffix"],
+        time_part=match["time"] or "",
     )
 
 
@@ -517,10 +538,23 @@ def normalize_kalshi_props(
     return PropLines.validate(df[_PROP_COLUMNS])
 
 
-# Kalshi NFL codes that differ from our rating keys and whose display names are
-# too truncated to resolve ("Los Angeles R"). Everything else resolves from the
-# code or the market subtitle, so this list stays deliberately tiny.
+# Kalshi codes whose display name cannot reach the model's team name on its own.
+# Everything else resolves from the code or the market subtitle, so these lists
+# stay deliberately tiny — two per sport, and none at all for women's
+# basketball, where every label is a clean prefix of the club's full name.
+#
+# Football: our keys are abbreviations, and the truncated subtitle ("Los
+# Angeles R") resolves to neither club. Baseball: our keys are full club names,
+# so the subtitle resolves by prefix for 28 of the 30 — "Chicago WS" is not a
+# prefix of "Chicago White Sox", and "A's" is not a prefix of "Athletics".
 NFL_CODE_FIXUPS = {"LAR": "LA", "JAC": "JAX"}
+MLB_CODE_FIXUPS = {"CWS": "Chicago White Sox", "ATH": "Athletics"}
+CODE_FIXUPS_BY_LEAGUE = {
+    "nfl": NFL_CODE_FIXUPS,
+    "ncaaf": {},
+    "mlb": MLB_CODE_FIXUPS,
+    "wnba": {},
+}
 
 
 def team_names_by_code(payload: Any) -> dict[str, str]:

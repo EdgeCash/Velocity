@@ -44,12 +44,21 @@ from velocity.wagering.live import (
     exchange_aliases,
 )
 
-# Our league → the series each venue lists it under.
+# Our league → the series each venue lists it under. Every sport files the same
+# four full-game series; the halves, quarters and inning markets beside them
+# have no sim support and stay out (docs/BUILD_EXCHANGES.md §4). Verified
+# against Kalshi's own sports catalogue on 2026-09-12.
 KALSHI_SERIES_BY_LEAGUE = {
     "nfl": ("KXNFLGAME", "KXNFLSPREAD", "KXNFLTOTAL", "KXNFLTEAMTOTAL"),
     "ncaaf": ("KXNCAAFGAME", "KXNCAAFSPREAD", "KXNCAAFTOTAL", "KXNCAAFTEAMTOTAL"),
+    "mlb": ("KXMLBGAME", "KXMLBSPREAD", "KXMLBTOTAL", "KXMLBTEAMTOTAL"),
+    "wnba": ("KXWNBAGAME", "KXWNBASPREAD", "KXWNBATOTAL", "KXWNBATEAMTOTAL"),
 }
-POLYMARKET_LEAGUE = {"nfl": "nfl", "ncaaf": "cfb"}
+POLYMARKET_LEAGUE = {"nfl": "nfl", "ncaaf": "cfb", "mlb": "mlb", "wnba": "wnba"}
+
+# The leagues either venue can quote at all — what the runner asks before it
+# bothers fetching a board.
+EXCHANGE_LEAGUES = frozenset(KALSHI_SERIES_BY_LEAGUE) | frozenset(POLYMARKET_LEAGUE)
 
 
 def kalshi_board(
@@ -57,6 +66,7 @@ def kalshi_board(
     known_teams: Iterable[str],
     base_events: pd.DataFrame,
     timestamp: Any,
+    league: str = "nfl",
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Kalshi's markets → lines re-keyed onto ``base_events``' game ids.
 
@@ -78,7 +88,8 @@ def kalshi_board(
     lines = pd.concat(frames, ignore_index=True) if frames else _empty_lines()
     events = kalshi_ingest.extract_kalshi_events(winner)
     aliases = exchange_aliases(
-        kalshi_ingest.team_names_by_code(winner), known, kalshi_ingest.NFL_CODE_FIXUPS
+        kalshi_ingest.team_names_by_code(winner), known,
+        kalshi_ingest.CODE_FIXUPS_BY_LEAGUE.get(league, {}),
     )
     lines, events = apply_team_aliases(lines, events, aliases)
     lines, events = align_game_ids(lines, events, canonical_base_events(base_events, known))
@@ -193,7 +204,9 @@ def fetch_exchange_board(  # pragma: no cover - network
                 series: kalshi_client.markets(series)
                 for series in KALSHI_SERIES_BY_LEAGUE[league]
             }
-            board, note = kalshi_board(payloads, known_teams, base_events, timestamp)
+            board, note = kalshi_board(
+                payloads, known_teams, base_events, timestamp, league=league
+            )
             boards.append(board)
             notes["kalshi"] = note
         except Exception as exc:  # noqa: BLE001 - an optional venue

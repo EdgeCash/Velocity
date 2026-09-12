@@ -1,0 +1,102 @@
+{
+ "markets": [
+  {
+   "ticker": "KXMLBGAME-26SEP111915PHIATL-PHI",
+   "event_ticker": "KXMLBGAME-26SEP111915PHIATL",
+   "title": "Philadelphia wins",
+   "yes_sub_title": "Philadelphia",
+   "status": "active",
+   "yes_ask_dollars": "0.4900",
+   "no_ask_dollars": "0.5200"
+  },
+  {
+   "ticker": "KXMLBGAME-26SEP111915PHIATL-ATL",
+   "event_ticker": "KXMLBGAME-26SEP111915PHIATL",
+   "title": "Atlanta wins",
+   "yes_sub_title": "Atlanta",
+   "status": "active",
+   "yes_ask_dollars": "0.5400",
+   "no_ask_dollars": "0.4700"
+  },
+  {
+   "ticker": "KXMLBSPREAD-26SEP111915PHIATL-PHI5",
+   "event_ticker": "KXMLBSPREAD-26SEP111915PHIATL",
+   "title": "Philadelphia wins by over 4.5 runs?",
+   "yes_sub_title": "Philadelphia wins by over 4.5 runs",
+   "status": "active",
+   "floor_strike": 4.5,
+   "yes_ask_dollars": "0.2400",
+   "no_ask_dollars": "0.9900"
+  },
+  {
+   "ticker": "KXMLBSPREAD-26SEP111915PHIATL-PHI4",
+   "event_ticker": "KXMLBSPREAD-26SEP111915PHIATL",
+   "title": "Philadelphia wins by over 3.5 runs?",
+   "yes_sub_title": "Philadelphia wins by over 3.5 runs",
+   "status": "active",
+   "floor_strike": 3.5,
+   "yes_ask_dollars": "0.1800",
+   "no_ask_dollars": "1.0000"
+  },
+  {
+   "ticker": "KXMLBSPREAD-26SEP111915PHIATL-PHI3",
+   "event_ticker": "KXMLBSPREAD-26SEP111915PHIATL",
+   "title": "Philadelphia wins by over 2.5 runs?",
+   "yes_sub_title": "Philadelphia wins by over 2.5 runs",
+   "status": "active",
+   "floor_strike": 2.5,
+   "yes_ask_dollars": "0.2400",
+   "no_ask_dollars": "0.9600"
+  },
+  {
+   "ticker": "KXMLBSPREAD-26SEP111915PHIATL-PHI2",
+   "event_ticker": "KXMLBSPREAD-26SEP111915PHIATL",
+   "title": "Philadelphia wins by over 1.5 runs?",
+   "yes_sub_title": "Philadelphia wins by over 1.5 runs",
+   "status": "active",
+   "floor_strike": 1.5,
+   "yes_ask_dollars": "0.2600",
+   "no_ask_dollars": "0.7500"
+  },
+  {
+   "ticker": "KXMLBTOTAL-26SEP111915PHIATL-14",
+   "event_ticker": "KXMLBTOTAL-26SEP111915PHIATL",
+   "title": "Over 13.5 runs scored",
+   "yes_sub_title": "Over 13.5 runs scored",
+   "status": "active",
+   "floor_strike": 13.5,
+   "yes_ask_dollars": "0.0900",
+   "no_ask_dollars": "0.9200"
+  },
+  {
+   "ticker": "KXMLBTOTAL-26SEP111915PHIATL-13",
+   "event_ticker": "KXMLBTOTAL-26SEP111915PHIATL",
+   "title": "Over 12.5 runs scored",
+   "yes_sub_title": "Over 12.5 runs scored",
+   "status": "active",
+   "floor_strike": 12.5,
+   "yes_ask_dollars": "0.1800",
+   "no_ask_dollars": "0.8300"
+  },
+  {
+   "ticker": "KXMLBTOTAL-26SEP111915PHIATL-9",
+   "event_ticker": "KXMLBTOTAL-26SEP111915PHIATL",
+   "title": "Over 8.5 runs scored",
+   "yes_sub_title": "Over 8.5 runs scored",
+   "status": "active",
+   "floor_strike": 8.5,
+   "yes_ask_dollars": "1.0000",
+   "no_ask_dollars": "0.0100"
+  },
+  {
+   "ticker": "KXMLBTOTAL-26SEP111915PHIATL-8",
+   "event_ticker": "KXMLBTOTAL-26SEP111915PHIATL",
+   "title": "Over 7.5 runs scored",
+   "yes_sub_title": "Over 7.5 runs scored",
+   "status": "active",
+   "floor_strike": 7.5,
+   "yes_ask_dollars": "1.0000",
+   "no_ask_dollars": "0.0100"
+  }
+ ]
+}

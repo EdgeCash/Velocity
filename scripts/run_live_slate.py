@@ -28,8 +28,9 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from velocity.eval.ladders import default_relative_tolerance
+from velocity.eval.ladders import default_relative_tolerance, has_ladder_calibration
 from velocity.features.scores import fit_scores_ratings
+from velocity.ingest.exchanges import EXCHANGE_LEAGUES
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
 from velocity.intel.publish import (
@@ -1090,12 +1091,24 @@ def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
 
 
 def resolve_paper_venues(args: argparse.Namespace) -> frozenset[str]:
-    """The venues this run prices but never stakes — the exchanges, by default."""
+    """The venues this run prices but never stakes.
+
+    Two reasons an exchange venue sits at stake zero. The operator can ask for
+    it with ``--exchange-paper``. And a league whose ladder shape table has not
+    been fitted is held there whatever the flag says, because the E8b gate is
+    asymmetric in exactly the wrong direction when it has nothing to read: a
+    spread or total rung gets no bias and is refused, while a moneyline — the
+    one market with no number to be miscalibrated about — passes ungated. So
+    the half of a new league's board that would ship first is the half nothing
+    is checking. Paper until measured.
+    """
     from velocity.store.schema import LADDER_BOOKS
 
     if not getattr(args, "exchanges", False):
         return frozenset()
-    return frozenset(LADDER_BOOKS) if args.exchange_paper else frozenset()
+    if args.exchange_paper or not has_ladder_calibration(args.league):
+        return frozenset(LADDER_BOOKS)
+    return frozenset()
 
 
 def _prop_paper_markets(args: argparse.Namespace) -> frozenset[str]:
@@ -1197,7 +1210,7 @@ def main() -> None:
     # A banked sportsbook board does not imply an offline run: both exchanges
     # are free and keyless, so they are pulled even when --snapshot-file
     # supplies the book side. --offline is the switch that means "no network".
-    if args.exchanges and not args.offline and args.league in ("nfl", "ncaaf"):
+    if args.exchanges and not args.offline and args.league in EXCHANGE_LEAGUES:
         from velocity.ingest.exchanges import fetch_exchange_board
 
         exchange_lines, venue_notes = fetch_exchange_board(
@@ -1253,8 +1266,10 @@ def main() -> None:
                   "posted closes calibrate the gate (--no-team-totals-paper to stake)")
         paper_venues = resolve_paper_venues(args)
         if paper_venues:
+            why = ("--exchange-paper" if args.exchange_paper
+                   else f"no ladder shape table fitted for {args.league}")
             print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
-                  "board, staked at zero (--no-exchange-paper to stake them)")
+                  f"board, staked at zero ({why})")
         elif getattr(args, "exchanges", False):
             from velocity.store.schema import LADDER_BOOKS
 
