@@ -406,6 +406,32 @@ def load_dfs_weeks(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - 
         pd.DataFrame())
 
 
+# nflverse weekly TEAM stats — the only free feed carrying the defensive line
+# DK scores a DST on (sacks, takeaways, defensive and return touchdowns,
+# safeties, blocked kicks). The player-week release above has no DST row at
+# all, so without this a graded lineup books its defense at zero.
+NFLVERSE_TEAM_STATS_URL = (
+    "https://github.com/nflverse/nflverse-data/releases/download/"
+    "stats_team/stats_team_week_{year}.parquet"
+)
+
+
+def load_team_weeks(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
+    """Fetch nflverse weekly team stats for ``years`` (network, unnormalized).
+
+    Handed straight to :func:`velocity.dfs.dst.dst_actuals`, which reads the
+    columns it needs by name and ignores the rest; a season the release does
+    not carry yet contributes nothing rather than raising.
+    """
+    frames = []
+    for year in years:
+        try:
+            frames.append(_read_parquet_url(NFLVERSE_TEAM_STATS_URL.format(year=year)))
+        except Exception as exc:  # noqa: BLE001 - a missing season never blocks a grade
+            print(f"nflverse team stats {year} unavailable ({exc})")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def load_weekly_stats(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
     """Fetch and normalize nflverse weekly player stats for ``years`` (network)."""
     frames = [

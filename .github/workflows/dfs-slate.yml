@@ -126,6 +126,29 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The receipt. Every other surface states what it scored against a
+      # settled number; the DFS boards were the one that went out six times a
+      # day and was never once graded. Actuals are free and keyless (statsapi
+      # boxscores, the nflverse weekly release), so this costs only minutes.
+      - name: Grade yesterday's DFS entries
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/dfs_prev
+          # Yesterday's boards live in yesterday's runs, and this job runs six
+          # times a day — a fortnight of runs is a couple of days of boards.
+          for id in $(gh run list --workflow dfs-slate.yml --status success \
+              --limit 14 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/dfs_prev/$id" || true
+          done
+          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf' }}; do
+            echo "::group::grade ${league} DFS"
+            python scripts/grade_dfs.py --prev-dir artifacts/dfs_prev \
+              --out-dir artifacts/slate --league "${league}" || true
+            echo "::endgroup::"
+          done
+
       - name: Build the MLB home-run board
         continue-on-error: true
         run: |

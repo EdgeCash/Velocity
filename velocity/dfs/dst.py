@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -146,6 +147,118 @@ def dst_expected_points(
          "position": "DST", "points": round(p.points, 2)}
         for p in projections
     ])[[*_ID_COLUMNS, "points"]]
+
+
+# The realized counterpart of DK_DST_WEIGHTS, keyed by nflverse's TEAM-week
+# column names. Every DK DST scoring event that nflverse counts is here: the
+# turnovers and sacks, the defensive and return touchdowns, safeties, blocked
+# kicks (2 apiece), and a returned two-point try. Points allowed is not a
+# counting stat — it comes off the opponent's final score, through the same
+# brackets the projection prices.
+DK_DST_ACTUAL_WEIGHTS: Mapping[str, float] = {
+    "def_sacks": 1.0,
+    "def_interceptions": 2.0,
+    "def_fumbles": 2.0,  # recoveries; forced fumbles are def_fumbles_forced
+    "def_tds": 6.0,
+    "special_teams_tds": 6.0,  # a kick or punt returned for a score
+    "def_safeties": 2.0,
+    "def_punt_blocks": 2.0,
+    "def_pat_blocks": 2.0,
+    "def_fg_blocks": 2.0,
+    "def_2pt_made": 2.0,  # a two-point try returned the other way
+}
+
+
+def dst_actuals(team_weeks: pd.DataFrame, schedule: pd.DataFrame) -> pd.DataFrame:
+    """What each defense actually scored, from the nflverse team-week release.
+
+    The grading counterpart of :func:`dst_expected_points`. A DST is a ninth
+    of every classic roster, and the player-week release has no row for it —
+    so without this a graded NFL lineup silently books its defense at zero and
+    every entry reads as a miss by five to fifteen points.
+
+    Returns ``[team, game_id, kickoff, actual]``: the counting stats at DK's
+    weights plus the points-allowed bracket of the opponent's final score,
+    which the schedule supplies. A week with no schedule row (an unplayed or
+    unmatched game) is dropped rather than scored without its bracket.
+    """
+    columns = ["team", "game_id", "kickoff", "actual"]
+    if team_weeks.empty or schedule.empty:
+        return pd.DataFrame(columns=columns)
+    games = schedule.copy()
+    games["kickoff"] = pd.to_datetime(games["kickoff"], errors="coerce")
+    # One row per SIDE: the team, its game, and what it gave up.
+    sides = pd.concat(
+        [
+            games.assign(team=games["home_team"].astype(str),
+                         points_allowed=pd.to_numeric(games["away_score"], errors="coerce")),
+            games.assign(team=games["away_team"].astype(str),
+                         points_allowed=pd.to_numeric(games["home_score"], errors="coerce")),
+        ],
+        ignore_index=True,
+    )[["game_id", "season", "week", "kickoff", "team", "points_allowed"]]
+    sides = sides.dropna(subset=["points_allowed", "kickoff"])
+
+    # The release carries its own ``game_id`` and may carry a kickoff; the
+    # schedule is the authority on both, and letting them collide renames the
+    # columns out from under the result.
+    weeks = team_weeks.drop(columns=["game_id", "kickoff", "points_allowed"],
+                            errors="ignore").copy()
+    weeks["team"] = weeks["team"].astype(str)
+    for frame in (sides, weeks):
+        for key in ("season", "week"):
+            frame[key] = pd.to_numeric(frame[key], errors="coerce").astype("Int64")
+    merged = weeks.merge(sides, on=["season", "week", "team"], how="inner")
+    if merged.empty:
+        return pd.DataFrame(columns=columns)
+
+    counted = pd.Series(0.0, index=merged.index)
+    for column, weight in DK_DST_ACTUAL_WEIGHTS.items():
+        if column in merged.columns:
+            counted += weight * pd.to_numeric(merged[column], errors="coerce").fillna(0.0)
+    merged["actual"] = counted + pa_points(merged["points_allowed"])
+    return merged[columns].reset_index(drop=True)
+
+
+# Team codes DraftKings and nflverse spell differently, plus the relocations
+# that still appear in older seasons. Every spelling of a club points at the
+# same defense, so registering them all only ever adds a key — it can never
+# join two clubs together. The live divergence today is the Rams: DK writes
+# "LAR" and the nflverse releases write "LA".
+TEAM_CODE_ALIASES: tuple[tuple[str, ...], ...] = (
+    ("LA", "LAR", "STL"),
+    ("LAC", "SD"),
+    ("LV", "OAK"),
+    ("JAX", "JAC"),
+    ("WAS", "WSH", "WFT"),
+    ("ARI", "ARZ"),
+    ("BAL", "BLT"),
+    ("CLE", "CLV"),
+    ("HOU", "HST"),
+)
+
+
+def dst_day_index(actuals: pd.DataFrame) -> dict[tuple[str, Any], dict[str, Any]]:
+    """(team code, game date) → the defense's realized DK points.
+
+    Keyed under every spelling of the club (:data:`TEAM_CODE_ALIASES`), which
+    is what lets a DK board's ``LAR`` find an nflverse ``LA``. The date is the
+    game's own, so a Thursday defense is never graded against Sunday's.
+    """
+    from velocity.dfs.backtest import norm
+
+    spellings = {norm(code): group for group in TEAM_CODE_ALIASES for code in group}
+    index: dict[tuple[str, Any], dict[str, Any]] = {}
+    for row in actuals.to_dict("records"):
+        when = pd.Timestamp(row["kickoff"])
+        if pd.isna(when):
+            continue
+        day = when.normalize().date()
+        record = {"actual": float(row["actual"]), "game_id": str(row["game_id"]),
+                  "team": str(row["team"])}
+        for code in spellings.get(norm(row["team"]), (str(row["team"]),)):
+            index[(norm(code), day)] = record
+    return index
 
 
 def dst_samples(

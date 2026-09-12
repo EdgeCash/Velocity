@@ -501,6 +501,56 @@ it publishes the site, so the DFS page shows the entries built closest to
 lock. Every input is free and unauthenticated, so the extra runs cost
 nothing but minutes.
 
+## The receipt
+
+Every other surface in this system states what it scored against a settled
+number. The DFS boards went out six times a day and, until 2026-09, were the
+one thing never graded — the optimizers are exact and the projections are
+backtested, but nothing asked what the lineups that actually shipped were
+worth.
+
+```bash
+python scripts/grade_dfs.py --prev-dir artifacts/dfs_prev \
+    --out-dir artifacts/slate --league mlb
+```
+
+Runs as a step in the DFS workflow itself, on the previous **operator day's**
+banked entries — all six runs of it, since each one banks its own boards.
+Writes two private parquets beside the day's lineups:
+
+| File | One row per | Carries |
+|---|---|---|
+| `dfs_record_{league}_{stamp}` | entry (format × slate × draft group) | `n_slots`, `n_matched`, `projected`, `realized`, `error` |
+| `dfs_players_{league}_{stamp}` | roster slot | the banked lineup row plus `actual` and `matched` |
+
+Four rules keep the number honest, and each is the unflattering reading:
+
+* a rostered player with **no box-score row scores 0.0** — what DK pays
+  someone who never appears — and `matched` says so, so a scratch is never
+  read as a bad projection;
+* the **captain multiplier applies to the realized points too**, because the
+  banked projection for a `CPT` slot already carries its 1.5x;
+* every slot keys on **its own game's date**, so a board spanning UTC
+  midnight grades each half against the right day;
+* a **DST is graded by team, never by name**. DK writes a club ("Falcons"),
+  the box score writes players, and the nflverse *player*-week release has no
+  DST row at all — so a defense used to book zero every week, a ninth of
+  every classic roster written off. The realized line comes off the nflverse
+  **team**-week release (sacks, takeaways, defensive and return touchdowns,
+  safeties, blocked kicks) plus the points-allowed bracket of the opponent's
+  final score, through the same brackets the projection prices.
+
+Actuals are free and keyless in both graded leagues: statsapi boxscores for
+MLB, through the same two extractors that bank `datasets/mlb`; the nflverse
+weekly releases for football. **NCAAF builds entries and cannot be graded** —
+there is no free college player box score in this repo, and a grade against
+guessed actuals is worse than none, so those boards report ungraded and say
+why.
+
+DK's **Single Stat** formats are skipped by name rather than graded: they
+project touchdowns or home runs, which are not DK points, and summing the
+two together would describe nothing.
+
 To re-run either backtest:
 
 ```bash

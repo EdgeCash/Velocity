@@ -170,6 +170,104 @@ def nfl_player_day_index(
     return index
 
 
+def grade_lineup_frame(
+    lineups: pd.DataFrame,
+    day_index: Mapping[tuple[str, object], Mapping[str, Any]],
+    *,
+    team_index: Mapping[tuple[str, object], Mapping[str, Any]] | None = None,
+    slate_date: object | None = None,
+    captain_slot: str = "CPT",
+    multiplier: float = 1.5,
+) -> pd.DataFrame:
+    """A persisted lineup frame with what each slot actually scored.
+
+    The receipt for the DFS surface: the frames ``build_dfs_lineup.py`` and
+    ``build_dfs_tiered.py`` bank carry one row per roster slot with a
+    projection in ``points``, and this puts the realized DK points beside it.
+
+    The join is the same (normalized name, date) key the backtests use, taken
+    from the row's own ``kickoff`` so a two-slate day grades each board
+    against its own games; ``slate_date`` is the fallback for a frame that
+    banked no kickoff. Three rules carry over from the backtest, and each one
+    is the honest reading rather than the flattering one:
+
+    * a rostered player with no box-score row scores **0.0** — exactly what
+      DK pays someone who never appears — and ``matched`` says so, so a
+      scratch is never mistaken for a bad projection;
+    * the captain multiplier applies to the realized points as well, because
+      the banked ``points`` already carries it (the projection is the
+      captain's 1.5x number, so the actual must be too);
+    * nothing is rescored. ``points`` is what the build claimed before lock
+      and it rides through untouched.
+
+    A **DST** is the one slot that cannot be found by name — DK writes a club
+    ("Falcons"), the box score writes players — so those rows key on the
+    board's own ``team`` against ``team_index`` instead. Without it the
+    defense books zero every week and a ninth of every classic roster grades
+    as a miss.
+    """
+    columns = [*lineups.columns, "actual", "matched"]
+    if lineups.empty:
+        return pd.DataFrame(columns=columns)
+    fallback: Any = (None if slate_date is None
+                     else pd.Timestamp(str(slate_date)).normalize().date())
+    out = lineups.copy()
+    factor = (out["slot"].astype(str) == captain_slot).map(
+        {True: multiplier, False: 1.0}).astype(float)
+    from velocity.dfs.dst import DST_POSITIONS
+
+    raw: list[float] = []
+    found: list[bool] = []
+    for row in out.to_dict("records"):
+        when = pd.Timestamp(row["kickoff"]) if row.get("kickoff") is not None else None
+        day = fallback if when is None or pd.isna(when) else when.normalize().date()
+        is_dst = str(row.get("position") or "").upper() in DST_POSITIONS
+        record = None
+        if day is not None:
+            # A defense is graded by its team or not at all. Falling back to
+            # the name lookup would let a club name collide with a player's.
+            record = ((team_index or {}).get((norm(row.get("team")), day))
+                      if is_dst else day_index.get((norm(row["player_name"]), day)))
+        raw.append(0.0 if record is None else float(record["actual"]))
+        found.append(record is not None)
+    out["actual"] = factor.to_numpy() * np.array(raw, dtype=float)
+    out["matched"] = found
+    return out
+
+
+# What makes two banked rows the same DFS entry. A day can bank several
+# boards (classic slates, showdowns, tiered formats), and each is its own
+# roster with its own total — collapsing them would report one meaningless
+# number for the day.
+_ENTRY_KEYS = ("format", "slate", "suffix", "draft_group_id")
+
+
+def lineup_record(graded: pd.DataFrame) -> pd.DataFrame:
+    """One row per graded DFS entry: what it projected against what it scored.
+
+    ``n_matched`` below ``n_slots`` is the number that keeps this honest — an
+    entry whose players are half missing from the box scores has a realized
+    total that understates it, and the column says to look before believing
+    the miss.
+    """
+    columns = ["format", "slate", "suffix", "draft_group_id", "n_slots",
+               "n_matched", "projected", "realized", "error"]
+    if graded.empty:
+        return pd.DataFrame(columns=columns)
+    frame = graded.copy()
+    for key in _ENTRY_KEYS:
+        frame[key] = frame[key].astype(str) if key in frame.columns else ""
+    grouped = frame.groupby(list(_ENTRY_KEYS), as_index=False, dropna=False).agg(
+        n_slots=("player_name", "size"),
+        n_matched=("matched", "sum"),
+        projected=("points", "sum"),
+        realized=("actual", "sum"),
+    )
+    grouped["n_matched"] = grouped["n_matched"].astype(int)
+    grouped["error"] = grouped["realized"] - grouped["projected"]
+    return grouped[columns].reset_index(drop=True)
+
+
 def opposing_starters(sp: pd.DataFrame) -> dict[tuple[str, str], str]:
     """(game_id, side) → the starter that side FACES, for the hitter model."""
     if sp.empty:
