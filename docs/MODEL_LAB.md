@@ -857,4 +857,71 @@ it uses every game.
 about **7% of games** (310 of 4,212) rather than the 72% raw was staking.
 That is the exposure change the anchor buys, and it is the point.
 
-Re-run with `scripts/sweep_mlb_anchoring.py --archive <artifact folder>`.
+Re-run with `scripts/sweep_anchoring.py --league mlb --archive <artifact folder>`.
+
+## WNBA Round 3 — the anchoring sweep (2025–2026, 572 games with closes)
+
+Run alongside MLB Round 4, on the same machinery
+(`scripts/sweep_anchoring.py --league wnba`), against the banked WNBA closes
+from both seasons. The model scored is the promoted one the live slate runs:
+pace×efficiency, λ=10, recency-8, walk-forward.
+
+**It does not support staking the league, and it is the clearest evidence yet
+for the posture already in place.**
+
+### The moneyline: nothing reliable, and nothing at all in 2026
+
+| | n | **w** | market Brier | raw model | blend @ w | blend @ 0.20 |
+|---|---|---|---|---|---|---|
+| all | 572 | 0.270 ± 0.161 | 0.20862 | 0.21506 | 0.20761 | 0.20768 |
+| 2025 | 307 | 0.431 ± 0.204 | 0.21462 | 0.21691 | 0.21154 | 0.21243 |
+| 2026 | 265 | **−0.013 ± 0.264** | 0.20168 | 0.21292 | 0.20167 | 0.20217 |
+
+Three things to read off it:
+
+* The pooled weight is **1.7 standard errors from zero** — not a number you
+  would stake on.
+* **The two seasons do not agree.** 2025 says the model's disagreement with
+  the close carries real information (w = 0.43); 2026 says it carries
+  *none* (w = −0.01). Compare MLB, where 0.212 and 0.292 bracketed the pooled
+  0.245.
+* The raw model is worse than the close in both seasons, and in 2026 blending
+  it in at 0.2 makes the forecast **worse than the closing line alone**
+  (0.20217 against 0.20168).
+
+### Against the spread: the 55.4% replicates, and still does not clear the vig
+
+**54.2% ± 2.1% over 568 decided games.** The lab's promoted WNBA headline was
+55.4% ATS over 504 games, and this is an independent read on two seasons of
+banked closes: the signal is real and it reproduces. But break-even at −110
+is **52.4%**, so 54.2% is 2.0 standard errors above a coin flip and only
+**0.86 above the number that pays**. That is the whole WNBA case in one line
+— a genuine edge against the number, not a demonstrated edge against the
+price.
+
+Note what this means for the moneyline table above: the two markets disagree,
+and that is not a contradiction. A spread edge that cannot clear the vig is
+exactly what a near-zero moneyline weight looks like.
+
+### A structural flaw worth fixing before the next round
+
+The WNBA still prices through the rounded normal, and it has a smaller
+version of the problem baseball had. At the shipped `sd_margin = 12.5` the sim
+puts **3.2%** of its probability on a tie; there are **zero** ties in the 875
+banked games, because basketball plays overtime. Its margin dispersion is also
+short — 12.5 against a realized 14.0 — and it prices the home team at 56.2%
+against a realized 54.9%.
+
+None of that explains a zero weight on its own, but it does mean this round
+scored a sim that is known to be mis-shaped. The baseball fix
+(`velocity/models/counts.py`) is the template: resolve the tie mass into
+overtime and widen the dispersion to the league's own. **Re-run this round
+after that lands** — for MLB the same repair moved the fitted weight from
+0.153 to 0.245.
+
+### The decision
+
+Unchanged: **WNBA stays paper** (docs/STRATEGY_REVIEW.md §1.3). It is priced,
+logged and graded at stake zero, which is what a league with a replicating
+but sub-vig edge has earned. The two things that would change the answer are
+the sim repair above and a third season of closes.

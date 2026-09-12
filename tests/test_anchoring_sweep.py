@@ -1,4 +1,4 @@
-"""The MLB anchoring sweep — the pieces that decide a staking weight.
+"""The anchoring sweep — the pieces that decide a staking weight.
 
 The closes it runs on are paid data and live only in a private artifact, so
 these exercise the machinery on constructed frames: the de-vig, the
@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-_SCRIPT = Path(__file__).parent.parent / "scripts" / "sweep_mlb_anchoring.py"
+_SCRIPT = Path(__file__).parent.parent / "scripts" / "sweep_anchoring.py"
 
 
 def _sweeper():
-    spec = importlib.util.spec_from_file_location("sweep_mlb_anchoring", _SCRIPT)
+    spec = importlib.util.spec_from_file_location("sweep_anchoring", _SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -221,3 +221,41 @@ def test_the_gate_keeps_only_claims_big_enough_to_bet() -> None:
     })
     table = sweeper.sweep(frame, weights=(0.2,), min_edge=0.02)
     assert int(table["n"].iloc[0]) == 1  # only the 0.40 disagreement clears it
+
+
+# --- the other claim: against the spread -------------------------------------
+
+
+def test_the_ats_record_backs_the_side_the_margin_favours() -> None:
+    """The WNBA headline was an ATS number, so a moneyline sweep cannot speak
+    to it. ``spread_line`` is positive when home is favored — the datasets'
+    own convention — so home covers by winning by more than it.
+    """
+    sweeper = _sweeper()
+    frame = pd.DataFrame({
+        # Model likes home by 10 against a 6-point line; home wins by 12.
+        "mu_margin": [10.0, -4.0], "spread_line": [6.0, 2.0],
+        "home_score": [70.0, 60.0], "away_score": [58.0, 55.0],
+    })
+    # Second game: model likes away, home wins by 5 against a 2-point line, so
+    # the away side does not cover.
+    record = sweeper.ats_record(frame)
+    assert record["n"] == 2.0
+    assert record["cover_rate"] == 0.5
+
+
+def test_a_push_is_excluded_the_way_a_book_excludes_it() -> None:
+    sweeper = _sweeper()
+    frame = pd.DataFrame({
+        "mu_margin": [10.0, 10.0], "spread_line": [6.0, 5.0],
+        "home_score": [70.0, 70.0], "away_score": [58.0, 65.0],
+    })
+    record = sweeper.ats_record(frame)
+    assert record["n"] == 1.0 and record["cover_rate"] == 1.0
+
+
+def test_no_spread_means_no_ats_record_rather_than_a_guess() -> None:
+    sweeper = _sweeper()
+    frame = pd.DataFrame({"mu_margin": [10.0], "spread_line": [float("nan")],
+                          "home_score": [70.0], "away_score": [58.0]})
+    assert sweeper.ats_record(frame)["n"] == 0.0

@@ -1,17 +1,18 @@
-"""The MLB staking sweep: does the claimed edge match the realized one?
+"""The summer-league staking sweep: does the claimed edge match the realized one?
 
-    python scripts/sweep_mlb_anchoring.py --archive artifacts/hist \\
-        --games datasets/mlb/games.parquet
+    python scripts/sweep_anchoring.py --league mlb --archive artifacts/hist
+    python scripts/sweep_anchoring.py --league wnba --archive artifacts/hist
 
-MLB ran with no market anchor and no probability shrink — both levers raw, on
-the league carrying the largest real exposure — and the number that should
-have settled it never had the data to be chosen from. This is that sweep.
+Both summer leagues ran with no market anchor and no probability shrink —
+both levers raw — and the number that should have settled it never had the
+data to be chosen from, because the closes live in the private
+historical-odds artifact rather than in ``datasets/``. This is that sweep.
 
-**The market is the closing moneyline.** The lab established that: the
-archive's run lines are all ±1.5 with the information in the *price*, so a
-spread-probit "market" is structurally invalid for baseball, while the
-de-vigged closing moneyline is a real, sharp forecast of the same quantity the
-sim produces.
+**The market is the closing moneyline.** The lab established that for
+baseball: the archive's run lines are all ±1.5 with the information in the
+*price*, so a spread-probit "market" is structurally invalid there. The
+moneyline is also the market both leagues' sims price most directly — a
+probability of winning, against a probability of winning.
 
 The method is the college sweep's (``sweep_ncaaf_anchoring.py``), and it
 turns on one property: the anchoring weight sets the *claimed* probability —
@@ -153,23 +154,81 @@ def attach_closes(games: pd.DataFrame, closes: pd.DataFrame,
     return out
 
 
+# Per-league: the ratings fit, the sim dispersion, and the ridge the live
+# slate runs. Kept here rather than imported so the sweep states exactly what
+# it scored — a sweep that silently tracks a config change is unreadable later.
+LEAGUES = {
+    "mlb": {"ridge": 100.0, "half_life": None, "sd_margin": 4.5, "sd_total": 4.5,
+            "counts": True, "min_train": 400},
+    # The promoted WNBA configuration: pace×efficiency, λ=10, recency-8
+    # (docs/MODEL_LAB.md WNBA Round 2), on the rounded normal it still uses.
+    "wnba": {"ridge": 10.0, "half_life": 8.0, "sd_margin": 12.5, "sd_total": 15.0,
+             "counts": False, "min_train": 150},
+}
+
+
+class _Ratings:
+    """One interface over the two fits: ``(mu_home, mu_away)`` and a team set."""
+
+    def __init__(self, teams: set[str], expected) -> None:  # noqa: ANN001
+        self.teams = teams
+        self._expected = expected
+
+    def expected_points(self, home: str, away: str) -> tuple[float, float]:
+        return self._expected(home, away)
+
+
+def _fit(  # pragma: no cover - exercised by the CLI
+    train: pd.DataFrame, pace: pd.DataFrame | None, ridge_lambda: float,
+    half_life: float | None, config,  # noqa: ANN001
+) -> _Ratings | None:
+    """The league's promoted fit: pace×efficiency when a pace frame is given."""
+    from velocity.features.scores import fit_scores_ratings
+
+    if pace is not None:
+        from velocity.backtest.lab import fit_pace_efficiency
+
+        try:
+            model = fit_pace_efficiency(train, pace, config,
+                                        ridge_lambda=ridge_lambda,
+                                        half_life=half_life)
+        except Exception:  # noqa: BLE001 - an unfittable early window is skipped
+            return None
+        def expected(home: str, away: str) -> tuple[float, float]:
+            eff_home, eff_away = model.eff_model.expected_points(home, away)
+            poss = (model.pace_league + model.pace_dev.get(home, 0.0)
+                    + model.pace_dev.get(away, 0.0))
+            return poss * eff_home / 100.0, poss * eff_away / 100.0
+        return _Ratings(set(model.eff_model.ratings.teams), expected)
+
+    ratings = fit_scores_ratings(train, ridge_lambda=ridge_lambda)
+    return _Ratings(
+        set(ratings.teams),
+        lambda home, away: (ratings.expected_points(home, away, at_home=True),
+                            ratings.expected_points(away, home, at_home=False)),
+    )
+
+
 def walk_forward_probabilities(  # pragma: no cover - slow, exercised by the CLI
     games: pd.DataFrame, *, ridge_lambda: float = 100.0, n_sims: int = 20_000,
-    min_train: int = 400, counts: bool = True,
+    min_train: int = 400, counts: bool = True, pace: pd.DataFrame | None = None,
+    half_life: float | None = None, sd_margin: float = 4.5, sd_total: float = 4.5,
 ) -> pd.DataFrame:
     """P(home win) per game, fitted only on games played before its own day.
 
-    ``counts`` picks the sim: the promoted baseball one
+    ``counts`` picks the baseball sim: the promoted one
     (:mod:`velocity.models.counts`) or the rounded normal it replaced, so the
     sweep can be run against either and the difference read off.
+
+    ``pace`` is the WNBA's possessions frame. When it is supplied the fit is
+    the promoted pace×efficiency one the live slate runs rather than the plain
+    scores fit — the sweep has to score what production actually prices.
     """
-    from velocity.features.scores import fit_scores_ratings
     from velocity.models.counts import MLB_COUNTS
     from velocity.models.simulate import SimConfig, simulate_game
     from velocity.util.seed import make_rng
 
-    config = SimConfig(sd_margin=4.5 if counts else 3.2,
-                       sd_total=4.5 if counts else 4.6,
+    config = SimConfig(sd_margin=sd_margin, sd_total=sd_total,
                        n_sims=n_sims, counts=MLB_COUNTS if counts else None)
     frame = games.dropna(subset=["home_score", "away_score"]).copy()
     frame["_day"] = pd.to_datetime(frame["kickoff"]).dt.normalize()
@@ -178,13 +237,14 @@ def walk_forward_probabilities(  # pragma: no cover - slow, exercised by the CLI
         train = frame[frame["_day"] < day]
         if len(train) < min_train:
             continue
-        ratings = fit_scores_ratings(train, ridge_lambda=ridge_lambda)
+        ratings = _fit(train, pace, ridge_lambda, half_life, config)
+        if ratings is None:
+            continue
         for record in frame[frame["_day"] == day].to_dict("records"):
             home, away = record["home_team"], record["away_team"]
             if home not in ratings.teams or away not in ratings.teams:
                 continue
-            mu_home = ratings.expected_points(home, away, at_home=True)
-            mu_away = ratings.expected_points(away, home, at_home=False)
+            mu_home, mu_away = ratings.expected_points(home, away)
             sim = simulate_game(
                 mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away,
                 # A per-game seed, from a STABLE hash: Python's own is
@@ -194,8 +254,38 @@ def walk_forward_probabilities(  # pragma: no cover - slow, exercised by the CLI
                 config=config,
             )
             rows.append({"game_id": str(record["game_id"]),
-                         "p_model": sim.p_home_win()})
+                         "p_model": sim.p_home_win(),
+                         "mu_margin": float(mu_home - mu_away)})
     return pd.DataFrame(rows)
+
+
+def ats_record(priced: pd.DataFrame) -> dict[str, float]:
+    """The model's record against the CLOSING SPREAD — the other claim.
+
+    The WNBA headline that put the league on a watch-it posture was 55.4%
+    against the spread, not a moneyline number, so a moneyline sweep alone
+    cannot speak to it. This is the direct test: back the side the projected
+    margin favours against the closing number, and count covers. Pushes are
+    excluded, as a book excludes them.
+    """
+    frame = priced.dropna(subset=["mu_margin", "spread_line", "home_score",
+                                  "away_score"])
+    if frame.empty:
+        return {"n": 0.0, "cover_rate": float("nan"), "se": float("nan")}
+    margin = (frame["home_score"].to_numpy(dtype=float)
+              - frame["away_score"].to_numpy(dtype=float))
+    # ``spread_line`` is positive when home is favored (the datasets' own
+    # convention), so the home side covers when it wins by more than that.
+    line = frame["spread_line"].to_numpy(dtype=float)
+    on_home = frame["mu_margin"].to_numpy(dtype=float) > line
+    decided = margin != line
+    if not decided.any():
+        return {"n": 0.0, "cover_rate": float("nan"), "se": float("nan")}
+    covered = np.where(on_home, margin > line, margin < line)[decided]
+    n = int(covered.sum() + (~covered).sum())
+    rate = float(covered.mean())
+    return {"n": float(n), "cover_rate": rate,
+            "se": float(np.sqrt(rate * (1 - rate) / n))}
 
 
 def calibration_slope(priced: pd.DataFrame) -> tuple[float, float, int]:
@@ -284,28 +374,43 @@ def sweep(priced: pd.DataFrame, *, weights=WEIGHTS,
 
 
 def main() -> None:  # pragma: no cover - CLI over private data
-    parser = argparse.ArgumentParser(description="MLB anchoring sweep on closing moneylines")
+    parser = argparse.ArgumentParser(
+        description="Anchoring sweep on banked closing moneylines")
+    parser.add_argument("--league", default="mlb", choices=sorted(LEAGUES))
     parser.add_argument("--archive", required=True,
                         help="downloaded historical-odds artifact folder")
-    parser.add_argument("--games", default="datasets/mlb/games.parquet")
+    parser.add_argument("--games", default=None,
+                        help="the committed games frame (default: the league's)")
+    parser.add_argument("--pace", default=None,
+                        help="the team-box frame for a pace×efficiency league "
+                             "(default: the league's, when it has one)")
     parser.add_argument("--min-edge", type=float, default=DEFAULT_MIN_EDGE)
     parser.add_argument("--n-sims", type=int, default=20_000)
-    parser.add_argument("--ridge", type=float, default=100.0)
+    parser.add_argument("--ridge", type=float, default=None)
     parser.add_argument("--old-sim", action="store_true",
-                        help="score with the rounded normal the count sim replaced")
+                        help="score with the rounded normal the count sim replaced "
+                             "(baseball only; the others never had one)")
     parser.add_argument("--probabilities", default=None,
                         help="cache the walk-forward probabilities here")
     args = parser.parse_args()
 
+    cfg = LEAGUES[args.league]
+    games_path = args.games or f"datasets/{args.league}/games.parquet"
+
     from join_historical_closes import load_archive
 
-    lines, events = load_archive(Path(args.archive), "mlb")
+    lines, events = load_archive(Path(args.archive), args.league)
     closes = closing_moneylines(lines, events)
     print(f"closes: {len(closes)} provider games with a de-vigged moneyline "
           f"({lines['game_id'].nunique()} in the archive)")
 
-    games = pd.read_parquet(args.games)
+    games = pd.read_parquet(games_path)
     priced = attach_closes(games, closes)
+    # The closing spread rides along from the same archive, through the
+    # existing consensus, so the ATS claim can be tested on the same games.
+    from join_historical_closes import closing_consensus, join_closes
+
+    priced = join_closes(priced, closing_consensus(lines, events))
     matched = int(priced["p_home_fair"].notna().sum())
     print(f"joined: {matched} of {len(games)} committed games carry a close")
 
@@ -314,11 +419,26 @@ def main() -> None:  # pragma: no cover - CLI over private data
         probs = pd.read_parquet(cache)
         print(f"probabilities: {len(probs)} read from {cache}")
     else:
+        pace = None
+        if cfg["half_life"] is not None:
+            box = Path(args.pace or f"datasets/{args.league}/team_box.parquet")
+            if box.exists():
+                from velocity.backtest.lab import wnba_pace_frame
+
+                pace = wnba_pace_frame(pd.read_parquet(box))
+            else:
+                print(f"no team box at {box}; falling back to the scores fit")
         probs = walk_forward_probabilities(
-            priced, ridge_lambda=args.ridge, n_sims=args.n_sims,
-            counts=not args.old_sim)
+            priced, ridge_lambda=args.ridge if args.ridge is not None else cfg["ridge"],
+            n_sims=args.n_sims, min_train=int(cfg["min_train"]),
+            counts=cfg["counts"] and not args.old_sim, pace=pace,
+            half_life=cfg["half_life"], sd_margin=cfg["sd_margin"],
+            sd_total=cfg["sd_total"])
+        fit = ("pace×efficiency" if pace is not None else "scores")
+        sim_name = ("count sim" if cfg["counts"] and not args.old_sim
+                    else "rounded normal")
         print(f"probabilities: {len(probs)} walk-forward games scored "
-              f"({'rounded normal' if args.old_sim else 'count sim'})")
+              f"({fit} fit, {sim_name})")
         if cache is not None:
             cache.parent.mkdir(parents=True, exist_ok=True)
             probs.to_parquet(cache, index=False)
@@ -342,6 +462,12 @@ def main() -> None:  # pragma: no cover - CLI over private data
               f"raw model {brier(model, won):.5f} · "
               f"blend@{w:.2f} {brier(fair + w * (model - fair), won):.5f} · "
               f"blend@0.20 {brier(fair + 0.2 * (model - fair), won):.5f}")
+
+    ats = ats_record(scored)
+    if ats["n"]:
+        print(f"\nagainst the closing spread: {ats['cover_rate']:.1%} "
+              f"± {ats['se']:.1%} over {int(ats['n'])} decided games "
+              f"(52.4% is the break-even at −110)")
 
     table = sweep(scored, min_edge=args.min_edge)
     print(f"\ngate-selected sweep at min-edge {args.min_edge:.3f} — what the "
