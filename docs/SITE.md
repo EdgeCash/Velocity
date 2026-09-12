@@ -581,8 +581,33 @@ text, not file contents. CI always starts fresh.)
 5. **Lock it down with Cloudflare Access** (Zero Trust → Access →
    Applications → Add): application domain = the Worker's hostname,
    policy = allow → your email(s), login via one-time PIN. Free for up to
-   50 users. Do this BEFORE sharing the URL — until Access is attached the
-   workers.dev URL is public-but-unlisted.
+   50 users.
+
+   **Then check it, and do not skip the check.** On 2026-09-12 this step had
+   not been completed, and an unauthenticated request to the workers.dev
+   hostname returned 200 — for the page and for the data parquets under
+   `/data/velocity/`, which carry prices, edges, Kelly stakes, closing-line
+   value and the bankroll. "Public-but-unlisted" is weak protection:
+   workers.dev hostnames appear in Certificate Transparency logs and are
+   routinely enumerated.
+
+   ```bash
+   curl -sS -o /dev/null -w '%{http_code}\n' https://<worker-host>/
+   ```
+
+   A **302** to a Cloudflare Access login is what you want. A **200** means
+   the site is open to the world.
+
+6. **Set `CLOUDFLARE_ACCESS_CONFIRMED=true`** (a repository *variable*, not a
+   secret — its value is not sensitive and it should be visible next to the
+   thing it claims). Until it is set, `live-slate` neither builds nor deploys
+   the site and prints a warning saying why.
+
+   This gate exists because `CLOUDFLARE_API_TOKEN` only says the deploy is
+   *configured*; it says nothing about whether Access is in front of the
+   Worker. Access lives in the Zero Trust dashboard, which no workflow can
+   see, so the attestation has to be a human one. Re-run the curl above and
+   unset the variable if you ever detach the policy.
 
 ## Daily publish
 
@@ -590,9 +615,12 @@ The `live-slate` workflow (after building slates): assemble
 `site/sources/velocity/data/` from the run's artifacts → `npm ci` →
 `npm run sources` → `npm run build` → `site/deploy.sh` (park oversized
 wasm in R2, `wrangler deploy`). Both site steps are gated on
-`CLOUDFLARE_API_TOKEN` being set, and they run **last** — after the slate
-artifact and email are delivered — so a site failure marks the run red
-(the honest signal the site didn't publish) without costing the slate.
+`CLOUDFLARE_API_TOKEN` **and** `CLOUDFLARE_ACCESS_CONFIRMED == 'true'` (see
+step 5 above — the token only says the deploy is configured, not that Access
+is in front of it). They run **last** — after the slate artifact and email are
+delivered — so a site failure marks the run red (the honest signal the site
+didn't publish) without costing the slate. A run that skips them because the
+attestation is unset prints a warning rather than passing in silence.
 
 ## Where the ten pages went
 

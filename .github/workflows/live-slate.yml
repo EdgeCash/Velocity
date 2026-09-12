@@ -505,14 +505,35 @@ jobs:
 
       # ---- the site (optional) ------------------------------------------------
       # Static Evidence build over the run's parquet, deployed to the
-      # Access-gated Cloudflare Worker (docs/SITE.md). Skipped entirely until
-      # the Cloudflare secrets exist — the site carries paid-odds-derived
-      # numbers and must only ever sit behind Cloudflare Access. These steps
-      # run LAST and are allowed to fail the run: the slate artifact and email
-      # are already delivered by now, and a red run is the only honest signal
-      # that the site didn't publish.
+      # Access-gated Cloudflare Worker (docs/SITE.md). These steps run LAST and
+      # are allowed to fail the run: the slate artifact and email are already
+      # delivered by now, and a red run is the only honest signal that the site
+      # didn't publish.
+      #
+      # TWO gates, and the second one exists because the first was not enough.
+      #
+      # `CLOUDFLARE_API_TOKEN` only says the deploy is *configured*. It says
+      # nothing about whether Cloudflare Access is actually in front of the
+      # Worker — and on 2026-09-12 it was not: an unauthenticated request to
+      # the workers.dev hostname returned 200 for the page AND for the data
+      # parquets under /data/velocity/, which carry prices, edges, Kelly
+      # stakes, closing-line value and the bankroll. Access is attached in the
+      # Cloudflare Zero Trust dashboard, which no workflow can see, so nothing
+      # here could detect it.
+      #
+      # `CLOUDFLARE_ACCESS_CONFIRMED` is therefore a human attestation: set the
+      # repository variable to `true` only once you have attached an Access
+      # policy to the Worker's hostname and checked that a logged-out browser
+      # is challenged. It is a VARIABLE rather than a secret on purpose — its
+      # value is not sensitive, and it should be visible in the settings UI
+      # next to the thing it claims.
+      #
+      # If you ever need to verify it the way it was caught:
+      #   curl -sS -o /dev/null -w '%{http_code}\n' https://<worker-host>/
+      # 200 means it is open to the world. A 302 to a Cloudflare Access login
+      # is what you want.
       - name: Build the site
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCESS_CONFIRMED == 'true'
         env:
           # College identity (school codes + colours + the ESPN mark id) comes
           # from the CFBD teams table. The slate step above already cached it
@@ -531,7 +552,19 @@ jobs:
           npm run build
 
       - name: Deploy the site (Cloudflare Worker behind Access)
-        if: env.CLOUDFLARE_API_TOKEN != ''
+        if: env.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCESS_CONFIRMED == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: cd site && ./deploy.sh
+
+      # A silent skip is how a site goes stale for a month without anyone
+      # noticing, so the run says out loud why it did not publish.
+      - name: Say why the site did not publish
+        if: env.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCESS_CONFIRMED != 'true'
+        run: |
+          echo "::warning title=Site not published::The deploy is configured but \
+          CLOUDFLARE_ACCESS_CONFIRMED is not 'true', so the site was neither built \
+          nor deployed. The site carries paid-odds-derived prices, edges, stakes and \
+          the bankroll, and must sit behind Cloudflare Access. Attach an Access policy \
+          to the Worker hostname, confirm a logged-out browser is challenged, then set \
+          the repository variable CLOUDFLARE_ACCESS_CONFIRMED=true. See docs/SITE.md." 
