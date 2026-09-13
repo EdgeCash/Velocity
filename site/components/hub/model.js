@@ -158,7 +158,13 @@ export function buildGames({
     const proj = projByGame.get(id) ?? null;
     const rows = boardByGame.get(id) ?? [];
     const markets = collapseMarkets(rows);
-    const published = (publishByGame.get(id) ?? []).filter((p) => p.published);
+    // EVERY gate verdict, not only the ones that cleared. The rejects are the
+    // half that says whether the thresholds are set where you want them —
+    // "conviction 0.72 below 0.72" is the gate working, and it is also the
+    // row you would want to know about. Keeping only the published ones is
+    // how the card became invisible in the first place.
+    const verdicts = publishByGame.get(id) ?? [];
+    const published = verdicts.filter((p) => p.published);
     const open = positionsByGame.get(id) ?? [];
 
     // A DFS player — or an injured one — counts for this game when their team
@@ -183,6 +189,7 @@ export function buildGames({
       proj,
       markets,
       n_markets: markets.length,
+      verdicts,
       published,
       n_published: published.length,
       staked: markets.reduce((sum, m) => sum + (m.stake || 0), 0),
@@ -240,6 +247,107 @@ export function leagueCounts(games) {
   return [...counts.entries()]
     .map(([league, n]) => ({ league, n }))
     .sort((a, b) => b.n - a.n || a.league.localeCompare(b.league));
+}
+
+/* ------------------------------------------------------------------ *
+ * The card — the publish gate's own verdicts.
+ *
+ * This is the primary output of the whole system and the rebuild lost it:
+ * `publish` reached the browser and nothing rendered it, so the two plays
+ * that cleared the gate on a 101-game slate were findable only by opening
+ * game cards one at a time.
+ *
+ * The plays are scattered across games BY DEFINITION, and gathering them is
+ * the product — which is the one argument that earns a view rather than a
+ * block inside a game sheet.
+ * ------------------------------------------------------------------ */
+
+/* Why a row was held, as a RULE rather than as a sentence.
+ *
+ * The gate writes its reason with the numbers in it — "edge 0.021 below
+ * floor 0.030" — which is exactly what you want to read on the row and
+ * exactly what you cannot group by: every near-miss is its own string, so a
+ * raw grouping produces forty buckets of one. Each row keeps its own
+ * sentence; this is only the heading it files under. */
+const HELD_RULES = [
+  [/^paper/i, 'Paper — priced, not staked', 3],
+  [/tier\s+(\S+)\s+below publishable/i, 'Tier below publishable', 2],
+  [/edge\s.*below floor/i, 'Edge below floor', 0],
+  [/conviction\s.*below/i, 'Conviction below threshold', 0],
+  [/market moved/i, 'Market moved against us', 0],
+  [/ceiling|capped/i, 'Edge ceiling', 1],
+  [/stale|age/i, 'Price too old', 1],
+];
+
+/** `{ rule, rank }` for a gate reason — `rank` orders the groups on screen. */
+export function heldRule(reason) {
+  const text = String(reason ?? '').trim();
+  if (!text) return { rule: 'Held back', rank: 4 };
+  for (const [pattern, rule, rank] of HELD_RULES) {
+    if (pattern.test(text)) return { rule, rank };
+  }
+  return { rule: text, rank: 4 };
+}
+
+/** The card: what cleared the gate, and what did not and why.
+ *
+ * Takes the ALREADY-BUILT games so the venue join is the one `collapseMarkets`
+ * already did — `publish` carries a price but never says which venue quoted
+ * it, and a play you cannot place is half a play.
+ */
+export function buildCard(games) {
+  const plays = [];
+  const held = [];
+  for (const game of games ?? []) {
+    // Every gate verdict for this game, not just the published ones: the
+    // rejects are the half that says whether the thresholds are set right.
+    for (const row of game.verdicts ?? []) {
+      const market = (game.markets ?? []).find(
+        (m) => m.market === String(row.market ?? '') && m.side === String(row.side ?? ''),
+      ) ?? null;
+      const entry = {
+        ...row,
+        game_id: game.game_id,
+        league: game.league,
+        home_team: game.home_team,
+        away_team: game.away_team,
+        kickoff: game.kickoff,
+        market_row: market,
+        best: market?.best ?? null,
+        point: market?.point ?? null,
+      };
+      if (row.published) plays.push(entry);
+      else held.push({ ...entry, ...heldRule(row.reason) });
+    }
+  }
+  // The card ranks by the money the model wants on it, then by edge. Ranking
+  // by edge alone leads with whatever is noisiest, which is the same mistake
+  // the old board made.
+  plays.sort((a, b) => {
+    const s = (Number(b.stake_sized) || 0) - (Number(a.stake_sized) || 0);
+    if (s) return s;
+    return (Number(b.edge) || 0) - (Number(a.edge) || 0);
+  });
+  return { plays, held };
+}
+
+/** Held rows grouped by rule, near-misses first. */
+export function heldGroups(held) {
+  const out = new Map();
+  for (const row of held ?? []) {
+    const bucket = out.get(row.rule) ?? { rule: row.rule, rank: row.rank, rows: [] };
+    bucket.rows.push(row);
+    out.set(row.rule, bucket);
+  }
+  for (const bucket of out.values()) {
+    // Within a rule, the strongest opinion first — on a near-miss group that
+    // is the row that most nearly made it.
+    bucket.rows.sort((a, b) => (Number(b.edge) || 0) - (Number(a.edge) || 0));
+  }
+  // A near-miss is news; "paper" and "tier B below publishable" are the gate
+  // working as designed on rows that were never candidates. Ordering by rank
+  // puts the ones worth a decision at the top.
+  return [...out.values()].sort((a, b) => a.rank - b.rank || b.rows.length - a.rows.length);
 }
 
 /* ------------------------------------------------------------------ *

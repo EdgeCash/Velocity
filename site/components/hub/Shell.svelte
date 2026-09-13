@@ -20,14 +20,15 @@
   import { live } from './liveStore.js';
   import { hubState, VIEWS } from './state.js';
   import {
-    buildGames, buildLineups, buildParlays, flaggedMarkets, leagueCounts,
-    realRows, splitCards,
+    buildCard, buildGames, buildLineups, buildParlays, flaggedMarkets,
+    leagueCounts, realRows, splitCards,
   } from './model.js';
   import { teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
   import GamesPanel from './GamesPanel.svelte';
   import DfsPanel from './DfsPanel.svelte';
   import PositionsPanel from './PositionsPanel.svelte';
+  import CardPanel from './CardPanel.svelte';
   import RecordPanel from './RecordPanel.svelte';
   import RatingsPanel from './RatingsPanel.svelte';
   import Rail from './Rail.svelte';
@@ -68,6 +69,10 @@
   // One source so the three can never disagree.
   $: flagged = flaggedMarkets(health);
   $: parlayRows = buildParlays(parlays);
+  // Built from the GAMES rather than from `publish` directly, so the card
+  // inherits the venue join `collapseMarkets` already did: publish carries a
+  // price but never says which venue quoted it.
+  $: cardRows = buildCard(hub);
   // Record cards carry no game_id and belong with the record they picture.
   $: leagueCards = splitCards(cards).byLeague;
   $: openPositions = realRows(ledgerOpen);
@@ -139,10 +144,13 @@
   }
 
   const VIEW_LABEL = {
-    games: 'Games', dfs: 'DFS', positions: 'Positions', record: 'Record',
-    ratings: 'Ratings',
+    card: 'Card', games: 'Games', dfs: 'DFS', positions: 'Positions',
+    record: 'Record', ratings: 'Ratings',
   };
   $: viewCount = {
+    // The card counts what CLEARED, not what was priced — the number that
+    // means something is "2", not "88".
+    card: cardRows.plays.length,
     games: hub.length,
     dfs: lineups.length,
     positions: openPositions.length,
@@ -192,7 +200,11 @@
 
   <div class="body">
     <main class="main">
-      {#if view === 'games'}
+      {#if view === 'card'}
+        <CardPanel
+          card={cardRows} {exposure} league={activeLeague} {identity} {isPrivate}
+        />
+      {:else if view === 'games'}
         <GamesPanel
           games={scored} {identity} {distributions} {openGame} {isPrivate} {flagged}
           parlays={parlayRows} league={activeLeague}

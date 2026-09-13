@@ -158,6 +158,13 @@
           {game.positions.length}&nbsp;open
         </span>
       {/if}
+      <!-- The card and the board have to agree: a game carrying a play that
+           cleared the gate says so here, not only inside the sheet. -->
+      {#if game.n_published}
+        <span class="flag card" title="cleared the publish gate — see the Card view">
+          {game.n_published === 1 ? 'on the card' : `${game.n_published} on the card`}
+        </span>
+      {/if}
       {#if isPrivate && game.staked > 0}
         <span class="flag staked">{num(game.staked, 2)}u</span>
       {/if}
@@ -647,6 +654,13 @@
   .flag.dfs { background: var(--v-brand-tint); color: var(--v-brand-dim); }
   .flag.prop { background: var(--v-warn-tint); color: var(--v-warn); }
   .flag.parlay { background: var(--v-info-tint); color: var(--v-info); }
+  /* The one flag that is lit rather than tinted: it is the only one that
+     means the model actually wants money on this game. */
+  .flag.card {
+    background: var(--v-brand-deep);
+    color: var(--v-brand);
+    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.35);
+  }
   .chev {
     font-family: var(--v-board);
     font-size: 1rem;
