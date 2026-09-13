@@ -33,8 +33,8 @@ non-push games, flat across all fifteen seasons. De-scaling that pair as if it
 were half-correlated under-bets both legs by about a third.
 
 The exception is blowout pricing, and only in college. NCAAF favourite-covers ×
-over is ρ +0.067 overall, but that average hides a clean monotone structure:
-flat (+0.008, CI [−0.015, +0.032]) for every favourite under 14, then +0.102 at
+over is ρ +0.070 overall, but that average hides a clean monotone structure:
+flat (+0.008, CI [−0.015, +0.032]) for every favourite under 14, then +0.107 at
 14-21, +0.185 at 21-28, +0.260 past 28. Reading it home-relative instead gives
 +0.050 and hides the structure, which is why the module restates every spread
 from the favourite's side. Physically plain — a four-touchdown
@@ -128,14 +128,14 @@ HISTORICAL_NOTES: Mapping[tuple[str, str], float] = {
     ("nfl", "total hedge 8p"): -0.588,
     ("nfl", "total middle 8p"): -0.611,
     # NCAAF — independent under 14 points of favourite, monotone above it
-    ("ncaaf", "spread x total"): +0.067,
+    ("ncaaf", "spread x total"): +0.0696,
     ("ncaaf", "spread x total, favourite 3-7"): +0.001,
-    ("ncaaf", "spread x total, favourite 14-21"): +0.102,
+    ("ncaaf", "spread x total, favourite 14-21"): +0.1072,
     ("ncaaf", "spread x total, favourite 21-28"): +0.185,
     # Refreshed 2026-09-12: main's current-season dataset top-up moved this
     # one entry from +0.260, which is exactly the drift this cache's test
     # exists to catch. Every other NCAAF and NFL entry re-measured unchanged.
-    ("ncaaf", "spread x total, favourite 28+"): +0.262,
+    ("ncaaf", "spread x total, favourite 28+"): +0.2685,
     ("ncaaf", "moneyline x spread"): +0.568,
     ("ncaaf", "total same-side 2p"): +0.912,
     ("ncaaf", "total same-side 4p"): +0.815,
