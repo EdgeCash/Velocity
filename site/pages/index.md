@@ -44,8 +44,13 @@ from velocity.board
 where league != '__none__'
 ```
 
+<!-- The gate's verdicts, in full. This once selected only the columns the
+     game-row count needed, and the Card view then rendered an em-dash for
+     every price, edge, conviction and stake on it — the data was simply
+     never queried. If the card grows a field, it has to be added here. -->
 ```sql publish
-select game_id, market, side, player, published, reason, tier, league
+select game_id, market, side, player, price, stake, stake_sized, edge, tier,
+  conviction, drift, context, published, reason, league, stamp
 from velocity.publish
 where league != '__none__'
 ```

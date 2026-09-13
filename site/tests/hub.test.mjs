@@ -19,6 +19,7 @@ import {
   scoreboardPlan,
 } from '../components/hub/live.js';
 import {
+  buildCard,
   buildGames,
   buildLineups,
   buildParlays,
@@ -26,6 +27,8 @@ import {
   dailyCurve,
   flaggedMarkets,
   healthRows,
+  heldGroups,
+  heldRule,
   impliedProb,
   leagueCounts,
   parlayCounts,
@@ -284,6 +287,140 @@ test('DFS rows group into one lineup per slate, with its totals', () => {
   const turbo = lineups.find((l) => l.slate === 'Turbo');
   assert.equal(turbo.salary, 16700);
   assert.ok(Math.abs(turbo.points - 30.29) < 1e-9);
+});
+
+/* ---- the card --------------------------------------------------------- */
+
+const VERDICT = (over = {}) => ({
+  game_id: 'g1', league: 'nfl', market: 'spread', side: 'away',
+  price: -109, stake_sized: 0.95, edge: 0.038, tier: 'A', conviction: 0.82,
+  published: true, reason: '', ...over,
+});
+
+function cardFrom(verdicts, board = []) {
+  return buildCard(buildGames({
+    games: [{ game_id: 'g1', league: 'nfl', home_team: 'LV', away_team: 'MIA' }],
+    publish: verdicts,
+    board,
+  }));
+}
+
+test('the card separates what cleared the gate from what did not', () => {
+  const { plays, held } = cardFrom([
+    VERDICT(),
+    VERDICT({ market: 'total', published: false, reason: 'tier B below publishable' }),
+  ]);
+  assert.equal(plays.length, 1);
+  assert.equal(held.length, 1);
+});
+
+test('every verdict reaches the card, not just the published ones', () => {
+  // The bug this pins: buildGames kept only `published`, so the 86 rejects on
+  // a real slate were dropped before anything could render them — which is
+  // how the gate became unauditable.
+  const built = buildGames({
+    games: [{ game_id: 'g1', league: 'nfl', home_team: 'LV', away_team: 'MIA' }],
+    publish: [VERDICT(), VERDICT({ published: false, reason: 'paper' })],
+  });
+  assert.equal(built[0].verdicts.length, 2, 'both verdicts survive');
+  assert.equal(built[0].n_published, 1, 'but only one counts as published');
+});
+
+test('the card ranks by the money the model wants, then by edge', () => {
+  // Ranking by edge alone leads with whatever is noisiest — the same mistake
+  // the old board made.
+  const { plays } = cardFrom([
+    VERDICT({ market: 'total', stake_sized: 0.4, edge: 0.09 }),
+    VERDICT({ market: 'spread', stake_sized: 1.2, edge: 0.03 }),
+    VERDICT({ market: 'moneyline', stake_sized: 1.2, edge: 0.05 }),
+  ]);
+  assert.deepEqual(plays.map((p) => p.market), ['moneyline', 'spread', 'total']);
+});
+
+test('a play carries the venue, which publish itself never says', () => {
+  // `publish` has a price but no book. Without the board join the card can
+  // tell you what to bet and not where, which is half a play.
+  const { plays } = cardFrom([VERDICT()], [
+    { game_id: 'g1', league: 'nfl', market: 'spread', side: 'away', point: 3.5,
+      book: 'kalshi', venue: 'kalshi', venue_key: 'kalshi', venue_label: 'Kalshi',
+      price: 113, p_model: 0.55 },
+    { game_id: 'g1', league: 'nfl', market: 'spread', side: 'away', point: 3.5,
+      book: 'fanduel', venue: 'sportsbook', venue_key: 'fanduel',
+      venue_label: 'FanDuel', price: -109, p_model: 0.55 },
+  ]);
+  assert.equal(plays[0].best.venue, 'kalshi', 'the best-priced venue');
+  assert.equal(plays[0].point, 3.5, 'and the line it is on');
+});
+
+test('a play with no matching board row still appears, without a venue', () => {
+  // Degrading beats disappearing: the gate published it, so it belongs on
+  // the card even if the board row cannot be matched.
+  const { plays } = cardFrom([VERDICT()]);
+  assert.equal(plays.length, 1);
+  assert.equal(plays[0].best, null);
+});
+
+test('held reasons group by RULE, not by their sentence', () => {
+  // The gate writes the numbers into the reason — "edge 0.021 below floor
+  // 0.030" — so grouping on the raw string gives one bucket per row. The
+  // sentence stays on the row; only the heading is normalised.
+  assert.equal(heldRule('edge 0.021 below floor 0.030').rule, 'Edge below floor');
+  assert.equal(heldRule('edge 0.028 below floor 0.030').rule, 'Edge below floor');
+  assert.equal(heldRule('conviction 0.71 below 0.72').rule, 'Conviction below threshold');
+  assert.equal(heldRule('tier B below publishable').rule, 'Tier below publishable');
+  assert.equal(
+    heldRule('paper — priced, not staked (paper market)').rule,
+    'Paper — priced, not staked',
+  );
+  assert.equal(
+    heldRule('market moved 0.017 against us since pricing').rule,
+    'Market moved against us',
+  );
+});
+
+test('an unrecognised reason is kept verbatim rather than swallowed', () => {
+  // A new gate rule must not silently file itself under an existing bucket.
+  assert.equal(heldRule('some brand new rule').rule, 'some brand new rule');
+  assert.equal(heldRule('').rule, 'Held back');
+});
+
+test('near misses sort above the gate working as designed', () => {
+  // "Paper" and "tier B below publishable" are rows that were never
+  // candidates; an edge that missed the floor by 0.002 is a decision.
+  const groups = heldGroups([
+    { rule: 'Paper — priced, not staked', rank: 3, edge: 0.01 },
+    { rule: 'Edge below floor', rank: 0, edge: 0.028 },
+    { rule: 'Tier below publishable', rank: 2, edge: 0.02 },
+    { rule: 'Conviction below threshold', rank: 0, edge: 0.04 },
+  ]);
+  assert.equal(groups[0].rank, 0);
+  assert.equal(groups[1].rank, 0);
+  assert.deepEqual(groups.map((g) => g.rule).slice(2),
+    ['Tier below publishable', 'Paper — priced, not staked']);
+});
+
+test('within a rule the strongest opinion leads', () => {
+  const [group] = heldGroups([
+    { rule: 'Edge below floor', rank: 0, edge: 0.021 },
+    { rule: 'Edge below floor', rank: 0, edge: 0.029 },
+    { rule: 'Edge below floor', rank: 0, edge: 0.025 },
+  ]);
+  assert.deepEqual(group.rows.map((r) => r.edge), [0.029, 0.025, 0.021]);
+});
+
+test('a slate where nothing clears yields an empty card, not an error', () => {
+  // The common case: on the Sept 12 slate, 2 of 88 cleared. A slate where
+  // none do is normal and the panel has to say so rather than look broken.
+  const { plays, held } = cardFrom([
+    VERDICT({ published: false, reason: 'tier B below publishable' }),
+  ]);
+  assert.deepEqual(plays, []);
+  assert.equal(held.length, 1);
+});
+
+test('the card is empty rather than throwing when there are no games', () => {
+  assert.deepEqual(buildCard([]), { plays: [], held: [] });
+  assert.deepEqual(buildCard(undefined), { plays: [], held: [] });
 });
 
 /* ---- parlays and cards ------------------------------------------------ */

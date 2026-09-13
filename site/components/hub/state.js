@@ -13,9 +13,11 @@
 
 import { writable } from 'svelte/store';
 
-export const VIEWS = ['games', 'dfs', 'positions', 'record', 'ratings'];
+// The card leads and is the default: it is the primary output of the
+// system, and the plays are scattered across games by definition.
+export const VIEWS = ['card', 'games', 'dfs', 'positions', 'record', 'ratings'];
 
-const DEFAULTS = { view: 'games', league: 'all', game: '' };
+const DEFAULTS = { view: 'card', league: 'all', game: '' };
 
 /** `#view=dfs&league=mlb&game=abc` → the state it names, defaults filled in. */
 export function parseHash(hash) {

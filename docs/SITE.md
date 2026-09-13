@@ -21,9 +21,9 @@ prices across sportsbooks and exchanges, its own DFS players, its own open
 positions and its own live score. Opening one expands it in place. Nothing
 navigates.
 
-Four things are not games — the DFS slate, the position blotter, the graded
-record and the power ratings — and they are **views** on the same surface
-rather than pages. DFS in particular has to be a peer view rather than only
+Five things are not games — **the card**, the DFS slate, the position
+blotter, the graded record and the power ratings — and they are **views** on
+the same surface rather than pages. DFS in particular has to be a peer view rather than only
 living inside game cards, because the two genuinely do not line up: a Friday
 in September is an MLB and WNBA DFS slate against an NFL and college *board*,
 so a DFS surface nested only in game cards would be empty on exactly the days
@@ -98,6 +98,7 @@ site/
       model.js            the joins: flat rows -> game objects (pure, tested)
       state.js            view/league/game in the URL hash
       Ticker.svelte       the scores crawl, in the top bar
+      CardPanel.svelte    what cleared the publish gate, and what did not
       GamesPanel.svelte   the feed, grouped by day, live games first
       GameCard.svelte     a game row and its expand-in-place dossier
       Spark.svelte        one simulated distribution, drawn small
@@ -635,6 +636,7 @@ they are about:
 
 | Was a page | Is now |
 |---|---|
+| Today — the staked card | **Card**, the default view |
 | Board, props, line movement, injuries, weather | The game sheet |
 | Matchup dossier | The game sheet, expanded in place |
 | Performance | Record |
@@ -646,6 +648,50 @@ they are about:
 
 The two that had nowhere obvious to go are **parlays** and the **record
 cards**, and both are below.
+
+## The card
+
+The publish gate's own verdicts, and the **default landing**. It earns a view
+for the one reason that justifies a view on this surface: the plays are
+scattered across games *by definition*, and gathering them is the product.
+
+The first version of the rebuild lost it. `publish` was queried, reached the
+browser, and nothing rendered it — so on a 101-game slate the two plays that
+cleared the gate were findable only by opening game cards one at a time. The
+board was complete and the answer was invisible.
+
+**Both halves are the point.** On the 2026-09-12 slate, 2 of 88 priced markets
+cleared; the other 86 break down as 54 paper, 26 tier-below-publishable, and
+six near misses — *"conviction 0.72 below 0.72"*, *"edge 0.028 below floor
+0.030"*, *"market moved 0.017 against us since pricing"*. Those six are the
+gate working exactly as designed, and they are also the only way to see
+whether the thresholds sit where you want them. A card with no rejects is a
+gate you cannot audit.
+
+Four things it is careful about:
+
+- **It is built from the GAMES, not from `publish` directly.** `publish`
+  carries a price but never says which venue quoted it, and a play you cannot
+  place is half a play. Going through the built games inherits the venue join
+  `collapseMarkets` already did.
+- **It ranks by the money the model wants, then by edge.** Ranking by edge
+  alone leads with whatever is noisiest — the same mistake the old board made.
+- **Held rows group by RULE, not by sentence.** The gate writes its numbers
+  into the reason, so grouping on the raw string gives one bucket per row. The
+  sentence stays on the row; only the heading is normalised, and an
+  unrecognised reason is kept verbatim rather than swallowed into an existing
+  bucket. Near misses sort above the groups that were never candidates.
+- **The card total is not the board total, and the cap is not additive.**
+  Kelly sizes every row it prices and the gate publishes a subset, so the card
+  is 2.02u of a 9.34u sized board — showing only the card total beside a cap
+  reads as "4% of allowance" and is wrong by 4.6x. Worse, `cap_units` is
+  bankroll x the slate fraction computed *per league with the same fraction*,
+  so every league's row carries an identical ceiling and summing two of them
+  presents **twice the real cap**. Both totals are shown, and the cap only
+  when a single league is in scope.
+
+A game that carries a published play says so on its row in the feed, so the
+card and the board can never disagree about what cleared.
 
 ## Market health
 
