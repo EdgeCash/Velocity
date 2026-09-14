@@ -353,6 +353,12 @@ jobs:
             # and logged as fresh (see `newest_banked_board`).
             EXTRA="$EXTRA --snapshot-dir artifacts/odds"
             EXTRA="$EXTRA --board-max-age-min ${{ github.event.inputs.board_max_age_min || '75' }}"
+            # NFL only. This gate used to be load-bearing — the runner picked
+            # its prop model from whether this flag was passed, so handing an
+            # MLB card a snapshot (which carries every banked league) took the
+            # football prop path and silently skipped MLB's pitcher-K slate.
+            # The runner now keys that off the league itself, so this is belt
+            # and braces: no other league has a consumer for these rows.
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi

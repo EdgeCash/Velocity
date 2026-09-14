@@ -951,6 +951,12 @@ DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.13, "mlb": 0.2}
 # (NCAAB null after FDR, NHL no closes backtest yet, WNBA tracked not staked —
 # docs/STRATEGY_REVIEW.md §1.3), so every market prices and grades as paper.
 DEFAULT_PAPER_BY_LEAGUE = {"ncaab": True, "nhl": True, "wnba": True}
+# Leagues whose props come from the FantasyPros-fed correlated football sim
+# (velocity/models/props_football.py). Every other league either has its own
+# prop model — MLB's pitcher-K slate, priced off the banked starters history —
+# or no prop board at all, and in neither case does --fp-projections mean
+# anything to it.
+FOOTBALL_PROP_LEAGUES = ("nfl", "ncaaf")
 GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_away")
 _TEAM_TOTALS = ("team_total_home", "team_total_away")
 
@@ -1531,7 +1537,16 @@ def main() -> None:
     key_to_name: dict[str, str] = {}
     prop_lines_used: pd.DataFrame | None = None
     watch_by_game: dict = {}
-    if args.fp_projections and projections and not events.empty:
+    # Which prop model runs is a property of the LEAGUE, not of which files
+    # happened to be passed. It used to be the latter, and that was a live
+    # trap: --fp-projections carries every league the collector banks, so
+    # supplying it for MLB took the football path on baseball players, found
+    # nothing, and — because this is an if/elif — silently skipped the pitcher-K
+    # slate that MLB actually has. The only thing standing between us and that
+    # was live-slate.yml gating the flag on `league = nfl`, a load-bearing
+    # condition in a shell script with nothing saying so.
+    if (args.fp_projections and args.league in FOOTBALL_PROP_LEAGUES
+            and projections and not events.empty):
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )

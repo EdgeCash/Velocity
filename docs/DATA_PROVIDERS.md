@@ -113,6 +113,36 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### What consumes a FantasyPros snapshot (and what does not)
+
+NFL projections feed three things: the correlated football prop sim
+(`models/props_football.py`), the DFS builds, and the projection-time QB
+starter map (`features/starters.py`). NFL injuries feed that starter map and
+the intel injury signal.
+
+**MLB projections feed nothing, and that is the right answer.** They have been
+collected since the collector was written — up to ten requests a run once the
+per-position fallback fires — and read by nothing, while a comment in
+`live-slate.yml` asserted the public tier serves no MLB players at all. Nobody
+was wrong on purpose; the contradiction simply had nowhere to surface. It does
+now: the collector emits an Actions **warning** naming any league that returns
+zero rows, and prints a standing note for any league in `UNCONSUMED_LEAGUES`.
+
+The reason MLB stays unconsumed is that better sources already exist for both
+consumers. MLB DFS prices from the contextual model (banked box scores × park ×
+lineup slot × today's probables, `docs/DFS_MODEL.md`) and MLB props from the
+banked starters frame — season-total consensus projections cannot improve
+either. Keeping the branch costs a handful of requests against a limit that has
+never bound; the decision to drop it belongs to whoever reads that warning.
+
+A related trap closed at the same time: the runner chose its prop model from
+whether `--fp-projections` was passed, not from the league. Since a snapshot
+carries every banked league, passing it for MLB took the *football* prop path
+on baseball players and — the dispatch being an if/elif — silently skipped the
+pitcher-K slate MLB actually has. The gate keeping that from happening lived in
+a shell conditional in `live-slate.yml`. It is now `FOOTBALL_PROP_LEAGUES` in
+the runner, with a test that fails if the guard is removed.
+
 ## The FantasyPros collector (`scripts/collect_fantasypros.py` + workflow)
 
 `.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).

@@ -38,6 +38,19 @@ LEAGUES = ("nfl", "mlb")
 # The collector tries ALL first and falls back to fetching these one by one.
 # Proven live for NFL; the first MLB dispatch (2026-08-23) hit the same
 # `public_api_limited` empty response on ALL, so MLB gets the same fallback.
+# Leagues whose snapshot currently has no consumer, and why. This is not a
+# TODO — it is a standing fact the log should state every run, because the
+# alternative is what happened here: MLB was collected from the day the
+# collector was written, every run, and read by nothing, while a workflow
+# comment three files away asserted the tier served no MLB players at all.
+# Nobody was wrong on purpose; the contradiction just had nowhere to show up.
+UNCONSUMED_LEAGUES = {
+    "mlb": "MLB DFS prices from the contextual model (banked box scores, park, "
+           "lineup slot, today's probables) and MLB props from the banked "
+           "starters frame — both strictly better than season-total consensus, "
+           "so there is nothing here for these rows to improve",
+}
+
 NFL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 FALLBACK_POSITIONS = {
     "nfl": NFL_POSITIONS,
@@ -234,6 +247,20 @@ def main() -> None:
         df = df.assign(league=league, collected_at=stamp)
         frames.append(df)
         print(f"  {league}: {len(df)} projection rows, {df['player_name'].nunique()} players")
+        # A league that comes back empty has been costing calls for nothing —
+        # up to ten a run once the per-position fallback fires. That is cheap,
+        # but it is also invisible: an empty frame banks, the parquet writes,
+        # the job goes green, and the log line reads like any other. Say it
+        # where a run summary shows it.
+        if df.empty:
+            print(f"::warning title=FantasyPros {league} empty::"
+                  f"{league} returned no projection rows for season {args.season} "
+                  f"week {week}. Either the tier does not serve it or the request "
+                  f"shape is wrong; drop it from LEAGUES or fix the call — it is "
+                  f"spending requests either way.")
+        elif league in UNCONSUMED_LEAGUES:
+            print(f"  note: {league} projections are banked but nothing reads them "
+                  f"({UNCONSUMED_LEAGUES[league]})")
 
     attempted = [lg for lg in args.leagues if lg != "ncaaf"]
     if failed and len(failed) == len(attempted):
