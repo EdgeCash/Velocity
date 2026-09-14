@@ -28,7 +28,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.bettingpros import BettingProsClient, normalize_props
+from velocity.ingest.bettingpros import (
+    BettingProsClient,
+    describe_slug_coverage,
+    normalize_props,
+)
 
 # The sports snapshotted by default. MLB joined on 2026-09-14: it is an
 # in-season sport carrying the largest real exposure in the book
@@ -260,6 +264,14 @@ def main() -> None:
             n_proj = int(props["projection"].notna().sum()) if not props.empty else 0
             print(f"  {sport} props: {len(props)} rows "
                   f"({n_proj} with projections{'* premium' if n_proj else ''}) → {dest}")
+            # What this board actually serves, against what we map. The slug
+            # table was written from reasoning and never confirmed against a
+            # live snapshot (docs/INTEL.md §6), and an unmapped slug abstains
+            # silently — so a board where most markets contribute nothing
+            # reads exactly like a healthy one. Printing it every run makes
+            # the gap impossible to miss and costs nothing.
+            for line in describe_slug_coverage(props, sport):
+                print(line)
         except Exception as exc:  # noqa: BLE001 - props are additive, lines already saved
             print(f"  {sport} props skipped ({exc})")
 

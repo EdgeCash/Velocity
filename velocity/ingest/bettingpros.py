@@ -43,7 +43,7 @@ from typing import Any
 
 import pandas as pd
 
-from velocity.store.schema import Lines
+from velocity.store.schema import PROP_MARKETS, Lines
 
 _BASE = "https://api.bettingpros.com/v3"
 _FETCH_TIMEOUT = 60
@@ -662,3 +662,82 @@ def bp_book_keys(board: pd.DataFrame) -> frozenset[str]:
     if board.empty or "book" not in board.columns:
         return frozenset()
     return frozenset(str(b).strip().lower() for b in board["book"].unique())
+
+
+# ---------------------------------------------------------------------------
+# Slug coverage — what the prop board actually serves vs what we map
+# ---------------------------------------------------------------------------
+#
+# ``BP_PROP_SLUG_TO_MARKET`` was written from reasoning, not observation, and
+# docs/INTEL.md has carried "confirming the slug table against a real
+# post-deploy snapshot" as an open item ever since. Meanwhile the collector has
+# been banking the raw /props payload every three hours, so the answer has been
+# sitting in the artifacts the whole time — nothing had asked it.
+#
+# These are the asking. An unmapped slug is not an error: the intel layer
+# abstains on it, which is the correct behaviour for a market whose meaning we
+# have not established. It *is* a gap, and a gap nobody can see is one nobody
+# closes — so the collector prints this report every run, and
+# ``scripts/inspect_bp_slugs.py`` prints it from a snapshot already banked.
+
+# ``PROP_MARKETS`` (imported at the top) is the canonical set this system
+# actually prices. A slug mapping to anything outside it would bank rows no
+# model can use, so the report calls that out rather than quietly accepting it.
+_SLUG_REPORT_COLUMNS = ["market_slug", "rows", "market", "mapped", "priced"]
+
+
+def slug_coverage(props: pd.DataFrame) -> pd.DataFrame:
+    """Per-slug coverage of a banked ``/props`` frame, busiest first.
+
+    Columns: the slug, how many rows carry it, the canonical market it maps to
+    (empty when unmapped), whether it is mapped at all, and whether that market
+    is one the props stack actually prices. Rows with no slug — a snapshot
+    taken while the ``/markets`` listing was failing — are reported under
+    ``"(no slug)"`` rather than dropped, because that is a collector problem
+    and it should be visible as one.
+    """
+    if props.empty or "market_slug" not in props.columns:
+        return pd.DataFrame(columns=_SLUG_REPORT_COLUMNS)
+    slugs = props["market_slug"].fillna("").astype(str).str.strip()
+    counts = slugs.replace("", "(no slug)").value_counts()
+    rows = []
+    for slug, n in counts.items():
+        market = BP_PROP_SLUG_TO_MARKET.get(str(slug), "")
+        rows.append({
+            "market_slug": str(slug),
+            "rows": int(n),
+            "market": market,
+            "mapped": bool(market),
+            "priced": market in PROP_MARKETS,
+        })
+    return pd.DataFrame(rows, columns=_SLUG_REPORT_COLUMNS)
+
+
+def describe_slug_coverage(props: pd.DataFrame, sport: str = "") -> list[str]:
+    """The coverage report as printable lines — what a run log should say.
+
+    Deliberately loud about the unmapped slugs and silent about nothing: a
+    board where four of five markets abstain reads as a healthy snapshot on
+    every other line of the log.
+    """
+    label = f"{sport} " if sport else ""
+    table = slug_coverage(props)
+    if table.empty:
+        return [f"  {label}slug coverage: no prop rows to report"]
+    mapped = table[table["mapped"]]
+    unmapped = table[~table["mapped"]]
+    lines = [
+        f"  {label}slug coverage: {len(mapped)} of {len(table)} slug(s) mapped, "
+        f"{int(mapped['rows'].sum())} of {int(table['rows'].sum())} rows usable"
+    ]
+    for row in mapped.to_dict("records"):
+        flag = "" if row["priced"] else "  <-- mapped to a market we do not price"
+        lines.append(f"    mapped   {row['market_slug']:<28} {row['rows']:>5} -> "
+                     f"{row['market']}{flag}")
+    for row in unmapped.to_dict("records"):
+        lines.append(f"    UNMAPPED {row['market_slug']:<28} {row['rows']:>5} "
+                     "(intel abstains on every row)")
+    if len(unmapped):
+        lines.append("    -> add the ones worth pricing to BP_PROP_SLUG_TO_MARKET "
+                     "(velocity/ingest/bettingpros.py)")
+    return lines

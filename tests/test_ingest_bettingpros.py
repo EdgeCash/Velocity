@@ -13,9 +13,11 @@ from velocity.ingest.bettingpros import (
     BettingProsClient,
     bp_board,
     bp_book_keys,
+    describe_slug_coverage,
     normalize_books,
     normalize_offers,
     resolve_sides_within_game,
+    slug_coverage,
     snapshot_age_minutes,
     to_lines,
 )
@@ -463,3 +465,62 @@ def test_bp_board_picks_its_league_out_of_a_multi_league_bank() -> None:
     # football board at all.
     assert set(board["game_id"]) == {"odds-1"}
     assert len(board) == len(nfl_lines)
+
+
+# --------------------------------------------------------------------------
+# Slug coverage — the report that makes an abstaining board visible
+# --------------------------------------------------------------------------
+
+
+def _props_frame() -> pd.DataFrame:
+    return pd.DataFrame({
+        "market_slug": (
+            ["passing-yards"] * 4 + ["receptions"] * 2 + ["anytime-touchdown"] * 3 + [""]
+        )
+    })
+
+
+def test_slug_coverage_counts_rows_and_separates_mapped_from_unmapped() -> None:
+    table = slug_coverage(_props_frame())
+    by_slug = {row["market_slug"]: row for row in table.to_dict("records")}
+    assert by_slug["passing-yards"]["rows"] == 4
+    assert by_slug["passing-yards"]["market"] == "pass_yards"
+    assert by_slug["passing-yards"]["mapped"] is True
+    assert by_slug["passing-yards"]["priced"] is True
+    # A slug the table does not name abstains — reported, never guessed at.
+    assert by_slug["anytime-touchdown"]["mapped"] is False
+    assert by_slug["anytime-touchdown"]["market"] == ""
+    # Busiest first, so the biggest gap is the first thing read.
+    assert table.iloc[0]["market_slug"] == "passing-yards"
+
+
+def test_slug_coverage_surfaces_a_snapshot_whose_market_listing_failed() -> None:
+    """An empty slug is a collector problem and must read as one."""
+    table = slug_coverage(_props_frame())
+    assert "(no slug)" in set(table["market_slug"])
+
+
+def test_slug_coverage_is_empty_for_a_board_with_no_props() -> None:
+    assert slug_coverage(pd.DataFrame()).empty
+    assert slug_coverage(pd.DataFrame({"other": [1]})).empty
+
+
+def test_describe_slug_coverage_names_every_unmapped_slug() -> None:
+    lines = "\n".join(describe_slug_coverage(_props_frame(), "NFL"))
+    # 4 distinct slugs (two mapped, one unmapped, one blank), 6 of 10 rows usable.
+    assert "2 of 4 slug(s) mapped, 6 of 10 rows usable" in lines
+    assert "UNMAPPED anytime-touchdown" in lines
+    assert "BP_PROP_SLUG_TO_MARKET" in lines
+
+
+def test_every_mapped_slug_points_at_a_market_we_actually_price() -> None:
+    """A slug mapped to a market no model prices banks rows nothing can use."""
+    from velocity.ingest.bettingpros import BP_PROP_SLUG_TO_MARKET
+    from velocity.store.schema import PROP_MARKETS
+
+    unpriced = {
+        slug: market
+        for slug, market in BP_PROP_SLUG_TO_MARKET.items()
+        if market not in PROP_MARKETS
+    }
+    assert not unpriced, unpriced

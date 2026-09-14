@@ -215,5 +215,18 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
    slate downloads the freshest snapshot automatically (`--bp-props-file`,
    the `--injuries-file` pattern). Still open: replacing the reasoned
    per-market dispersion constants (`DEFAULT_OUTLIER_POINTS`) with values
-   measured from the banked snapshots, and confirming the slug table
-   against a real post-deploy snapshot.
+   measured from the banked snapshots.
+
+   *Slug confirmation is no longer a waiting game.* The table was written
+   from reasoning, never observation, and an unmapped slug abstains
+   **silently** — so a board where four of five markets contribute nothing
+   reads exactly like a healthy one on every other line of the log. The
+   collector now prints a per-slug coverage report on every run (which slugs
+   the board served, how many rows each carried, which are mapped, and
+   whether the mapped market is one the props stack actually prices), and
+   `scripts/inspect_bp_slugs.py` prints the same report from a snapshot
+   already banked — so the artifacts sitting in Actions answer it today,
+   without waiting for a dispatch. Extending `BP_PROP_SLUG_TO_MARKET` is then
+   a read of that report, not a guess; a unit test also pins every mapped
+   slug to a market in `PROP_MARKETS`, so the table cannot drift into
+   banking rows no model can use.
