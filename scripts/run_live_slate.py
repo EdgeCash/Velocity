@@ -30,6 +30,7 @@ from typing import Any
 import pandas as pd
 from velocity.eval.ladders import default_relative_tolerance, has_ladder_calibration
 from velocity.features.scores import fit_scores_ratings
+from velocity.ingest.bettingpros import DEFAULT_BP_MAX_AGE_MIN
 from velocity.ingest.exchanges import EXCHANGE_LEAGUES
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
@@ -744,6 +745,27 @@ def build_parser() -> argparse.ArgumentParser:
     # implied totals) but no >52.4% over-rate on *derived* numbers, so the
     # disagreement gate defaults to off — the EV gate still applies, and the
     # threshold gets calibrated once banked team-total closes accumulate.
+    # The BettingPros board (docs/DATA_PROVIDERS.md). The collector has banked
+    # multi-book game lines every three hours since it was built and nothing
+    # read them: the live board came from The Odds API alone, so a BP price was
+    # never shopped and never graded. These flags put that board back on the
+    # card. It is PAPER by default for the same reason the exchanges were: the
+    # rows are read off a snapshot up to a cadence old, and S2's rule is that
+    # money does not follow a market whose evidence is not in yet. Priced,
+    # logged and graded at stake zero, the CLV record accrues; --bp-stake is
+    # the switch to flip once it says something.
+    parser.add_argument("--bp-lines-file",
+                        help="banked bp_lines parquet — puts the BettingPros board on the card")
+    parser.add_argument("--bp-events-file",
+                        help="banked bp_events parquet (the team/kickoff map for --bp-lines-file)")
+    parser.add_argument("--bp-books-file",
+                        help="banked bp_books parquet — resolves bp:<id> keys to bp:<name>")
+    parser.add_argument("--bp-stake", action=argparse.BooleanOptionalAction, default=False,
+                        help="stake the BettingPros rows instead of papering them. Tighten "
+                             "--bp-max-age-min first: a banked price that has moved is not "
+                             "a price we can take.")
+    parser.add_argument("--bp-max-age-min", type=float, default=DEFAULT_BP_MAX_AGE_MIN,
+                        help="refuse a banked BettingPros board older than this many minutes")
     parser.add_argument("--offline", action="store_true",
                         help="make no network calls at all (test and CI runs). Distinct from "
                              "--snapshot-file, which only means the sportsbook board comes "
@@ -978,6 +1000,15 @@ def live_config_rows(
                    else ("team totals" if paper else "none"))
     if venues:
         paper_label += f" · exchanges ({', '.join(sorted(venues))})"
+    # The BettingPros books are papered by the board builder, not by an arg, so
+    # they are read back off the config that was actually built — the whole
+    # point of this function.
+    bp_venues = sorted(
+        v for v in getattr(cfg, "paper_venues", frozenset()) or frozenset()
+        if str(v).startswith("bp:")
+    )
+    if bp_venues:
+        paper_label += f" · BettingPros ({len(bp_venues)} book(s))"
     rows.append(("Paper", paper_label))
     if args.league in FOOTBALL_SDS:
         rows.append(("Simulation", describe_sim(football_sim_config(args.league, args),
@@ -1284,6 +1315,56 @@ def main() -> None:
     elif args.exchanges:
         print("exchanges: skipped (--offline, or a league with no exchange board)")
 
+    # The BettingPros board — banked by the 3-hourly collector, re-keyed onto
+    # this board's game ids the same way an exchange board is. Its books are
+    # the same sportsbooks The Odds API quotes, so every key is prefixed
+    # ``bp:``: the feed is part of the book's identity, and a grader must be
+    # able to tell which feed a bet's number came from.
+    bp_paper_venues: frozenset[str] = frozenset()
+    if args.bp_lines_file and args.bp_events_file:
+        try:
+            from velocity.ingest.bettingpros import bp_board, bp_book_keys
+
+            book_names = {}
+            if args.bp_books_file and Path(args.bp_books_file).exists():
+                books_frame = pd.read_parquet(args.bp_books_file)
+                book_names = dict(
+                    zip(books_frame["book_id"].astype(str),
+                        books_frame["book_name"].astype(str), strict=False)
+                )
+            bp_lines, bp_notes = bp_board(
+                pd.read_parquet(args.bp_lines_file),
+                pd.read_parquet(args.bp_events_file),
+                known_teams,
+                events,
+                now=generated_at,
+                league=args.league,
+                max_age_minutes=args.bp_max_age_min,
+                book_names=book_names,
+            )
+            if bp_notes["stale"]:
+                age = bp_notes["age_min"]
+                seen = "no timestamp" if age is None else f"{age:g} min old"
+                print(f"bettingpros: board refused ({seen}, limit "
+                      f"{args.bp_max_age_min:g} min) — a price that has moved is not "
+                      "a price we can take")
+            elif bp_lines.empty:
+                print(f"bettingpros: no rows aligned onto the board "
+                      f"({bp_notes['games']} game(s) matched)")
+            else:
+                unresolved = bp_notes["unresolved_sides"]
+                tail = f" ({unresolved} row(s) dropped — side unresolved)" if unresolved else ""
+                print(f"bettingpros: {bp_notes['lines']} lines across "
+                      f"{bp_notes['games']} board games, {bp_notes['age_min']:g} min old"
+                      f"{tail}")
+                lines = pd.concat([lines, bp_lines], ignore_index=True)
+                if not args.bp_stake:
+                    bp_paper_venues = bp_book_keys(bp_lines)
+                    print(f"bettingpros: priced and graded on the board, staked at zero "
+                          f"({len(bp_paper_venues)} book(s)) — --bp-stake stakes them")
+        except Exception as exc:  # noqa: BLE001 - an optional banked board
+            print(f"bettingpros board skipped: {exc}")
+
     n_board = len(events)
     if args.max_days > 0 and not events.empty:
         kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
@@ -1344,11 +1425,15 @@ def main() -> None:
         elif paper_markets:
             print("team totals: paper — priced and graded, staked at zero until "
                   "posted closes calibrate the gate (--no-team-totals-paper to stake)")
-        paper_venues = resolve_paper_venues(args)
-        if paper_venues:
+        # The exchange venues and the BettingPros books are papered for
+        # different reasons and announce themselves separately (BP printed its
+        # own line as the board was built); the config takes the union.
+        exchange_paper = resolve_paper_venues(args)
+        paper_venues = exchange_paper | bp_paper_venues
+        if exchange_paper:
             why = ("--exchange-paper" if args.exchange_paper
                    else f"no ladder shape table fitted for {args.league}")
-            print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
+            print(f"exchanges: {', '.join(sorted(exchange_paper))} priced and graded on the "
                   f"board, staked at zero ({why})")
         elif getattr(args, "exchanges", False):
             from velocity.store.schema import LADDER_BOOKS

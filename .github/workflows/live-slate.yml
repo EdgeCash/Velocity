@@ -324,6 +324,12 @@ jobs:
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
           BP_FILE=$(ls -t artifacts/bp/**/bp_props_nfl_*.parquet 2>/dev/null | head -1 || true)
+          # The BettingPros game board — banked by the 3-hourly collector and,
+          # until now, read by nothing. Paper by default: priced and graded so
+          # the CLV record accrues, staked at zero (see --bp-stake).
+          BP_LINES=$(ls -t artifacts/bp/**/bp_lines_*.parquet 2>/dev/null | head -1 || true)
+          BP_EVENTS=$(ls -t artifacts/bp/**/bp_events_*.parquet 2>/dev/null | head -1 || true)
+          BP_BOOKS=$(ls -t artifacts/bp/**/bp_books_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             echo "::group::${league} slate"
             EXTRA=""
@@ -353,6 +359,15 @@ jobs:
             fi
             if [ "${league}" = "nfl" ] && [ -n "$BP_FILE" ]; then
               EXTRA="$EXTRA --bp-props-file $BP_FILE"
+            fi
+            # The BP game board covers the sports the collector snapshots; the
+            # runner filters by league and reports an empty board for the rest,
+            # so this needs no per-league list to drift out of date.
+            if [ -n "$BP_LINES" ] && [ -n "$BP_EVENTS" ]; then
+              EXTRA="$EXTRA --bp-lines-file $BP_LINES --bp-events-file $BP_EVENTS"
+              if [ -n "$BP_BOOKS" ]; then
+                EXTRA="$EXTRA --bp-books-file $BP_BOOKS"
+              fi
             fi
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"

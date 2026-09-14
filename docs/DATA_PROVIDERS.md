@@ -151,6 +151,47 @@ callable — swapping the historical archive for the live feed is a config chang
 not a rewrite. CLV is then the live snapshot vs the closing snapshot from the
 archive.
 
+### The BettingPros board on the live card
+
+For most of this system's life the paragraph above was aspirational: the
+collector banked `bp_lines_*.parquet` every three hours and **nothing read
+it**. The live board came from The Odds API alone, so a BettingPros price was
+never shopped, never logged and never graded — a paid multi-book feed
+accumulating in artifacts nobody opened.
+
+`bettingpros.bp_board` closes that. It takes the banked lines + events
+parquets and re-keys them onto the board the slate is already pricing, reusing
+the exchange alignment path (`docs/BUILD_EXCHANGES.md` E6) rather than
+inventing a second one:
+
+1. **League filter and age gate.** The board is refused whole if the snapshot
+   is older than `--bp-max-age-min` (default 200, just past the 3-hour
+   cadence), or carries no stamp at all — an age we cannot establish is
+   exactly the failure the gate exists to prevent. A refused board says so on
+   the run log; it is never silently dropped.
+2. **Sides, in BettingPros' own scope.** BP labels a selection by *nickname*
+   ("Chiefs") while its events name the team in full ("Kansas City Chiefs").
+   Matched as plain strings, every spread and moneyline is dropped and a board
+   of totals reaches the card looking healthy. `resolve_sides_within_game`
+   matches the label against that game's own two teams by word-subset — a
+   two-way choice from one payload, so a looser rule is safe — and drops a
+   label matching both or neither.
+3. **Teams, games, books.** Events resolve to rating keys, games re-key onto
+   the base board's ids by team pair and kickoff, and every book is prefixed
+   `bp:` (`bp:draftkings`, or `bp:10` where the `/books` listing did not
+   resolve the id). The feed is part of the book's identity: BP quotes the
+   same sportsbooks The Odds API does, and a grader must be able to tell which
+   feed a number came from.
+
+**Posture: paper.** The rows are priced, logged and graded at stake zero, per
+S2 — money does not follow a market whose evidence is not in yet, and these
+come off a snapshot up to a cadence old. `--bp-stake` flips that once the CLV
+record says something; tighten `--bp-max-age-min` hard before you do, because
+a banked price that has moved is not a price we can take.
+
+The runner takes `--bp-lines-file` / `--bp-events-file` / `--bp-books-file`,
+and `live-slate.yml` passes the freshest banked set automatically.
+
 ## The live slate runner (`scripts/run_live_slate.py`)
 
 The end of the pipeline: today's board → staked recommendations, running the

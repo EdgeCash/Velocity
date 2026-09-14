@@ -176,6 +176,22 @@ def main() -> None:
     # needs to bridge Odds-API-keyed bets onto these snapshots for CLV.
     events.to_parquet(out / f"bp_events_{tag_now}.parquet", index=False)
     print(f"wrote {len(events)} event rows")
+    # The book id -> name listing. BettingPros identifies a book by a small
+    # integer, and a board keyed "bp:10" is unreadable on a card and
+    # un-auditable in the record. One extra call per run resolves every id to
+    # a name; a failure just leaves the board keyed by id (abstain, never
+    # guess), which is why this never raises.
+    try:
+        client_books = BettingProsClient.from_env().books(args.sports[0])
+        if client_books:
+            pd.DataFrame(
+                [{"book_id": k, "book_name": v} for k, v in sorted(client_books.items())]
+            ).assign(collected_at=stamp).to_parquet(
+                out / f"bp_books_{tag_now}.parquet", index=False
+            )
+            print(f"wrote {len(client_books)} book names")
+    except Exception as exc:  # noqa: BLE001 - labels are additive
+        print(f"  book names skipped ({exc})")
     if df.empty:
         # Off-season / no board yet is not an error — the job still succeeds so the
         # schedule keeps running; the artifact just carries an empty frame.
