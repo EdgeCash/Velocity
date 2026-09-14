@@ -87,7 +87,9 @@ def test_intel_layer_end_to_end(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "intelligence card" in result.stdout
-    assert "injuries snapshot loaded (1 genuine outs)" in result.stdout
+    # The line names its source now that there are two of them (ESPN covers
+    # every league; FantasyPros is NFL only).
+    assert "FantasyPros injuries loaded (1 genuine outs)" in result.stdout
 
     intel_files = list(out.glob("intel_nfl_*.parquet"))
     assert intel_files, result.stdout

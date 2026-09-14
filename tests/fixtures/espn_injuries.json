@@ -1,0 +1,585 @@
+{
+ "timestamp": "2026-09-14T23:30Z",
+ "status": "success",
+ "season": {
+  "year": 2026
+ },
+ "injuries": [
+  {
+   "id": "22",
+   "displayName": "Arizona Cardinals",
+   "injuries": [
+    {
+     "id": "637333",
+     "shortComment": "Bourne caught all eight of his targets for 75 yards during the Cardinals' 26-14 win over the Chargers on Sunday.",
+     "status": "Active",
+     "date": "2026-09-14T23:09Z",
+     "athlete": {
+      "firstName": "Kendrick",
+      "lastName": "Bourne",
+      "displayName": "Kendrick Bourne",
+      "shortName": "K. Bourne",
+      "position": {
+       "id": "1",
+       "name": "Wide Receiver",
+       "displayName": "Wide Receiver",
+       "abbreviation": "WR",
+       "leaf": true
+      },
+      "team": {
+       "id": "22",
+       "name": "Cardinals",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Cardinals"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "0",
+      "name": "INJURY_STATUS_ACTIVE",
+      "description": "active",
+      "abbreviation": "A"
+     }
+    },
+    {
+     "id": "-2003700",
+     "shortComment": "out",
+     "status": "Out",
+     "date": "2026-09-14T19:27Z",
+     "athlete": {
+      "firstName": "Isaiah",
+      "lastName": "Adams",
+      "displayName": "Isaiah Adams",
+      "shortName": "I. Adams",
+      "position": {
+       "id": "73",
+       "name": "Guard",
+       "displayName": "Guard",
+       "abbreviation": "G",
+       "leaf": false
+      },
+      "team": {
+       "id": "22",
+       "name": "Cardinals",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Cardinals"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE"
+      },
+      "type": "Knee",
+      "location": "Leg",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-09-20"
+     }
+    },
+    {
+     "id": "-2003692",
+     "shortComment": "out",
+     "status": "Out",
+     "date": "2026-09-14T19:26Z",
+     "athlete": {
+      "firstName": "Dadrion",
+      "lastName": "Taylor-Demerson",
+      "displayName": "Dadrion Taylor-Demerson",
+      "shortName": "D. Taylor-Demerson",
+      "position": {
+       "id": "36",
+       "name": "Safety",
+       "displayName": "Safety",
+       "abbreviation": "S",
+       "leaf": true
+      },
+      "team": {
+       "id": "22",
+       "name": "Cardinals",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Cardinals"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE"
+      },
+      "type": "Ribs",
+      "location": "Torso",
+      "detail": "Not Specified",
+      "side": "Not Specified",
+      "returnDate": "2026-09-20"
+     }
+    },
+    {
+     "id": "-2003694",
+     "shortComment": "out",
+     "status": "Out",
+     "date": "2026-09-14T19:26Z",
+     "athlete": {
+      "firstName": "Garrett",
+      "lastName": "Williams",
+      "displayName": "Garrett Williams",
+      "shortName": "G. Williams",
+      "position": {
+       "id": "29",
+       "name": "Cornerback",
+       "displayName": "Cornerback",
+       "abbreviation": "CB",
+       "leaf": true
+      },
+      "team": {
+       "id": "22",
+       "name": "Cardinals",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Cardinals"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE"
+      },
+      "type": "Achilles",
+      "location": "Leg",
+      "detail": "Surgery",
+      "side": "Not Specified",
+      "returnDate": "2026-09-20"
+     }
+    }
+   ]
+  },
+  {
+   "id": "1",
+   "displayName": "Atlanta Falcons",
+   "injuries": [
+    {
+     "id": "637338",
+     "shortComment": "Hand suffered a torn quadriceps in Sunday's 20-13 loss to the Steelers, Marc Raimondi of ESPN.com reports.",
+     "status": "Out",
+     "date": "2026-09-14T23:17Z",
+     "athlete": {
+      "firstName": "Da'Shawn",
+      "lastName": "Hand",
+      "displayName": "Da'Shawn Hand",
+      "shortName": "D. Hand",
+      "position": {
+       "id": "32",
+       "name": "Defensive Tackle",
+       "displayName": "Defensive Tackle",
+       "abbreviation": "DT",
+       "leaf": true
+      },
+      "team": {
+       "id": "1",
+       "name": "Falcons",
+       "abbreviation": "ATL",
+       "displayName": "Atlanta Falcons"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "OUT",
+       "abbreviation": "OUT"
+      },
+      "type": "Quadriceps",
+      "location": "Leg",
+      "detail": "Surgery",
+      "side": "Not Specified",
+      "returnDate": "2027-02-15"
+     }
+    },
+    {
+     "id": "637320",
+     "shortComment": "Dotson caught one of three targets for 19 yards in Atlanta's 20-13 loss to the Steelers on Sunday.",
+     "status": "Active",
+     "date": "2026-09-14T22:33Z",
+     "athlete": {
+      "firstName": "Jahan",
+      "lastName": "Dotson",
+      "displayName": "Jahan Dotson",
+      "shortName": "J. Dotson",
+      "position": {
+       "id": "1",
+       "name": "Wide Receiver",
+       "displayName": "Wide Receiver",
+       "abbreviation": "WR",
+       "leaf": true
+      },
+      "team": {
+       "id": "1",
+       "name": "Falcons",
+       "abbreviation": "ATL",
+       "displayName": "Atlanta Falcons"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "0",
+      "name": "INJURY_STATUS_ACTIVE",
+      "description": "active",
+      "abbreviation": "A"
+     }
+    },
+    {
+     "id": "-2003708",
+     "shortComment": "out",
+     "status": "Out",
+     "date": "2026-09-14T19:27Z",
+     "athlete": {
+      "firstName": "Tua",
+      "lastName": "Tagovailoa",
+      "displayName": "Tua Tagovailoa",
+      "shortName": "T. Tagovailoa",
+      "position": {
+       "id": "8",
+       "name": "Quarterback",
+       "displayName": "Quarterback",
+       "abbreviation": "QB",
+       "leaf": true
+      },
+      "team": {
+       "id": "1",
+       "name": "Falcons",
+       "abbreviation": "ATL",
+       "displayName": "Atlanta Falcons"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE"
+      },
+      "type": "Oblique",
+      "location": "Torso",
+      "detail": "Strain",
+      "side": "Not Specified",
+      "returnDate": "2026-09-20"
+     }
+    },
+    {
+     "id": "-2003705",
+     "shortComment": "out",
+     "status": "Out",
+     "date": "2026-09-14T19:27Z",
+     "athlete": {
+      "firstName": "Michael",
+      "lastName": "Penix Jr.",
+      "displayName": "Michael Penix Jr.",
+      "shortName": "M. Penix Jr.",
+      "position": {
+       "id": "8",
+       "name": "Quarterback",
+       "displayName": "Quarterback",
+       "abbreviation": "QB",
+       "leaf": true
+      },
+      "team": {
+       "id": "1",
+       "name": "Falcons",
+       "abbreviation": "ATL",
+       "displayName": "Atlanta Falcons"
+      },
+      "status": {
+       "id": "1",
+       "name": "Active",
+       "type": "active",
+       "abbreviation": "Active"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "4",
+      "name": "INJURY_STATUS_OUT",
+      "description": "out",
+      "abbreviation": "O"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "QUESTIONABLE",
+       "abbreviation": "QUESTIONABLE"
+      },
+      "type": "Knee - ACL",
+      "location": "Leg",
+      "detail": "Surgery",
+      "side": "Left",
+      "returnDate": "2026-09-20"
+     }
+    }
+   ]
+  },
+  {
+   "id": "29",
+   "displayName": "Arizona Diamondbacks",
+   "injuries": [
+    {
+     "id": "1025283",
+     "shortComment": "Nelson (elbow) allowed two runs on four hits while striking out two over 1.2 innings for Triple-A Reno on Saturday.",
+     "status": "60-Day-IL",
+     "date": "2026-09-13T11:52Z",
+     "athlete": {
+      "firstName": "Ryne",
+      "lastName": "Nelson",
+      "displayName": "Ryne Nelson",
+      "shortName": "R. Nelson",
+      "position": {
+       "id": "15",
+       "name": "Starting Pitcher",
+       "displayName": "Starting Pitcher",
+       "abbreviation": "SP",
+       "leaf": true
+      },
+      "team": {
+       "id": "29",
+       "name": "Diamondbacks",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Diamondbacks"
+      },
+      "status": {
+       "id": "10",
+       "name": "Injured/60",
+       "type": "injured60",
+       "abbreviation": "IL60"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "11",
+      "name": "INJURY_STATUS_60DAYIL",
+      "description": "60-day IL",
+      "abbreviation": "IL60"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "60-Day IL",
+       "abbreviation": "60-Day IL"
+      },
+      "type": "Elbow",
+      "detail": "Strain",
+      "side": "Right",
+      "returnDate": "2026-09-14"
+     }
+    },
+    {
+     "id": "-227913",
+     "shortComment": "The Diamondbacks optioned Locklear to Triple-A Reno on Monday.",
+     "status": "60-Day-IL",
+     "date": "2026-09-12T21:22Z",
+     "athlete": {
+      "firstName": "Tyler",
+      "lastName": "Locklear",
+      "displayName": "Tyler Locklear",
+      "shortName": "T. Locklear",
+      "position": {
+       "id": "3",
+       "name": "First Base",
+       "displayName": "First Baseman",
+       "abbreviation": "1B",
+       "leaf": true
+      },
+      "team": {
+       "id": "29",
+       "name": "Diamondbacks",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Diamondbacks"
+      },
+      "status": {
+       "id": "10",
+       "name": "Injured/60",
+       "type": "injured60",
+       "abbreviation": "IL60"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "11",
+      "name": "INJURY_STATUS_60DAYIL",
+      "description": "60-day IL",
+      "abbreviation": "IL60"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "60-Day IL",
+       "abbreviation": "60-Day IL"
+      },
+      "type": "Thumb",
+      "detail": "Fracture",
+      "side": "Right",
+      "returnDate": "2027-02-01"
+     }
+    },
+    {
+     "id": "1023367",
+     "shortComment": "The Diamondbacks transferred Thompson (back) to the 60-day IL on Tuesday.",
+     "status": "60-Day-IL",
+     "date": "2026-09-01T21:34Z",
+     "athlete": {
+      "firstName": "Ryan",
+      "lastName": "Thompson",
+      "displayName": "Ryan Thompson",
+      "shortName": "R. Thompson",
+      "position": {
+       "id": "0",
+       "name": "Relief Pitcher",
+       "displayName": "Relief Pitcher",
+       "abbreviation": "RP",
+       "leaf": true
+      },
+      "team": {
+       "id": "29",
+       "name": "Diamondbacks",
+       "abbreviation": "ARI",
+       "displayName": "Arizona Diamondbacks"
+      },
+      "status": {
+       "id": "10",
+       "name": "Injured/60",
+       "type": "injured60",
+       "abbreviation": "IL60"
+      }
+     },
+     "source": {
+      "id": "1",
+      "description": "basic/manual",
+      "state": "basic"
+     },
+     "type": {
+      "id": "11",
+      "name": "INJURY_STATUS_60DAYIL",
+      "description": "60-day IL",
+      "abbreviation": "IL60"
+     },
+     "details": {
+      "fantasyStatus": {
+       "description": "60-Day IL",
+       "abbreviation": "60-Day IL"
+      },
+      "type": "Back",
+      "detail": "Strain",
+      "side": "Not Specified",
+      "returnDate": "2027-02-01"
+     }
+    }
+   ]
+  }
+ ]
+}

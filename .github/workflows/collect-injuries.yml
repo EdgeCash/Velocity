@@ -3,10 +3,17 @@ name: Collect injuries snapshot
 # The injuries feed moves on a daily rhythm the weekly projections refresh
 # can't see: official reports finalize Friday, and Sunday-morning scratches
 # are exactly the information the intel layer's veto signals exist for
-# (docs/INTEL.md §6). This banks one NFL injuries snapshot per run into a
-# PRIVATE Actions artifact — the live slate downloads the freshest one at
-# build time; nothing is committed. The committed nflverse history
+# (docs/INTEL.md §6). This banks the injury snapshots per run into a PRIVATE
+# Actions artifact — the live slate downloads the freshest at build time;
+# nothing is committed. The committed nflverse history
 # (datasets/nfl/injuries.parquet) is the backtest twin of these snapshots.
+#
+# Two sources, because one of them only covers football. FantasyPros is NFL
+# only, which meant the intel layer's availability vetoes abstained on every
+# other league — an MLB card priced with no idea a listed starter was on the
+# 60-day IL. ESPN's report is keyless and covers all six leagues we price, so
+# it runs unconditionally: it needs no secret and cannot be skipped for want
+# of one.
 
 on:
   schedule:
@@ -47,7 +54,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
-      - name: Snapshot injuries
+      # continue-on-error is what makes the ESPN step below actually
+      # unconditional: without it a missing or expired FP_API_KEY fails this
+      # step, the job stops, and five leagues lose their only injury source to
+      # a secret none of them use.
+      - name: Snapshot injuries (FantasyPros, NFL)
+        continue-on-error: true
         env:
           FP_API_KEY: ${{ secrets.FP_API_KEY }}
         run: |
@@ -57,10 +69,18 @@ jobs:
             --out artifacts/fp \
             --injuries-only
 
+      # Keyless, every league, and deliberately NOT gated on the step above:
+      # a missing or expired FP_API_KEY must not take the other five leagues'
+      # injury reports down with it.
+      - name: Snapshot ESPN injuries (all leagues, keyless)
+        run: python scripts/collect_espn_injuries.py --out artifacts/espn
+
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4
         with:
           name: fp-injuries-${{ github.run_id }}
-          path: artifacts/fp/*.parquet
+          path: |
+            artifacts/fp/*.parquet
+            artifacts/espn/*.parquet
           if-no-files-found: warn
           retention-days: 30

@@ -834,7 +834,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="judge qualifying bets against stats/form/rest/injuries")
     parser.add_argument("--injuries-file",
                         help="normalized injuries parquet (the collect_fantasypros "
-                             "artifact) — enables availability vetoes")
+                             "artifact) — enables availability vetoes. NFL only: "
+                             "FantasyPros has no other league.")
+    # ESPN's injury report (velocity/ingest/espn.py) — keyless, and the only
+    # injury source that covers every league we price. Before it, the intel
+    # layer's availability signals abstained on all five non-NFL leagues: an
+    # MLB card was priced with no idea a listed starter was on the 60-day IL.
+    parser.add_argument("--espn-injuries-file",
+                        help="banked espn_injuries parquet — availability vetoes "
+                             "for every league, not just the NFL")
     # BettingPros prop snapshot (the collect-bettingpros artifact): their own
     # projection block judges every qualifying prop — outside corroboration
     # for the plays product, never a pick source.
@@ -2017,6 +2025,60 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                   "regardless of the failure above: stake nothing today.")
 
 
+def _injury_report(args: argparse.Namespace, games: pd.DataFrame) -> pd.DataFrame | None:
+    """The availability evidence for this league — ESPN, FantasyPros, or neither.
+
+    Two sources, deliberately not merged into one blended view:
+
+    * **ESPN** (``--espn-injuries-file``) is keyless and covers every league we
+      price. It is the only reason an MLB, WNBA, NCAAF, NCAAB or NHL card has
+      any availability evidence at all — before it those five abstained
+      entirely, which on a baseball card meant no idea a listed starter was on
+      the 60-day IL. Its teams arrive in ESPN's key space and are resolved onto
+      the model's, scoped to this league because a team abbreviation is only
+      unique inside one.
+    * **FantasyPros** (``--injuries-file``) is NFL-only and already wired.
+
+    Where both exist (the NFL), the frames are concatenated rather than
+    reconciled. The consumer takes genuine outs and looks them up by team, so a
+    player both sources call out appears twice and vetoes once; a player only
+    one of them has is still seen. Reconciling two designations into a single
+    truth is a judgement neither feed licenses us to make.
+    """
+    frames: list[pd.DataFrame] = []
+    if args.espn_injuries_file:
+        from velocity.ingest.espn import resolve_injury_teams
+
+        known = sorted(
+            set(games["home_team"].astype(str)) | set(games["away_team"].astype(str))
+        )
+        raw = pd.read_parquet(args.espn_injuries_file)
+        espn, unresolved = resolve_injury_teams(raw, known, args.league)
+        if espn.empty:
+            print(f"\nintel: ESPN report carries no {args.league.upper()} rows "
+                  "that resolve to the model's teams")
+        else:
+            print(f"\nintel: ESPN injuries loaded — {int(espn['is_out'].sum())} genuine "
+                  f"outs across {espn['team'].nunique()} team(s)")
+            frames.append(espn)
+        if unresolved:
+            # A team nobody can look up is invisible, and silently invisible is
+            # how a whole league's report goes missing unnoticed.
+            print(f"  {len(unresolved)} ESPN team(s) unresolved: "
+                  f"{', '.join(unresolved[:6])}"
+                  f"{' …' if len(unresolved) > 6 else ''}")
+    if args.injuries_file:
+        fp = pd.read_parquet(args.injuries_file)
+        n_out = int(fp["is_out"].sum()) if "is_out" in fp.columns else 0
+        print(f"intel: FantasyPros injuries loaded ({n_out} genuine outs)")
+        frames.append(fp)
+    if not frames:
+        print("\nintel: no injuries snapshot (--espn-injuries-file / --injuries-file) "
+              "— availability signals abstain")
+        return None
+    return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+
+
 def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's parts
     args: argparse.Namespace,
     events: pd.DataFrame,
@@ -2055,14 +2117,7 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
             from velocity.ingest.local import load_plays
 
             plays = load_plays(plays_path)
-        injuries = None
-        if args.injuries_file:
-            injuries = pd.read_parquet(args.injuries_file)
-            n_out = int(injuries["is_out"].sum()) if "is_out" in injuries.columns else 0
-            print(f"\nintel: injuries snapshot loaded ({n_out} genuine outs)")
-        else:
-            print("\nintel: no injuries snapshot (--injuries-file) — availability "
-                  "signals abstain")
+        injuries = _injury_report(args, games)
         lib = ContextLibrary.build(games, plays, injuries, as_of=generated_at)
 
         kickoffs = {

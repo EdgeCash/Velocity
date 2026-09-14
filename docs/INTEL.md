@@ -230,3 +230,19 @@ python scripts/run_live_slate.py --league nfl --data datasets/nfl \
    a read of that report, not a guess; a unit test also pins every mapped
    slug to a market in `PROP_MARKETS`, so the table cannot drift into
    banking rows no model can use.
+
+
+## Injury coverage (2026-09-14)
+
+Availability signals used to abstain on every league but the NFL, because
+FantasyPros — the only injury source wired — serves no other. ESPN's keyless
+report (`velocity/ingest/espn.py`, `docs/DATA_PROVIDERS.md`) now covers all
+six, so an MLB, WNBA, NCAAF, NCAAB or NHL card is judged against who is
+actually playing.
+
+Coverage is honest about its own thinness: college programs are not obliged to
+publish injuries and mostly do not (NCAAF returned 3 rows on the first run,
+NCAAB 0), and the collector says so rather than letting a thin report read as a
+broken fetch. `Questionable` and `Day-To-Day` are deliberately **not** outs —
+the signal vetoes rather than nudges, and a game-time decision is not evidence
+that somebody is unavailable.

@@ -1,4 +1,4 @@
-# Live data providers — BettingPros, The Odds API, FantasyPros
+# Live data providers — BettingPros, The Odds API, FantasyPros, ESPN
 
 Three paid feeds sit behind the wagering stack. They serve different jobs, and —
 critically — they must never write into this **public** repo: provider terms
@@ -9,7 +9,8 @@ paid data lives only in **private GitHub Actions artifacts**, never in git.
 |---|---|---|---|---|
 | **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props — NFL, NCAAF, MLB | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
 | **The Odds API** | Historical + live odds, **line archive for CLV/backtest** | ✅ | `THE_ODDS_API` | 100k credits/month |
-| **FantasyPros** | Consensus **player projections** (prop inputs) | partial | `FP_API_KEY` | not published |
+| **FantasyPros** | Consensus **player projections** (prop inputs) — NFL | partial | `FP_API_KEY` | not published |
+| **ESPN** | **Injury reports**, all six leagues | ❌ live only | *none — keyless* | none published |
 
 The secrets are configured as **GitHub Actions repository secrets** (see the repo
 Settings → Secrets and variables → Actions). They are injected only into workflow
@@ -152,6 +153,94 @@ It snapshots consensus projections for both leagues into `artifacts/fp/*.parquet
 prints the raw top-level keys and first-player JSON to the log — that's how we
 verify the `FP_API_KEY` secret and tighten the tolerant normalizer against the
 real response. Same rules: never commits, `artifacts/` gitignored.
+
+## ESPN (`velocity/ingest/espn.py`)
+
+Injuries reached this system from one place — FantasyPros, NFL only — so the
+intel layer's availability signals, the ones that veto a bet when the player it
+depends on is not playing, **abstained on every other league**. An MLB card was
+priced with no idea a listed starter was on the 60-day IL.
+
+ESPN publishes an injury report per sport at
+`site.api.espn.com/apis/site/v2/sports/{sport}/{league}/injuries`. No key, no
+account, no quota, and it covers all six leagues we price. Measured on the
+first collection run: NFL 800 rows / 161 outs, MLB 283 / 272, NHL 85 / 44,
+WNBA 42 / 42, NCAAF 3 / 1, NCAAB 0.
+
+### The 403 was never about the IP
+
+`build_wnba_box.py` records that "ESPN's own edge 403s datacenter IPs" and
+routes around it through a sportsdataverse mirror. That conclusion was drawn
+with a **browser-impersonating** User-Agent — the script sets `Mozilla/5.0
+(X11; Linux x86_64) velocity-datasets` — and that is the thing being refused.
+A real browser running in a data center is exactly the shape of a scraper.
+
+Measured 2026-09-14, same host, same second, same endpoint:
+
+| User-Agent | Result |
+|---|---|
+| `Mozilla/5.0 (X11; Linux x86_64) velocity-datasets` | **403** |
+| `Mozilla/5.0 (Macintosh; …) AppleWebKit/537.36` | **403** |
+| `velocity-datasets/1.0 (+https://github.com/EdgeCash/Velocity)` | **200** |
+| `Python-urllib/3.12`, `curl/8.5.0` | **200** |
+
+So the rule is the opposite of the usual scraping instinct: **say what you
+are.** A UA naming the project and where to complain is served normally.
+
+If this endpoint ever starts returning 403, do **not** fix it by making the
+agent look more like a browser. That is the arms race this document declines
+to enter under PrizePicks, and it is precisely what gets refused here.
+
+(The WNBA box-score scripts are untouched. Their mirror works, is stable, and
+serves bulk season parquets this API does not — there is nothing to gain by
+moving them.)
+
+### Statuses, and the asymmetry that matters
+
+Vocabulary is per sport: football says `Out` / `Questionable` / `Injured
+Reserve`, baseball `10-Day-IL` / `15-Day-IL` / `60-Day-IL`, basketball
+`Day-To-Day`. `OUT_STATUSES` plus an injured-list shape match cover all of it.
+
+Two deliberate choices:
+
+- **`Questionable` and `Day-To-Day` are not outs.** They mean *probably
+  playing*, and the intel contract is that availability **vetoes** rather than
+  nudges. Treating a game-time decision as an out vetoes bets on players who
+  take the field.
+- **An unrecognized status reads as available.** A missing out costs a signal;
+  an invented one kills a good bet. MLB has changed its list lengths
+  repeatedly, so the failure mode is real.
+
+### Teams
+
+ESPN supplies both an abbreviation (`ARI`) and a display name ("Arizona
+Diamondbacks") because our leagues key differently — NFL by nflverse
+abbreviation, MLB and WNBA by full name, college by school. Both are offered to
+the same alias machinery every venue board uses, with two guards:
+
+- **Scoped to one league.** ESPN calls the Cardinals `ARI` and the
+  Diamondbacks `ARI` too. Resolving a multi-league bank in one pass hands one
+  of them the other's injury list, and there is no collision to detect because
+  there is only one `ARI` to go around.
+- **Collision-checked.** The alias fallback is prefix matching, which is what
+  lets "San Jose St." find "San Jose State" — and also what makes "Arizona
+  Cardinals" match "Arizona Diamondbacks". Two ESPN teams claiming one model
+  team is that misfire's signature, so neither is kept. Same-city pairs
+  (Cubs/White Sox, Yankees/Mets) resolve exactly and are unaffected.
+
+Everything that fails to resolve is dropped **and reported** — silently
+invisible is how a whole league's report goes missing unnoticed.
+
+### Collection and wiring
+
+`collect-injuries.yml` runs `scripts/collect_espn_injuries.py` alongside the
+FantasyPros step, which is marked `continue-on-error` so an expired
+`FP_API_KEY` cannot take five leagues' only injury source down with it. The
+runner takes `--espn-injuries-file` for every league; where both sources exist
+(the NFL) the frames are **concatenated, not reconciled** — the consumer takes
+genuine outs and looks them up by team, so a player both feeds call out vetoes
+once anyway, and reconciling two designations into a single truth is a
+judgement neither feed licenses us to make.
 
 ## The PrizePicks collector (`scripts/collect_prizepicks.py` + workflow)
 
