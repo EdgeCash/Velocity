@@ -84,13 +84,91 @@ export function tone(value) {
   return n > 0 ? 'pos' : 'neg';
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A build time → epoch milliseconds, or null.
+ *
+ * Two spellings reach the surface and they are NOT interchangeable. The slate
+ * `stamp` is the compact capture stamp the artifacts are named with
+ * (`20260909T191129Z`), which is UTC by construction. `built_at` is written by
+ * build_site_data.py as a NAIVE timestamp holding a UTC instant
+ * (`pd.Timestamp.now("UTC").tz_localize(None)`), and DuckDB hands it back as
+ * either a Date or a bare ISO string with no zone on it.
+ *
+ * That bare string is the trap. `Date.parse('2026-09-12T23:51:48')` is defined
+ * to read LOCAL time, so a viewer in New York would have the site reporting a
+ * build four hours in the FUTURE — and "updated in 4h" on a staleness chip is
+ * worse than no chip, because it reads as a bug in the data rather than in the
+ * clock. The zone is pinned here before anything parses it.
+ */
+export function stampTime(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.getTime() : null;
+  }
+  const text = String(value).trim();
+  const compact = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/.exec(text);
+  if (compact) {
+    const [, y, mo, d, h, mi, s] = compact;
+    return Date.UTC(+y, +mo - 1, +d, +h, +mi, +s);
+  }
+  const naive = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?$/.exec(text);
+  if (naive) {
+    const t = Date.parse(`${naive[1]}T${naive[2]}${naive[3] ?? ''}Z`);
+    return Number.isFinite(t) ? t : null;
+  }
+  const t = Date.parse(text);
+  return Number.isFinite(t) ? t : null;
+}
+
 /** 20260909T191129Z → Sep 9, 19:11 UTC. */
 export function stampLabel(stamp) {
-  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(stamp ?? '');
-  if (!m) return stamp ?? '';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[+m[2] - 1]} ${+m[3]}, ${m[4]}:${m[5]} UTC`;
+  const t = stampTime(stamp);
+  if (t === null) return stamp === null || stamp === undefined ? '' : String(stamp);
+  const d = new Date(t);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${hh}:${mm} UTC`;
+}
+
+/** The same instant in the viewer's own zone — "Sep 9, 3:11 PM". */
+export function localLabel(value) {
+  const t = stampTime(value);
+  if (t === null) return '';
+  return new Date(t).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+/** An elapsed duration in ms → "just now" / "14m ago" / "3h ago" / "2d ago". */
+export function ageLabel(ms) {
+  if (!Number.isFinite(ms)) return 'unknown';
+  // A runner's clock and a viewer's clock disagree by seconds, and a build
+  // stamped a minute into the future must not print "−1m ago".
+  if (ms < 60_000) return 'just now';
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/* How old is too old. The slate builds twice a day — 16:53 and 22:53 UTC
+   (live-slate.yml) — so the longest HEALTHY gap is the eighteen hours from the
+   evening run to the next afternoon one. Past eight hours a run has been
+   missed and the surface should say so quietly; past twenty, the evening run
+   went missing too and the whole board is yesterday's. An unparseable stamp is
+   stale by definition: not knowing when the data is from is not reassuring. */
+const AGING_MS = 8 * 3600_000;
+const STALE_MS = 20 * 3600_000;
+
+/** 'fresh' | 'aging' | 'stale' — the class the chip's colour hangs off. */
+export function ageTone(ms) {
+  if (!Number.isFinite(ms)) return 'stale';
+  if (ms < AGING_MS) return 'fresh';
+  if (ms < STALE_MS) return 'aging';
+  return 'stale';
 }
 
 /** A kickoff Date → "Sun 1:00 PM" in the viewer's own zone. */

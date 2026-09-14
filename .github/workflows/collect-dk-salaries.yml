@@ -9,10 +9,10 @@ name: Collect DraftKings salaries
 
 on:
   schedule:
-    # Once daily at 15:00 UTC (late morning ET): after DK posts/moves salaries
+    # Once daily at 15:31 UTC (late morning ET): after DK posts/moves salaries
     # and before evening lock windows. Tighten toward slate lock if
     # late-swap-relevant history is wanted.
-    - cron: "0 15 * * *"
+    - cron: "31 15 * * *"
   workflow_dispatch:
     inputs:
       leagues:

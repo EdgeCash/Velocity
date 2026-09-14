@@ -219,5 +219,6 @@ where league != '__none__'
   cards={cards}
   parlays={parlays}
   stamp={meta[0]?.stamp ?? ''}
+  builtAt={meta[0]?.built_at ?? ''}
   tier={meta[0]?.tier ?? 'private'}
 />

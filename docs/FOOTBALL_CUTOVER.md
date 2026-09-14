@@ -218,10 +218,10 @@ operator should manually dispatch each new workflow once as verification:
   CFBD REST for NCAAF — needs the `CFBD_API_KEY` secret) and commits the
   changed parquets. Idempotent per-season replace; if branch protection blocks
   the github-actions bot's push, allow bypass or convert the push to a PR.
-- `collect-football-props.yml` (15:00/22:00 UTC daily) —
+- `collect-football-props.yml` (15:19/22:19 UTC daily) —
   `scripts/collect_football_props.py` banks NFL+NCAAF prop boards (raw
   per-event JSON + normalized `PropLines` parquet) to private artifacts.
-- `collect-dk-salaries.yml` (15:00 UTC daily) — `velocity/dfs/salaries.py` +
+- `collect-dk-salaries.yml` (15:31 UTC daily) — `velocity/dfs/salaries.py` +
   `scripts/collect_dk_salaries.py` bank every DK draft group's salaries (raw
   lobby/draftables JSON + normalized `Salaries` parquet) to private
   artifacts. Unauthenticated; no secret.

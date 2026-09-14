@@ -21,12 +21,19 @@ on:
     # UTC, and every window sits AFTER the relevant availability news and
     # BEFORE the slate it serves locks. MLB posts batting orders 2-3 hours
     # out; the NFL posts inactives 90 minutes out.
-    - cron: "0 16 * * *"    # MLB day games; NFL early-slate inactives (11:30 ET)
-    - cron: "30 19 * * *"   # NFL late-slate inactives (14:35 ET)
-    - cron: "30 21 * * *"   # MLB main slate, cards mostly in
-    - cron: "30 22 * * *"   # MLB main slate, second pass nearer lock
-    - cron: "30 23 * * *"   # Sunday-night inactives (18:50 ET); MLB west cards
-    - cron: "0 1 * * *"     # MLB night slate
+    #
+    # Odd minutes, per the map in docs/LAUNCH.md. The 16:11 window matters
+    # beyond queue spread: it used to be 16:00, the same minute as
+    # live-slate.yml, and live-slate's "Fetch the latest DFS entries" step
+    # downloads this workflow's newest SUCCESSFUL run — so starting together
+    # meant the site always showed the PREVIOUS window's lineups. Forty
+    # minutes of head start is what makes that step fetch today's.
+    - cron: "11 16 * * *"   # MLB day games; NFL early-slate inactives (11:30 ET)
+    - cron: "29 19 * * *"   # NFL late-slate inactives (14:35 ET)
+    - cron: "31 21 * * *"   # MLB main slate, cards mostly in
+    - cron: "39 22 * * *"   # MLB main slate, second pass nearer lock
+    - cron: "29 23 * * *"   # Sunday-night inactives (18:50 ET); MLB west cards
+    - cron: "17 1 * * *"    # MLB night slate
   workflow_dispatch:
     inputs:
       leagues:

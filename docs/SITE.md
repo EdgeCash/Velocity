@@ -98,6 +98,7 @@ site/
       model.js            the joins: flat rows -> game objects (pure, tested)
       state.js            view/league/game in the URL hash
       Ticker.svelte       the scores crawl, in the top bar
+      Stamp.svelte        how old the board is, in the top bar
       CardPanel.svelte    what cleared the publish gate, and what did not
       GamesPanel.svelte   the feed, grouped by day, live games first
       GameCard.svelte     a game row and its expand-in-place dossier
@@ -609,6 +610,48 @@ text, not file contents. CI always starts fresh.)
    Worker. Access lives in the Zero Trust dashboard, which no workflow can
    see, so the attestation has to be a human one. Re-run the curl above and
    unset the variable if you ever detach the policy.
+
+## How old the board is
+
+A static site's worst habit is looking alive. Everything on this surface
+except the live scores is whatever the last `live-slate` run published, and a
+page of prices with no age on it reads as current — which is how a slate from
+two days ago gets acted on. So the top bar carries the age of the data next to
+the scores crawl, and the two answer the same question from opposite ends: the
+ticker says what is moving now, the chip says how old everything that *isn't*
+moving is.
+
+It is a **relative** age — "18h ago" — because that is the question actually
+being asked; "Sep 12, 23:51 UTC" needs arithmetic and a timezone conversion
+first. The absolute instant is on the hover, in UTC and in the viewer's own
+zone, and spelled out again in the rail and the footer stub.
+
+Three tiers, from the slate's own cadence (`live-slate.yml` runs 16:53 and
+22:53 UTC, so six hours apart and then eighteen):
+
+| Age | Reads as | Means |
+|---|---|---|
+| under 8h | teal | the last run landed |
+| 8–20h | amber | a run was missed |
+| over 20h, or no stamp | red | the evening run went missing too; this is yesterday's board |
+
+An unparseable stamp is **stale**, not unknown-and-therefore-fine: not knowing
+when the prices are from is not the reassuring case.
+
+Two values feed it, and they are not the same thing. `stamp` is the newest
+slate capture in the build — when the **data** is from. `built_at` is when
+`build_site_data.py` ran — when the **page** was made. A normal run builds a
+minute after the capture and only the one number shows; a rebuild over banked
+artifacts can publish hours after the slate it is showing, and then both
+appear. The chip always ages the *data*, because that is what the numbers on
+screen are.
+
+One trap worth keeping, in `format.js:stampTime`. `built_at` is written as
+`pd.Timestamp.now("UTC").tz_localize(None)` — a UTC instant with the zone
+stripped — and `Date.parse` is *specified* to read a bare ISO string as local
+time. Parsed naively, a viewer west of Greenwich gets a build timestamped in
+the future and a chip reading "updated in 4h", which looks like broken data
+rather than a broken clock. The zone is pinned before anything parses it.
 
 ## Daily publish
 

@@ -13,9 +13,51 @@ turning it on, verifying it, and running it week to week.
 | `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → private artifact |
 | `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → private artifact |
 | `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → private artifact |
-| `refresh-datasets.yml` | Tue 9am UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` |
-| `collect-football-props.yml` | daily 15:00/22:00 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → private artifact |
-| `collect-dk-salaries.yml` | daily 15:00 UTC | — | DK salary snapshots → private artifact |
+| `refresh-datasets.yml` | daily 09:29 UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` |
+| `collect-football-props.yml` | daily 15:19/22:19 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → private artifact |
+| `collect-dk-salaries.yml` | daily 15:31 UTC | — | DK salary snapshots → private artifact |
+
+### The minute map
+
+Every scheduled workflow gets its **own odd minute**, and none of them sit on
+`:00` or `:30`. Two reasons, and both are real:
+
+* **Queue time.** GitHub runs all of Actions' cron off one queue, and the
+  default anyone writes first is `0 * * * *` — so the top of the hour is where
+  the whole platform piles up, with `:30` second. This repo's 16:00 slate was
+  routinely starting closer to 18:40, two and a half hours late, with nothing
+  wrong on our side. Moving off the crowded minutes is the only lever we have
+  over that, and it is free.
+* **Ordering.** `live-slate.yml` consumes what the other workflows produce, so
+  it runs **last** in its hour. It used to share `16:00` with `dfs-slate.yml`
+  exactly, and its "Fetch the latest DFS entries" step downloads that
+  workflow's newest *successful* run — so the site's DFS lineups were always
+  one window stale, because the run it wanted was still in progress.
+
+| Minute | Workflow | Hours (UTC) |
+|---|---|---|
+| `:07` | `collect-exchanges.yml` | hourly |
+| `:11` | `dfs-slate.yml` | 16 |
+| `:13` | `collect-bettingpros.yml` | every 3h |
+| `:17` | `dfs-slate.yml` | 1 |
+| `:19` | `collect-football-props.yml` | 15, 22 |
+| `:23` | `collect-odds.yml` | hourly |
+| `:29` | `refresh-datasets.yml` · `collect-kalshi-candles.yml` · `dfs-slate.yml` | 9 · 12 · 19, 23 |
+| `:31` | `model-drift.yml` · `collect-dk-salaries.yml` · `dfs-slate.yml` | 6 (1st/15th) · 15 · 21 |
+| `:33` | `collect-injuries.yml` | 16 (Sun) |
+| `:37` | `collect-fantasypros.yml` · `collect-injuries.yml` | 12 (Tue/Thu/Sat/Sun) · 15 |
+| `:39` | `dfs-slate.yml` | 22 |
+| `:43` | `collect-prizepicks.yml` | every 3h |
+| `:47` | `consolidate-exchanges.yml` | 9 (Mon) |
+| `:53` | `live-slate.yml` | 16, 22 |
+
+`tests/test_workflow_schedules.py` pins all of it: no crowded minutes, no two
+workflows on the same slot, and nothing `live-slate.yml` reads starting at or
+after it. Adding a schedule means picking a free minute from this table.
+
+> Cron is *best effort* on GitHub's side no matter which minute you pick — a
+> run can still start late, and a busy hour can drop one entirely. The odd
+> minutes shorten the queue; they do not make the schedule a guarantee.
 
 > **Note (2026-09):** the MLB-specific workflows referenced below were folded
 > into `live-slate.yml` per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md)
@@ -94,8 +136,9 @@ public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
   workflow dispatch (defaults 0.02 and 100). The design's real edge is **selective
   NCAAF totals** (see `docs/BACKTEST_NCAAF.md`) — raise `min_edge` to bet only the
   bigger disagreements.
-- **Cron windows:** `live-slate.yml`'s cron is a sensible default
-  (Thu/Sat/Sun/Mon, 16:00 & 22:00 UTC); tighten it to the real kickoff windows.
+- **Cron windows:** `live-slate.yml`'s cron is a sensible default (daily, 16:53
+  & 22:53 UTC); tighten it to the real kickoff windows. Keep the minute odd and
+  keep it last in its hour — see **The minute map** above for why.
 - **Staking discipline:** fractional Kelly with per-bet and per-game group caps is
   already enforced (`velocity/wagering/staking.py`); the group cap keeps one
   game's correlated bets bounded.

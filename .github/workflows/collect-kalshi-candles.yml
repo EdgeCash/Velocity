@@ -9,8 +9,8 @@ name: Collect Kalshi candles (settled markets)
 
 on:
   schedule:
-    # Daily 12:00 UTC — after the previous night's games (incl. MNF) settle.
-    - cron: "0 12 * * *"
+    # Daily 12:29 UTC — after the previous night's games (incl. MNF) settle.
+    - cron: "29 12 * * *"
   workflow_dispatch:
     inputs:
       since_hours:

@@ -11,8 +11,9 @@ name: Collect exchange boards (Kalshi + Polymarket)
 
 on:
   schedule:
-    # Hourly at :10, offset from collect-odds.yml's :30.
-    - cron: "10 * * * *"
+    # Hourly at :07 (see the minute map in docs/LAUNCH.md), offset from
+    # collect-odds.yml's :23.
+    - cron: "7 * * * *"
   workflow_dispatch:
     inputs:
       leagues:

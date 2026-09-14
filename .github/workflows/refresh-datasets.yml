@@ -13,7 +13,7 @@ name: Refresh datasets (current season)
 
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "29 9 * * *"
   workflow_dispatch:
     inputs:
       season:
