@@ -145,9 +145,18 @@
     text-transform: uppercase;
     color: var(--v-warn);
   }
+  /* One line, always. This is the only thing in the top bar that is a
+     SENTENCE, and left to wrap it makes the sticky bar two or three rows tall
+     on a phone — which then sits wrong against `.cmd`'s fixed sticky offset
+     and eats a third of the screen to say that nothing is happening. */
   .note {
+    flex: 0 1 auto;
+    min-width: 0;
     font-size: 0.72rem;
     color: var(--v-ink-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   @media (prefers-reduced-motion: reduce) {
     .track { animation: none; }

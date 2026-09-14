@@ -9,6 +9,7 @@
   import { num, pct, signed, tone, stampLabel, marketLabel } from '../format.js';
   import { flaggedMarkets, realRows, toTime } from './model.js';
   import { hubState } from './state.js';
+  import Stamp from './Stamp.svelte';
 
   export let bankroll = [];
   export let exposure = [];
@@ -20,6 +21,7 @@
   export let health = [];
   export let isPrivate = true;
   export let stamp = '';
+  export let builtAt = '';
 
   $: bank = realRows(bankroll)[0] ?? null;
   $: exp = realRows(exposure);
@@ -210,7 +212,13 @@
     </section>
   {/if}
 
-  <p class="built">Built {stampLabel(stamp)}</p>
+  <!-- The rail's copy of the age, spelled out. The topbar chip is the glance
+       ("18h ago"); this is the receipt — which capture the board on screen
+       came from, and when the page around it was made. -->
+  <p class="built">
+    <Stamp {stamp} {builtAt} />
+    <span class="at">Slate {stampLabel(stamp)}</span>
+  </p>
 </aside>
 
 <style>
@@ -358,6 +366,10 @@
   .cv { font-size: 0.7rem; color: var(--v-ink-2); line-height: 1.4; }
 
   .built {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.5rem;
     margin: 0.2rem 0 0;
     font-family: var(--v-board);
     font-size: 0.6rem;

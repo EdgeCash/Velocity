@@ -28,14 +28,14 @@ What the historical measurement says (see :data:`HISTORICAL_NOTES`):
 
 The headline is that the flat 0.5 is wrong in both directions, and the largest
 error is on the pair a card carries most often. Spread and total on the same
-game are close to independent — NFL ρ −0.006 (95% CI [−0.036, +0.026]) on 3,952
+game are close to independent — NFL ρ −0.0045 (95% CI [−0.035, +0.026]) on 3,966
 non-push games, flat across all fifteen seasons. De-scaling that pair as if it
 were half-correlated under-bets both legs by about a third.
 
 The exception is blowout pricing, and only in college. NCAAF favourite-covers ×
 over is ρ +0.070 overall, but that average hides a clean monotone structure:
 flat (+0.008, CI [−0.015, +0.032]) for every favourite under 14, then +0.107 at
-14-21, +0.185 at 21-28, +0.260 past 28. Reading it home-relative instead gives
+14-21, +0.185 at 21-28, +0.269 past 28. Reading it home-relative instead gives
 +0.050 and hides the structure, which is why the module restates every spread
 from the favourite's side. Physically plain — a four-touchdown
 college favourite covering *is* a game with points in it. It is stable season by
@@ -116,7 +116,7 @@ FAVOURITE_BUCKETS: tuple[tuple[float, float], ...] = (
 # the values, with intervals and sample sizes.
 HISTORICAL_NOTES: Mapping[tuple[str, str], float] = {
     # NFL — spread and total are independent, at every favourite size
-    ("nfl", "spread x total"): -0.006,
+    ("nfl", "spread x total"): -0.0045,
     ("nfl", "spread x total, favourite 3-7"): -0.014,
     ("nfl", "moneyline x spread"): +0.710,
     ("nfl", "total same-side 2p"): +0.878,

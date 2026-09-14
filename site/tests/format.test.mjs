@@ -16,7 +16,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  american, isNum, marketLabel, num, pct, signed, venueMark,
+  ageLabel, ageTone, american, isNum, marketLabel, num, pct, signed,
+  stampLabel, stampTime, venueMark,
 } from '../components/format.js';
 
 const MINUS = '−';
@@ -82,6 +83,63 @@ test('a prop market from the feed is cased like every other market', () => {
   assert.equal(marketLabel('pitcher strikeouts'), 'Pitcher strikeouts');
   assert.equal(marketLabel('player_reception_yds'), 'Player reception yds');
   assert.equal(marketLabel(null), '');
+});
+
+/* ---- when the board was last updated ---------------------------------- */
+
+test('a capture stamp reads as the UTC instant it names', () => {
+  assert.equal(stampTime('20260912T235148Z'), Date.UTC(2026, 8, 12, 23, 51, 48));
+  // The stamps in the wild carry the Z; the ones in older filenames do not.
+  assert.equal(stampTime('20260912T235148'), Date.UTC(2026, 8, 12, 23, 51, 48));
+  assert.equal(stampLabel('20260909T191129Z'), 'Sep 9, 19:11 UTC');
+});
+
+test('a naive built_at is read as UTC, not as the viewer local time', () => {
+  // THE trap this function exists for. `built_at` is written by
+  // build_site_data.py as `pd.Timestamp.now("UTC").tz_localize(None)` — a UTC
+  // instant with the zone stripped off — and `Date.parse` is *specified* to
+  // read a bare ISO string as LOCAL time. A viewer west of Greenwich would
+  // therefore see a build timestamped in the future, and the staleness chip
+  // would read "updated in 4h": a number that looks like broken data rather
+  // than a broken clock.
+  const want = Date.UTC(2026, 8, 12, 23, 51, 48);
+  assert.equal(stampTime('2026-09-12T23:51:48'), want);
+  assert.equal(stampTime('2026-09-12 23:51:48'), want, 'DuckDB spells it with a space');
+  assert.equal(stampTime('2026-09-12T23:51:48.123456'), want + 123);
+  assert.equal(stampTime('2026-09-12T23:51:48Z'), want, 'an explicit zone still works');
+  assert.equal(stampTime(new Date(want)), want, 'and a real Date passes through');
+});
+
+test('a missing or unreadable stamp is null, never an instant', () => {
+  // `new Date(null)` is the epoch, which would render as "56y ago" rather
+  // than as "we do not know" — the same trap `toTime` closes in model.js.
+  for (const value of [null, undefined, '', 'not a stamp', '2026-13-45']) {
+    assert.equal(stampTime(value), null, `${value} must not parse`);
+  }
+});
+
+test('an age reads as the answer to "how old", not as a timestamp', () => {
+  assert.equal(ageLabel(0), 'just now');
+  assert.equal(ageLabel(14 * 60_000), '14m ago');
+  assert.equal(ageLabel(3 * 3600_000), '3h ago');
+  assert.equal(ageLabel(50 * 3600_000), '2d ago');
+  // A runner's clock a minute ahead of the viewer's must not print "−1m ago".
+  assert.equal(ageLabel(-90_000), 'just now');
+  assert.equal(ageLabel(NaN), 'unknown');
+});
+
+test('the staleness tiers are the slate cadence, not round numbers', () => {
+  // live-slate.yml runs 16:53 and 22:53 UTC, so six hours apart and then
+  // eighteen. Past 8h a run has been missed; past 20h the evening run went
+  // missing too and the whole board is yesterday's.
+  assert.equal(ageTone(2 * 3600_000), 'fresh');
+  assert.equal(ageTone(7.9 * 3600_000), 'fresh');
+  assert.equal(ageTone(8 * 3600_000), 'aging');
+  assert.equal(ageTone(19 * 3600_000), 'aging');
+  assert.equal(ageTone(20 * 3600_000), 'stale');
+  // No stamp is stale by definition: not knowing how old the prices are is
+  // not the reassuring case.
+  assert.equal(ageTone(NaN), 'stale');
 });
 
 test('every venue resolves to a two-letter mark', () => {

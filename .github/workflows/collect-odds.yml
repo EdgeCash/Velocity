@@ -16,7 +16,8 @@ on:
     # ~11k/month, well under the 100k budget. All five slate leagues are
     # snapshotted so every league's plays can be graded against a real
     # close (the CLV loop in grade_yesterday.py).
-    - cron: "30 * * * *"
+    # :23 past the hour — see the minute map in docs/LAUNCH.md.
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       leagues:

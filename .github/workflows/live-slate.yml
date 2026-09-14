@@ -13,9 +13,18 @@ name: Live slate
 on:
   schedule:
     # Daily windows (UTC): the summer leagues (MLB/WNBA) play every night, and
-    # 16:00 + 22:00 still bracket football's afternoon/evening kickoffs on
+    # 16:xx + 22:xx still bracket football's afternoon/evening kickoffs on
     # game days. Off nights find an empty board and succeed cheaply.
-    - cron: "0 16,22 * * *"
+    #
+    # :53 rather than :00, and it is the LAST minute in the map
+    # (docs/LAUNCH.md) on purpose. This job is the one that consumes every
+    # other workflow's artifact — the odds archive, the props boards, the DFS
+    # lineups, the injuries — so it wants to start after they have all had
+    # their turn in the hour, not alongside them. The odds snapshot it reuses
+    # is then :23's, thirty minutes old and comfortably inside
+    # `board_max_age_min` (75), so the board still comes from banked data
+    # rather than a paid pull.
+    - cron: "53 16,22 * * *"
   workflow_dispatch:
     inputs:
       leagues:

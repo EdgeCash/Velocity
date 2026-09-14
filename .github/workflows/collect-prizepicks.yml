@@ -13,7 +13,7 @@ on:
     # Every 3 hours, mirroring the BettingPros cadence: in-season this brackets
     # board moves toward lock; off-season the snapshot is small or empty and
     # the job still succeeds.
-    - cron: "30 */3 * * *"
+    - cron: "43 */3 * * *"
   workflow_dispatch:
     inputs:
       leagues:

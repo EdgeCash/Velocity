@@ -19,7 +19,7 @@ on:
     # Twice daily (UTC): mid-morning ET for overnight moves, early evening ET
     # after injury reports land. Tighten toward kickoff if closer-to-close
     # prop CLV is wanted.
-    - cron: "0 15,22 * * *"
+    - cron: "19 15,22 * * *"
   workflow_dispatch:
     inputs:
       leagues:

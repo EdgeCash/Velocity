@@ -23,7 +23,7 @@
     buildCard, buildGames, buildLineups, buildParlays, flaggedMarkets,
     leagueCounts, realRows, splitCards,
   } from './model.js';
-  import { teamIndex } from '../format.js';
+  import { stampLabel, stampTime, teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
   import GamesPanel from './GamesPanel.svelte';
   import DfsPanel from './DfsPanel.svelte';
@@ -32,6 +32,7 @@
   import RecordPanel from './RecordPanel.svelte';
   import RatingsPanel from './RatingsPanel.svelte';
   import Rail from './Rail.svelte';
+  import Stamp from './Stamp.svelte';
 
   export let games = [];
   export let projections = [];
@@ -57,7 +58,10 @@
   export let ratings = [];
   export let cards = [];
   export let parlays = [];
+  /** The newest slate capture stamp in the build — when the DATA is from. */
   export let stamp = '';
+  /** When build_site_data.py ran — when the PAGE was made. */
+  export let builtAt = '';
   /** 'private' carries prices, edges, stakes and the bankroll; 'public' does not. */
   export let tier = 'private';
 
@@ -158,6 +162,20 @@
     ratings: realRows(ratings).length,
   };
 
+  // The footer's absolute reading of the same thing the topbar chip shows as
+  // an age. It used to print the raw `20260912T235148Z`, which is a filename,
+  // not a time. Both instants appear only when they actually differ — a
+  // normal run builds a minute after the capture and repeating it is noise.
+  $: builtLine = (() => {
+    const slate = stampLabel(stamp);
+    const at = stampTime(stamp);
+    const built = stampTime(builtAt);
+    const same = at !== null && built !== null && Math.abs(built - at) <= 5 * 60_000;
+    if (!slate) return built === null ? '' : `Built ${stampLabel(builtAt)}`;
+    if (built === null || same) return `Slate ${slate}`;
+    return `Slate ${slate} · built ${stampLabel(builtAt)}`;
+  })();
+
   function setView(next) { hubState.set({ view: next, game: '' }); }
   function setLeague(next) { hubState.set({ league: next }); }
 </script>
@@ -169,6 +187,10 @@
       <span class="tierpill" class:pub={!isPrivate}>{isPrivate ? 'Private' : 'Public'}</span>
     </div>
     <Ticker games={$live.games} ok={$live.ok} tried={$live.tried} />
+    <!-- Sticky, beside the live scores, because those two things answer the
+         same question from opposite ends: the ticker says what is moving
+         right now, and this says how old everything that ISN'T moving is. -->
+    <Stamp {stamp} {builtAt} />
   </header>
 
   <nav class="cmd" aria-label="views">
@@ -232,6 +254,7 @@
     <Rail
       {bankroll} {exposure} {units} positions={openPositions}
       games={hub} live={$live} {modelConfig} {health} {isPrivate} {stamp}
+      {builtAt}
     />
   </div>
 
@@ -241,7 +264,7 @@
       Model output for entertainment only · not advice · no order is ever
       placed from here
     </span>
-    <span class="built">{stamp}</span>
+    <span class="built">{builtLine}</span>
   </footer>
 </div>
 

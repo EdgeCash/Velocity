@@ -513,7 +513,7 @@ portfolio's tail is wider than the table above.
 ### The clock
 
 `.github/workflows/dfs-slate.yml` runs the DFS surfaces on their own
-schedule rather than riding the betting slate's 16:00/22:00 UTC cadence,
+schedule rather than riding the betting slate's 16:53/22:53 UTC cadence,
 for exactly the reason the backtests give:
 
 Every window sits **after** the relevant availability news and **before**
@@ -522,12 +522,12 @@ the NFL posts inactives ninety minutes out.
 
 | Cron (UTC) | What it catches |
 |---|---|
-| `0 16 * * *` | MLB day games; NFL early-slate inactives (11:30 ET) |
-| `30 19 * * *` | NFL late-slate inactives (14:35 ET) |
-| `30 21 * * *` | MLB main slate, cards mostly in |
-| `30 22 * * *` | MLB main slate, second pass nearer lock |
-| `30 23 * * *` | Sunday-night inactives (18:50 ET); MLB west-coast cards |
-| `0 1 * * *` | MLB night slate |
+| `11 16 * * *` | MLB day games; NFL early-slate inactives (11:30 ET) |
+| `29 19 * * *` | NFL late-slate inactives (14:35 ET) |
+| `31 21 * * *` | MLB main slate, cards mostly in |
+| `39 22 * * *` | MLB main slate, second pass nearer lock |
+| `29 23 * * *` | Sunday-night inactives (18:50 ET); MLB west-coast cards |
+| `17 1 * * *` | MLB night slate |
 
 Each run takes a fresh DK snapshot (salaries move, and the probable-pitcher
 and lineup flags are game-day state), builds every format, and uploads a
@@ -535,6 +535,14 @@ private artifact. The betting-slate workflow pulls the newest one in before
 it publishes the site, so the DFS page shows the entries built closest to
 lock. Every input is free and unauthenticated, so the extra runs cost
 nothing but minutes.
+
+The odd minutes are not decoration (`docs/LAUNCH.md`, **The minute map**). The
+16:11 window in particular used to be `0 16 * * *` — the same minute as
+`live-slate.yml` — and live-slate's "Fetch the latest DFS entries" step
+downloads this workflow's newest *successful* run. Starting together meant the
+run it wanted was still in progress, so the site published the **previous**
+window's lineups every time. The forty-minute head start is what makes that
+step fetch today's.
 
 ## The receipt
 

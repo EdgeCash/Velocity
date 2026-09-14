@@ -9,7 +9,7 @@ on:
   schedule:
     # Every 3 hours. In-season this captures line movement toward close; in the
     # off-season the snapshot is small (or empty) and the job still succeeds.
-    - cron: "0 */3 * * *"
+    - cron: "13 */3 * * *"
   workflow_dispatch:
     inputs:
       sports:
