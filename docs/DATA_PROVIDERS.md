@@ -7,7 +7,7 @@ paid data lives only in **private GitHub Actions artifacts**, never in git.
 
 | Provider | Job | History? | Secret(s) | Limit |
 |---|---|---|---|---|
-| **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
+| **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props — NFL, NCAAF, MLB | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
 | **The Odds API** | Historical + live odds, **line archive for CLV/backtest** | ✅ | `THE_ODDS_API` | 100k credits/month |
 | **FantasyPros** | Consensus **player projections** (prop inputs) | partial | `FP_API_KEY` | not published |
 
@@ -20,8 +20,15 @@ an Action, not from a checkout.
 
 - **BettingPros** is the production line feed. It has **no archive** — a line
   exists only while it is live — so line *history* has to be built by snapshotting
-  the current board on a schedule (see the collector below). It covers both NFL
-  and NCAAF, and (premium tier) carries its own projections.
+  the current board on a schedule (see the collector below). It covers NFL,
+  NCAAF and MLB, and (premium tier) carries its own projections.
+
+  MLB joined on 2026-09-14. It had been outside `SPORTS` since the collector was
+  written, which meant the in-season league carrying the largest real exposure
+  (`docs/WAGERING.md` §1.3) was the one league with no second line feed — while
+  the daily call spend sat at about 1% of a 5,000/day cap. Its prop board joined
+  `PROP_SPORTS` at the same time; the `/props` sport enum had listed MLB all
+  along and nothing had ever asked for it.
 - **The Odds API** is the one with real **history**, so it is the source for the
   closing-line archive that powers CLV measurement and the market-facing backtest.
   Its 100k monthly credits are the budget to spend deliberately (historical pulls
@@ -73,7 +80,7 @@ snapshot).
 dispatch). It:
 
 1. installs the package (runtime deps only),
-2. runs `collect_bettingpros.py`, which snapshots NFL + NCAAF game lines into a
+2. runs `collect_bettingpros.py`, which snapshots NFL + NCAAF + MLB game lines into a
    single timestamped parquet under `artifacts/bp/`, tagged with `league` and
    `collected_at`,
 3. uploads that parquet as a **private Actions artifact** (`retention-days: 30`).

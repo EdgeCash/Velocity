@@ -30,7 +30,17 @@ from pathlib import Path
 import pandas as pd
 from velocity.ingest.bettingpros import BettingProsClient, normalize_props
 
-SPORTS = ("NFL", "NCAAF")
+# The sports snapshotted by default. MLB joined on 2026-09-14: it is an
+# in-season sport carrying the largest real exposure in the book
+# (docs/WAGERING.md §1.3) and BettingPros quotes it, yet the collector had
+# only ever asked for football — so the one league where a better number is
+# worth the most was the one league with no second line feed at all.
+#
+# Call budget: a sport costs 3 calls for game lines (markets, events, offers)
+# and a prop sport 2 more (props, markets). Three sports plus two prop sports
+# is ~13 a run, 8 runs a day — about 2% of the 5k/day cap. The cap has never
+# been the constraint here; asking for less than we pay for was.
+SPORTS = ("NFL", "NCAAF", "MLB")
 
 
 def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
@@ -54,8 +64,12 @@ def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
                 raise
     raise RuntimeError("unreachable")
 # The /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport
-# enum has no NCAAF) — college props stay model-generated.
-PROP_SPORTS = ("NFL",)
+# enum has no NCAAF) — college props stay model-generated. MLB was inside that
+# enum the whole time and was never asked for; it is now. Its slugs are not yet
+# in BP_PROP_SLUG_TO_MARKET, so the intel layer abstains on every MLB row until
+# a real snapshot names them — banked evidence first, mapping second, which is
+# the only order that does not guess.
+PROP_SPORTS = ("NFL", "MLB")
 
 
 def collect(
@@ -124,9 +138,14 @@ def probe_props() -> None:
     and football is seasonal; 429 on every sport — in-season and off — means
     the partner key has no ``/props`` provisioning at all. limit=1, one
     request per sport, spaced under the 5 RPS budget; nothing is banked.
+
+    NCAAF and WNBA are probed too, not because the spec lists them (it does
+    not, for props) but because the only honest way to learn what this key can
+    reach is to ask. A 200 on either is a finding worth acting on; a 4xx
+    confirms the spec and costs one request.
     """
     client = BettingProsClient.from_env()
-    for sport in ("NFL", "MLB", "NBA", "NHL"):
+    for sport in ("NFL", "NCAAF", "MLB", "WNBA", "NBA", "NHL"):
         time.sleep(3)
         try:
             payload = client.props(sport, limit=1)

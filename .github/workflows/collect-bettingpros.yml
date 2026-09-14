@@ -15,7 +15,7 @@ on:
       sports:
         description: "Sports to snapshot (space-separated)"
         required: false
-        default: "NFL NCAAF"
+        default: "NFL NCAAF MLB"
       probe_props:
         description: "Probe /props status codes per sport instead of snapshotting"
         required: false
@@ -59,7 +59,7 @@ jobs:
           fi
           python scripts/collect_bettingpros.py \
             --out artifacts/bp \
-            --sports ${{ github.event.inputs.sports || 'NFL NCAAF' }} $EXTRA
+            --sports ${{ github.event.inputs.sports || 'NFL NCAAF MLB' }} $EXTRA
 
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4

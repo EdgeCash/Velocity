@@ -323,7 +323,9 @@ jobs:
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
-          BP_FILE=$(ls -t artifacts/bp/**/bp_props_nfl_*.parquet 2>/dev/null | head -1 || true)
+          # Per-league, resolved inside the loop below — the prop board is now
+          # banked for MLB as well as NFL, and a single NFL-shaped glob would
+          # have quietly fed football props to the baseball card.
           # The BettingPros game board — banked by the 3-hourly collector and,
           # until now, read by nothing. Paper by default: priced and graded so
           # the CLV record accrues, staked at zero (see --bp-stake).
@@ -357,7 +359,8 @@ jobs:
             if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
               EXTRA="$EXTRA --injuries-file $INJ_FILE"
             fi
-            if [ "${league}" = "nfl" ] && [ -n "$BP_FILE" ]; then
+            BP_FILE=$(ls -t artifacts/bp/**/bp_props_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$BP_FILE" ]; then
               EXTRA="$EXTRA --bp-props-file $BP_FILE"
             fi
             # The BP game board covers the sports the collector snapshots; the

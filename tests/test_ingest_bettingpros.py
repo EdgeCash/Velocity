@@ -440,3 +440,26 @@ def test_within_game_side_resolution_drops_an_ambiguous_label() -> None:
     out = resolve_sides_within_game(lines, events)
     # "New York" matches both, "Packers" neither; only "Jets" resolves.
     assert list(out["side"]) == ["away"]
+
+
+def test_bp_board_picks_its_league_out_of_a_multi_league_bank() -> None:
+    """The collector banks NFL, NCAAF and MLB into one parquet per run.
+
+    A board that ignored the league column would price baseball rows onto a
+    football card the moment MLB joined the collector.
+    """
+    nfl_lines, nfl_events = _banked()
+    mlb_lines = nfl_lines.assign(league="mlb", game_id="2002")
+    mlb_events = nfl_events.assign(
+        league="mlb", game_id="2002",
+        home_team="Kansas City Royals", away_team="Buffalo Bisons",
+    )
+    lines = pd.concat([nfl_lines, mlb_lines], ignore_index=True)
+    events = pd.concat([nfl_events, mlb_events], ignore_index=True)
+
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert notes["games"] == 1
+    # Only the football game's rows survived; the baseball ones never met the
+    # football board at all.
+    assert set(board["game_id"]) == {"odds-1"}
+    assert len(board) == len(nfl_lines)
