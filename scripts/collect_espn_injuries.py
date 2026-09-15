@@ -9,7 +9,7 @@ ESPN publishes an injury report per sport, keyless and quota-free, covering
 all six. This snapshots each into one timestamped parquet.
 
 Unlike the paid feeds, there is nothing to keep out of the repo on licensing
-grounds — but the output still lands in a private Actions artifact alongside
+grounds — but the output still lands in an Actions artifact alongside
 them, because it is operational data with no reason to be in git and the
 consumers already know how to find it there.
 
@@ -86,7 +86,7 @@ def collect(leagues: tuple[str, ...], stamp: pd.Timestamp) -> tuple[pd.DataFrame
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot ESPN injury reports")
     parser.add_argument("--out", default="artifacts/espn",
-                        help="output folder (private artifact, not git)")
+                        help="output folder (Actions artifact, not git)")
     parser.add_argument("--leagues", nargs="+", default=list(ESPN_LEAGUE_PATHS),
                         help=f"leagues to snapshot (default: {' '.join(ESPN_LEAGUE_PATHS)})")
     args = parser.parse_args()

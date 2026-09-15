@@ -64,7 +64,7 @@ jobs:
             --regions "${{ github.event.inputs.regions || 'us' }}" \
             --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}
 
-      - name: Upload snapshot (private artifact)
+      - name: Upload snapshot (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: odds-lines-${{ github.run_id }}

@@ -50,7 +50,7 @@ slate before football arrives in September.
 | Confidence calibration | `SlateConfig.prob_shrink` / `prop_shrink_by_market` / `exclude_markets` | ✅ live — tuned by walk-forward sweeps (see §1.3) |
 | Walk-forward backtests | `backtest/engine.py`, `backtest/mlb.py`, `backtest/props_mlb.py` | ✅ — game CLV+ROI and grade-free prop CLV over the banked archive |
 | Grading / scorecard | `report/scorecard.py`, `report/results.py`, `scripts/grade_archive.py` | ✅ — finals join (Odds-API id ↔ StatsAPI gamePk by team+date), ROI + calibration tables |
-| CLV archive | `collect-odds.yml`, `collect-mlb-props.yml`, `backtest/archive.py` | ✅ — hourly line snapshots + per-event prop banking → private artifacts |
+| CLV archive | `collect-odds.yml`, `collect-mlb-props.yml`, `backtest/archive.py` | ✅ — hourly line snapshots + per-event prop banking → Actions artifacts |
 
 ### 1.2 Built and tested, **not** wired
 
@@ -130,7 +130,7 @@ The single highest-leverage change: make bankroll a persisted, settled, real
 number.
 
 - **Build:** `wagering/ledger.py` — an append-only ledger (parquet, same
-  private-artifact discipline as the archive) with three record types:
+  artifact discipline as the archive) with three record types:
   `recommended` (every slate row, auto-appended by the runner), `placed`
   (operator-confirmed: actual price/stake/book — a tiny CLI,
   `scripts/ledger.py place/skip`, since the operator places bets manually per

@@ -124,7 +124,7 @@ def collect(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot ESPN rosters and depth charts")
     parser.add_argument("--out", default="artifacts/espn",
-                        help="output folder (private artifact, not git)")
+                        help="output folder (Actions artifact, not git)")
     parser.add_argument("--leagues", nargs="+", default=list(DEFAULT_LEAGUES),
                         help=f"leagues to snapshot (default: {' '.join(DEFAULT_LEAGUES)})")
     parser.add_argument("--season", type=int, default=None,

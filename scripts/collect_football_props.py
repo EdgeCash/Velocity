@@ -109,7 +109,8 @@ def snapshot_league(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot NFL/NCAAF player-prop lines")
-    parser.add_argument("--out", default="artifacts/props", help="output folder (private)")
+    parser.add_argument("--out", default="artifacts/props",
+                        help="output folder (artifact, never git)")
     parser.add_argument("--leagues", default="nfl ncaaf",
                         help="space-separated leagues to snapshot")
     parser.add_argument("--markets", default="",

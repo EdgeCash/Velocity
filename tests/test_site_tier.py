@@ -117,7 +117,7 @@ def test_every_named_private_column_is_blanked(table: str, columns: tuple) -> No
 def test_a_dfs_lineup_keeps_our_points_and_drops_draftkings_salary() -> None:
     # The projected points are the model's own output and are the whole reason
     # the lineup is interesting. The salary is DraftKings' data, and the repo
-    # already quarantines it to private artifacts.
+    # already quarantines it to Actions artifacts.
     lineups = pd.DataFrame([
         {"player_name": "C. Keith", "team": "DET", "salary": 3200.0,
          "points": 8.77, "league": "mlb"},

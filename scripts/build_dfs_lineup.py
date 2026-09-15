@@ -1,10 +1,10 @@
 """Build the optimal DK classic lineup from the day's snapshots → card + frame.
 
-Inputs are the two private artifacts the daily loop already collects: the DK
+Inputs are the two Actions artifacts the daily loop already collects: the DK
 salary snapshot (``collect_dk_salaries.py``) and the FantasyPros projections
 snapshot (``collect_fantasypros.py``). The main slate is auto-picked (most
 games on the board); ``--draft-group`` pins a specific one. Outputs land in
-``--out``: the lineup parquet (private-artifact material), the lineup card
+``--out``: the lineup parquet (artifact material), the lineup card
 PNG, and a captions file of post copy.
 
 Every failure mode (no salaries, empty board, infeasible pool) exits 0 with a

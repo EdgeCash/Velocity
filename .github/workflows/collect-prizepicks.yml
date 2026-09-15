@@ -2,7 +2,7 @@ name: Collect PrizePicks board
 
 # PrizePicks has no historical archive — a board line exists only while it is
 # live — so we build pick'em history by snapshotting the board on a schedule
-# and storing each snapshot as a PRIVATE Actions artifact. Nothing is
+# and storing each snapshot as an Actions artifact. Nothing is
 # committed: the repo is public, and both ToS hygiene and our own edge say
 # board snapshots never land in it. The feed is keyless; the collector is
 # deliberately polite (one request per league, spaced, backoff) and reports
@@ -53,7 +53,7 @@ jobs:
             --out artifacts/pp \
             --leagues ${{ github.event.inputs.leagues || 'NFL CFB' }}
 
-      - name: Upload snapshot (private artifact)
+      - name: Upload snapshot (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: pp-board-${{ github.run_id }}

@@ -440,7 +440,7 @@ jobs:
       # ---- the optimal DK lineup (DFS surface) --------------------------------
       # Needs both a DK salary snapshot and an FP projections snapshot; missing
       # either just skips the lineup. The lineup parquet + card land in the same
-      # private artifact (DK salaries are collected data — never public repo).
+      # Actions artifact (DK salaries are collected data — never public repo).
       - name: Fetch DraftKings salaries
         continue-on-error: true
         env:
@@ -491,7 +491,7 @@ jobs:
             fi
           done
 
-      - name: Upload slates (private artifact)
+      - name: Upload slates (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: slate-${{ github.run_id }}

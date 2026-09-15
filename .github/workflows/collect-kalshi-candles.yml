@@ -5,7 +5,7 @@ name: Collect Kalshi candles (settled markets)
 # honest close) and hourly candles for the market's life. Kalshi's live
 # endpoints keep ~3 months, so this runs daily — bank-forward is the primary
 # posture even though the /historical archive carries pre-cutoff seasons.
-# Free and keyless; private artifact only; nothing is committed.
+# Free and keyless; Actions artifact only; nothing is committed.
 
 on:
   schedule:
@@ -50,7 +50,7 @@ jobs:
             --out artifacts/exchanges \
             --since-hours ${{ github.event.inputs.since_hours || '36' }}
 
-      - name: Upload candles (private artifact)
+      - name: Upload candles (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: kalshi-candles-${{ github.run_id }}

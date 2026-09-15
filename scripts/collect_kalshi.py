@@ -8,7 +8,7 @@ can re-process later) and the normalized ``Lines``/``PropLines`` parquet, tagged
 ``snapshot``/``collected_at``/``league`` so ``backtest/archive.py`` splits
 entry/close boards unchanged.
 
-Runs as a GitHub Actions job and uploads to a private artifact (repo policy:
+Runs as a GitHub Actions job and uploads to an Actions artifact (repo policy:
 no odds data in git, docs/DATA_PROVIDERS.md); the consolidation workflow rolls
 the parquet forward past artifact expiry. No secret needed — market data reads
 are unauthenticated (verified live 2026-09-09).
@@ -73,7 +73,8 @@ def collect(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot the Kalshi sports board")
-    parser.add_argument("--out", default="artifacts/exchanges", help="output folder (private)")
+    parser.add_argument("--out", default="artifacts/exchanges",
+                        help="output folder (artifact, never git)")
     parser.add_argument(
         "--leagues", nargs="+", default=list(GAME_SERIES_BY_LEAGUE), help="leagues to snapshot"
     )

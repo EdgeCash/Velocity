@@ -1,7 +1,7 @@
 name: Collect FantasyPros projections
 
 # FantasyPros consensus projections feed the props model as an external prior.
-# This snapshots them into a PRIVATE Actions artifact — nothing is committed
+# This snapshots them into an Actions artifact — nothing is committed
 # (public repo, paid data). Because we don't have a pinned FantasyPros schema,
 # the manual dispatch runs with --inspect so its log shows the raw response
 # shape, doubling as the in-CI verification of the FP_API_KEY secret and the
@@ -72,7 +72,7 @@ jobs:
             --out artifacts/fp \
             --inspect
 
-      - name: Upload snapshot (private artifact)
+      - name: Upload snapshot (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: fp-projections-${{ github.run_id }}

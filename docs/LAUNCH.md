@@ -9,13 +9,13 @@ turning it on, verifying it, and running it week to week.
 | Workflow | Schedule | Secret(s) | Output |
 |---|---|---|---|
 | `ci.yml` | push / PR | — | the test gate |
-| `collect-bettingpros.yml` | every 3h | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | line snapshots → private artifact |
-| `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → private artifact |
-| `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → private artifact |
-| `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → private artifact |
+| `collect-bettingpros.yml` | every 3h | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | line snapshots → Actions artifact |
+| `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → Actions artifact |
+| `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → Actions artifact |
+| `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → Actions artifact |
 | `refresh-datasets.yml` | daily 09:29 UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` |
-| `collect-football-props.yml` | daily 15:19/22:19 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → private artifact |
-| `collect-dk-salaries.yml` | daily 15:31 UTC | — | DK salary snapshots → private artifact |
+| `collect-football-props.yml` | daily 15:19/22:19 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → Actions artifact |
+| `collect-dk-salaries.yml` | daily 15:31 UTC | — | DK salary snapshots → Actions artifact |
 
 ### The minute map
 
@@ -65,7 +65,7 @@ after it. Adding a schedule means picking a free minute from this table.
 > them: MLB runs in the shared slate on every cron, and the same grading,
 > email and card features run for it there.
 
-Everything paid is written **only to private Actions artifacts**, never to this
+Everything paid is written **only to Actions artifacts**, never to this
 public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
 
 ## Pre-season checklist (do once)
@@ -151,7 +151,7 @@ the formatted workbook attached, and a "no plays today" heartbeat on empty days.
 The email opens with a **model status** section: the previous day's plays graded
 against StatsAPI finals (linescores settle the F5/NRFI segments, box scores the
 props and parlay prop legs) as a per-section record with units won/lost.
-Previous slates are fetched from recent runs' private artifacts; if none exist
+Previous slates are fetched from recent runs' Actions artifacts; if none exist
 yet (first runs) or grading fails, the section is simply omitted — it never
 blocks the email.
 It activates when these Actions secrets exist (until then the email steps skip
@@ -231,7 +231,7 @@ paid-odds data itself stays out of the repo. Deploy free on
 
 **Privacy:** the app displays paid-odds-derived data, so don't share the URL
 publicly — deploy it as a private app (Community Cloud allows one free) or keep
-the URL to yourself, the same discipline as the private artifacts.
+the URL to yourself, the same discipline as the Actions artifacts.
 
 Local, no token needed:
 

@@ -184,7 +184,7 @@ Start these **now**, weeks before kickoff.
    rows will start appearing in preseason).
 2. **Football props collection:** successor to `collect-mlb-props.yml` —
    The Odds API + BettingPros NFL/NCAAF player-prop markets (pass/rush/rec
-   yards, receptions, anytime TD), snapshotted into the same private-artifact
+   yards, receptions, anytime TD), snapshotted into the same artifact
    CLV archive pattern. *2026-08-11:* the BP collector also snapshots the
    partner `/props` board — best/consensus lines per book plus the
    BettingPros projection block (projection, recommended side, probability,
@@ -220,7 +220,7 @@ operator should manually dispatch each new workflow once as verification:
   the github-actions bot's push, allow bypass or convert the push to a PR.
 - `collect-football-props.yml` (15:19/22:19 UTC daily) —
   `scripts/collect_football_props.py` banks NFL+NCAAF prop boards (raw
-  per-event JSON + normalized `PropLines` parquet) to private artifacts.
+  per-event JSON + normalized `PropLines` parquet) to Actions artifacts.
 - `collect-dk-salaries.yml` (15:31 UTC daily) — `velocity/dfs/salaries.py` +
   `scripts/collect_dk_salaries.py` bank every DK draft group's salaries (raw
   lobby/draftables JSON + normalized `Salaries` parquet) to private
@@ -491,7 +491,7 @@ against actuals.
   callout, salary-used bar, projected total, source + cash-objective notes.
   No ownership column until an ownership feed exists.
 - `live-slate.yml` fetches the newest DK salary artifact and builds both
-  leagues' lineups into the same private slate artifact (NCAAF needs the FP
+  leagues' lineups into the same slate artifact (NCAAF needs the FP
   snapshot to carry NCAAF rows — currently blocked on the FP key tier).
 
 Still open from the 5b plan: FD scoring, sim-based GPP construction

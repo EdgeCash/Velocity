@@ -3,7 +3,47 @@
 Three paid feeds sit behind the wagering stack. They serve different jobs, and —
 critically — they must never write into this **public** repo: provider terms
 forbid redistributing their odds, and committing them would leak our edge. All
-paid data lives only in **private GitHub Actions artifacts**, never in git.
+paid data lives only in **GitHub Actions artifacts**, never in git.
+
+> ## ⚠️ Those artifacts are not private
+>
+> This document called them "private Actions artifacts" everywhere, and so did
+> most of the collectors. **That is false, and it was load-bearing** — it is the
+> reason banking a raw provider payload verbatim looked safe.
+>
+> This repository is **public**, and Actions artifacts on a public repository
+> are downloadable by **anyone, with no authentication at all**. Verified on
+> 2026-09-15 by fetching one with no token and reading its contents:
+>
+> ```
+> curl -sL https://api.github.com/repos/<owner>/<repo>/actions/artifacts/<id>/zip
+> ```
+>
+> returns the real zip, anonymously. There is no private tier here to fall back
+> on; the only levers are repository visibility, artifact retention, and not
+> putting the thing in the artifact in the first place.
+>
+> **What the policy still gets right.** "Never commit paid data" remains
+> correct and worth keeping: git history is permanent, clonable and mirrored,
+> while an artifact expires in 30 days and can be deleted. Artifacts are a
+> *shorter-lived* place, not a *private* one — that is the distinction the word
+> "private" was hiding.
+>
+> **What it cost.** BettingPros echoes the request URL — partner key included —
+> back inside its `/props` response, and the collector banked that payload
+> verbatim. 89 unexpired artifacts carried a live API key, anonymously
+> downloadable, from 2026-08-28 until it was found. `scrub_secrets()`
+> (#197) stops new ones; it cannot un-bank the old.
+>
+> **What to check before adding a collector.** Not "is this artifact private" —
+> it is not. Ask instead: does the payload echo credentials back? Does it carry
+> more than the normalizer needs? A provider that reflects your request is more
+> common than it sounds, and the raw bank is the place it lands.
+>
+> Actions *logs* are public on a public repo too, but registered secrets are
+> masked there (`BP_API_KEY: ***`). Artifacts get no such masking. That
+> asymmetry is why the leak was invisible: the logs looked clean because they
+> genuinely were.
 
 | Provider | Job | History? | Secret(s) | Limit |
 |---|---|---|---|---|
@@ -84,7 +124,8 @@ dispatch). It:
 2. runs `collect_bettingpros.py`, which snapshots NFL + NCAAF + MLB game lines into a
    single timestamped parquet under `artifacts/bp/`, tagged with `league` and
    `collected_at`,
-3. uploads that parquet as a **private Actions artifact** (`retention-days: 30`).
+3. uploads that parquet as an **Actions artifact** (`retention-days: 30`) — see the
+   visibility note at the top of this document.
 
 It never commits. `artifacts/` is gitignored so a local run can't leak paid data
 into the public repo either. Off-season / empty boards are a success, not a
@@ -98,7 +139,7 @@ are wanted for CLV.
 
 `.github/workflows/collect-odds.yml` runs hourly (and on manual dispatch). It
 snapshots the live board for both leagues into `artifacts/odds/*.parquet` (tagged
-`league` + `collected_at`), uploads it as a **private Actions artifact**, and
+`league` + `collected_at`), uploads it as an **Actions artifact**, and
 prints the remaining monthly credits each run. Live `/odds` for 2 leagues × 3
 markets is ≈6 credits/run → ~4.3k/month, well under 100k; true historical backfill
 uses the pricier `/historical` endpoint on demand. Same rules as the BP collector:
@@ -200,7 +241,7 @@ next run measures the whole board, and the slug mix may look different once
 `.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).
 It snapshots consensus projections for both leagues into `artifacts/fp/*.parquet`
 (long `(player, stat, value)` rows tagged `league` + `collected_at`) and uploads a
-**private Actions artifact**. The manual dispatch runs with `--inspect`, which
+**Actions artifact**. The manual dispatch runs with `--inspect`, which
 prints the raw top-level keys and first-player JSON to the log — that's how we
 verify the `FP_API_KEY` secret and tighten the tolerant normalizer against the
 real response. Same rules: never commits, `artifacts/` gitignored.
@@ -451,7 +492,7 @@ snapshot from the archive.
 
 - Keys are read from the environment only — never a literal, never committed.
 - The repo is public: **no paid odds/props data in git, ever** (ToS + edge leak).
-  Snapshots live only in private Actions artifacts.
+  Snapshots live only in Actions artifacts (not private — see the top).
 - If a key is ever exposed (e.g. pasted into a chat), rotate it with the provider.
 
 ## Spending the odds budget once
@@ -485,7 +526,7 @@ The prediction-exchange feeds (docs/BUILD_EXCHANGES.md) need no secrets — mark
 data on both venues is unauthenticated — but the storage policy is *stricter*
 than the paid feeds', not looser: Kalshi's Developer Agreement permits storing
 API data only to facilitate your own trading and bars sharing it in any manner,
-so exchange data lives **only** in private Actions artifacts, is never
+so exchange data lives **only** in Actions artifacts, is never
 committed, and is never redistributed (BUILD_EXCHANGES.md D7). Unlike The Odds
 API there is no vendor archive to re-pull everything from, so the artifacts
 *are* the record:

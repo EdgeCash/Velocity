@@ -304,7 +304,7 @@ plumbing item, the model constants are settled.
 **Data:** the committed games frames (2024–2026) carry no lines, so the
 market benchmarks come from The Odds API's historical archive — daily
 closing snapshots for 2025–2026 (MLB at 17:00/23:00 UTC, WNBA at 22:30),
-banked as **private** Actions artifacts and joined per game by
+banked as **Actions** artifacts and joined per game by
 `scripts/join_historical_closes.py` (last pre-kickoff snapshot, median
 across books, doubleheader-safe nearest-kickoff match). The joined frame
 lives on a private path; only the aggregated verdicts below are committed.

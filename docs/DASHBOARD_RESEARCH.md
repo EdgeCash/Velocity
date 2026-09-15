@@ -14,7 +14,7 @@ load-bearing claims here were verified against 2025–2026 primary docs.
   even with 2025+ theming and shadcn components, is "nicely themed
   Streamlit," visibly short of the bettorsheets-style reference.
 - Everything the app shows is flat parquet keyed by
-  `{kind}_{league}_{stamp}` in one private Actions artifact per run —
+  `{kind}_{league}_{stamp}` in one Actions artifact per run —
   no database, no manifest, filename-pattern resolution. A replacement
   front-end reads the same files.
 - Two fragilities worth fixing in any migration: the **season record

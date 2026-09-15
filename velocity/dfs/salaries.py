@@ -11,7 +11,7 @@ so the test gate stays offline (the same pattern as the odds ingest):
 * :class:`DraftKingsClient` — the network layer. No key needed; a browser-ish
   User-Agent is set because DK rejects the default urllib one.
 
-Salary snapshots are banked to PRIVATE Actions artifacts alongside the odds
+Salary snapshots are banked to Actions artifacts alongside the odds
 archives (docs/FOOTBALL_CUTOVER.md §5a) — salary-vs-projection history is the
 DFS equivalent of the CLV archive, so it starts accruing before the season.
 """

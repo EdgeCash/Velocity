@@ -5,7 +5,7 @@ scores) — season hitting + pitching totals for every player, written in the
 FantasyPros long shape so ``build_dfs_lineup.py`` prices the MLB board from
 it directly (``--fp`` input). Runs inside the live-slate workflow right
 before the DFS step, so the rates are same-day fresh; nothing here is paid
-data, but the output stays in the private artifacts flow with everything
+data, but the output stays in the artifacts flow with everything
 else the slate emits.
 
     python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats

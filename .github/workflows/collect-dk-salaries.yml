@@ -51,7 +51,7 @@ jobs:
           python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
             --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba nba ncaab nhl' }}"
 
-      - name: Upload salaries (private artifact)
+      - name: Upload salaries (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: dk-salaries-${{ github.run_id }}

@@ -8,7 +8,7 @@ NFL ``/props`` board (BettingPros prop projections + EV; premium fields need
 the ``BP_USER_ID``/``BP_USER_KEY`` pair, and the endpoint has no NCAAF).
 
 It is designed to run as a **GitHub Actions** job (where the ``BP_*`` secrets
-live) and to upload its output as a **private Actions artifact**. It deliberately
+live) and to upload its output as an **Actions artifact**. It deliberately
 does *not* commit anything: the repo is public and paid line data must never land
 in it (provider ToS, and it would leak our edge).
 
@@ -165,7 +165,7 @@ def probe_props() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot BettingPros game lines")
-    parser.add_argument("--out", default="artifacts/bp", help="output folder (private, not git)")
+    parser.add_argument("--out", default="artifacts/bp", help="output folder (artifact, never git)")
     parser.add_argument(
         "--sports", nargs="+", default=list(SPORTS), help="sports to snapshot (default NFL NCAAF)"
     )
