@@ -17,6 +17,7 @@ from velocity.ingest.bettingpros import (
     BettingProsClient,
     bp_board,
     bp_book_keys,
+    describe_payload_shape,
     describe_slug_coverage,
     merge_prop_pages,
     normalize_books,
@@ -608,3 +609,73 @@ def test_every_mapped_slug_still_points_at_a_market_we_price() -> None:
 
     assert BP_PROP_SLUG_TO_MARKET["strikeouts"] == "pitcher_strikeouts"
     assert all(m in PROP_MARKETS for m in BP_PROP_SLUG_TO_MARKET.values())
+
+
+# --------------------------------------------------------------------------
+# Payload shape reporting — the OpenAPI document types every array as [{}]
+# --------------------------------------------------------------------------
+
+
+def test_shape_report_separates_what_we_read_from_what_we_do_not() -> None:
+    rows = [
+        {"id": 1, "projection": {"value": 1.0}, "performance": {"over_pct": 0.6}},
+        {"id": 2, "projection": {"value": 2.0}},
+    ]
+    lines = "\n".join(describe_payload_shape(rows, ["id", "projection"], "NFL props"))
+    assert "2 row(s), 3 distinct key(s)" in lines
+    assert "read  id" in lines
+    assert "UNREAD performance" in lines
+    # Presence is per-key, so a field only some rows carry is visible as such.
+    assert "1/2" in lines
+    assert "1 key(s) we do not read" in lines
+
+
+def test_shape_report_describes_structure_and_never_values() -> None:
+    """A payload that echoes credentials must not be made worse by the report."""
+    rows = [{
+        "self": "/v3/props?key=SUPERSECRET&user=4455432",
+        "books": [{"id": 10}, {"id": 12}],
+        "count": 7,
+        "missing": None,
+    }]
+    lines = "\n".join(describe_payload_shape(rows, [], "probe"))
+    assert "SUPERSECRET" not in lines
+    assert "4455432" not in lines
+    assert "str" in lines                    # the URL reports as a type
+    assert "list[2] of object" in lines
+    assert "int" in lines and "null" in lines
+
+
+def test_shape_report_names_a_nested_objects_own_keys() -> None:
+    """The point is to write a normalizer from it, so one level down shows."""
+    rows = [{"projection": {"value": 1.0, "bet_rating": 4, "probability": 0.6}}]
+    lines = "\n".join(describe_payload_shape(rows, [], "x"))
+    assert "object{value, bet_rating, probability}" in lines
+
+
+def test_shape_report_is_inert_for_junk() -> None:
+    assert "0 row(s)" in describe_payload_shape([], [], "x")[0]
+    assert "0 row(s)" in describe_payload_shape([None, 3, "x"], [], "x")[0]  # type: ignore[list-item]
+
+
+def test_props_now_asks_for_correlated_picks_and_the_full_board() -> None:
+    """Defaults that would silently truncate, pinned.
+
+    ``ev_threshold`` defaults to TRUE server-side, which returns only props
+    outside EV > 40% or < -25% — a filtered board that looks like a whole one.
+    """
+    import inspect
+
+    src = inspect.getsource(BettingProsClient.props)
+    assert '"ev_threshold": "false"' in src
+    assert '"include_correlated_picks": "true"' in src
+    assert '"limit": PROPS_PAGE_LIMIT' in src
+
+
+def test_events_asks_for_the_blocks_that_ride_on_the_same_call() -> None:
+    """lineups/park_factors default true; notes/officials default false."""
+    import inspect
+
+    src = inspect.getsource(BettingProsClient.events_payload)
+    for key in ("lineups", "park_factors", "notes", "officials"):
+        assert f'"{key}": "true"' in src, key

@@ -211,6 +211,57 @@ pitcher-K slate MLB actually has. The gate keeping that from happening lived in
 a shell conditional in `live-slate.yml`. It is now `FOOTBALL_PROP_LEAGUES` in
 the runner, with a test that fails if the guard is removed.
 
+### What the published OpenAPI spec turned out to say (2026-09-15)
+
+Reading the partner spec end to end corrected a standing claim and found four
+blocks we were paying for and discarding.
+
+**There is no prop-sport enum.** The collector carried a comment asserting
+"/props serves NFL/NBA/MLB/NHL only (the spec's prop sport enum has no NCAAF)",
+on which college props stayed model-only. The spec types `sport` on `/props` as
+a free-form colon-delimited string with no enum at all, and the probe
+(`--probe-props`) answered **HTTP 200 with props on all six** — NFL, NCAAF,
+MLB, WNBA, NBA, NHL. `PROP_SPORTS` now covers every league we price. NBA is
+omitted deliberately: no NBA vertical prices anything, so banking it would be
+collecting for nobody.
+
+**Four `/events` blocks ride on a call we already make.** `lineups` and
+`park_factors` **default to true**, so MLB batting orders and park factors have
+been arriving on every request while the collector kept four fields per event —
+this against a `dfs_mlb` that fits park factors from banked box scores and needs
+`E[PA|slot]`, and a `props_hr` that fits park factors too. `notes` (schedule,
+market, **weather**, roster, trend insights across all seven leagues) and
+`officials` (the NFL crew) default false and are now asked for. None of it
+costs an extra request.
+
+**Server defaults that would truncate silently.** `ev_threshold` defaults to
+**true**, returning only props outside EV > 40% or < −25% — a filtered board
+that looks like a whole one. We send `false`. `sort` defaults to `diff`, which
+mattered while we took page one only.
+
+**A gating flag we will not use.** `/props` documents `fence=ungated` as
+returning `projection.value` / `probability` / `expected_value` / `bet_rating`
+unfenced *for a non-premium caller*. We hold premium credentials and receive
+those fields legitimately; taking them by a flag that bypasses entitlement is
+circumventing access control, and for a partner key that cannot be reissued the
+downside is asymmetric against an upside of zero.
+
+#### Shape first, normalizer second
+
+The spec types every response array as `[{}]` — it says an endpoint exists and
+nothing whatever about what comes back. Every field we map was learned from a
+live payload; every field we do not map is invisible until something looks.
+
+`describe_payload_shape()` is that something, and the collector now runs it over
+both prop rows and event rows each run: per key, how many rows carry it, whether
+we read it, and the *shape* of the value — a scalar's type, a list's length, a
+nested object's own key names. **Values are never printed**, because the payload
+that started this carried an API key.
+
+Raw `/events` payloads bank alongside raw `/props` (scrubbed), so a normalizer
+for lineups, park factors, notes or officials gets written against an observed
+structure rather than a guess. That order is the whole lesson of the slug table.
+
 ### What the first coverage run found (2026-09-15)
 
 The slug report shipped in the previous change, and its first live run turned

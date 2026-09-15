@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import urllib.error
 from pathlib import Path
 
@@ -68,12 +69,15 @@ def test_collect_isolates_a_dead_sport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bp.time, "sleep", lambda _s: None)
 
     class FakeClient:
-        def events(self, sport: str) -> list[dict]:
+        def events_payload(self, sport: str) -> dict:
             if sport == "NCAAF":
                 raise _http_error(504)
-            return [{"id": 1, "home": "Kansas City Chiefs",
-                     "visitor": "Buffalo Bills", "scheduled": "2026-09-10",
-                     "participants": []}]
+            return {"events": [{"id": 1, "home": "Kansas City Chiefs",
+                                "visitor": "Buffalo Bills",
+                                "scheduled": "2026-09-10", "participants": [],
+                                # the blocks that ride on this call
+                                "lineups": {"home": []}, "park_factors": {"runs": 1.0}}],
+                    "_pagination": {"self": "/v3/events?key=SECRET&user=42"}}
 
         def game_lines(self, sport: str, event_ids: list) -> pd.DataFrame:
             return pd.DataFrame([{"game_id": "1", "book": "dk",
@@ -83,7 +87,15 @@ def test_collect_isolates_a_dead_sport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         bp.BettingProsClient, "from_env", staticmethod(lambda: FakeClient())
     )
-    lines, events, failed = bp.collect(("NFL", "NCAAF"), pd.Timestamp("2026-09-10"))
+    lines, events, raw_events, failed = bp.collect(
+        ("NFL", "NCAAF"), pd.Timestamp("2026-09-10")
+    )
     assert failed == ["NCAAF"]
     assert len(lines) == 1 and lines["league"].iloc[0] == "nfl"  # NFL banked
     assert len(events) == 1  # the dead sport contributed nothing, not garbage
+    # The raw payload is banked for the sport that answered, and only that one,
+    # so a normalizer for lineups/park factors has an observed shape to read.
+    assert set(raw_events) == {"NFL"}
+    assert "lineups" in raw_events["NFL"]["events"][0]
+    # And it is scrubbed on the way out — /events echoes the request URL too.
+    assert "SECRET" not in json.dumps(raw_events)

@@ -29,7 +29,9 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.ingest.bettingpros import (
+    _PROP_COLUMNS,
     BettingProsClient,
+    describe_payload_shape,
     describe_slug_coverage,
     normalize_props,
     pagination,
@@ -69,19 +71,35 @@ def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
             if exc.code < 500 or attempt == 2:
                 raise
     raise RuntimeError("unreachable")
-# The /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport
-# enum has no NCAAF) — college props stay model-generated. MLB was inside that
-# enum the whole time and was never asked for; it is now. Its slugs are not yet
-# in BP_PROP_SLUG_TO_MARKET, so the intel layer abstains on every MLB row until
-# a real snapshot names them — banked evidence first, mapping second, which is
-# the only order that does not guess.
-PROP_SPORTS = ("NFL", "MLB")
+# Every league we price, because a probe finally asked.
+#
+# This list said ("NFL",) and then ("NFL", "MLB"), on a comment asserting "the
+# /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport enum has
+# no NCAAF)". **There is no such enum.** The published OpenAPI document types
+# `sport` on /props as a free-form colon-delimited string, and the probe
+# (--probe-props, run 2026-09-15) came back HTTP 200 with props on all six:
+#
+#   NFL 200 · NCAAF 200 · MLB 200 · WNBA 200 · NBA 200 · NHL 200
+#
+# So college props were model-only against a board that existed the whole
+# time. NBA is the one omission on purpose: no NBA vertical prices anything,
+# so banking it would be collecting for nobody — the exact habit
+# docs/DATA_PROVIDERS.md now warns about.
+#
+# Budget: a sport costs ceil(rows/200) pages plus one /markets call. Five prop
+# sports is roughly 30 calls a run, ~240 a day against a 5,000/day cap.
+PROP_SPORTS = ("NFL", "NCAAF", "MLB", "WNBA", "NHL")
+
+# The event fields the banked frame keeps. Everything else an event carries
+# — lineups, park factors, notes, officials — is reported as unread until a
+# normalizer is written against an observed payload.
+_EVENT_COLUMNS = ("id", "home", "visitor", "scheduled", "participants")
 
 
 def collect(
     sports: tuple[str, ...], collected_at: pd.Timestamp
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    """One canonical ``Lines`` frame + the events map for ``sports``.
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object], list[str]]:
+    """One canonical ``Lines`` frame, the events map, and the raw event payloads.
 
     The events frame (``game_id``/``home_team``/``away_team``/``kickoff``)
     is what lets a grader bridge our Odds-API-keyed bets to these BP
@@ -90,10 +108,15 @@ def collect(
     client = BettingProsClient.from_env()
     frames: list[pd.DataFrame] = []
     event_rows: list[dict[str, object]] = []
+    raw_events: dict[str, object] = {}
     failed: list[str] = []
     for sport in sports:
         try:
-            events = _retry_5xx(lambda s=sport: client.events(s), f"{sport} events")
+            payload = _retry_5xx(
+                lambda s=sport: client.events_payload(s), f"{sport} events"
+            )
+            events = payload.get("events") or []
+            raw_events[sport] = scrub_secrets(payload)
         except urllib.error.HTTPError as exc:
             # A sustained outage on ONE sport's route (seen live: NCAAF 504s
             # outlasting the 60s of backoff while NFL served fine) must not
@@ -112,6 +135,15 @@ def collect(
                 "kickoff": e.get("scheduled"),
                 "league": sport.lower(),
             })
+        # What an event carries beyond the four fields we keep. lineups and
+        # park_factors default TRUE on this endpoint, so they have been arriving
+        # all along; notes (weather, trends) and officials are now asked for.
+        # Reported, not parsed: a normalizer written against an unseen shape is
+        # the guess this repo keeps paying for.
+        for line in describe_payload_shape(
+            events, _EVENT_COLUMNS, f"{sport} event row"
+        ):
+            print(line)
         try:
             lines = _retry_5xx(
                 lambda s=sport, ev=events: client.game_lines(
@@ -133,7 +165,7 @@ def collect(
     events_out = pd.DataFrame(
         event_rows, columns=["game_id", "home_team", "away_team", "kickoff", "league"]
     ).assign(collected_at=collected_at)
-    return lines_out, events_out, failed
+    return lines_out, events_out, raw_events, failed
 
 
 def probe_props() -> None:
@@ -187,7 +219,7 @@ def main() -> None:
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
     print(f"BettingPros snapshot @ {now.isoformat()}")
-    df, events, failed = collect(tuple(args.sports), stamp)
+    df, events, raw_events, failed = collect(tuple(args.sports), stamp)
     if failed and len(failed) == len(args.sports):
         # Every sport failed after retries — a real outage worth a red run.
         raise SystemExit(f"all sports failed after retries: {failed}")
@@ -198,6 +230,12 @@ def main() -> None:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     tag_now = now.strftime("%Y%m%dT%H%M%SZ")
+    raw_dir = out / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    for sport, payload in raw_events.items():
+        (raw_dir / f"events_{sport.lower()}_{tag_now}.json").write_text(
+            json.dumps(payload)
+        )
     dest = out / f"bp_lines_{tag_now}.parquet"
     df.to_parquet(dest, index=False)
     print(f"wrote {len(df)} rows to {dest}")
@@ -299,6 +337,13 @@ def main() -> None:
             # reads exactly like a healthy one. Printing it every run makes
             # the gap impossible to miss and costs nothing.
             for line in describe_slug_coverage(props, sport):
+                print(line)
+            # And what the row carries that we never read. The OpenAPI document
+            # types this array as [{}], so the only way to learn the shape is
+            # to look at one. Keys, counts and value *shapes* — never values.
+            for line in describe_payload_shape(
+                payload.get("props") or [], _PROP_COLUMNS, f"{sport} prop row"
+            ):
                 print(line)
         except Exception as exc:  # noqa: BLE001 - props are additive, lines already saved
             print(f"  {sport} props skipped ({exc})")
