@@ -216,7 +216,7 @@ rounded-normal sim smooths over.
   anything more. **Polymarket**: storage isn't specifically restricted
   and redistribution is restricted only toward "Capital Market
   Clients"/market-data distributors — but the same artifact
-  posture applies anyway (public repo discipline). Secrets (the
+  posture applies anyway (nothing paid or scraped in git). Secrets (the
   optional `KALSHI_API_KEY` for rate headroom) live only in Actions
   secrets.
 

@@ -66,7 +66,7 @@ after it. Adding a schedule means picking a free minute from this table.
 > email and card features run for it there.
 
 Everything paid is written **only to Actions artifacts**, never to this
-public repo (provider ToS + it would leak the edge). `artifacts/` is gitignored.
+git (provider ToS + it would leak the edge). `artifacts/` is gitignored.
 
 ## Pre-season checklist (do once)
 
@@ -162,7 +162,7 @@ and the workflow behaves exactly as before):
   Password** (Google account → Security → 2-Step Verification → App passwords);
   a normal account password will not authenticate.
 - `MAIL_TO` — the recipient inbox. Kept in a secret, never in the workflow file:
-  the repo is public, and the mail carries paid-odds-derived data, so it must go
+  the mail carries paid-odds-derived data, so it must go
   to a private inbox.
 - `MAIL_SERVER` / `MAIL_PORT` *(optional)* — default `smtp.gmail.com` / `465`
   (SSL); set both to use another provider.

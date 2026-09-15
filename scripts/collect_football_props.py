@@ -12,7 +12,7 @@ endpoint. This pulls each event's prop board once per league, then:
   the ``min_team_total_disagreement`` gate.
 
 Runs as a GitHub Action (where ``THE_ODDS_API`` lives) and uploads a PRIVATE
-artifact — never commits, since the repo is public and paid odds must not land
+artifact — never commits: paid odds must not land in git, where history is
 in it. Empty (no board posted yet, or off-season) is a success, not a failure.
 
     THE_ODDS_API=... python scripts/collect_football_props.py --out artifacts/props

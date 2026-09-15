@@ -8,7 +8,7 @@ ratings from; both summer leagues have free, keyless schedule/score APIs:
 * **WNBA** — wehoop's per-season schedule parquet (sportsdataverse-data
   GitHub releases; ESPN's own API 403s datacenter IPs).
 
-Both are free feeds, so the output commits to the public repo like every
+Both are free feeds, so the output commits to the repo like every
 other ``datasets/`` file. Completed games only, full-name team keys (they
 match The Odds API's event names).
 

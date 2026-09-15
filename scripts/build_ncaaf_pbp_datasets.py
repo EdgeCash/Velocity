@@ -4,7 +4,7 @@ The college analogue of ``build_nfl_pbp_datasets.py``: fetch CFBD's ``/plays``
 per (season, week, season type), distill each payload onto the canonical
 ``Plays`` schema via :func:`velocity.ingest.ncaaf.distill_rest_plays` (CFBD's
 ``ppa`` is the EPA column), and write one ``datasets/ncaaf/plays.parquet``.
-CFBD is a free feed, so the output is committed to the public repo like every
+CFBD is a free feed, so the output is committed to the repo like every
 other ``datasets/`` file.
 
 The (season, week, type) combinations come from the committed games file, so

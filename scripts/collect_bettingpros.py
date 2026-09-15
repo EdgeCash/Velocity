@@ -9,8 +9,8 @@ the ``BP_USER_ID``/``BP_USER_KEY`` pair, and the endpoint has no NCAAF).
 
 It is designed to run as a **GitHub Actions** job (where the ``BP_*`` secrets
 live) and to upload its output as an **Actions artifact**. It deliberately
-does *not* commit anything: the repo is public and paid line data must never land
-in it (provider ToS, and it would leak our edge).
+does *not* commit anything: paid line data must never land in git, whose history
+is permanent and clonable (provider ToS, and it would leak our edge).
 
 Credentials come from the environment only — ``BP_API_KEY`` and the optional
 ``BP_USER_ID`` / ``BP_USER_KEY`` premium pair — never a literal.

@@ -1,49 +1,75 @@
 # Live data providers — BettingPros, The Odds API, FantasyPros, ESPN
 
 Three paid feeds sit behind the wagering stack. They serve different jobs, and —
-critically — they must never write into this **public** repo: provider terms
-forbid redistributing their odds, and committing them would leak our edge. All
+critically — they must never write into **git**: provider terms forbid
+redistributing their odds, committing them would leak our edge, and git history
+is permanent and clonable in a way an artifact is not. All
 paid data lives only in **GitHub Actions artifacts**, never in git.
 
-> ## ⚠️ Those artifacts are not private
+> ## ⚠️ An Actions artifact is not a private place
 >
 > This document called them "private Actions artifacts" everywhere, and so did
-> most of the collectors. **That is false, and it was load-bearing** — it is the
-> reason banking a raw provider payload verbatim looked safe.
+> most of the collectors. **That word was load-bearing and it was wrong** — it
+> is the reason banking a raw provider payload verbatim looked safe.
 >
-> This repository is **public**, and Actions artifacts on a public repository
-> are downloadable by **anyone, with no authentication at all**. Verified on
-> 2026-09-15 by fetching one with no token and reading its contents:
+> An artifact's audience is exactly whoever can read the repository, plus a
+> 30-day clock. While this repo was **public**, that audience was the public
+> internet. There was never a private tier to fall back on; the levers are
+> repository visibility, artifact retention, and not putting the secret in the
+> artifact to begin with.
 >
-> ```
-> curl -sL https://api.github.com/repos/<owner>/<repo>/actions/artifacts/<id>/zip
-> ```
+> **The repository went private on 2026-09-15**, which closed that audience.
+> The guidance below is what still applies, because a private repo is a
+> narrower audience and not a safe one — anyone with repo access still reads
+> every artifact, unmasked.
 >
-> returns the real zip, anonymously. There is no private tier here to fall back
-> on; the only levers are repository visibility, artifact retention, and not
-> putting the thing in the artifact in the first place.
+> ### What is established, and what is not
 >
-> **What the policy still gets right.** "Never commit paid data" remains
-> correct and worth keeping: git history is permanent, clonable and mirrored,
-> while an artifact expires in 30 days and can be deleted. Artifacts are a
-> *shorter-lived* place, not a *private* one — that is the distinction the word
-> "private" was hiding.
+> Precision matters here because the first write-up of this overstated its
+> evidence, and a doc about not fooling yourself is a bad place to do it.
 >
-> **What it cost.** BettingPros echoes the request URL — partner key included —
-> back inside its `/props` response, and the collector banked that payload
-> verbatim. 89 unexpired artifacts carried a live API key, anonymously
-> downloadable, from 2026-08-28 until it was found. `scrub_secrets()`
-> (#197) stops new ones; it cannot un-bank the old.
+> **Established.** The BettingPros partner key and user id were written into
+> **89 unexpired artifacts**, from 2026-08-28 until found. Read directly out of
+> the banked zips; this does not depend on who could fetch them. BettingPros
+> echoes the request URL — credentials included — back inside its `/props`
+> response, and the collector banked that payload verbatim. `scrub_secrets()`
+> (#197) stops new ones and cannot un-bank the old.
 >
-> **What to check before adding a collector.** Not "is this artifact private" —
-> it is not. Ask instead: does the payload echo credentials back? Does it carry
-> more than the normalizer needs? A provider that reflects your request is more
-> common than it sounds, and the raw bank is the place it lands.
+> **Not established.** Whether an *unauthenticated* stranger could have
+> downloaded them. #198 claimed that, citing a `curl` with no token that
+> returned the real zip. **That test was invalid**: it ran inside an agent
+> sandbox whose proxy injects GitHub credentials into every outbound request.
+> The tell was available and unread — an anonymous `api.github.com` call has a
+> 60/hour rate limit, and that environment reports 15,000.
 >
-> Actions *logs* are public on a public repo too, but registered secrets are
-> masked there (`BP_API_KEY: ***`). Artifacts get no such masking. That
-> asymmetry is why the leak was invisible: the logs looked clean because they
-> genuinely were.
+> So the floor is "every GitHub user who could see this repo", which for a
+> public repo is a very large number. The ceiling — genuinely anonymous — was
+> never demonstrated either way, and the window to test it closed with the
+> repo.
+>
+> **The transferable lesson**, worth more than the resolved question: *a
+> negative-access test run from an environment with credential injection proves
+> nothing.* If a check is meant to show something is unreachable, run it from
+> somewhere with nothing to inject, or verify the request was actually
+> unauthenticated before believing the result.
+>
+> ### What the policy still gets right
+>
+> "Never commit paid data" remains correct and worth keeping: git history is
+> permanent, clonable and mirrored, while an artifact expires in 30 days and
+> can be deleted. Artifacts are a *shorter-lived* place, not a *private* one —
+> that is the distinction the word "private" was hiding.
+>
+> ### What to check before adding a collector
+>
+> Not "is this artifact private". Ask instead: does the payload **echo
+> credentials back**? Does it carry **more than the normalizer needs**? A
+> provider that reflects your request is more common than it sounds, and the
+> raw bank is the place it lands.
+>
+> Actions *logs* mask registered secrets (`BP_API_KEY: ***`). Artifacts get no
+> such masking. That asymmetry is why the leak was invisible: the logs looked
+> clean because they genuinely were.
 
 | Provider | Job | History? | Secret(s) | Limit |
 |---|---|---|---|---|
@@ -128,7 +154,7 @@ dispatch). It:
    visibility note at the top of this document.
 
 It never commits. `artifacts/` is gitignored so a local run can't leak paid data
-into the public repo either. Off-season / empty boards are a success, not a
+into git either. Off-season / empty boards are a success, not a
 failure — the job still writes an (empty) artifact so the schedule keeps running.
 
 At 3-hour cadence the collector uses ≈48 BP calls/day, far under the 5k/day cap;
@@ -491,7 +517,8 @@ snapshot from the archive.
 ## Security
 
 - Keys are read from the environment only — never a literal, never committed.
-- The repo is public: **no paid odds/props data in git, ever** (ToS + edge leak).
+- **No paid odds/props data in git, ever** (ToS + edge leak; git history is
+  permanent, and the repo's visibility can change under you — it did).
   Snapshots live only in Actions artifacts (not private — see the top).
 - If a key is ever exposed (e.g. pasted into a chat), rotate it with the provider.
 
