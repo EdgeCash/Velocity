@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+from velocity.ingest.scrub import scrub_secrets
 from velocity.ingest.theoddsapi import (
     DEFAULT_EVENT_MARKETS,
     describe_usage,
@@ -80,7 +81,11 @@ def snapshot_league(
     raw_dir = out / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     for event_id, raw in payloads:
-        (raw_dir / f"{league}_event_{tag}_{event_id}.json").write_text(json.dumps(raw))
+        # Scrubbed at the banking boundary — The Odds API's key rides in the
+        # query string, the string an API echoes back (velocity/ingest/scrub.py).
+        (raw_dir / f"{league}_event_{tag}_{event_id}.json").write_text(
+            json.dumps(scrub_secrets(raw))
+        )
 
     frames = [normalize_player_props(events_of(raw), is_closing=False) for _, raw in payloads]
     props = (

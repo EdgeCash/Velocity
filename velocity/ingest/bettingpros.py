@@ -43,6 +43,7 @@ from typing import Any
 
 import pandas as pd
 
+from velocity.ingest.scrub import SECRET_QUERY_PARAMS, scrub_secrets
 from velocity.store.schema import PROP_MARKETS, Lines
 
 _BASE = "https://api.bettingpros.com/v3"
@@ -252,35 +253,18 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
 }
 
 
-# Query parameters BettingPros echoes back that must never reach disk. The
-# /props response carries the full request URL in ``_pagination.self``,
-# credentials included, and the collector banks that payload verbatim — so the
+# Credential scrubbing moved to velocity.ingest.scrub when a sweep of the other
+# collectors found the hazard is not BettingPros' — it belongs to any provider
+# whose credential travels in the URL. Re-exported here so existing importers
+# (the collector, the tests) keep working unchanged.
+#
+# The original finding, kept for the record: BettingPros echoes the full request
+# URL — partner key and user id included — in ``_pagination.self``, and the
 # partner key and user id were being written into every artifact. An artifact's
 # audience is whoever can read the repo, plus a 30-day clock — no masking, no
 # private tier (docs/DATA_PROVIDERS.md). While this repo was public that was a
 # very large audience, which is not "a private place with a short retention".
-_SECRET_QUERY_PARAMS = ("key", "user", "auth", "api_key", "token")
-_SECRET_RE = re.compile(
-    r"([?&](?:" + "|".join(_SECRET_QUERY_PARAMS) + r")=)[^&\s\"']+",
-    re.IGNORECASE,
-)
-
-
-def scrub_secrets(value: Any) -> Any:
-    """Recursively redact credential query parameters from a payload.
-
-    Walks dicts, lists and strings, rewriting ``key=abc`` to ``key=REDACTED``
-    wherever it appears in a URL-shaped string. Structure and every other value
-    are preserved exactly, so a scrubbed payload still normalizes identically —
-    the redaction touches only the echoed request URL.
-    """
-    if isinstance(value, str):
-        return _SECRET_RE.sub(r"\1REDACTED", value)
-    if isinstance(value, Mapping):
-        return {k: scrub_secrets(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [scrub_secrets(v) for v in value]
-    return value
+_SECRET_QUERY_PARAMS = SECRET_QUERY_PARAMS
 
 
 def pagination(payload: Any) -> dict[str, int]:
