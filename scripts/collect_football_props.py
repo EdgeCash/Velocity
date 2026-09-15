@@ -16,6 +16,12 @@ artifact — never commits: paid odds must not land in git, whose history is
 permanent. Empty (no board posted yet, or off-season) is a success, not a
 failure.
 
+Per-event pulls are the expensive half of the Odds API bill — one call per game
+per league, priced by markets × regions — so a network run also banks a
+**credit ledger** (``odds_credits_*.parquet``) recording what each call cost.
+That is the input to ``scripts/report_odds_credits.py``, which is how the plan
+size gets decided on evidence rather than on a guess.
+
     THE_ODDS_API=... python scripts/collect_football_props.py --out artifacts/props
 
     # offline re-processing of banked raw payloads (also the test path):
@@ -33,9 +39,11 @@ from pathlib import Path
 import pandas as pd
 from velocity.ingest.theoddsapi import (
     DEFAULT_EVENT_MARKETS,
+    describe_usage,
     events_of,
     normalize_odds_events,
     normalize_player_props,
+    write_usage,
 )
 
 _TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
@@ -150,6 +158,13 @@ def main() -> None:
         snapshot_league(league, payloads, out, tag, collected_at)
         if not payloads:
             print(f"  {league}: no events on the board (off-season or not yet posted)")
+    # Banked outside the per-league try: when one league's board dies partway,
+    # the per-event calls it already made still spent credits, and those are
+    # exactly the ones worth having on the record.
+    ledger = write_usage(client.usage, out, tag)
+    print(describe_usage(client.usage))
+    if ledger is not None:
+        print(f"credit ledger → {ledger}")
     if client.remaining is not None:
         print(f"credits remaining this month: {client.remaining}")
 

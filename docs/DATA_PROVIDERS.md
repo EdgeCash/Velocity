@@ -181,6 +181,53 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### Credit accounting — the ledger (2026-09)
+
+The numbers above ("≈6 credits/run", "~9k/month") are **estimates from the
+price list**, and a $60/month subscription should not be renewed or cut on an
+estimate. So every network run now banks a **credit ledger** beside the data it
+bought: `odds_credits_<tag>.parquet`, one row per credit-spending call —
+
+| column | what it holds |
+| --- | --- |
+| `at` | when the call was made (UTC, naive) |
+| `kind` | endpoint shape: `odds`, `events`, `event_odds`, `historical_odds`, `historical_events`, `historical_event_odds`, `sports` |
+| `endpoint` | the request path verbatim (carries the event id; never the key) |
+| `league` | read off the **path** — The Odds API puts the sport there, never in the query |
+| `markets`, `regions` | what the call asked for: the two multipliers on its price |
+| `cost` | `x-requests-last` — what THIS call cost |
+| `used`, `remaining` | the running monthly totals at that moment |
+
+The point is the `cost` column. `remaining` was already printed each run, and a
+printed number ages out of a run log; the plan question is not "how many are
+left" but "which calls spend them", and only a banked per-call series answers
+it. Costs are nullable `Int64`: a response that omitted the header records a
+**missing** cost, which is not the same claim as a cost of zero.
+
+The ledger holds request shapes and response counts only — no key, no query
+string — which is what makes it safe to upload. An Actions artifact is not a
+private place (the warning at the top of this file), so that is a property
+worth keeping, and a test asserts the key never reaches a row.
+
+`scripts/report_odds_credits.py` reads a folder of banked ledgers (recursively —
+each run is its own artifact folder, so download several into one place) and
+reports where the credits go per `kind` × league, prices the league axis so a
+cut can be costed before it is made, and projects a month against the plan:
+
+```
+python scripts/report_odds_credits.py --ledgers artifacts/odds --plan 100000
+```
+
+Two honesty guards, because the whole point is a number worth acting on:
+
+- It **refuses to project** from a window under `--min-hours` (default 24). A
+  Tuesday afternoon says nothing about a Sunday NFL slate; bank a full week,
+  ideally one with a busy weekend, before taking a number to a plan change.
+- The projection is a **floor**. A call that errored never reaches the ledger
+  (the header is read off the response), and the window is measured between the
+  first and last *recorded* call, not across the billing period. Read a
+  comfortable verdict as comfortable, not as exact.
+
 ### What consumes a FantasyPros snapshot (and what does not)
 
 NFL projections feed three things: the correlated football prop sim

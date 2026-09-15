@@ -1,9 +1,10 @@
 """Bank historical odds snapshots into a CLV archive — burn Odds API credits well.
 
 The Odds API is the one feed with a real historical archive, and historical calls
-cost more credits than live ones — so this spends them deliberately: for each day
-in a range, at a few snapshot times, it pulls the historical board and banks it
-three ways —
+cost more credits than live ones (a 10× multiplier) — so this spends them
+deliberately, and banks a **credit ledger** (``odds_credits_*.parquet``) recording
+what each snapshot actually cost. For each day in a range, at a few snapshot
+times, it pulls the historical board and banks it three ways —
 
 * the **raw JSON** verbatim (nothing the credits bought is ever lost),
 * a normalized ``Lines`` parquet (game markets), and
@@ -31,7 +32,13 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.theoddsapi import extract_events, normalize_odds_events, unwrap
+from velocity.ingest.theoddsapi import (
+    describe_usage,
+    extract_events,
+    normalize_odds_events,
+    unwrap,
+    write_usage,
+)
 
 
 def _dates(start: str, end: str) -> list[str]:
@@ -103,6 +110,10 @@ def main() -> None:
             print(f"{iso}: {len(lines)} lines, {len(events)} games "
                   f"(credits left: {client.remaining})")
     print(f"\nbanked {total_lines} closing-line rows to {out_dir}")
+    ledger = write_usage(client.usage, out_dir, f"{args.league}_{args.start}_{args.end}")
+    print(describe_usage(client.usage))
+    if ledger is not None:
+        print(f"credit ledger → {ledger}")
 
 
 if __name__ == "__main__":
