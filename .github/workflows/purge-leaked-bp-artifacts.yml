@@ -1,0 +1,116 @@
+# One-shot cleanup for the BettingPros credential leak (docs/DATA_PROVIDERS.md).
+#
+# BettingPros echoes the full request URL — partner key and user id included —
+# in `_pagination.self`. The collector banked that payload verbatim into
+# `artifacts/bp/raw/*.json`, which `collect-bettingpros.yml` uploads as
+# `bp-lines-<run_id>`. Scrubbing landed 2026-09-15T00:56:45Z; every bp-lines
+# artifact created BEFORE that carries the key and needs deleting, because the
+# partner key CANNOT be reissued.
+#
+# There is no partial delete: an artifact goes whole. So this also destroys the
+# clean `bp_lines_*.parquet` / `bp_events_*.parquet` in the same archives —
+# accepted, because the board is re-snapshotted every three hours and the live
+# slate reads the newest (post-fix) one.
+#
+# Scope is deliberately narrow. `slate-*` artifacts upload only
+# `artifacts/slate/*` and never the raw JSON, so they are not touched.
+#
+# DRY RUN BY DEFAULT. It reports what it would delete and changes nothing
+# unless `confirm` is exactly DELETE.
+name: Purge leaked BettingPros artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to actually delete. Anything else is a dry run.'
+        required: true
+        default: 'dry-run'
+      cutoff:
+        description: 'Delete bp-lines artifacts created strictly before this UTC instant'
+        required: true
+        default: '2026-09-15T00:56:45Z'
+      prefix:
+        description: 'Artifact name prefix to match'
+        required: true
+        default: 'bp-lines-'
+
+# The only write this needs. Nothing here touches repository contents.
+permissions:
+  actions: write
+
+jobs:
+  purge:
+    name: purge leaked artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const confirm = context.payload.inputs.confirm;
+            const prefix = context.payload.inputs.prefix;
+            const cutoffRaw = context.payload.inputs.cutoff;
+            const cutoff = Date.parse(cutoffRaw);
+            if (Number.isNaN(cutoff)) {
+              core.setFailed(`cutoff is not a parseable instant: ${cutoffRaw}`);
+              return;
+            }
+            const live = confirm === 'DELETE';
+
+            // Paginate the WHOLE repo rather than walking runs: an artifact
+            // outlives interest in its run, and listing by run would need one
+            // call per run to find the same set.
+            const all = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 },
+            );
+
+            // `expired` artifacts are already gone; deleting one is a 404 that
+            // would abort the loop partway and leave the job half done.
+            const doomed = all.filter((a) =>
+              !a.expired &&
+              a.name.startsWith(prefix) &&
+              Date.parse(a.created_at) < cutoff
+            );
+
+            const bytes = doomed.reduce((n, a) => n + (a.size_in_bytes || 0), 0);
+            const kept = all.filter((a) => !a.expired && a.name.startsWith(prefix)).length
+                       - doomed.length;
+
+            core.summary.addHeading(live ? 'Purge (LIVE)' : 'Purge (dry run)');
+            core.summary.addRaw(
+              `\nMatched **${doomed.length}** unexpired \`${prefix}*\` artifacts created before ` +
+              `\`${cutoffRaw}\` (${(bytes / 1048576).toFixed(1)} MiB).\n` +
+              `Left alone: ${kept} post-cutoff ${prefix}* artifacts, ` +
+              `${all.filter((a) => !a.expired && !a.name.startsWith(prefix)).length} other unexpired artifacts.\n\n`
+            );
+
+            let deleted = 0;
+            const failures = [];
+            for (const a of doomed) {
+              core.info(`${live ? 'deleting' : 'would delete'} ${a.id} ${a.name} ${a.created_at}`);
+              if (!live) continue;
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner, repo: context.repo.repo, artifact_id: a.id,
+                });
+                deleted += 1;
+              } catch (err) {
+                // One failure must not strand the rest — collect and report.
+                failures.push(`${a.id} ${a.name}: ${err.status || ''} ${err.message}`);
+              }
+            }
+
+            if (live) {
+              core.summary.addRaw(`Deleted **${deleted}** / ${doomed.length}.\n`);
+              if (failures.length) {
+                core.summary.addRaw(`\nFailed:\n\n\`\`\`\n${failures.join('\n')}\n\`\`\`\n`);
+              }
+            } else {
+              core.summary.addRaw('Dry run — nothing was deleted. Re-run with `confirm: DELETE`.\n');
+            }
+            await core.summary.write();
+
+            if (failures.length) {
+              core.setFailed(`${failures.length} artifact(s) could not be deleted`);
+            }
