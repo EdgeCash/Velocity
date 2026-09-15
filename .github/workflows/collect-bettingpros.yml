@@ -2,7 +2,7 @@ name: Collect BettingPros lines
 
 # BettingPros has no historical archive — a line exists only while it is live —
 # so we build line history by snapshotting the current board on a schedule and
-# storing each snapshot as a PRIVATE Actions artifact. Nothing is committed: the
+# storing each snapshot as an Actions artifact. Nothing is committed: the
 # repo is public and paid line data must never land in it.
 
 on:
@@ -61,7 +61,7 @@ jobs:
             --out artifacts/bp \
             --sports ${{ github.event.inputs.sports || 'NFL NCAAF MLB' }} $EXTRA
 
-      - name: Upload snapshot (private artifact)
+      - name: Upload snapshot (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: bp-lines-${{ github.run_id }}

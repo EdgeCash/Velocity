@@ -531,7 +531,7 @@ the NFL posts inactives ninety minutes out.
 
 Each run takes a fresh DK snapshot (salaries move, and the probable-pitcher
 and lineup flags are game-day state), builds every format, and uploads a
-private artifact. The betting-slate workflow pulls the newest one in before
+Actions artifact. The betting-slate workflow pulls the newest one in before
 it publishes the site, so the DFS page shows the entries built closest to
 lock. Every input is free and unauthenticated, so the extra runs cost
 nothing but minutes.

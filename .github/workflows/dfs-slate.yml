@@ -13,7 +13,7 @@ name: DFS slate
 # So this runs in the windows where the cards are posted and the slates have
 # not locked, rather than riding the 16:00/22:00 betting-slate cadence. Every
 # input is free and unauthenticated (DK's lobby, statsapi), so extra runs
-# cost nothing but minutes. Output is a PRIVATE artifact — DK salaries are
+# cost nothing but minutes. Output is an Actions artifact — DK salaries are
 # collected data and never land in the public repo.
 
 on:
@@ -171,7 +171,7 @@ jobs:
           PYTHONPATH=scripts python scripts/build_hr_board.py \
             ${STATCAST:+--statcast "$STATCAST"} --out artifacts/slate || true
 
-      - name: Upload DFS entries (private artifact)
+      - name: Upload DFS entries (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: dfs-slate-${{ github.run_id }}

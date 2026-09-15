@@ -167,7 +167,8 @@ def collect(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bank Kalshi candles for settled markets")
-    parser.add_argument("--out", default="artifacts/exchanges", help="output folder (private)")
+    parser.add_argument("--out", default="artifacts/exchanges",
+                        help="output folder (artifact, never git)")
     parser.add_argument("--leagues", nargs="+", default=list(SERIES_BY_LEAGUE))
     parser.add_argument(
         "--since-hours", type=int, default=36, help="settled-market lookback window"

@@ -215,7 +215,7 @@ rounded-normal sim smooths over.
   Kalshi data); a written research/data license is the route to
   anything more. **Polymarket**: storage isn't specifically restricted
   and redistribution is restricted only toward "Capital Market
-  Clients"/market-data distributors — but the same private-artifact
+  Clients"/market-data distributors — but the same artifact
   posture applies anyway (public repo discipline). Secrets (the
   optional `KALSHI_API_KEY` for rate headroom) live only in Actions
   secrets.
@@ -381,7 +381,7 @@ Findings from the live data that shaped the code:
 ### Phase E4 — Polymarket collectors (board half landed; closes pending)
 
 - Board snapshots on the hourly cron (events + batch books →
-  raw + parquet, private artifacts) — this **is** the spread/liquidity
+  raw + parquet, Actions artifacts) — this **is** the spread/liquidity
   history, since the CLOB keeps no historical books. The E2
   durability rule applies verbatim: ≥90-day retention + the
   consolidation job, because this data is unrecoverable by definition.
@@ -814,7 +814,7 @@ piece of work, not a flag to flip.
   but the venue-strategy payoff (E7's question) could be repriced by a
   ruling.
 - **ToS/redistribution.** Free ≠ redistributable. D7 keeps everything in
-  private artifacts; each adapter phase exits only after the venue's
+  Actions artifacts; each adapter phase exits only after the venue's
   terms are read.
 - **Key-less rate limits on Kalshi are undocumented.** Fine at our
   volumes in testing; the collector should attach the free key via

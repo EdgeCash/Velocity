@@ -8,7 +8,7 @@ then each group's draftables (players + salaries), and:
 * writes one normalized :class:`~velocity.dfs.salaries.Salaries` parquet per
   league covering every draft group on the board.
 
-Runs as a GitHub Action and uploads a PRIVATE artifact — salary history is
+Runs as a GitHub Action and uploads an Actions artifact — salary history is
 part of the edge, so it stays out of the public repo like the odds archives
 (docs/FOOTBALL_CUTOVER.md §5a). An empty lobby (off-season) succeeds.
 
@@ -98,7 +98,7 @@ def _write_tiered(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot DraftKings salaries")
     parser.add_argument("--out", default="artifacts/dk_salaries",
-                        help="output folder (private)")
+                        help="output folder (artifact, never git)")
     parser.add_argument("--leagues", default="nfl ncaaf mlb wnba nba ncaab nhl",
                         help="space-separated leagues to snapshot")
     parser.add_argument("--from-file",

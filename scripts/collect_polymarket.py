@@ -7,7 +7,7 @@ history lost. Each run banks the raw Gamma events and CLOB books verbatim (so
 improved normalizers can re-process later) plus normalized ``Lines``/
 ``PropLines`` parquet tagged ``snapshot``/``collected_at``/``league``.
 
-Runs as a GitHub Actions job into a private artifact; nothing is committed
+Runs as a GitHub Actions job into an Actions artifact; nothing is committed
 (docs/DATA_PROVIDERS.md). No secret needed — reads are unauthenticated.
 
     python scripts/collect_polymarket.py --out artifacts/exchanges
@@ -65,7 +65,8 @@ def collect(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot the Polymarket football board")
-    parser.add_argument("--out", default="artifacts/exchanges", help="output folder (private)")
+    parser.add_argument("--out", default="artifacts/exchanges",
+                        help="output folder (artifact, never git)")
     parser.add_argument("--leagues", nargs="+", default=list(TAG_IDS), help="Gamma league tags")
     args = parser.parse_args()
 

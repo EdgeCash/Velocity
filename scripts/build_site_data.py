@@ -49,7 +49,7 @@ _STAMP = r"(\d{8}T\d{6}Z)"
 #
 # The odd one out is the DraftKings salary. It is free to any account holder
 # rather than licensed, but it is DraftKings' data and the repo already
-# quarantines it to private artifacts, so it is treated the same way here. The
+# quarantines it to Actions artifacts, so it is treated the same way here. The
 # projected POINTS are ours and stay.
 PUBLIC_DROP_TABLES = (
     "bankroll",       # every number in it is a staked-money number

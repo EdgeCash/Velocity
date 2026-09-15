@@ -68,7 +68,7 @@ jobs:
       - name: Consolidate parquet by kind
         run: python scripts/consolidate_exchanges.py --in downloaded --out consolidated
 
-      - name: Upload rolling archive (private artifact)
+      - name: Upload rolling archive (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
           name: exchanges-archive-${{ github.run_id }}

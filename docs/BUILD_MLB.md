@@ -127,7 +127,7 @@ scheme, namespaced: `v*-mlbN`.
   tests unchanged**.
 - **DoD:** `pytest`/`ruff`/`mypy` green; **manual dispatch of `collect-odds.yml
   --leagues mlb` returns a real non-empty board, prints credits remaining, and
-  writes a private artifact** — this is the live pipeline/API-key proof, done now
+  writes an Actions artifact** — this is the live pipeline/API-key proof, done now
   in-season, not in September. → `v*-mlb0`.
 
   *M0 alone is the "in-season test" already discussed — it ships value before any
@@ -210,7 +210,7 @@ scheme, namespaced: `v*-mlbN`.
   snapshot (offline); empty/off-day board writes an empty slate and succeeds;
   cron parses.
 - **DoD:** a dry-run MLB slate produces shoppable, staked recommendations from a
-  live snapshot, written to a **private** artifact; off-day runs succeed empty.
+  live snapshot, written to a **Actions** artifact; off-day runs succeed empty.
   → `v*-mlb6` / `v1.x`.
 
 ---
@@ -360,7 +360,7 @@ toward the market, no probability shrink — while NFL sits at 0.2 and NCAAF at
 0.13. The lab's MLB rounds put the promoted model at Brier 0.2485 against the
 de-vigged closing moneyline's 0.2491, i.e. at parity rather than ahead, which
 argues for an anchor. Choosing the weight properly is a sweep against banked
-closing moneylines, and those live in the private historical-odds artifact
+closing moneylines, and those live in the historical-odds artifact
 rather than in `datasets/`, so it is a lab round and not a code change. It
 should be re-run *after* this promotion in any case: the numbers above were
 produced by the sim this section replaces.

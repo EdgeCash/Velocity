@@ -1,6 +1,6 @@
 """Grade the most recent prior day's slate → the email's model-status record.
 
-The workflow downloads previous runs' private artifacts into a folder; this
+The workflow downloads previous runs' Actions artifacts into a folder; this
 script finds **every slate from before today** (US/Central — the operator's
 day), merges the day's cards so each play is graded once, grades them against
 the league's schedule feed, and writes

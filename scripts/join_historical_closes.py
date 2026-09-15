@@ -4,7 +4,7 @@ The walk-forward lab's market benchmarks (ATS vs close, disagreement sweeps,
 the market-blend ceiling) need per-game closing ``spread_line``/``total_line``.
 The football frames carry them from free feeds; MLB/WNBA closes come from The
 Odds API's historical archive, banked by ``collect_historical_odds.py`` as
-**private** artifacts. This script joins them:
+**Actions** artifacts. This script joins them:
 
 1. read every ``lines_<league>_*.parquet`` + ``events_<league>_*.parquet``
    under ``--archive`` (a downloaded artifact folder),
@@ -144,7 +144,7 @@ def main() -> None:  # pragma: no cover - file orchestration
     parser = argparse.ArgumentParser(description="Join banked closes onto games")
     parser.add_argument("--league", required=True, choices=["mlb", "wnba"])
     parser.add_argument("--archive", required=True,
-                        help="folder of downloaded hist artifacts (private)")
+                        help="folder of downloaded hist artifacts")
     parser.add_argument("--games", required=True, help="committed games parquet")
     parser.add_argument("--out", required=True,
                         help="output folder (private — paid lines, never git)")

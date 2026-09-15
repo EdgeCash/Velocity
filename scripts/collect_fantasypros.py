@@ -9,7 +9,7 @@ falls back to per-position fetches when that happens. ``--inspect`` dumps the
 first normalized row for schema discovery.
 
 Runs as a **GitHub Actions** job (where ``FP_API_KEY`` lives) and uploads its
-output as a **private Actions artifact**; it never commits. Triggering the
+output as an **Actions artifact**; it never commits. Triggering the
 workflow manually (``workflow_dispatch``) with ``--inspect`` doubles as the in-CI
 verification + schema discovery, since the sandbox can't see the secret.
 
@@ -188,7 +188,7 @@ def main() -> None:
     parser.add_argument("--no-fetch-schedule", action="store_true",
                         help="resolve --week auto from the committed games parquet only")
     parser.add_argument("--leagues", nargs="+", default=list(LEAGUES))
-    parser.add_argument("--out", default="artifacts/fp", help="output folder (private, not git)")
+    parser.add_argument("--out", default="artifacts/fp", help="output folder (artifact, never git)")
     parser.add_argument(
         "--inspect", action="store_true", help="print the raw shape of the first player (dry-run)"
     )

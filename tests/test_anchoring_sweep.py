@@ -1,6 +1,6 @@
 """The anchoring sweep — the pieces that decide a staking weight.
 
-The closes it runs on are paid data and live only in a private artifact, so
+The closes it runs on are paid data and live only in an Actions artifact, so
 these exercise the machinery on constructed frames: the de-vig, the
 doubleheader-safe join, and the estimator the verdict rests on.
 """

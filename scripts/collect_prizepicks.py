@@ -7,7 +7,7 @@ takes one snapshot per requested league and writes a single timestamped
 parquet plus the raw JSON payloads.
 
 It is designed to run as a **GitHub Actions** job and to upload its output as
-a **private Actions artifact**. It deliberately does *not* commit anything:
+an **Actions artifact**. It deliberately does *not* commit anything:
 the repo is public, and both ToS hygiene and our own edge say board snapshots
 never land in it.
 
@@ -34,7 +34,7 @@ DEFAULT_LEAGUES = ("NFL", "CFB")
 
 def main() -> None:  # pragma: no cover - network orchestration
     parser = argparse.ArgumentParser(description="Snapshot the PrizePicks board")
-    parser.add_argument("--out", default="artifacts/pp", help="output folder (private, not git)")
+    parser.add_argument("--out", default="artifacts/pp", help="output folder (artifact, never git)")
     parser.add_argument("--leagues", nargs="+", default=list(DEFAULT_LEAGUES),
                         help="PrizePicks league names (as /leagues spells them)")
     args = parser.parse_args()

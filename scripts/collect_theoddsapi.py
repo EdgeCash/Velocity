@@ -7,7 +7,7 @@ builds the line-movement history toward close; true historical backfill uses the
 pricier ``/historical`` endpoint on demand.
 
 Runs as a **GitHub Actions** job (where ``THE_ODDS_API`` lives) and uploads its
-output as a **private Actions artifact** — it never commits, because the repo is
+output as an **Actions artifact** — it never commits, because the repo is
 public and paid odds data must not land in it. Triggering the workflow manually
 (``workflow_dispatch``) doubles as the in-CI verification that the key works,
 since the sandbox can't see the secret.
@@ -70,7 +70,8 @@ def collect(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot The Odds API game lines")
-    parser.add_argument("--out", default="artifacts/odds", help="output folder (private, not git)")
+    parser.add_argument("--out", default="artifacts/odds",
+                        help="output folder (artifact, never git)")
     parser.add_argument("--leagues", nargs="+", default=list(LEAGUES), help="leagues to snapshot")
     parser.add_argument("--regions", default="us",
                         help="The Odds API regions: 'us', or 'us,eu' for Pinnacle (each "
