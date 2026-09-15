@@ -210,7 +210,7 @@ scheme, namespaced: `v*-mlbN`.
   snapshot (offline); empty/off-day board writes an empty slate and succeeds;
   cron parses.
 - **DoD:** a dry-run MLB slate produces shoppable, staked recommendations from a
-  live snapshot, written to a **Actions** artifact; off-day runs succeed empty.
+  live snapshot, written to an **Actions** artifact; off-day runs succeed empty.
   → `v*-mlb6` / `v1.x`.
 
 ---

@@ -429,10 +429,11 @@ resolution shared rather than copied a fourth time.
 
 Four things this had to get right:
 
-- **Marks are hot-linked from ESPN's public CDN, never vendored.** The repo
-  is public and club marks are not ours to redistribute — the same line the
-  card renderers draw. That makes "the image did not arrive" a normal state,
-  not an error — and there are three ways to have no logo, only one of which
+- **Marks are hot-linked from ESPN's public CDN, never vendored.** Club marks
+  are not ours to redistribute, and the site is public whatever the repo's
+  visibility is — the same line the card renderers draw. That makes "the image
+  did not arrive" a normal state, not an error — and there are three ways to
+  have no logo, only one of which
   fires an `error`. A blocked or slow CDN just leaves the request **pending**,
   so an `on:error` fallback alone shows an empty plate for as long as the
   browser is willing to wait. `TeamMark.svelte` therefore paints the code chip

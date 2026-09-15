@@ -3,9 +3,9 @@ name: Live slate
 # The daily loop: on game days, grade yesterday's slate into the record chain
 # (with Sim Check + record cards), fit the model on committed history, pull the
 # current board from The Odds API, and produce a staked slate of recommended
-# bets plus the shareable model cards — all persisted as a PRIVATE Actions
-# artifact (the slate is derived from paid odds, so it never lands in the
-# public repo). Off-season runs find an empty board and succeed.
+# bets plus the shareable model cards — all persisted as an Actions artifact
+# (the slate is derived from paid odds, so it never lands in git). Off-season
+# runs find an empty board and succeed.
 #
 # Read the slate from the run's artifact (or the job log). This does not place
 # bets — a human acts on it. Tune the cron to the real game-day windows.
@@ -108,8 +108,8 @@ jobs:
       # record line, and the Sim Check cards (yesterday's results on the pregame
       # distributions) land in the same artifact. Both best-effort: grading
       # trouble never blocks the slate or its email. Previous slates live only
-      # in private run artifacts (paid-odds data never lands in the public
-      # repo); grading uses the free schedule feeds (nflverse; CFBD when
+      # in run artifacts (paid-odds data never lands in git); grading uses
+      # the free schedule feeds (nflverse; CFBD when
       # CFBD_API_KEY is set).
       - name: Fetch previous slates
         continue-on-error: true
@@ -440,7 +440,7 @@ jobs:
       # ---- the optimal DK lineup (DFS surface) --------------------------------
       # Needs both a DK salary snapshot and an FP projections snapshot; missing
       # either just skips the lineup. The lineup parquet + card land in the same
-      # Actions artifact (DK salaries are collected data — never public repo).
+      # Actions artifact (DK salaries are collected data — never git).
       - name: Fetch DraftKings salaries
         continue-on-error: true
         env:

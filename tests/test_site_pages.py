@@ -307,8 +307,8 @@ def test_a_displayed_number_goes_through_the_shared_formatters(component: Path) 
 def test_a_team_mark_falls_back_when_the_logo_does_not_arrive() -> None:
     """Marks are hot-linked, so "the image did not load" is a normal state.
 
-    ESPN's CDN is a third party the board does not control, and the repo is
-    public so the marks cannot be vendored instead. The component therefore has
+    ESPN's CDN is a third party the board does not control, and club marks are
+    not ours to redistribute, so they cannot be vendored instead. The component therefore has
     to have both branches — an error handler that gives up on the image, and a
     code chip to fall back to — or a bad CDN day is a page of empty squares.
     """

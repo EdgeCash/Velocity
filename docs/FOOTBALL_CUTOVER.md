@@ -223,7 +223,7 @@ operator should manually dispatch each new workflow once as verification:
   per-event JSON + normalized `PropLines` parquet) to Actions artifacts.
 - `collect-dk-salaries.yml` (15:31 UTC daily) — `velocity/dfs/salaries.py` +
   `scripts/collect_dk_salaries.py` bank every DK draft group's salaries (raw
-  lobby/draftables JSON + normalized `Salaries` parquet) to private
+  lobby/draftables JSON + normalized `Salaries` parquet) to Actions
   artifacts. Unauthenticated; no secret.
 
 The pre-existing `collect-odds` / `collect-bettingpros` / `collect-fantasypros`
@@ -437,8 +437,8 @@ distribution is our structural edge in tournaments.
 | Ownership projections (GPP leverage) | Paid (RotoGrinders etc.) | **Deferred.** Start without; approximate from salary + FantasyPros consensus rank if needed. |
 | Contest results / payout curves | Own entered-contest CSVs | Bank as we go; no good free historical source. |
 
-Same archive discipline as odds: salary snapshots land in private Actions
-artifacts, never in git. Snapshots start **now** — salary vs. projection
+Same archive discipline as odds: salary snapshots land in Actions artifacts,
+never in git. Snapshots start **now** — salary vs. projection
 history is the DFS equivalent of the CLV archive.
 
 ### 5b. Build (rides Phase 3's prop wiring; ~1 week on top)
@@ -507,7 +507,7 @@ against actuals.
    Rebuild the sweep for football props before betting them.
 2. **Market exclusions** — some markets (MLB: `total_bases`) never calibrated
    and were excluded. Expect football analogs; let the backtest choose.
-3. **CLV archive discipline** — paid-odds snapshots live only in private
+3. **CLV archive discipline** — paid-odds snapshots live only in Actions
    artifacts, never in git; grading and record-keeping run on the archive.
 4. **Daily loop shape** — grade yesterday → build slate → email → artifact →
    social cards. The football cadence is weekly-with-bursts, but the loop is

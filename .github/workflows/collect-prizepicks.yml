@@ -1,19 +1,32 @@
 name: Collect PrizePicks board
 
 # PrizePicks has no historical archive — a board line exists only while it is
-# live — so we build pick'em history by snapshotting the board on a schedule
-# and storing each snapshot as an Actions artifact. Nothing is
-# committed: the repo is public, and both ToS hygiene and our own edge say
-# board snapshots never land in it. The feed is keyless; the collector is
-# deliberately polite (one request per league, spaced, backoff) and reports
-# bot-protection blocks instead of fighting them.
+# live — so pick'em history has to be built by snapshotting the board. Nothing
+# is committed: ToS hygiene and our own edge both say board snapshots never
+# land in git. The feed is keyless; the collector is deliberately polite (one
+# request per league, spaced, backoff) and reports bot-protection blocks
+# instead of fighting them.
+#
+# THE SCHEDULE IS OFF (2026-09-15). It ran every 3 hours for 180 runs and
+# banked nothing: DataDome refuses GitHub's datacenter IPs, so every run logs
+#
+#   PrizePicks board unreachable from this network (HTTP Error 403: Forbidden)
+#   skipping snapshot (bot-protection block — expected from datacenter IPs)
+#
+# and exits green, by design — a known block is a clean skip so the schedule
+# survives. That was the right call when the block might have been transient.
+# It is not transient, and a green run that collects nothing is indistinguishable
+# from a working one at a glance, which is the worst shape for a job to sit in.
+# Nothing downstream reads the artifacts, so the cost was pure: ~40 minutes of
+# Actions time a week, which now bills, since the repo is private.
+#
+# The capability is kept, not deleted: workflow_dispatch still runs it, so the
+# moment the transport is solved (docs/DATA_PROVIDERS.md lists the relay
+# options — a licensed aggregator, or this same collector run from a
+# residential connection) this becomes a one-line change back. What we do NOT
+# do is fight the bot protection; that posture is unchanged.
 
 on:
-  schedule:
-    # Every 3 hours, mirroring the BettingPros cadence: in-season this brackets
-    # board moves toward lock; off-season the snapshot is small or empty and
-    # the job still succeeds.
-    - cron: "43 */3 * * *"
   workflow_dispatch:
     inputs:
       leagues:

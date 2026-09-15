@@ -14,7 +14,7 @@ name: DFS slate
 # not locked, rather than riding the 16:00/22:00 betting-slate cadence. Every
 # input is free and unauthenticated (DK's lobby, statsapi), so extra runs
 # cost nothing but minutes. Output is an Actions artifact — DK salaries are
-# collected data and never land in the public repo.
+# collected data and never land in git.
 
 on:
   schedule:

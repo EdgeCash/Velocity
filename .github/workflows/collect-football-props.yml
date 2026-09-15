@@ -1,7 +1,7 @@
 name: Collect player-prop lines
 
 # Snapshots NFL + NCAAF player props (pass/rush/receiving yards, receptions,
-# pass TDs, anytime TD) PLUS the team-total derivative into a PRIVATE Actions
+# pass TDs, anytime TD) PLUS the team-total derivative into an Actions
 # artifact — the soft-market CLV archive the prop backtest replays, and the
 # posted team-total closes the min_team_total_disagreement gate calibrates
 # against (docs/BACKTEST_NCAAF.md addendum). All are per-event "additional"
@@ -10,7 +10,7 @@ name: Collect player-prop lines
 # full NCAAF Saturday board is the big one (~60 events → ~420), so twice
 # daily lands well under the 100k/month budget. Raw payloads are banked
 # verbatim alongside the normalized parquets; empty boards succeed. Never
-# commits — the repo is public and paid odds must not land in it.
+# commits — paid odds must not land in git, whose history is permanent.
 #
 # Manual dispatch doubles as the THE_ODDS_API prop-endpoint verification.
 

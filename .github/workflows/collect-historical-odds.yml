@@ -4,7 +4,7 @@ name: Bank historical odds (CLV archive)
 # historical endpoint costs more credits than live, so this exists to spend a
 # stash of expiring credits deliberately: it pulls past snapshots for a date
 # range at a few times per day and banks them (raw JSON + normalized parquet)
-# into an Actions artifact. Nothing is committed — the repo is public and
+# into an Actions artifact. Nothing is committed — git history is permanent and
 # paid odds must not land in it.
 #
 # Later, grade_archive joins these closing lines to schedule-feed finals for CLV

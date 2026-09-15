@@ -3,8 +3,8 @@ name: Collect injuries snapshot
 # The injuries feed moves on a daily rhythm the weekly projections refresh
 # can't see: official reports finalize Friday, and Sunday-morning scratches
 # are exactly the information the intel layer's veto signals exist for
-# (docs/INTEL.md §6). This banks the injury snapshots per run into a PRIVATE
-# Actions artifact — the live slate downloads the freshest at build time;
+# (docs/INTEL.md §6). This banks the injury snapshots per run into an Actions
+# artifact — the live slate downloads the freshest at build time;
 # nothing is committed. The committed nflverse history
 # (datasets/nfl/injuries.parquet) is the backtest twin of these snapshots.
 #

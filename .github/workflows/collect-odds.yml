@@ -2,9 +2,9 @@ name: Collect The Odds API lines
 
 # The Odds API is the feed with real history — the source of the closing-line
 # archive for CLV and the market backtest. This snapshots the live board on a
-# schedule (cheap: 1 credit per market per region) into a PRIVATE Actions
-# artifact. Nothing is committed: the repo is public and paid odds must not land
-# in it.
+# schedule (cheap: 1 credit per market per region) into an Actions artifact.
+# Nothing is committed: paid odds must not land in git, whose history is
+# permanent, clonable and mirrored.
 #
 # Triggering this manually (workflow_dispatch) is also the in-CI verification
 # that the THE_ODDS_API secret works — the dev sandbox can't see the secret, so

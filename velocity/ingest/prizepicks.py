@@ -5,8 +5,9 @@ it is not a priced market, so these rows aren't ``Lines``; they are the
 *pick'em board* our slip-EV engine compares against devigged sportsbook
 props and our own prop model. There is no historical archive: a board line
 exists only while it is live, so history is built the same way as the
-BettingPros feed — scheduled snapshots banked as **private Actions
-artifacts**, never committed to git.
+BettingPros feed — snapshots banked as **Actions artifacts**, never committed
+to git. (That schedule is currently off: DataDome refuses datacenter IPs, so
+every run banked nothing — see the workflow.)
 
 The board is served by PrizePicks' own unofficial JSON:API (no key, no
 login). Two postures follow from that:

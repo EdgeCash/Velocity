@@ -5,7 +5,7 @@ name: Refresh datasets (current season)
 # tracks each season as it happens — daily, because the summer leagues (MLB,
 # WNBA; free keyless feeds) play every night. Free feeds only (nflverse;
 # CFBD needs the CFBD_API_KEY secret) — datasets/ carries no paid data, so
-# committing it to the public repo is fine (it's the whole point).
+# committing it is fine (it's the whole point).
 #
 # The push goes straight to the branch the run checked out (the default
 # branch on schedule). If branch protection blocks the github-actions bot,

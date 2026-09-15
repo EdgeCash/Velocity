@@ -1,8 +1,8 @@
 name: Collect FantasyPros projections
 
 # FantasyPros consensus projections feed the props model as an external prior.
-# This snapshots them into an Actions artifact — nothing is committed
-# (public repo, paid data). Because we don't have a pinned FantasyPros schema,
+# This snapshots them into an Actions artifact — nothing is committed (paid
+# data never lands in git). Because we don't have a pinned FantasyPros schema,
 # the manual dispatch runs with --inspect so its log shows the raw response
 # shape, doubling as the in-CI verification of the FP_API_KEY secret and the
 # way we tighten the tolerant normalizer.

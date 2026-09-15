@@ -255,10 +255,10 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
 # Query parameters BettingPros echoes back that must never reach disk. The
 # /props response carries the full request URL in ``_pagination.self``,
 # credentials included, and the collector banks that payload verbatim — so the
-# partner key and user id were being written into every artifact. An Actions
-# artifact on a PUBLIC repo is downloadable by anyone with NO authentication at
-# all (docs/DATA_PROVIDERS.md) and outlives the run by a month — so this was not
-# "a private place with a short retention", it was publication.
+# partner key and user id were being written into every artifact. An artifact's
+# audience is whoever can read the repo, plus a 30-day clock — no masking, no
+# private tier (docs/DATA_PROVIDERS.md). While this repo was public that was a
+# very large audience, which is not "a private place with a short retention".
 _SECRET_QUERY_PARAMS = ("key", "user", "auth", "api_key", "token")
 _SECRET_RE = re.compile(
     r"([?&](?:" + "|".join(_SECRET_QUERY_PARAMS) + r")=)[^&\s\"']+",
