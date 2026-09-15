@@ -20,7 +20,7 @@ yesterday, season units); four tabs carry the detail:
 
 Data comes from the newest ``slate-*`` GitHub Actions artifact (the runner's
 parquets), fetched with a token from Streamlit secrets — the paid-odds data
-itself never lives in the public repo. For local use, point
+itself never lives in git. For local use, point
 ``VELOCITY_SLATE_DIR`` at a runner ``--out`` folder instead; no token needed.
 
     streamlit run app/streamlit_app.py

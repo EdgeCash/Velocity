@@ -9,7 +9,7 @@ then each group's draftables (players + salaries), and:
   league covering every draft group on the board.
 
 Runs as a GitHub Action and uploads an Actions artifact — salary history is
-part of the edge, so it stays out of the public repo like the odds archives
+part of the edge, so it stays out of git like the odds archives
 (docs/FOOTBALL_CUTOVER.md §5a). An empty lobby (off-season) succeeds.
 
     python scripts/collect_dk_salaries.py --out artifacts/dk_salaries

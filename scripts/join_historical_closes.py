@@ -15,7 +15,7 @@ Odds API's historical archive, banked by ``collect_historical_odds.py`` as
    (they agree by construction) and **nearest kickoff**, doubleheader-safe,
 4. write the augmented games parquet to ``--out``.
 
-The output contains paid line data, so it must never land in the public repo:
+The output contains paid line data, so it must never land in git:
 ``--out`` defaults under ``artifacts/`` (gitignored) and the lab is pointed at
 it with ``--data``. Only aggregated lab verdicts are committed.
 

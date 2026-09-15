@@ -6,7 +6,7 @@ it is not a priced market, so these rows aren't ``Lines``; they are the
 props and our own prop model. There is no historical archive: a board line
 exists only while it is live, so history is built the same way as the
 BettingPros feed — scheduled snapshots banked as **private Actions
-artifacts**, never committed to the public repo.
+artifacts**, never committed to git.
 
 The board is served by PrizePicks' own unofficial JSON:API (no key, no
 login). Two postures follow from that:

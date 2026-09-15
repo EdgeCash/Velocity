@@ -490,10 +490,11 @@ def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFr
     rather than in the browser because the maths belongs with the palette and is
     tested; the page just paints what it is handed.
 
-    Marks are **hot-linked** from ESPN's public CDN rather than vendored: the
-    repo is public and club marks are not ours to redistribute, which is the
-    same line the card renderers draw. A page therefore has to survive the
-    image not loading, and ``TeamMark`` falls back to the code chip.
+    Marks are **hot-linked** from ESPN's public CDN rather than vendored: club
+    marks are not ours to redistribute, and the *site* is public whatever the
+    repo's visibility is, which is the same line the card renderers draw. A page
+    therefore has to survive the image not loading, and ``TeamMark`` falls back
+    to the code chip.
 
     NCAAF identity needs ``CFBD_API_KEY`` or its cached payload, and degrades to
     bare codes without either — a missing key costs colour, never a build. The

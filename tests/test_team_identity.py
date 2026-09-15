@@ -13,8 +13,9 @@ half the surfaces blank.
 floor leaves fifteen of thirty-two clubs under 3:1 against the site's panel,
 because HLS lightness is not luminance.
 
-**Marks stay hot-linked.** The repo is public and club marks are not ours to
-redistribute, so none of them may ever land in the build's static tree.
+**Marks stay hot-linked.** Club marks are not ours to redistribute, and the
+site is public whatever the repo's visibility is, so none of them may ever land
+in the build's static tree.
 """
 
 from __future__ import annotations

@@ -8,7 +8,7 @@ parquet plus the raw JSON payloads.
 
 It is designed to run as a **GitHub Actions** job and to upload its output as
 an **Actions artifact**. It deliberately does *not* commit anything:
-the repo is public, and both ToS hygiene and our own edge say board snapshots
+both ToS hygiene and our own edge say board snapshots
 never land in it.
 
 No credentials exist for this feed (the board API is keyless); the client is
