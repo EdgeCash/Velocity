@@ -46,6 +46,10 @@ import pandas as pd
 from velocity.store.schema import PROP_MARKETS, Lines
 
 _BASE = "https://api.bettingpros.com/v3"
+# The /props page size the server enforces. Asking for more is silently capped
+# (the echoed _parameters.limit reads 200 however big the request was), so the
+# only way to the whole board is to page through it.
+PROPS_PAGE_LIMIT = 200
 _FETCH_TIMEOUT = 60
 
 # BettingPros game-market slug → canonical Lines market. These are the slugs the
@@ -232,7 +236,102 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
     "rushing-yards": "rush_yards",
     "receiving-yards": "receiving_yards",
     "receptions": "receptions",
+    # Confirmed against a live board on 2026-09-15 (the first run of the
+    # coverage report below): BettingPros files MLB pitcher strikeouts under
+    # the bare slug "strikeouts". It is the one slug the board served that
+    # maps to a market we actually price.
+    #
+    # Deliberately NOT added from that same board: "total-bases" is the
+    # largest MLB slug there and PROP_MARKETS excludes the market outright —
+    # the walk-forward found it losing at every shrink (docs/WAGERING.md
+    # §1.3), so mapping it would arm a signal for a market we refuse to bet.
+    # "rushing-receiving-yards", "runs-hits-rbis" and "passing-attempts" are
+    # combined or unmodeled markets with no counterpart in PROP_MARKETS; they
+    # abstain correctly, and mapping them would need a model first.
+    "strikeouts": "pitcher_strikeouts",
 }
+
+
+# Query parameters BettingPros echoes back that must never reach disk. The
+# /props response carries the full request URL in ``_pagination.self``,
+# credentials included, and the collector banks that payload verbatim — so the
+# partner key and user id were being written into every artifact. Private
+# artifacts are not a place to keep a secret; they are downloadable by anyone
+# with repo access and they outlive the run by a month.
+_SECRET_QUERY_PARAMS = ("key", "user", "auth", "api_key", "token")
+_SECRET_RE = re.compile(
+    r"([?&](?:" + "|".join(_SECRET_QUERY_PARAMS) + r")=)[^&\s\"']+",
+    re.IGNORECASE,
+)
+
+
+def scrub_secrets(value: Any) -> Any:
+    """Recursively redact credential query parameters from a payload.
+
+    Walks dicts, lists and strings, rewriting ``key=abc`` to ``key=REDACTED``
+    wherever it appears in a URL-shaped string. Structure and every other value
+    are preserved exactly, so a scrubbed payload still normalizes identically —
+    the redaction touches only the echoed request URL.
+    """
+    if isinstance(value, str):
+        return _SECRET_RE.sub(r"\1REDACTED", value)
+    if isinstance(value, Mapping):
+        return {k: scrub_secrets(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_secrets(v) for v in value]
+    return value
+
+
+def pagination(payload: Any) -> dict[str, int]:
+    """``{page, limit, total_pages, total_items}`` from a ``/props`` response.
+
+    BettingPros caps ``limit`` at **200 per page** and silently ignores a
+    larger request — the echoed ``_parameters.limit`` reads 200 however big the
+    ask was. One page is therefore 200 rows of a board that is routinely an
+    order of magnitude bigger, and nothing said so: the collector asked for
+    5,000, got 200, and banked it as if it were the board.
+
+    Missing or unparseable metadata yields an empty dict, and the caller then
+    treats the response as a single page — the old behaviour, but chosen rather
+    than assumed.
+    """
+    block = payload.get("_pagination") if isinstance(payload, Mapping) else None
+    if not isinstance(block, Mapping):
+        return {}
+    out: dict[str, int] = {}
+    for key in ("page", "limit", "total_pages", "total_items"):
+        try:
+            out[key] = int(block[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def merge_prop_pages(pages: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Concatenate paged ``/props`` responses into one payload.
+
+    The first page supplies the envelope (labels, parameters); every page
+    contributes its ``props``. The merged ``_pagination`` records what was
+    actually collected, so a truncated run is legible after the fact rather
+    than looking like a complete small board.
+    """
+    merged: dict[str, Any] = {}
+    props: list[Any] = []
+    pages_seen = 0
+    for page in pages:
+        if not isinstance(page, Mapping):
+            continue
+        pages_seen += 1
+        if not merged:
+            merged = {k: v for k, v in page.items() if k != "props"}
+        props.extend(page.get("props") or [])
+    merged["props"] = props
+    if merged:
+        block = dict(merged.get("_pagination") or {})
+        block["pages_collected"] = pages_seen
+        block["items_collected"] = len(props)
+        merged["_pagination"] = block
+    return merged
 
 
 def normalize_props(
@@ -379,13 +478,39 @@ class BettingProsClient:
         keeps them as NaN.
         """
         defaults: dict[str, object] = {
-            "limit": 5000,
+            # The server caps this at 200 whatever we ask for, so ask for the
+            # cap and page through it rather than pretending one call is the
+            # board. ``props_all`` is what callers want.
+            "limit": PROPS_PAGE_LIMIT,
             "ev_threshold": "false",  # the full board, not just the flagged edges
             "include_selections": "false",
             "include_markets": "false",
         }
         defaults.update(params)
         return self._get("props", sport=sport, **defaults)
+
+    def props_all(  # pragma: no cover - network
+        self, sport: str, *, max_pages: int = 20, **params: object
+    ) -> dict[str, Any]:
+        """Every page of the ``/props`` board for ``sport``, merged and scrubbed.
+
+        The cap is 200 rows a page and a real board runs to thousands, so a
+        single call was banking a fifth of the NFL board and an eighth of the
+        MLB one — silently, because nothing read ``_pagination``. This follows
+        ``total_pages`` to the end.
+
+        ``max_pages`` is a budget guard, not a tuning knob: it bounds a run
+        against a board that grows unexpectedly, and the caller is told when it
+        bites (the merged ``_pagination`` records pages collected against pages
+        available).
+        """
+        first = scrub_secrets(self.props(sport, page=1, **params))
+        meta = pagination(first)
+        total = min(int(meta.get("total_pages", 1) or 1), max_pages)
+        pages = [first]
+        for page in range(2, total + 1):
+            pages.append(scrub_secrets(self.props(sport, page=page, **params)))
+        return merge_prop_pages(pages)
 
     def game_lines(
         self, sport: str, event_ids: Iterable[object] | None = None

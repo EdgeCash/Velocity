@@ -144,6 +144,57 @@ pitcher-K slate MLB actually has. The gate keeping that from happening lived in
 a shell conditional in `live-slate.yml`. It is now `FOOTBALL_PROP_LEAGUES` in
 the runner, with a test that fails if the guard is removed.
 
+### What the first coverage run found (2026-09-15)
+
+The slug report shipped in the previous change, and its first live run turned
+up three things — two of them larger than the question it was built to answer.
+
+**1. The prop board was being truncated by ~85%, silently.** BettingPros caps
+`/props` at **200 rows a page** and ignores a larger `limit` (the echoed
+`_parameters.limit` reads 200 however big the request was). The collector asked
+for 5,000, got 200, and banked it as the board. The response says so plainly in
+`_pagination`, which nothing read:
+
+| sport | banked | actually available | |
+|---|---|---|---|
+| NFL | 200 | 940 (5 pages) | **21%** |
+| MLB | 200 | 1,635 (9 pages) | **12%** |
+
+`props_all()` now follows `total_pages` to the end, with `--max-prop-pages` as
+a budget guard that emits an Actions warning when it bites — a truncated board
+should never again look like a small one. Cost: ~14 calls a run instead of 2,
+against a 5,000/day cap.
+
+**2. The partner key was being written to disk on every snapshot.**
+BettingPros echoes the full request URL — `key`, `user` and `auth` included —
+back in `_pagination.self`, and the collector banked the raw payload verbatim
+into an artifact that outlives the run by 30 days. `scrub_secrets()` redacts
+those parameters everywhere they appear before anything is written. It runs per
+page inside `props_all` and again at the write, because a credential leak is
+worth two passes.
+
+**3. The slug table was about half right, and mostly for reasons no mapping can
+fix.** Of its five reasoned entries, `passing-touchdowns` and `receptions`
+served **zero rows**, while the single biggest slug on the NFL board —
+`rushing-receiving-yards`, 38% of it — was absent from the map entirely. On the
+MLB board all 11 slugs were unmapped and every row abstained.
+
+But only one of those was a mapping gap. `strikeouts` → `pitcher_strikeouts` is
+now mapped, confirmed against the live board. Everything else abstains
+correctly:
+
+- `rushing-receiving-yards`, `runs-hits-rbis`, `passing-attempts` are combined
+  or unmodeled markets with no counterpart in `PROP_MARKETS` — they need a
+  model before they need a mapping.
+- `total-bases` is the largest MLB slug and `PROP_MARKETS` excludes it
+  deliberately: the walk-forward found it losing at every shrink
+  (`docs/WAGERING.md` §1.3). Mapping it would arm a signal for a market we
+  refuse to bet.
+
+Note the counts above are page-1 samples, taken before pagination landed. The
+next run measures the whole board, and the slug mix may look different once
+85% more of it is visible.
+
 ## The FantasyPros collector (`scripts/collect_fantasypros.py` + workflow)
 
 `.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).

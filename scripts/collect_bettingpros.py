@@ -32,6 +32,8 @@ from velocity.ingest.bettingpros import (
     BettingProsClient,
     describe_slug_coverage,
     normalize_props,
+    pagination,
+    scrub_secrets,
 )
 
 # The sports snapshotted by default. MLB joined on 2026-09-14: it is an
@@ -168,6 +170,10 @@ def main() -> None:
         "--sports", nargs="+", default=list(SPORTS), help="sports to snapshot (default NFL NCAAF)"
     )
     parser.add_argument(
+        "--max-prop-pages", type=int, default=20,
+        help="page budget per sport's prop board (200 rows a page, server-capped)",
+    )
+    parser.add_argument(
         "--probe-props", action="store_true",
         help="probe /props status codes across sports and exit (no snapshot)",
     )
@@ -237,15 +243,37 @@ def main() -> None:
                     print(f"  {sport} props throttled (429); retrying in {delay}s")
                     time.sleep(delay)
                 try:
-                    payload = client.props(sport)
+                    # Every page, not just the first. The server caps a page at
+                    # 200 and a real board runs to thousands, so the single call
+                    # this replaced was banking a fifth of the NFL board and an
+                    # eighth of the MLB one — with nothing saying so, because
+                    # nothing read _pagination.
+                    payload = client.props_all(sport, max_pages=args.max_prop_pages)
                     break
                 except urllib.error.HTTPError as exc:
                     if exc.code != 429 or attempt == 2:
                         raise
             assert payload is not None
+            meta = pagination(payload)
+            available = int(meta.get("total_pages", 1) or 1)
+            collected = int(meta.get("pages_collected", 1) or 1)
+            items = int(meta.get("items_collected", len(payload.get("props") or [])))
+            print(f"  {sport} props: {collected} of {available} page(s), "
+                  f"{items} of {meta.get('total_items', items)} rows")
+            if collected < available:
+                print(f"::warning title={sport} prop board truncated::"
+                      f"collected {collected} of {available} pages "
+                      f"(--max-prop-pages {args.max_prop_pages}); the banked board "
+                      "is a sample, not the board")
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
-            (raw_dir / f"props_{sport.lower()}_{tag}.json").write_text(json.dumps(payload))
+            # scrub_secrets already ran per page inside props_all; this is the
+            # belt to that braces. BettingPros echoes the full request URL —
+            # partner key and user id included — in _pagination.self, and this
+            # file is written to an artifact that outlives the run by a month.
+            (raw_dir / f"props_{sport.lower()}_{tag}.json").write_text(
+                json.dumps(scrub_secrets(payload))
+            )
             # The /markets listing supplies the durable market_slug per id —
             # what the intel layer keys its slug→market table on. Best-effort:
             # a failed listing just leaves the column empty (abstain, never
