@@ -289,6 +289,139 @@ export function heldRule(reason) {
   return { rule: text, rank: 4 };
 }
 
+/** Is a HIGHER number better for this side?
+ *
+ * Spreads are quoted signed FROM the side you are on, so a higher point is
+ * always the better number (+3.5 beats +2.5; −2.5 beats −3.5). Totals invert
+ * by side: the over wants a lower number, the under a higher one. A market
+ * with no point (moneyline, anytime-TD) is judged on price, where higher is
+ * better on the American scale for the same reason `collapseMarkets` sorts
+ * that way — there are no values between −100 and +100, so signed order and
+ * payout order are the same order.
+ */
+function higherIsBetter(market, side) {
+  const kind = String(market ?? '');
+  const isTotalish = kind === 'total' || kind.startsWith('team_total');
+  if (isTotalish || kind.startsWith('player_') || kind.startsWith('pitcher_')
+      || kind.startsWith('batter_')) {
+    return String(side ?? '') !== 'over';
+  }
+  return true;
+}
+
+/** How this market moved since it opened, FROM THE BETTOR'S SIDE.
+ *
+ * The card is read before a bet exists, so the useful question is not the CLV
+ * one ("did the close move past me") but "is the number on offer now better or
+ * worse than the one that was there at open". A side steamed all week is still
+ * a play; it is a play you are buying late, and that is worth seeing on the
+ * row rather than inferred from a screenshot.
+ *
+ * Returns null when the market never moved — an unmoved line is not news.
+ */
+export function marketMove(moves, market, side) {
+  const row = (moves ?? []).find(
+    (m) => String(m.market ?? '') === String(market ?? '')
+      && String(m.side ?? '') === String(side ?? ''),
+  );
+  if (!row) return null;
+
+  const hasPoint = row.point_open !== null && row.point_open !== undefined
+    && row.point_now !== null && row.point_now !== undefined
+    && Number.isFinite(Number(row.point_open)) && Number.isFinite(Number(row.point_now));
+  const from = hasPoint ? Number(row.point_open) : Number(row.price_open);
+  const to = hasPoint ? Number(row.point_now) : Number(row.price_now);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+
+  const delta = to - from;
+  if (Math.abs(delta) < 1e-9) return null;
+  const better = higherIsBetter(market, side) ? delta > 0 : delta < 0;
+
+  return {
+    kind: hasPoint ? 'point' : 'price',
+    from,
+    to,
+    delta,
+    // 'better'/'worse' for the reader taking this side NOW — never rendered as
+    // colour alone: pos↔warn is ΔE 6.2 under protanopia, so every chip that
+    // uses this carries a glyph and a word too.
+    direction: better ? 'better' : 'worse',
+    glyph: better ? '▲' : '▼',
+    // Said plainly, because "line moved" without a subject is the kind of
+    // phrasing that reads as a recommendation when it is a fact.
+    label: better
+      ? 'better number than open'
+      : 'worse number than open',
+  };
+}
+
+/** What the record says about beating the close in THIS market.
+ *
+ * Spreads, totals and moneylines close efficiently enough that beating the
+ * close is skill; props and team totals do not, and their rows carry
+ * `clv_trusted = false` (docs/WAGERING.md §6). A card that showed one CLV
+ * number for every market would quietly average a meaningful signal with a
+ * meaningless one, so this hands back the flag and lets the surface say
+ * "judge on P/L" instead of printing a number that does not mean what it
+ * looks like.
+ */
+export function clvTrust(clvRows, league, market) {
+  const want = String(market ?? '');
+  const lg = String(league ?? '');
+  const row = realRows(clvRows).find(
+    (r) => String(r.market ?? '') === want && String(r.league ?? '') === lg,
+  );
+  if (!row) return null;
+  const n = Number(row.n_bets);
+  return {
+    market: want,
+    trusted: row.clv_trusted === true || row.clv_trusted === 'true',
+    nBets: Number.isFinite(n) ? n : 0,
+    meanClv: Number(row.mean_price_clv),
+    units: Number(row.units),
+  };
+}
+
+/** The model's number against the market's, and the gap between them.
+ *
+ * `p_fair` is the DE-VIGGED market probability, so the gap is the whole
+ * argument for the bet in one subtraction — and it is the pair the card has
+ * been carrying in `market_row` and throwing away. Null when either side is
+ * missing: a bar drawn against an absent market number is a bar that invents
+ * its own reference.
+ */
+export function modelVsMarket(marketRow) {
+  const pModel = Number(marketRow?.p_model);
+  const pFair = Number(marketRow?.p_fair);
+  if (!Number.isFinite(pModel) || !Number.isFinite(pFair)) return null;
+  return { pModel, pFair, gap: pModel - pFair };
+}
+
+/** The strongest single thing to say about a play, for the one-line why.
+ *
+ * Ranked by what would change a decision: the model's own sentence if it wrote
+ * one, then a line that moved, then a side missing players, then weather. One
+ * line only — the rest is behind the expand, and a "summary" that lists
+ * everything is the row it was meant to summarise.
+ */
+export function playHeadline(play) {
+  if (play?.market_row?.rationale) return String(play.market_row.rationale);
+  if (play?.move) return `Line ${play.move.label}`;
+  const out = play?.injuries ?? [];
+  if (out.length) {
+    const side = out[0].side === 'home' ? play.home_team : play.away_team;
+    return out.length === 1
+      ? `${out[0].player_name} out for ${side}`
+      : `${out.length} out for ${side} and the other side`;
+  }
+  const wx = play?.weather;
+  if (wx && wx.covered === false && Number.isFinite(Number(wx.wind_mph))
+      && Number(wx.wind_mph) >= 12) {
+    return `Wind ${Math.round(Number(wx.wind_mph))} mph, outdoors`;
+  }
+  return '';
+}
+
 /** The card: what cleared the gate, and what did not and why.
  *
  * Takes the ALREADY-BUILT games so the venue join is the one `collapseMarkets`
@@ -305,6 +438,10 @@ export function buildCard(games) {
       const market = (game.markets ?? []).find(
         (m) => m.market === String(row.market ?? '') && m.side === String(row.side ?? ''),
       ) ?? null;
+      // Everything the row needs to be decided ON THE ROW. The game already
+      // holds all of it; the card used to take the price and leave the
+      // reasoning behind, which is what sent a reader to the game sheet to
+      // answer "why" for a play the card had already made.
       const entry = {
         ...row,
         game_id: game.game_id,
@@ -315,8 +452,18 @@ export function buildCard(games) {
         market_row: market,
         best: market?.best ?? null,
         point: market?.point ?? null,
+        // p_model vs the de-vigged p_fair: the argument for the bet, in one
+        // subtraction.
+        vs: modelVsMarket(market),
+        // Every venue that quoted it, best first — a play you cannot shop is
+        // a play you overpay for.
+        venues: market?.venues ?? [],
+        move: marketMove(game.moves, row.market, row.side),
+        injuries: game.injuries ?? [],
+        weather: game.weather ?? null,
+        ratings: game.ratings ?? { away: null, home: null },
       };
-      if (row.published) plays.push(entry);
+      if (row.published) plays.push({ ...entry, headline: playHeadline(entry) });
       else held.push({ ...entry, ...heldRule(row.reason) });
     }
   }

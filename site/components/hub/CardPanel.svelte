@@ -19,7 +19,8 @@
     sideLabel, teamMark, venueColor, venueMark,
   } from '../format.js';
   import TeamMark from '../TeamMark.svelte';
-  import { heldGroups, realRows } from './model.js';
+  import PlayBrief from './PlayBrief.svelte';
+  import { clvTrust, heldGroups, realRows } from './model.js';
   import { hubState } from './state.js';
 
   export let card = { plays: [], held: [] };
@@ -27,6 +28,8 @@
   export let league = 'all';
   export let identity = {};
   export let isPrivate = true;
+  /** Per-market CLV with its trust flag; private builds only. */
+  export let clv = [];
 
   const scope = (rows) => (league === 'all'
     ? rows : rows.filter((r) => String(r.league ?? '') === league));
@@ -51,6 +54,13 @@
 
   let open = {};
   const toggle = (rule) => { open = { ...open, [rule]: !open[rule] }; };
+
+  // The brief opens in place. The card is the output, so the default gesture
+  // has to keep the reader on it — the game sheet is still one click away for
+  // the full matchup, but answering "why this play" no longer costs the card.
+  let shown = {};
+  const key = (row, i) => `${row.game_id}-${row.market}-${row.side}-${i}`;
+  const reveal = (k) => { shown = { ...shown, [k]: !shown[k] }; };
 
   /** The call, phrased the way a ticket phrases it. */
   function call(row) {
@@ -137,78 +147,119 @@
         {#each plays as row, i (`${row.game_id}-${row.market}-${row.side}-${i}`)}
           {@const home = teamMark(identity, row.home_team, row.league)}
           {@const away = teamMark(identity, row.away_team, row.league)}
-          <!-- The whole row opens the game it is on: a play you cannot get
-               back to the reasoning for is a tip, not a model output. -->
-          <button
-            class="play"
-            on:click={() => hubState.set({ view: 'games', game: row.game_id })}
-            title="open this game"
-          >
-            <span class="rank">{i + 1}</span>
+          {@const k = key(row, i)}
+          {@const play = row}
+          <!-- The row opens the BRIEF, not the game. The reasoning used to
+               live one surface away, which made the card a list of tips; it
+               is on the row now, so the row keeps the reader. -->
+          <div class="play" class:open={shown[k]}>
+            <button
+              class="head"
+              aria-expanded={!!shown[k]}
+              on:click={() => reveal(k)}
+              title="why this play"
+            >
+              <span class="rank">{i + 1}</span>
 
-            <span class="who">
-              <span class="callline">
-                {call(row)}
-                {#if row.tier}<span class="tier t{row.tier}">{row.tier}</span>{/if}
-              </span>
-              <span class="match">
-                <TeamMark code={away.code} logo={away.logo} color={away.color}
-                          label={row.away_team} size={16} />
-                {away.code}
-                <span class="at">@</span>
-                <TeamMark code={home.code} logo={home.logo} color={home.color}
-                          label={row.home_team} size={16} />
-                {home.code}
-                <span class="lg">{String(row.league).toUpperCase()}</span>
-                <span class="when">{kickoffLabel(row.kickoff)}</span>
-              </span>
-            </span>
-
-            {#if isPrivate}
-              <span class="nums">
-                <span class="pair">
-                  <span class="k">Price</span>
-                  <span class="v">{american(row.price)}</span>
+              <span class="who">
+                <span class="callline">
+                  {call(row)}
+                  {#if row.tier}<span class="tier t{row.tier}">{row.tier}</span>{/if}
                 </span>
-                {#if row.best}
-                  <span class="pair">
-                    <span class="k">Venue</span>
-                    <span
-                      class="venue"
-                      class:exch={row.best.exchange}
-                      style={venueColor(row.best.venue) ? `--vc:${venueColor(row.best.venue)}` : ''}
-                      title={row.best.label}
-                    >{venueMark(row.best.venue)}</span>
-                  </span>
-                {/if}
-                {#if isNum(row.edge)}
-                  <span class="pair">
-                    <span class="k">Edge</span>
-                    <span class="v pos">{pct(row.edge, 1, true)}</span>
-                  </span>
-                {/if}
-                {#if isNum(row.conviction)}
-                  <span class="pair">
-                    <span class="k">Conv</span>
-                    <span class="v">{num(row.conviction, 2)}</span>
-                  </span>
-                {/if}
-                <span class="pair">
-                  <span class="k">Stake</span>
-                  <span class="v stake">{num(row.stake_sized, 2)}<small>u</small></span>
+                <span class="match">
+                  <TeamMark code={away.code} logo={away.logo} color={away.color}
+                            label={row.away_team} size={16} />
+                  {away.code}
+                  <span class="at">@</span>
+                  <TeamMark code={home.code} logo={home.logo} color={home.color}
+                            label={row.home_team} size={16} />
+                  {home.code}
+                  <span class="lg">{String(row.league).toUpperCase()}</span>
+                  <span class="when">{kickoffLabel(row.kickoff)}</span>
+                </span>
+
+                <!-- The one-line why: the gap that argues for the bet, and the
+                     single strongest thing to say about it. Everything else
+                     waits for the expand. -->
+                <span class="why">
+                  {#if row.vs}
+                    <span class="mini" aria-hidden="true">
+                      <span class="mfill" style={`width:${Math.max(0, Math.min(row.vs.pModel, 1)) * 100}%`}></span>
+                      <span class="mref" style={`left:${Math.max(0, Math.min(row.vs.pFair, 1)) * 100}%`}></span>
+                    </span>
+                    <span class="mgap" class:pos={row.vs.gap > 0} class:neg={row.vs.gap < 0}>
+                      {signed(row.vs.gap * 100, 1)} pts
+                    </span>
+                    <span class="mlab">model over market</span>
+                  {/if}
+                  {#if row.headline}
+                    <span class="hl">{row.headline}</span>
+                  {/if}
                 </span>
               </span>
-            {:else}
-              <span class="nums">
-                {#if isNum(row.conviction)}
+
+              {#if isPrivate}
+                <span class="nums">
                   <span class="pair">
-                    <span class="k">Conv</span>
-                    <span class="v">{num(row.conviction, 2)}</span>
+                    <span class="k">Price</span>
+                    <span class="v">{american(row.price)}</span>
                   </span>
-                {/if}
-              </span>
+                  {#if row.best}
+                    <span class="pair">
+                      <span class="k">Venue</span>
+                      <span
+                        class="venue"
+                        class:exch={row.best.exchange}
+                        style={venueColor(row.best.venue) ? `--vc:${venueColor(row.best.venue)}` : ''}
+                        title={row.best.label}
+                      >{venueMark(row.best.venue)}</span>
+                    </span>
+                  {/if}
+                  {#if isNum(row.edge)}
+                    <span class="pair">
+                      <span class="k">Edge</span>
+                      <span class="v pos">{pct(row.edge, 1, true)}</span>
+                    </span>
+                  {/if}
+                  {#if isNum(row.conviction)}
+                    <span class="pair">
+                      <span class="k">Conv</span>
+                      <span class="v">{num(row.conviction, 2)}</span>
+                    </span>
+                  {/if}
+                  <span class="pair">
+                    <span class="k">Stake</span>
+                    <span class="v stake">{num(row.stake_sized, 2)}<small>u</small></span>
+                  </span>
+                </span>
+              {:else}
+                <span class="nums">
+                  {#if isNum(row.conviction)}
+                    <span class="pair">
+                      <span class="k">Conv</span>
+                      <span class="v">{num(row.conviction, 2)}</span>
+                    </span>
+                  {/if}
+                </span>
+              {/if}
+
+              <span class="chev" aria-hidden="true">{shown[k] ? '\u2212' : '+'}</span>
+            </button>
+
+            {#if shown[k]}
+              <PlayBrief
+                {play}
+                {isPrivate}
+                {away}
+                {home}
+                clv={clvTrust(clv, row.league, row.market)}
+              />
+              <button
+                class="tosheet"
+                on:click={() => hubState.set({ view: 'games', game: row.game_id })}
+              >Open the full matchup sheet &rarr;</button>
             {/if}
-          </button>
+          </div>
         {/each}
       </div>
     {:else}
@@ -350,23 +401,105 @@
      Everything else the board holds is desaturated by comparison. */
   .plays { display: grid; gap: 0.4rem; }
   .play {
+    border: 1px solid rgba(61, 218, 208, 0.28);
+    border-radius: var(--v-radius);
+    background: var(--v-brand-tint);
+    overflow: hidden;
+    transition: border-color 130ms ease;
+  }
+  .play.open { border-color: var(--v-brand-dim); }
+  .head {
     display: grid;
-    grid-template-columns: 1.6rem minmax(0, 1fr) auto;
+    grid-template-columns: 1.6rem minmax(0, 1fr) auto auto;
     align-items: center;
     gap: 0.8rem;
     width: 100%;
     padding: 0.6rem 0.8rem;
-    border: 1px solid rgba(61, 218, 208, 0.28);
-    border-radius: var(--v-radius);
-    background: var(--v-brand-tint);
+    border: 0;
+    background: transparent;
     text-align: left;
     color: inherit;
     font: inherit;
     cursor: pointer;
-    transition: background 130ms ease, border-color 130ms ease;
+    transition: background 130ms ease;
   }
-  .play:hover { background: rgba(61, 218, 208, 0.19); border-color: var(--v-brand-dim); }
-  .play:focus-visible { outline: 2px solid var(--v-brand); outline-offset: 2px; }
+  .head:hover { background: rgba(61, 218, 208, 0.12); }
+  .head:focus-visible { outline: 2px solid var(--v-brand); outline-offset: -2px; }
+  .chev {
+    font-family: var(--v-board);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--v-brand-dim);
+  }
+
+  /* ---- the one-line why -------------------------------------------------
+     A miniature of the brief's gauge: same zero baseline, same neutral tick
+     for the market, sized so a 4-point gap is still a visible slice rather
+     than a rounding error. */
+  .why {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem 0.55rem;
+    flex-wrap: wrap;
+    margin-top: 0.18rem;
+    font-size: 0.68rem;
+    color: var(--v-ink-3);
+    min-width: 0;
+  }
+  .mini {
+    position: relative;
+    display: block;
+    width: 5.5rem;
+    height: 5px;
+    border-radius: 2px;
+    background: var(--v-lvl-2);
+    overflow: hidden;
+    flex: none;
+  }
+  .mfill { display: block; height: 100%; border-radius: 2px; background: var(--v-brand-dim); }
+  .mref {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    background: var(--v-ink);
+    box-shadow: 0 0 0 1px var(--v-lvl-0);
+    transform: translateX(-1px);
+  }
+  .mgap {
+    font-family: var(--v-board);
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--v-ink-2);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .mgap.pos { color: var(--v-pos); }
+  .mgap.neg { color: var(--v-neg); }
+  .mlab { white-space: nowrap; }
+  .hl {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--v-ink-2);
+  }
+
+  .tosheet {
+    display: block;
+    width: 100%;
+    padding: 0.45rem 0.85rem 0.55rem;
+    border: 0;
+    border-top: 1px solid var(--v-line);
+    background: var(--v-lvl-0);
+    text-align: left;
+    font: inherit;
+    font-size: 0.68rem;
+    color: var(--v-brand);
+    cursor: pointer;
+  }
+  .tosheet:hover { background: var(--v-hover); }
+  .tosheet:focus-visible { outline: 2px solid var(--v-brand); outline-offset: -2px; }
   .rank {
     font-family: var(--v-board);
     font-size: 0.9rem;
@@ -566,8 +699,13 @@
   .none p { margin: 0; font-size: 0.8rem; line-height: 1.6; color: var(--v-ink-2); }
 
   @media (max-width: 720px) {
-    .play { grid-template-columns: 1.4rem minmax(0, 1fr); }
-    .nums { grid-column: 1 / -1; justify-content: flex-start; }
+    /* Three columns, with the numbers on their own row: leaving the chevron to
+       flow after a full-width .nums stranded it alone on a third row. */
+    .head { grid-template-columns: 1.4rem minmax(0, 1fr) auto; }
+    .chev { grid-column: 3; grid-row: 1; }
+    .nums { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
+    /* The one-line why earns a second line here rather than an ellipsis. */
+    .hl { white-space: normal; overflow: visible; }
     .hrow { grid-template-columns: minmax(0, 1fr) auto; }
     .hmatch, .hwhy { grid-column: 1 / -1; white-space: normal; }
   }

@@ -21,6 +21,10 @@ import {
 import {
   buildCard,
   buildGames,
+  clvTrust,
+  marketMove,
+  modelVsMarket,
+  playHeadline,
   buildLineups,
   buildParlays,
   collapseMarkets,
@@ -816,4 +820,126 @@ test('a stat block with headers but no players is dropped', () => {
     }),
     [],
   );
+});
+
+// ---- the decision brief ---------------------------------------------------
+// The card carries the reasoning now, and the piece most likely to be wrong
+// QUIETLY is direction: "the line moved" is only useful if it says moved which
+// way FOR THE SIDE YOU ARE ON, and that inverts between the over and the
+// under. A sign error here reads as a confident, plausible, backwards fact.
+
+test('a spread move is judged from the side you are taking', () => {
+  const moves = [{ market: 'spread', side: 'home', point_open: -2.5, point_now: -3.5 }];
+  // Laying 3.5 where 2.5 was available is the worse number, full stop.
+  assert.equal(marketMove(moves, 'spread', 'home').direction, 'worse');
+  const back = [{ market: 'spread', side: 'home', point_open: -3.5, point_now: -2.5 }];
+  assert.equal(marketMove(back, 'spread', 'home').direction, 'better');
+});
+
+test('a total move inverts between the over and the under', () => {
+  const up = (side) => [{ market: 'total', side, point_open: 44, point_now: 45.5 }];
+  // The SAME move, opposite verdicts — the case a single rule gets backwards.
+  assert.equal(marketMove(up('over'), 'total', 'over').direction, 'worse');
+  assert.equal(marketMove(up('under'), 'total', 'under').direction, 'better');
+});
+
+test('a market with no point is judged on price', () => {
+  const moves = [{ market: 'moneyline', side: 'home', price_open: -140, price_now: -120 }];
+  const move = marketMove(moves, 'moneyline', 'home');
+  assert.equal(move.kind, 'price');
+  assert.equal(move.direction, 'better');
+});
+
+test('player props follow the over/under rule, not the spread one', () => {
+  const moves = [{ market: 'player_pass_yds', side: 'over', point_open: 249.5, point_now: 255.5 }];
+  assert.equal(marketMove(moves, 'player_pass_yds', 'over').direction, 'worse');
+});
+
+test('an unmoved line is not news', () => {
+  const moves = [{ market: 'spread', side: 'home', point_open: -3, point_now: -3 }];
+  assert.equal(marketMove(moves, 'spread', 'home'), null);
+  assert.equal(marketMove([], 'spread', 'home'), null);
+});
+
+test('direction never rides on colour alone', () => {
+  const moves = [{ market: 'spread', side: 'home', point_open: -3.5, point_now: -2.5 }];
+  const move = marketMove(moves, 'spread', 'home');
+  // pos vs warn measures ΔE 6.2 under protanopia, so a chip that only changed
+  // hue would be unreadable. Both carriers have to be present.
+  assert.ok(move.glyph);
+  assert.match(move.label, /better|worse/);
+});
+
+test('the model/market gap is against the DE-VIGGED number', () => {
+  const vs = modelVsMarket({ p_model: 0.582, p_fair: 0.541 });
+  assert.ok(Math.abs(vs.gap - 0.041) < 1e-9);
+  // Missing either side draws no bar rather than inventing a reference.
+  assert.equal(modelVsMarket({ p_model: 0.58 }), null);
+  assert.equal(modelVsMarket(null), null);
+});
+
+test('CLV hands back the trust flag rather than one averaged number', () => {
+  const rows = [
+    { market: 'spread', league: 'nfl', n_bets: 214, mean_price_clv: 1.8, clv_trusted: true },
+    { market: 'player_pass_yds', league: 'nfl', n_bets: 40, mean_price_clv: 9.1, clv_trusted: false },
+  ];
+  assert.equal(clvTrust(rows, 'nfl', 'spread').trusted, true);
+  // The prop's 9.1 is the bigger number and the one that means nothing.
+  assert.equal(clvTrust(rows, 'nfl', 'player_pass_yds').trusted, false);
+  assert.equal(clvTrust(rows, 'mlb', 'spread'), null);
+});
+
+test('the one-line why prefers the model’s own sentence', () => {
+  const play = {
+    market_row: { rationale: 'Rest edge and a backup tackle' },
+    move: { label: 'better number than open' },
+  };
+  assert.match(playHeadline(play), /Rest edge/);
+});
+
+test('the one-line why falls through to what is actually there', () => {
+  assert.match(
+    playHeadline({ move: { label: 'worse number than open' } }),
+    /worse number/,
+  );
+  assert.match(
+    playHeadline({
+      injuries: [{ player_name: 'A. Hamilton', side: 'home' }],
+      home_team: 'Baltimore', away_team: 'Kansas City',
+    }),
+    /Hamilton out for Baltimore/,
+  );
+  // An indoor game's weather is not a headline.
+  assert.equal(playHeadline({ weather: { covered: true, wind_mph: 30 } }), '');
+  assert.equal(playHeadline({}), '');
+});
+
+test('buildCard carries the brief onto the row', () => {
+  const games = [{
+    game_id: 'g1',
+    league: 'nfl',
+    home_team: 'Baltimore',
+    away_team: 'Kansas City',
+    kickoff: null,
+    verdicts: [{ game_id: 'g1', market: 'spread', side: 'home', published: true, reason: '' }],
+    markets: [{
+      market: 'spread', side: 'home', p_model: 0.58, p_fair: 0.54,
+      rationale: 'why', venues: [{ venue: 'dk', price: -108 }], best: { venue: 'dk' },
+    }],
+    moves: [{ market: 'spread', side: 'home', point_open: -2.5, point_now: -3.5 }],
+    injuries: [{ player_name: 'A. Hamilton', side: 'home' }],
+    weather: { covered: false, wind_mph: 14 },
+    ratings: { away: { net: 6.1 }, home: { net: 4.2 } },
+  }];
+  const { plays } = buildCard(games);
+  assert.equal(plays.length, 1);
+  const play = plays[0];
+  // Every piece the brief renders has to reach the row, or the panel silently
+  // renders an empty section.
+  assert.ok(play.vs);
+  assert.equal(play.venues.length, 1);
+  assert.equal(play.move.direction, 'worse');
+  assert.equal(play.injuries.length, 1);
+  assert.equal(play.ratings.home.net, 4.2);
+  assert.equal(play.headline, 'why');
 });
