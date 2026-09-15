@@ -241,7 +241,9 @@ def resolve_injury_teams(
     by_abbrev = _without_collisions(exchange_aliases(abbrevs, known))
     by_name = _without_collisions(exchange_aliases(names, known))
 
-    def _team(row: Mapping[str, Any]) -> str | None:
+    # ``to_dict("records")`` hands back Hashable keys, so the row type matches
+    # the rest of the codebase's per-row helpers rather than narrowing to str.
+    def _team(row: Mapping[Any, Any]) -> str | None:
         abbrev = row.get("team_abbreviation")
         name = row.get("team_name")
         return (by_abbrev.get(str(abbrev)) if abbrev else None) or (
