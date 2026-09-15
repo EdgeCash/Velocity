@@ -37,7 +37,8 @@ import os
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -67,6 +68,10 @@ SPORT_KEYS = {
     "ncaab": "basketball_ncaab",
     "nhl": "icehockey_nhl",
 }
+
+# The Odds API sport key → friendly league. The league lives in the request
+# *path*, never the query, so credit accounting reads it back from there.
+LEAGUE_BY_SPORT_KEY = {v: k for k, v in SPORT_KEYS.items()}
 
 # The Odds API player-prop market key → canonical prop stat (PropLines /
 # the stats :mod:`velocity.models.props` simulates). Anything else is ignored.
@@ -357,6 +362,228 @@ def events_of(payload: Any) -> list[dict]:
     return list(payload or [])
 
 
+# ---------------------------------------------------------------------------
+# Credit accounting
+#
+# The Odds API bills per call and puts the bill on the response:
+# ``x-requests-last`` is what THIS call cost, ``x-requests-used`` /
+# ``x-requests-remaining`` the running totals. A collector that prints
+# "remaining" answers nothing a month later — the plan question is not "how
+# many are left" but "which calls spend them", and only a banked series of
+# per-call costs answers that. Hence a ledger: one row per credit-spending
+# call, banked beside the data it bought.
+# ---------------------------------------------------------------------------
+
+USAGE_COLUMNS = [
+    "at",
+    "kind",
+    "endpoint",
+    "league",
+    "markets",
+    "regions",
+    "cost",
+    "used",
+    "remaining",
+]
+
+# Endpoint path shape → ledger ``kind``. The shape is what recurs across runs;
+# the raw path carries an event id, worth keeping but useless to group by.
+_ENDPOINT_KINDS = {
+    ("sports",): "sports",
+    ("sports", "*", "odds"): "odds",
+    ("sports", "*", "events"): "events",
+    ("sports", "*", "events", "*", "odds"): "event_odds",
+    ("historical", "sports", "*", "odds"): "historical_odds",
+    ("historical", "sports", "*", "events"): "historical_events",
+    ("historical", "sports", "*", "events", "*", "odds"): "historical_event_odds",
+}
+_PATH_WORDS = {"sports", "events", "odds", "historical"}
+
+
+def classify_endpoint(endpoint: str) -> tuple[str, str]:
+    """Return ``(kind, league)`` for an API path — the ledger's grouping keys.
+
+    The league is in the *path* (``sports/baseball_mlb/odds``), never in the
+    query, so reading it off the request params would bank a blank column. An
+    unrecognised shape degrades to its masked path rather than raising:
+    accounting never decides whether a fetch succeeded.
+    """
+    parts = [p for p in str(endpoint).strip("/").split("/") if p]
+    league = ""
+    for i, part in enumerate(parts):
+        if part == "sports" and i + 1 < len(parts):
+            key = parts[i + 1]
+            league = LEAGUE_BY_SPORT_KEY.get(key, key)
+            break
+    shape = tuple(p if p in _PATH_WORDS else "*" for p in parts)
+    return _ENDPOINT_KINDS.get(shape, "/".join(shape)), league
+
+
+def _int_or_none(value: object) -> int | None:
+    """Header value → int, or ``None`` when absent/unparseable (never raises)."""
+    try:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _empty_usage() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "at": pd.Series(dtype="datetime64[ns]"),
+            "kind": pd.Series(dtype=str),
+            "endpoint": pd.Series(dtype=str),
+            "league": pd.Series(dtype=str),
+            "markets": pd.Series(dtype=str),
+            "regions": pd.Series(dtype=str),
+            "cost": pd.Series(dtype="Int64"),
+            "used": pd.Series(dtype="Int64"),
+            "remaining": pd.Series(dtype="Int64"),
+        }
+    )
+
+
+def usage_frame(rows: Iterable[Mapping[str, object]] | pd.DataFrame) -> pd.DataFrame:
+    """Ledger rows (or an already-built frame) → the typed ledger shape.
+
+    Counts are nullable ``Int64``: a response that omitted a header records a
+    missing cost, which is not the same claim as a cost of zero. Idempotent, so
+    the summary functions can normalize whatever they are handed.
+    """
+    if isinstance(rows, pd.DataFrame):
+        frame = rows.copy()
+    else:
+        frame = pd.DataFrame([dict(row) for row in rows])
+    if frame.empty:
+        return _empty_usage()
+    frame = frame.reindex(columns=USAGE_COLUMNS)
+    # Pin the resolution: ``utcnow()`` is microsecond, the empty frame is
+    # nanosecond, and ledgers from many runs get concatenated.
+    frame["at"] = pd.to_datetime(frame["at"], errors="coerce").astype("datetime64[ns]")
+    for col in ("kind", "endpoint", "league", "markets", "regions"):
+        frame[col] = frame[col].fillna("").astype(str)
+    for col in ("cost", "used", "remaining"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("Int64")
+    return frame
+
+
+def usage_summary(usage: Iterable[Mapping[str, object]] | pd.DataFrame) -> pd.DataFrame:
+    """Per ``(kind, league)`` totals — calls, credits, credits per call.
+
+    Dearest first, because right-sizing a plan is a question about the top few
+    rows: one per-event pull across a full board outspends every game-line call
+    in the run combined.
+    """
+    frame = usage_frame(usage)
+    if frame.empty:
+        return pd.DataFrame(
+            {
+                "kind": pd.Series(dtype=str),
+                "league": pd.Series(dtype=str),
+                "calls": pd.Series(dtype="int64"),
+                "credits": pd.Series(dtype="int64"),
+                "per_call": pd.Series(dtype=float),
+            }
+        )
+    frame = frame.assign(cost=frame["cost"].fillna(0).astype("int64"))
+    grouped = frame.groupby(["kind", "league"], as_index=False).agg(
+        calls=("cost", "size"), credits=("cost", "sum")
+    )
+    grouped["per_call"] = grouped["credits"] / grouped["calls"]
+    return grouped.sort_values(
+        ["credits", "calls", "kind"], ascending=[False, False, True]
+    ).reset_index(drop=True)
+
+
+def write_usage(
+    usage: Iterable[Mapping[str, object]], out_dir: Path, tag: str
+) -> Path | None:
+    """Bank a run's credit ledger beside the data it bought.
+
+    Returns the written path, or ``None`` when the run made no calls (an
+    off-season run banks nothing rather than an empty file). The ledger holds
+    request *shapes* and response counts only — no key, no query string — so it
+    is safe in an Actions artifact, which is not a private place
+    (docs/DATA_PROVIDERS.md).
+    """
+    frame = usage_frame(usage)
+    if frame.empty:
+        return None
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"odds_credits_{tag}.parquet"
+    frame.to_parquet(dest, index=False)
+    return dest
+
+
+def describe_usage(usage: Iterable[Mapping[str, object]]) -> str:
+    """One run's credit spend as run-log lines: total, then dearest kinds first."""
+    frame = usage_frame(usage)
+    if frame.empty:
+        return "credits: no API calls this run"
+    spent = int(frame["cost"].fillna(0).sum())
+    left = frame["remaining"].dropna()
+    last_left = _int_or_none(left.iloc[-1]) if not left.empty else None
+    tail = "" if last_left is None else f"; {last_left} left this month"
+
+    def _calls(n: int) -> str:
+        return f"{n} call" if n == 1 else f"{n} calls"
+
+    lines = [f"credits: {spent} spent over {_calls(len(frame))}{tail}"]
+    summary = usage_summary(frame)
+    for kind, league, calls, credits, per_call in zip(
+        summary["kind"].astype(str),
+        summary["league"].astype(str),
+        summary["calls"].astype("int64"),
+        summary["credits"].astype("int64"),
+        summary["per_call"].astype(float),
+        strict=True,
+    ):
+        lines.append(
+            f"  {kind} [{league or '-'}]: {int(credits)} credits "
+            f"over {_calls(int(calls))} ({float(per_call):.1f}/call)"
+        )
+    return "\n".join(lines)
+
+
+def project_monthly(
+    usage: Iterable[Mapping[str, object]] | pd.DataFrame,
+    *,
+    plan: int = 100_000,
+    min_hours: float = 1.0,
+) -> dict[str, float]:
+    """Extrapolate a ledger window to a month's consumption against ``plan``.
+
+    A window shorter than ``min_hours`` projects ``nan`` rather than a number:
+    a handful of calls says nothing about a month, and a confident projection
+    from one is worse than none. Feed this several days of banked ledgers
+    before taking it to a plan change.
+    """
+    frame = usage_frame(usage)
+    credits = float(frame["cost"].fillna(0).sum())
+    out: dict[str, float] = {
+        "calls": float(len(frame)),
+        "credits": credits,
+        "days": 0.0,
+        "per_day": float("nan"),
+        "monthly": float("nan"),
+        "plan": float(plan),
+        "plan_use_pct": float("nan"),
+    }
+    stamps = frame["at"].dropna()
+    if stamps.empty:
+        return out
+    span_days = float((stamps.max() - stamps.min()).total_seconds()) / 86_400.0
+    out["days"] = span_days
+    if span_days * 24.0 < min_hours:
+        return out
+    per_day = credits / span_days
+    out["per_day"] = per_day
+    out["monthly"] = per_day * 30.0
+    if plan:
+        out["plan_use_pct"] = 100.0 * per_day * 30.0 / float(plan)
+    return out
+
+
 @dataclass
 class TheOddsAPIClient:
     """Network client for The Odds API. Build with :meth:`from_env`.
@@ -365,12 +592,21 @@ class TheOddsAPIClient:
     literal — so the collector reads it from a GitHub Actions secret and the
     sandbox never sees it. Each response also carries the remaining-credit count in
     the ``x-requests-remaining`` header, surfaced by the fetchers that need it.
+
+    Every credit-spending call also appends a row to :attr:`usage`, the credit
+    ledger (:func:`usage_frame`), which collectors bank with :func:`write_usage`
+    so plan sizing is a measurement rather than an estimate. A client is
+    single-run: the ledger is its own calls, not a global tally.
     """
 
     api_key: str
     regions: str = "us"
     odds_format: str = "american"
     remaining: str | None = None  # credits left, from the last response header
+    # One row per credit-spending call: endpoint, what it cost, what is left.
+    # A printed "credits remaining" is a number in a log that ages out; a
+    # banked series is what answers "are we on the right plan".
+    usage: list[dict[str, object]] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> TheOddsAPIClient:
@@ -393,8 +629,46 @@ class TheOddsAPIClient:
             headers = {
                 "remaining": resp.headers.get("x-requests-remaining", ""),
                 "used": resp.headers.get("x-requests-used", ""),
+                # What THIS call cost. The plan question is not "how many are
+                # left" but "which calls spend them", and only this header says.
+                "last": resp.headers.get("x-requests-last", ""),
             }
+            self._record(endpoint, params, headers)
             return json.loads(resp.read()), headers
+
+    def _record(
+        self, endpoint: str, params: Mapping[str, object], headers: Mapping[str, str]
+    ) -> None:
+        """Append one ledger row. Never raises — accounting must not break a fetch.
+
+        Records the request's *shape* (kind, league, markets, regions) and the
+        bill the response carried. Never the key: the signed query string is
+        built in :meth:`_get` and does not reach here, and this frame is banked
+        to an artifact, which is not a private place (docs/DATA_PROVIDERS.md).
+        """
+        try:
+            kind, league = classify_endpoint(endpoint)
+            markets = params.get("markets")
+            regions = params.get("regions")
+            self.usage.append(
+                {
+                    "at": pd.Timestamp.now("UTC").tz_localize(None),
+                    "kind": kind,
+                    "endpoint": str(endpoint).strip("/"),
+                    "league": league,
+                    "markets": "" if markets is None else str(markets),
+                    "regions": "" if regions is None else str(regions),
+                    "cost": _int_or_none(headers.get("last")),
+                    "used": _int_or_none(headers.get("used")),
+                    "remaining": _int_or_none(headers.get("remaining")),
+                }
+            )
+        except Exception:  # noqa: BLE001 - accounting is never worth a failed run
+            pass
+
+    def usage_ledger(self) -> pd.DataFrame:
+        """This client's credit ledger as a typed frame (see :func:`usage_frame`)."""
+        return usage_frame(self.usage)
 
     def sports(self) -> list[dict]:  # pragma: no cover - network
         """Return the list of in-season sports (a cheap, credit-free call)."""

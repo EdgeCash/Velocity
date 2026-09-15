@@ -12,7 +12,10 @@ must not land in git, whose history is permanent. Triggering the workflow manual
 (``workflow_dispatch``) doubles as the in-CI verification that the key works,
 since the sandbox can't see the secret.
 
-Credits are finite (100k/month) — this prints the remaining count each run.
+Credits are finite (100k/month), so each run banks a **credit ledger** beside
+the data: one row per call with what it cost (``x-requests-last``) and what was
+left. A printed "remaining" ages out of a run log; a banked series is what
+answers whether the plan is the right size (``scripts/report_odds_credits.py``).
 
     THE_ODDS_API=... python scripts/collect_theoddsapi.py --out artifacts/odds
 """
@@ -26,7 +29,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.theoddsapi import TheOddsAPIClient, normalize_odds_events, unwrap
+from velocity.ingest.theoddsapi import (
+    TheOddsAPIClient,
+    describe_usage,
+    normalize_odds_events,
+    unwrap,
+    write_usage,
+)
 
 LEAGUES = ("nfl", "ncaaf")
 
@@ -34,8 +43,8 @@ LEAGUES = ("nfl", "ncaaf")
 def collect(
     leagues: tuple[str, ...], collected_at: pd.Timestamp, out_raw: Path | None = None,
     *, regions: str = "us",
-) -> tuple[pd.DataFrame, str | None]:
-    """Return a canonical ``Lines`` frame for ``leagues`` plus the remaining-credit count.
+) -> tuple[pd.DataFrame, str | None, list[dict[str, object]]]:
+    """Return ``Lines`` for ``leagues``, the remaining-credit count, and the credit ledger.
 
     The raw ``/odds`` payload is banked verbatim alongside the parquet when
     ``out_raw`` is given. That costs **nothing extra** — ``client.odds`` is only
@@ -65,7 +74,7 @@ def collect(
             f"({lines['game_id'].nunique()} games, {lines['book'].nunique()} books)"
         )
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    return df, remaining
+    return df, remaining, client.usage
 
 
 def main() -> None:
@@ -84,11 +93,15 @@ def main() -> None:
     out = Path(args.out)
     raw = out / "raw"
     raw.mkdir(parents=True, exist_ok=True)
-    df, remaining = collect(tuple(args.leagues), stamp, raw, regions=args.regions)
+    df, remaining, usage = collect(tuple(args.leagues), stamp, raw, regions=args.regions)
 
     dest = out / f"odds_lines_{now.strftime('%Y%m%dT%H%M%SZ')}.parquet"
     df.to_parquet(dest, index=False)
     print(f"wrote {len(df)} rows to {dest}")
+    ledger = write_usage(usage, out, now.strftime("%Y%m%dT%H%M%SZ"))
+    print(describe_usage(usage))
+    if ledger is not None:
+        print(f"credit ledger → {ledger}")
     if remaining is not None:
         print(f"credits remaining this month: {remaining}")
     if df.empty:
