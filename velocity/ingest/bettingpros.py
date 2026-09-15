@@ -445,7 +445,39 @@ class BettingProsClient:
 
     def events(self, sport: str, **params: object) -> list[dict]:  # pragma: no cover - network
         """Return the ``events`` list for ``sport`` (e.g. ``NFL``, ``NCAAF``)."""
-        return self._get("events", sport=sport, **params).get("events", [])
+        return self.events_payload(sport, **params).get("events", [])
+
+    def events_payload(self, sport: str, **params: object) -> dict:  # pragma: no cover - network
+        """The whole ``/events`` response, with the optional blocks asked for.
+
+        Four blocks ride on this one call and we were taking none of them:
+
+        * ``lineups`` and ``park_factors`` default to **true**, so we have been
+          receiving MLB batting orders and park factors on every request and
+          keeping four fields per event. ``dfs_mlb`` fits park factors from
+          banked box scores and needs ``E[PA|slot]`` — the batting order — and
+          ``props_hr`` fits park factors too.
+        * ``notes`` (default false) carries schedule, market, **weather**,
+          roster and trend insights for all seven leagues we price. We fetch
+          weather separately from Open-Meteo.
+        * ``officials`` (default false) names the NFL crew.
+
+        None of it costs an extra request; it is the same call with the
+        switches on. What the blocks actually contain is another matter —
+        the OpenAPI document types every response array as ``[{}]`` — so the
+        collector reports their shape rather than assuming one.
+        """
+        defaults: dict[str, object] = {
+            "lineups": "true", "park_factors": "true",
+            "notes": "true", "officials": "true",
+        }
+        defaults.update(params)
+        return self._get("events", sport=sport, **defaults)
+
+    def offer_counts(self, sport: str, **params: object) -> dict:  # pragma: no cover - network
+        """``/markets/offer-counts`` — what is actually quoted, before spending
+        calls on ``/offers`` to find out."""
+        return self._get("markets/offer-counts", sport=sport, **params)
 
     def markets(self, sport: str, **params: object) -> list[dict]:  # pragma: no cover - network
         """Return the ``markets`` offered for ``sport``."""
@@ -486,6 +518,11 @@ class BettingProsClient:
             "ev_threshold": "false",  # the full board, not just the flagged edges
             "include_selections": "false",
             "include_markets": "false",
+            # BettingPros' own view of which props move together. Free on this
+            # call, and velocity/wagering/parlay.py currently derives
+            # correlation from our sim alone — an outside read on the same
+            # question is worth banking even before anything consumes it.
+            "include_correlated_picks": "true",
         }
         defaults.update(params)
         return self._get("props", sport=sport, **defaults)
@@ -810,6 +847,64 @@ def bp_book_keys(board: pd.DataFrame) -> frozenset[str]:
 # actually prices. A slug mapping to anything outside it would bank rows no
 # model can use, so the report calls that out rather than quietly accepting it.
 _SLUG_REPORT_COLUMNS = ["market_slug", "rows", "market", "mapped", "priced"]
+
+
+def describe_payload_shape(
+    rows: Iterable[Mapping[str, Any]], known: Iterable[str], label: str = "",
+    *, limit: int = 40,
+) -> list[str]:
+    """Report the keys a payload carries that our normalizer does not read.
+
+    The BettingPros OpenAPI document types every response array as an empty
+    object (``"props": [{}]``), so it tells you an endpoint exists and says
+    nothing whatever about the shape of what comes back. Every field we do map
+    was learned from a live payload, and every field we do not map is invisible
+    until something looks.
+
+    This is that something: a generalization of :func:`slug_coverage` from one
+    column to whole objects. For each key present, it reports how many rows
+    carry it, whether we read it, and a redacted sample of the value's *shape*
+    — a scalar's type, a list's length, a nested object's own keys — so a
+    follow-up normalizer is written against observed structure rather than a
+    guess. Values are never printed: a payload that echoes credentials is
+    exactly the case this must not make worse.
+    """
+    seen: dict[str, int] = {}
+    shapes: dict[str, str] = {}
+    total = 0
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        total += 1
+        for key, value in row.items():
+            seen[key] = seen.get(key, 0) + 1
+            if key not in shapes:
+                shapes[key] = _shape_of(value)
+    known_set = {str(k) for k in known}
+    lines = [f"  {label} shape: {total} row(s), {len(seen)} distinct key(s)"]
+    for key, count in sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]:
+        mark = "read " if key in known_set else "UNREAD"
+        lines.append(f"    {mark} {key:<34} {count:>5}/{total}  {shapes[key]}")
+    unread = [k for k in seen if k not in known_set]
+    if unread:
+        lines.append(f"    -> {len(unread)} key(s) we do not read; see docs/DATA_PROVIDERS.md")
+    return lines
+
+
+def _shape_of(value: Any, depth: int = 0) -> str:
+    """A value's structure, never its contents."""
+    if isinstance(value, Mapping):
+        keys = list(value)[:8]
+        inner = ", ".join(str(k) for k in keys)
+        more = "…" if len(value) > len(keys) else ""
+        return f"object{{{inner}{more}}}" if depth == 0 else "object"
+    if isinstance(value, list):
+        if not value:
+            return "list[0]"
+        return f"list[{len(value)}] of {_shape_of(value[0], depth + 1)}"
+    if value is None:
+        return "null"
+    return type(value).__name__
 
 
 def slug_coverage(props: pd.DataFrame) -> pd.DataFrame:
