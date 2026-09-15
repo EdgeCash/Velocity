@@ -326,6 +326,9 @@ jobs:
           # ESPN's report rides in the same artifact and covers every league,
           # so it is passed for all of them rather than NFL alone.
           ESPN_INJ=$(ls -t artifacts/{espn,fp}/**/espn_injuries_*.parquet 2>/dev/null | head -1 || true)
+          # The NFL depth chart — names each team's QB1 outright instead of
+          # inferring it from projected workload.
+          ESPN_DEPTH=$(ls -t artifacts/{espn,fp}/**/espn_depth_*.parquet 2>/dev/null | head -1 || true)
           # Per-league, resolved inside the loop below — the prop board is now
           # banked for MLB as well as NFL, and a single NFL-shaped glob would
           # have quietly fed football props to the baseball card.
@@ -370,6 +373,11 @@ jobs:
             fi
             if [ -n "$ESPN_INJ" ]; then
               EXTRA="$EXTRA --espn-injuries-file $ESPN_INJ"
+            fi
+            # The runner filters the frame by league, so no per-league gate is
+            # needed here; a league with no rows just keeps its own starters.
+            if [ -n "$ESPN_DEPTH" ]; then
+              EXTRA="$EXTRA --espn-depth-file $ESPN_DEPTH"
             fi
             BP_FILE=$(ls -t artifacts/bp/**/bp_props_${league}_*.parquet 2>/dev/null | head -1 || true)
             if [ -n "$BP_FILE" ]; then

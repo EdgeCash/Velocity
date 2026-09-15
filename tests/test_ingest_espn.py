@@ -13,10 +13,16 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.ingest.espn import (
+    DEPTH_COLUMNS,
     ESPN_LEAGUE_PATHS,
     INJURY_COLUMNS,
+    ROSTER_COLUMNS,
+    depth_by_position,
     is_out_status,
+    normalize_depth_chart,
     normalize_injuries,
+    normalize_roster,
+    normalize_teams,
     resolve_injury_teams,
 )
 
@@ -208,3 +214,94 @@ def test_the_frame_satisfies_the_intel_layers_injury_contract() -> None:
     outs = lib.outs_for("ARI")
     assert outs, "the intel layer saw no outs from a report that has them"
     assert all(o.player_name and o.status for o in outs)
+
+
+# --------------------------------------------------------------------------
+# Rosters and depth charts — who is on the team, and who is ahead of whom
+# --------------------------------------------------------------------------
+
+ROSTER_PAYLOAD = json.loads((FIXTURE.parent / "espn_roster.json").read_text())
+DEPTH_PAYLOAD = json.loads((FIXTURE.parent / "espn_depthchart.json").read_text())
+
+
+def test_roster_flattens_every_group_with_identity_and_status() -> None:
+    roster = normalize_roster(ROSTER_PAYLOAD, "nfl")
+    assert list(roster.columns) == ROSTER_COLUMNS
+    assert not roster.empty
+    assert set(roster["team_abbreviation"]) == {"KC"}
+    assert roster["athlete_id"].notna().all()
+    assert roster["player_name"].notna().all()
+    # ESPN's own bucketing rides along — coarse availability the depth chart
+    # does not carry.
+    assert roster["status_group"].notna().any()
+
+
+def test_depth_chart_is_named_by_joining_the_roster_on_athlete_id() -> None:
+    """The payload carries $ref links only; names come from the roster."""
+    roster = normalize_roster(ROSTER_PAYLOAD, "nfl")
+    depth = normalize_depth_chart(DEPTH_PAYLOAD, roster, "nfl")
+    assert list(depth.columns) == DEPTH_COLUMNS
+    assert not depth.empty
+    assert depth["player_name"].notna().any()
+    assert set(depth["team_abbreviation"]) == {"KC"}
+
+
+def test_depth_chart_without_a_roster_keeps_ids_rather_than_dropping_rows() -> None:
+    """An unnamed row is still joinable, and honest about what is missing."""
+    depth = normalize_depth_chart(DEPTH_PAYLOAD, None, "nfl")
+    assert not depth.empty
+    assert depth["athlete_id"].notna().all()
+    assert depth["player_name"].isna().all()
+
+
+def test_depth_by_position_orders_by_rank_with_the_starter_first() -> None:
+    roster = normalize_roster(ROSTER_PAYLOAD, "nfl")
+    depth = normalize_depth_chart(DEPTH_PAYLOAD, roster, "nfl")
+    qbs = depth_by_position(depth, "QB")
+    assert "KC" in qbs
+    ranks = depth[(depth["position"] == "QB") & depth["player_name"].notna()]
+    expected = list(ranks.sort_values("rank")["player_name"])
+    assert qbs["KC"] == expected
+
+
+def test_depth_by_position_prefers_the_ordinary_unit_over_a_situational_one() -> None:
+    """ESPN files "Nickel" and "3WR 1TE" beside the plain chart.
+
+    Taking whichever came first in the payload silently answers a different
+    question — the nickel package's corner ordering is not the depth chart.
+    """
+    payload = {"items": [
+        {"name": "Nickel", "positions": {"qb": {"position": {"displayName": "Quarterback"},
+         "athletes": [{"rank": 1, "athlete": {"$ref": ".../athletes/2"}}]}}},
+        {"name": "3WR 1TE", "positions": {"qb": {"position": {"displayName": "Quarterback"},
+         "athletes": [{"rank": 1, "athlete": {"$ref": ".../athletes/1"}}]}}},
+    ]}
+    roster = pd.DataFrame([
+        {"league": "nfl", "team_id": "12", "team_abbreviation": "KC",
+         "team_name": "Kansas City Chiefs", "athlete_id": "1", "player_name": "Starter",
+         "position": "QB", "jersey": "1", "status_group": "offense"},
+        {"league": "nfl", "team_id": "12", "team_abbreviation": "KC",
+         "team_name": "Kansas City Chiefs", "athlete_id": "2", "player_name": "Situational",
+         "position": "QB", "jersey": "2", "status_group": "offense"},
+    ])
+    depth = normalize_depth_chart(payload, roster, "nfl")
+    assert depth_by_position(depth, "QB") == {"KC": ["Starter"]}
+
+
+def test_depth_normalizers_are_empty_and_typed_for_junk() -> None:
+    for payload in ({}, None, {"items": []}):
+        assert normalize_depth_chart(payload, None, "nfl").empty
+        assert list(normalize_depth_chart(payload, None, "nfl").columns) == DEPTH_COLUMNS
+    for payload in ({}, None, {"athletes": []}):
+        assert normalize_roster(payload, "nfl").empty
+    assert depth_by_position(pd.DataFrame(), "QB") == {}
+
+
+def test_normalize_teams_reads_the_ids_the_other_routes_are_keyed_by() -> None:
+    payload = {"sports": [{"leagues": [{"teams": [
+        {"team": {"id": "12", "abbreviation": "KC", "displayName": "Kansas City Chiefs"}},
+        {"team": {"abbreviation": "XX"}},  # no id — unusable, dropped
+    ]}]}]}
+    teams = normalize_teams(payload)
+    assert list(teams["team_id"]) == ["12"]
+    assert normalize_teams({}).empty

@@ -332,23 +332,41 @@ def _build_projection(
         # the team follows. A name that resolves to nothing leaves the fit's
         # detection in place.
         weeks_path = folder / "player_weeks.parquet"
-        if args.fp_projections and weeks_path.exists() and hasattr(ratings, "starters"):
+        has_depth_source = bool(args.fp_projections or args.espn_depth_file)
+        if has_depth_source and weeks_path.exists() and hasattr(ratings, "starters"):
             from dataclasses import replace
 
             from velocity.features.starters import describe_changes, starter_map
 
-            fp_frame = pd.read_parquet(args.fp_projections)
-            if "league" in fp_frame.columns:
-                fp_frame = fp_frame[fp_frame["league"].astype(str) == "nfl"]
+            fp_frame = pd.DataFrame(
+                columns=["player_name", "team", "position", "stat", "value"]
+            )
+            if args.fp_projections:
+                fp_frame = pd.read_parquet(args.fp_projections)
+                if "league" in fp_frame.columns:
+                    fp_frame = fp_frame[fp_frame["league"].astype(str) == "nfl"]
+            # The depth chart STATES what the projected-workload inference
+            # guesses, so where it covers a team it wins; disagreements are
+            # logged, because each one is either a stale projection or a
+            # starter change we would otherwise price blind.
+            espn_depth = None
+            if args.espn_depth_file:
+                espn_depth = pd.read_parquet(args.espn_depth_file)
+                if "league" in espn_depth.columns:
+                    espn_depth = espn_depth[espn_depth["league"].astype(str) == "nfl"]
             weeks = pd.read_parquet(weeks_path)
-            injuries = pd.read_parquet(args.injuries_file) if args.injuries_file else None
-            overrides, notes = starter_map(fp_frame, weeks, injuries)
+            injuries = _starter_outs(args)
+            overrides, notes = starter_map(
+                fp_frame, weeks, injuries, espn_depth=espn_depth
+            )
             # Only clubs the fit knows: FantasyPros lists free agents under "FA".
             overrides = {t: q for t, q in overrides.items() if t in ratings.teams}  # type: ignore[attr-defined]
             changes = describe_changes(overrides, ratings.starters, weeks)  # type: ignore[attr-defined]
             if overrides:
                 ratings = replace(ratings, starters={**ratings.starters, **overrides})  # type: ignore[attr-defined,type-var]
-            print(f"starter map: {len(overrides)} teams from the FantasyPros depth, "
+            source = ("the ESPN depth chart" if espn_depth is not None and not espn_depth.empty
+                      else "the FantasyPros depth")
+            print(f"starter map: {len(overrides)} teams from {source}, "
                   f"{len(changes)} changed from the fit's own detection")
             for line in changes + notes:
                 print(f"  {line}")
@@ -843,6 +861,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--espn-injuries-file",
                         help="banked espn_injuries parquet — availability vetoes "
                              "for every league, not just the NFL")
+    # The depth chart the QB starter map would rather read than infer. Without
+    # it the map takes FantasyPros' busiest projected passer, which is a proxy
+    # that disagrees with the depth chart exactly when the projections are
+    # stale — the case it exists to catch.
+    parser.add_argument("--espn-depth-file",
+                        help="banked espn_depth parquet — names each team's QB1 from "
+                             "the depth chart instead of projected workload")
     # BettingPros prop snapshot (the collect-bettingpros artifact): their own
     # projection block judges every qualifying prop — outside corroboration
     # for the plays product, never a pick source.
@@ -2023,6 +2048,29 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
             print(f"=== KILL-SWITCH — halted: {standing_halt} ===\n"
                   "    Read from the ledger before sizing, so it stands "
                   "regardless of the failure above: stake nothing today.")
+
+
+def _starter_outs(args: argparse.Namespace) -> pd.DataFrame | None:
+    """The injury frame the NFL starter map demotes an out QB1 with.
+
+    ``outs_by_team`` keys on a ``team`` column of nflverse-ish codes. The
+    FantasyPros frame already has one; the ESPN frame carries the code as
+    ``team_abbreviation``, and its two NFL divergences (LAR/WSH) are the same
+    two FantasyPros has, so the map's own fixups cover it after a rename.
+
+    ESPN is preferred where both exist: it is the report the depth chart comes
+    from, so an out flagged there and a depth chart read in the same run cannot
+    disagree with each other about who exists.
+    """
+    if args.espn_injuries_file:
+        frame = pd.read_parquet(args.espn_injuries_file)
+        if "league" in frame.columns:
+            frame = frame[frame["league"].astype(str) == "nfl"]
+        if not frame.empty:
+            return frame.rename(columns={"team_abbreviation": "team"})
+    if args.injuries_file:
+        return pd.read_parquet(args.injuries_file)
+    return None
 
 
 def _injury_report(args: argparse.Namespace, games: pd.DataFrame) -> pd.DataFrame | None:

@@ -10,7 +10,7 @@ paid data lives only in **private GitHub Actions artifacts**, never in git.
 | **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props — NFL, NCAAF, MLB | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
 | **The Odds API** | Historical + live odds, **line archive for CLV/backtest** | ✅ | `THE_ODDS_API` | 100k credits/month |
 | **FantasyPros** | Consensus **player projections** (prop inputs) — NFL | partial | `FP_API_KEY` | not published |
-| **ESPN** | **Injury reports**, all six leagues | ❌ live only | *none — keyless* | none published |
+| **ESPN** | **Injury reports** (all six leagues), **rosters and depth charts** | ❌ live only | *none — keyless* | none published |
 
 The secrets are configured as **GitHub Actions repository secrets** (see the repo
 Settings → Secrets and variables → Actions). They are injected only into workflow
@@ -231,12 +231,58 @@ the same alias machinery every venue board uses, with two guards:
 Everything that fails to resolve is dropped **and reported** — silently
 invisible is how a whole league's report goes missing unnoticed.
 
+### Rosters and depth charts
+
+The NFL starter map (`velocity/features/starters.py`) worked out each team's
+QB1 by **inference**: read FantasyPros' projected passing yards, take the
+busiest passer. That is a decent proxy that fails exactly where it matters — a
+stale projection, or a backup projected high in a week his starter is expected
+to sit, and the inference disagrees with the depth chart. The depth chart is
+the thing that knows.
+
+ESPN states it. Two endpoints, joined locally:
+
+| | endpoint | per call |
+|---|---|---|
+| roster | site API, `/teams/{id}/roster` | every athlete: id, name, position, jersey, ESPN's own status bucket |
+| depth chart | **core** API, `/seasons/{year}/teams/{id}/depthcharts` | per position, athlete ids in rank order |
+
+The depth chart names athletes **only by `$ref`**. Left to the API that is one
+fetch per player — hundreds a team; joined against the roster it is free. A
+league therefore costs 2 calls per team plus a teams listing (65 for the NFL),
+against no quota at all.
+
+Depth charts exist for **NFL, MLB and NHL**. WNBA 500s and college football
+400s on that route, so those leagues collect rosters only — and the collector
+stops asking after the first refusal rather than repeating it 30 times.
+
+Two things the normalizer is careful about:
+
+- **Formations.** ESPN files several units per team ("3WR 1TE", "Nickel",
+  "Base 4-3 D"). Taking whichever came first in the payload silently answers a
+  different question — a nickel package's corner ordering is not the depth
+  chart — so `depth_by_position` prefers the ordinary unit.
+- **Team codes.** ESPN writes `LAR`/`WSH` where nflverse writes `LA`/`WAS`.
+  Those are the same two divergences FantasyPros has, so the existing
+  `FP_CODE_FIXUPS` serves both.
+
+**What it changed.** `starter_map` now takes `espn_depth` and prefers it per
+team, falling back to the projection inference for teams a partial snapshot did
+not reach. Every disagreement is logged, because each one is either a stale
+projection or a starter change we would otherwise price blind. On the first
+live run it corrected three teams the fit had wrong — including KC from Chris
+Oladokun to Patrick Mahomes, the exact 5.6-points-a-game error
+`docs/SYSTEM_REVIEW.md` §3.1 documents — and it did so with **no FantasyPros
+key involved at all**: `--espn-depth-file` plus `--espn-injuries-file` is now a
+complete starter map on its own.
+
 ### Collection and wiring
 
 `collect-injuries.yml` runs `scripts/collect_espn_injuries.py` alongside the
 FantasyPros step, which is marked `continue-on-error` so an expired
 `FP_API_KEY` cannot take five leagues' only injury source down with it. The
-runner takes `--espn-injuries-file` for every league; where both sources exist
+runner takes `--espn-injuries-file` for every league and `--espn-depth-file`
+for the starter map; where both injury sources exist
 (the NFL) the frames are **concatenated, not reconciled** — the consumer takes
 genuine outs and looks them up by team, so a player both feeds call out vetoes
 once anyway, and reconciling two designations into a single truth is a

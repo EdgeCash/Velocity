@@ -14,6 +14,7 @@ from velocity.features.starters import (
     nflverse_ids,
     normalize_player_name,
     qb_depth_by_team,
+    qb_depth_from_espn,
     starter_map,
 )
 
@@ -104,3 +105,90 @@ def test_empty_inputs_are_inert() -> None:
     assert starter_map(FP.iloc[0:0], WEEKS) == ({}, [])
     assert starter_map(FP, WEEKS.iloc[0:0])[0] == {}
     assert qb_depth_by_team(pd.DataFrame(columns=FP.columns)) == {}
+
+
+# --------------------------------------------------------------------------
+# The ESPN depth chart — a statement where FantasyPros gives an inference
+# --------------------------------------------------------------------------
+
+
+def _espn_depth(rows: list[tuple[str, str, int, str]]) -> pd.DataFrame:
+    """(team, unit, rank, player) → the columns the ESPN ingest produces."""
+    return pd.DataFrame(
+        [
+            {
+                "league": "nfl", "team_id": "0", "team_abbreviation": team,
+                "team_name": f"{team} Team", "unit": unit, "position": "QB",
+                "position_name": "Quarterback", "rank": rank,
+                "athlete_id": str(i), "player_name": player,
+            }
+            for i, (team, unit, rank, player) in enumerate(rows)
+        ]
+    )
+
+
+def test_the_depth_chart_overrides_a_stale_projection() -> None:
+    """The case the workload inference cannot get right.
+
+    If the projections have the backup busiest — stale, or a week the starter
+    was expected to sit — FantasyPros names the backup as QB1. The depth chart
+    says otherwise, and the depth chart is the thing that knows.
+    """
+    stale = _fp([
+        ("KC", "Chris Oladokun", "QB", "pass_yds", 4000.0),
+        ("KC", "Patrick Mahomes", "QB", "pass_yds", 100.0),
+    ])
+    inferred, _ = starter_map(stale, WEEKS)
+    assert inferred["KC"] == "00-oladokun"
+
+    depth = _espn_depth([("KC", "3WR 1TE", 1, "Patrick Mahomes"),
+                         ("KC", "3WR 1TE", 2, "Chris Oladokun")])
+    stated, notes = starter_map(stale, WEEKS, espn_depth=depth)
+    assert stated["KC"] == "00-mahomes"
+    # The disagreement is logged, not silently resolved — it is either a stale
+    # projection or a starter change we would otherwise price blind.
+    assert any("depth chart says Patrick Mahomes" in n for n in notes)
+
+
+def test_the_depth_chart_alone_is_enough_with_no_projections_at_all() -> None:
+    """The map no longer needs a FantasyPros key to work."""
+    empty = _fp([])
+    depth = _espn_depth([("KC", "3WR 1TE", 1, "Patrick Mahomes"),
+                         ("KC", "3WR 1TE", 2, "Chris Oladokun")])
+    overrides, _ = starter_map(empty, WEEKS, espn_depth=depth)
+    assert overrides == {"KC": "00-mahomes"}
+
+
+def test_a_partial_depth_snapshot_improves_its_teams_without_blanking_others() -> None:
+    """A fetch that died midway must not cost the teams it never reached."""
+    depth = _espn_depth([("KC", "3WR 1TE", 1, "Patrick Mahomes")])
+    overrides, _ = starter_map(FP, WEEKS, espn_depth=depth)
+    assert overrides["KC"] == "00-mahomes"          # from the depth chart
+    assert overrides["ATL"] == "00-penix"           # still from the projections
+    assert overrides["NYJ"] == "00-fields"
+
+
+def test_an_out_qb1_still_demotes_when_the_depth_chart_is_the_source() -> None:
+    depth = _espn_depth([("ATL", "3WR 1TE", 1, "Michael Penix Jr."),
+                         ("ATL", "3WR 1TE", 2, "Kirk Cousins")])
+    injuries = pd.DataFrame([
+        {"team": "ATL", "player_name": "Michael Penix Jr.", "is_out": True},
+    ])
+    overrides, notes = starter_map(FP, WEEKS, injuries, espn_depth=depth)
+    assert overrides["ATL"] == "00-cousins"
+    assert any("is out" in n for n in notes)
+
+
+def test_espn_team_codes_are_translated_to_the_fits_keys() -> None:
+    """ESPN writes LAR and WSH where nflverse writes LA and WAS."""
+    depth = _espn_depth([("LAR", "3WR 1TE", 1, "Matthew Stafford")])
+    assert qb_depth_from_espn(depth) == {"LA": ["Matthew Stafford"]}
+    overrides, _ = starter_map(_fp([]), WEEKS, espn_depth=depth)
+    assert overrides == {"LA": "00-stafford"}
+
+
+def test_an_empty_depth_frame_leaves_the_projection_path_untouched() -> None:
+    baseline, _ = starter_map(FP, WEEKS)
+    for empty in (None, pd.DataFrame()):
+        overrides, _ = starter_map(FP, WEEKS, espn_depth=empty)
+        assert overrides == baseline

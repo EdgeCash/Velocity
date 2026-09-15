@@ -41,6 +41,7 @@ Convention notes:
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -51,6 +52,8 @@ from typing import Any
 import pandas as pd
 
 _BASE = "https://site.api.espn.com/apis/site/v2/sports"
+# Depth charts live on the core API, not the site one, and are keyed by season.
+_CORE_BASE = "https://sports.core.api.espn.com/v2"
 _FETCH_TIMEOUT = 60
 # An HONEST, identifying User-Agent — and this matters more than it looks.
 #
@@ -310,3 +313,256 @@ class ESPNClient:
     def injuries(self, league: str) -> pd.DataFrame:  # pragma: no cover - network
         """One league's injury report, normalized."""
         return normalize_injuries(self.raw_injuries(league), league)
+
+    def teams(self, league: str) -> pd.DataFrame:  # pragma: no cover - network
+        """The league's teams — the ids the roster and depth-chart routes take."""
+        return normalize_teams(self._get(f"{self._path(league)}/teams"))
+
+    def roster(self, league: str, team_id: object) -> pd.DataFrame:  # pragma: no cover - network
+        """One team's roster, normalized."""
+        return normalize_roster(
+            self._get(f"{self._path(league)}/teams/{team_id}/roster"), league
+        )
+
+    def depth_chart(  # pragma: no cover - network
+        self, league: str, team_id: object, season: int,
+        roster: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
+        """One team's depth chart, named from ``roster``.
+
+        Lives on the **core** API rather than the site one, and is keyed by
+        season. Leagues without the route (WNBA 500s, college football 400s)
+        raise; the collector reports that rather than inventing an ordering.
+        """
+        try:
+            sport, league_path = ESPN_LEAGUE_PATHS[league].split("/", 1)
+        except KeyError:
+            raise ValueError(f"no ESPN path for league {league!r}") from None
+        url = (f"{_CORE_BASE}/sports/{sport}/leagues/{league_path}/seasons/{season}"
+               f"/teams/{team_id}/depthcharts")
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            payload = json.loads(resp.read())
+        return normalize_depth_chart(payload, roster, league)
+
+    def _path(self, league: str) -> str:
+        try:
+            return ESPN_LEAGUE_PATHS[league]
+        except KeyError:
+            raise ValueError(
+                f"no ESPN path for league {league!r}; known: {sorted(ESPN_LEAGUE_PATHS)}"
+            ) from None
+
+
+# ---------------------------------------------------------------------------
+# Rosters and depth charts — who is on the team, and who is ahead of whom
+# ---------------------------------------------------------------------------
+#
+# The NFL starter map (velocity/features/starters.py) works out each team's QB1
+# by *inference*: it reads FantasyPros' projected passing yards and takes the
+# busiest passer. That is a good proxy and it fails in the obvious place —
+# whenever the projections are stale or a backup is projected high, the
+# inference disagrees with the depth chart, and the depth chart is right.
+#
+# ESPN states it outright. Two endpoints, joined locally:
+#
+# * the **roster** (site API, one call per team) — every athlete with an id,
+#   name, position and jersey;
+# * the **depth chart** (core API, one call per team) — per position, athlete
+#   ids in rank order, and *ids only*: every athlete is a ``$ref`` link. Left to
+#   the API that is one fetch per player, hundreds a team. Joined against the
+#   roster it is free.
+#
+# So a league costs 2 calls per team plus a teams listing — 65 for the NFL,
+# against no quota at all.
+#
+# Depth charts exist for NFL, MLB and NHL. WNBA 500s and college football 400s
+# on that route, so those leagues get rosters only; ``depth_chart`` reports it
+# rather than inventing an ordering.
+
+ROSTER_COLUMNS = [
+    "league", "team_id", "team_abbreviation", "team_name",
+    "athlete_id", "player_name", "position", "jersey", "status_group",
+]
+DEPTH_COLUMNS = [
+    "league", "team_id", "team_abbreviation", "team_name",
+    "unit", "position", "position_name", "rank", "athlete_id", "player_name",
+]
+
+# Depth-chart formations that are not a team's ordinary ordering. ESPN lists
+# several per team ("Base 4-3 D", "Nickel", "3WR 1TE"); the plain one is what a
+# starter question means, and taking the first item blindly picks whichever
+# formation happens to be first in the payload.
+_PREFERRED_UNITS = ("depth chart", "3wr 1te", "base 4-3 d", "base 3-4 d")
+
+
+def normalize_teams(payload: Any) -> pd.DataFrame:
+    """The league's teams — ``team_id``/``abbreviation``/``displayName``.
+
+    The id is what the roster and depth-chart routes are keyed by, so this is
+    the listing every other call in this section starts from.
+    """
+    rows: list[dict[str, object]] = []
+    sports = (payload or {}).get("sports") if isinstance(payload, Mapping) else None
+    for sport in sports or []:
+        for league in sport.get("leagues") or []:
+            for entry in league.get("teams") or []:
+                team = entry.get("team") if isinstance(entry, Mapping) else None
+                if not isinstance(team, Mapping) or team.get("id") is None:
+                    continue
+                rows.append({
+                    "team_id": str(team["id"]),
+                    "team_abbreviation": _text(team.get("abbreviation")),
+                    "team_name": _text(team.get("displayName")),
+                })
+    return pd.DataFrame(rows, columns=["team_id", "team_abbreviation", "team_name"])
+
+
+def normalize_roster(payload: Any, league: str = "") -> pd.DataFrame:
+    """One team's roster → a row per athlete.
+
+    ``status_group`` carries ESPN's own bucketing ("offense", "defense",
+    "injuredReserveOrOut", "practiceSquad"), which is coarse availability
+    evidence in its own right and is exactly what a depth chart does not say.
+    """
+    if not isinstance(payload, Mapping):
+        return pd.DataFrame(columns=ROSTER_COLUMNS)
+    team = payload.get("team") or {}
+    team_id = _text(team.get("id")) if isinstance(team, Mapping) else None
+    team_abbr = _text(team.get("abbreviation")) if isinstance(team, Mapping) else None
+    team_name = _text(team.get("displayName")) if isinstance(team, Mapping) else None
+
+    rows: list[dict[str, object]] = []
+    for group in payload.get("athletes") or []:
+        if not isinstance(group, Mapping):
+            continue
+        status = _text(group.get("position"))
+        # A flat roster (no groups) puts athletes at the top level instead.
+        items = group.get("items") if "items" in group else [group]
+        for athlete in items or []:
+            if not isinstance(athlete, Mapping) or athlete.get("id") is None:
+                continue
+            name = _text(athlete.get("displayName")) or _text(athlete.get("fullName"))
+            if name is None:
+                continue
+            position = athlete.get("position") or {}
+            rows.append({
+                "league": league,
+                "team_id": team_id,
+                "team_abbreviation": team_abbr,
+                "team_name": team_name,
+                "athlete_id": str(athlete["id"]),
+                "player_name": name,
+                "position": _text(
+                    position.get("abbreviation") if isinstance(position, Mapping) else None
+                ),
+                "jersey": _text(athlete.get("jersey")),
+                "status_group": status,
+            })
+    return pd.DataFrame(rows, columns=ROSTER_COLUMNS)
+
+
+def _athlete_id_from_ref(ref: object) -> str | None:
+    """The trailing athlete id out of a core-API ``$ref`` URL."""
+    match = re.search(r"/athletes/(\d+)", str(ref or ""))
+    return match.group(1) if match else None
+
+
+def normalize_depth_chart(
+    payload: Any, roster: pd.DataFrame | None = None, league: str = ""
+) -> pd.DataFrame:
+    """One team's depth chart → a row per (unit, position, rank, athlete).
+
+    The payload names athletes only by ``$ref``, so ``roster`` (that team's
+    :func:`normalize_roster` frame) supplies the names. Without it the rows
+    still carry ids and ranks — usable for a join, and honest about what is
+    missing — rather than being dropped.
+
+    Rows are returned in ESPN's own rank order per position; rank 1 is the
+    starter.
+    """
+    if not isinstance(payload, Mapping):
+        return pd.DataFrame(columns=DEPTH_COLUMNS)
+    names: Mapping[str, str] = {}
+    team_id = team_abbr = team_name = None
+    if roster is not None and not roster.empty:
+        names = dict(
+            zip(roster["athlete_id"].astype(str), roster["player_name"].astype(str),
+                strict=False)
+        )
+        first = roster.iloc[0]
+        team_id = _text(first.get("team_id"))
+        team_abbr = _text(first.get("team_abbreviation"))
+        team_name = _text(first.get("team_name"))
+
+    rows: list[dict[str, object]] = []
+    for item in payload.get("items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        unit = _text(item.get("name"))
+        for key, block in (item.get("positions") or {}).items():
+            if not isinstance(block, Mapping):
+                continue
+            position = block.get("position") or {}
+            for entry in block.get("athletes") or []:
+                if not isinstance(entry, Mapping):
+                    continue
+                athlete_id = _athlete_id_from_ref(
+                    (entry.get("athlete") or {}).get("$ref")
+                    if isinstance(entry.get("athlete"), Mapping) else None
+                )
+                if athlete_id is None:
+                    continue
+                rows.append({
+                    "league": league,
+                    "team_id": team_id,
+                    "team_abbreviation": team_abbr,
+                    "team_name": team_name,
+                    "unit": unit,
+                    "position": str(key).upper(),
+                    "position_name": _text(
+                        position.get("displayName") if isinstance(position, Mapping) else None
+                    ),
+                    "rank": entry.get("rank"),
+                    "athlete_id": athlete_id,
+                    "player_name": names.get(athlete_id),
+                })
+    frame = pd.DataFrame(rows, columns=DEPTH_COLUMNS)
+    if not frame.empty:
+        frame["rank"] = pd.to_numeric(frame["rank"], errors="coerce")
+    return frame
+
+
+def depth_by_position(
+    depth: pd.DataFrame, position: str, *, team_column: str = "team_abbreviation"
+) -> dict[str, list[str]]:
+    """``{team: [player names]}`` in depth order for one position.
+
+    The shape :func:`velocity.features.starters.starter_map` already consumes,
+    so an ESPN depth chart can stand in for the FantasyPros workload inference
+    without touching anything downstream of it.
+
+    A team listing several formations contributes its **ordinary** one — ESPN
+    files "Nickel" and "3WR 1TE" beside the plain chart, and taking whichever
+    came first in the payload would silently answer a different question.
+    Players the roster could not name are skipped.
+    """
+    if depth.empty:
+        return {}
+    wanted = depth[depth["position"].astype(str).str.upper() == position.upper()]
+    wanted = wanted[wanted["player_name"].notna()]
+    if wanted.empty:
+        return {}
+    out: dict[str, list[str]] = {}
+    for team, rows in wanted.groupby(team_column):
+        units = list(rows["unit"].dropna().unique())
+        preferred = next(
+            (u for p in _PREFERRED_UNITS for u in units if str(u).strip().lower() == p),
+            units[0] if units else None,
+        )
+        scoped = rows[rows["unit"] == preferred] if preferred is not None else rows
+        ordered = scoped.sort_values("rank", na_position="last")
+        names = [str(n) for n in ordered["player_name"] if str(n).strip()]
+        if names:
+            out[str(team)] = names
+    return out

@@ -75,6 +75,14 @@ jobs:
       - name: Snapshot ESPN injuries (all leagues, keyless)
         run: python scripts/collect_espn_injuries.py --out artifacts/espn
 
+      # The NFL depth chart, which is what the QB starter map would rather read
+      # than infer from projected passing yards. ~2 calls per team against no
+      # quota, and continue-on-error because a starter map that falls back to
+      # the projections is a worse map, not a broken run.
+      - name: Snapshot ESPN rosters and depth charts (NFL)
+        continue-on-error: true
+        run: python scripts/collect_espn_depth.py --out artifacts/espn --leagues nfl
+
       - name: Upload snapshot (private artifact)
         uses: actions/upload-artifact@v4
         with:
