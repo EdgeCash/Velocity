@@ -30,6 +30,7 @@ from typing import Any
 import pandas as pd
 from velocity.eval.ladders import default_relative_tolerance, has_ladder_calibration
 from velocity.features.scores import fit_scores_ratings
+from velocity.ingest.bettingpros import DEFAULT_BP_MAX_AGE_MIN
 from velocity.ingest.exchanges import EXCHANGE_LEAGUES
 from velocity.ingest.local import load_games
 from velocity.ingest.theoddsapi import extract_events, normalize_odds_events
@@ -331,23 +332,41 @@ def _build_projection(
         # the team follows. A name that resolves to nothing leaves the fit's
         # detection in place.
         weeks_path = folder / "player_weeks.parquet"
-        if args.fp_projections and weeks_path.exists() and hasattr(ratings, "starters"):
+        has_depth_source = bool(args.fp_projections or args.espn_depth_file)
+        if has_depth_source and weeks_path.exists() and hasattr(ratings, "starters"):
             from dataclasses import replace
 
             from velocity.features.starters import describe_changes, starter_map
 
-            fp_frame = pd.read_parquet(args.fp_projections)
-            if "league" in fp_frame.columns:
-                fp_frame = fp_frame[fp_frame["league"].astype(str) == "nfl"]
+            fp_frame = pd.DataFrame(
+                columns=["player_name", "team", "position", "stat", "value"]
+            )
+            if args.fp_projections:
+                fp_frame = pd.read_parquet(args.fp_projections)
+                if "league" in fp_frame.columns:
+                    fp_frame = fp_frame[fp_frame["league"].astype(str) == "nfl"]
+            # The depth chart STATES what the projected-workload inference
+            # guesses, so where it covers a team it wins; disagreements are
+            # logged, because each one is either a stale projection or a
+            # starter change we would otherwise price blind.
+            espn_depth = None
+            if args.espn_depth_file:
+                espn_depth = pd.read_parquet(args.espn_depth_file)
+                if "league" in espn_depth.columns:
+                    espn_depth = espn_depth[espn_depth["league"].astype(str) == "nfl"]
             weeks = pd.read_parquet(weeks_path)
-            injuries = pd.read_parquet(args.injuries_file) if args.injuries_file else None
-            overrides, notes = starter_map(fp_frame, weeks, injuries)
+            injuries = _starter_outs(args)
+            overrides, notes = starter_map(
+                fp_frame, weeks, injuries, espn_depth=espn_depth
+            )
             # Only clubs the fit knows: FantasyPros lists free agents under "FA".
             overrides = {t: q for t, q in overrides.items() if t in ratings.teams}  # type: ignore[attr-defined]
             changes = describe_changes(overrides, ratings.starters, weeks)  # type: ignore[attr-defined]
             if overrides:
                 ratings = replace(ratings, starters={**ratings.starters, **overrides})  # type: ignore[attr-defined,type-var]
-            print(f"starter map: {len(overrides)} teams from the FantasyPros depth, "
+            source = ("the ESPN depth chart" if espn_depth is not None and not espn_depth.empty
+                      else "the FantasyPros depth")
+            print(f"starter map: {len(overrides)} teams from {source}, "
                   f"{len(changes)} changed from the fit's own detection")
             for line in changes + notes:
                 print(f"  {line}")
@@ -744,6 +763,27 @@ def build_parser() -> argparse.ArgumentParser:
     # implied totals) but no >52.4% over-rate on *derived* numbers, so the
     # disagreement gate defaults to off — the EV gate still applies, and the
     # threshold gets calibrated once banked team-total closes accumulate.
+    # The BettingPros board (docs/DATA_PROVIDERS.md). The collector has banked
+    # multi-book game lines every three hours since it was built and nothing
+    # read them: the live board came from The Odds API alone, so a BP price was
+    # never shopped and never graded. These flags put that board back on the
+    # card. It is PAPER by default for the same reason the exchanges were: the
+    # rows are read off a snapshot up to a cadence old, and S2's rule is that
+    # money does not follow a market whose evidence is not in yet. Priced,
+    # logged and graded at stake zero, the CLV record accrues; --bp-stake is
+    # the switch to flip once it says something.
+    parser.add_argument("--bp-lines-file",
+                        help="banked bp_lines parquet — puts the BettingPros board on the card")
+    parser.add_argument("--bp-events-file",
+                        help="banked bp_events parquet (the team/kickoff map for --bp-lines-file)")
+    parser.add_argument("--bp-books-file",
+                        help="banked bp_books parquet — resolves bp:<id> keys to bp:<name>")
+    parser.add_argument("--bp-stake", action=argparse.BooleanOptionalAction, default=False,
+                        help="stake the BettingPros rows instead of papering them. Tighten "
+                             "--bp-max-age-min first: a banked price that has moved is not "
+                             "a price we can take.")
+    parser.add_argument("--bp-max-age-min", type=float, default=DEFAULT_BP_MAX_AGE_MIN,
+                        help="refuse a banked BettingPros board older than this many minutes")
     parser.add_argument("--offline", action="store_true",
                         help="make no network calls at all (test and CI runs). Distinct from "
                              "--snapshot-file, which only means the sportsbook board comes "
@@ -812,7 +852,22 @@ def build_parser() -> argparse.ArgumentParser:
                         help="judge qualifying bets against stats/form/rest/injuries")
     parser.add_argument("--injuries-file",
                         help="normalized injuries parquet (the collect_fantasypros "
-                             "artifact) — enables availability vetoes")
+                             "artifact) — enables availability vetoes. NFL only: "
+                             "FantasyPros has no other league.")
+    # ESPN's injury report (velocity/ingest/espn.py) — keyless, and the only
+    # injury source that covers every league we price. Before it, the intel
+    # layer's availability signals abstained on all five non-NFL leagues: an
+    # MLB card was priced with no idea a listed starter was on the 60-day IL.
+    parser.add_argument("--espn-injuries-file",
+                        help="banked espn_injuries parquet — availability vetoes "
+                             "for every league, not just the NFL")
+    # The depth chart the QB starter map would rather read than infer. Without
+    # it the map takes FantasyPros' busiest projected passer, which is a proxy
+    # that disagrees with the depth chart exactly when the projections are
+    # stale — the case it exists to catch.
+    parser.add_argument("--espn-depth-file",
+                        help="banked espn_depth parquet — names each team's QB1 from "
+                             "the depth chart instead of projected workload")
     # BettingPros prop snapshot (the collect-bettingpros artifact): their own
     # projection block judges every qualifying prop — outside corroboration
     # for the plays product, never a pick source.
@@ -929,6 +984,12 @@ DEFAULT_MODEL_WEIGHT_BY_LEAGUE = {"nfl": 0.2, "ncaaf": 0.13, "mlb": 0.2}
 # (NCAAB null after FDR, NHL no closes backtest yet, WNBA tracked not staked —
 # docs/STRATEGY_REVIEW.md §1.3), so every market prices and grades as paper.
 DEFAULT_PAPER_BY_LEAGUE = {"ncaab": True, "nhl": True, "wnba": True}
+# Leagues whose props come from the FantasyPros-fed correlated football sim
+# (velocity/models/props_football.py). Every other league either has its own
+# prop model — MLB's pitcher-K slate, priced off the banked starters history —
+# or no prop board at all, and in neither case does --fp-projections mean
+# anything to it.
+FOOTBALL_PROP_LEAGUES = ("nfl", "ncaaf")
 GAME_MARKETS = ("moneyline", "spread", "total", "team_total_home", "team_total_away")
 _TEAM_TOTALS = ("team_total_home", "team_total_away")
 
@@ -978,6 +1039,15 @@ def live_config_rows(
                    else ("team totals" if paper else "none"))
     if venues:
         paper_label += f" · exchanges ({', '.join(sorted(venues))})"
+    # The BettingPros books are papered by the board builder, not by an arg, so
+    # they are read back off the config that was actually built — the whole
+    # point of this function.
+    bp_venues = sorted(
+        v for v in getattr(cfg, "paper_venues", frozenset()) or frozenset()
+        if str(v).startswith("bp:")
+    )
+    if bp_venues:
+        paper_label += f" · BettingPros ({len(bp_venues)} book(s))"
     rows.append(("Paper", paper_label))
     if args.league in FOOTBALL_SDS:
         rows.append(("Simulation", describe_sim(football_sim_config(args.league, args),
@@ -1284,6 +1354,56 @@ def main() -> None:
     elif args.exchanges:
         print("exchanges: skipped (--offline, or a league with no exchange board)")
 
+    # The BettingPros board — banked by the 3-hourly collector, re-keyed onto
+    # this board's game ids the same way an exchange board is. Its books are
+    # the same sportsbooks The Odds API quotes, so every key is prefixed
+    # ``bp:``: the feed is part of the book's identity, and a grader must be
+    # able to tell which feed a bet's number came from.
+    bp_paper_venues: frozenset[str] = frozenset()
+    if args.bp_lines_file and args.bp_events_file:
+        try:
+            from velocity.ingest.bettingpros import bp_board, bp_book_keys
+
+            book_names = {}
+            if args.bp_books_file and Path(args.bp_books_file).exists():
+                books_frame = pd.read_parquet(args.bp_books_file)
+                book_names = dict(
+                    zip(books_frame["book_id"].astype(str),
+                        books_frame["book_name"].astype(str), strict=False)
+                )
+            bp_lines, bp_notes = bp_board(
+                pd.read_parquet(args.bp_lines_file),
+                pd.read_parquet(args.bp_events_file),
+                known_teams,
+                events,
+                now=generated_at,
+                league=args.league,
+                max_age_minutes=args.bp_max_age_min,
+                book_names=book_names,
+            )
+            if bp_notes["stale"]:
+                age = bp_notes["age_min"]
+                seen = "no timestamp" if age is None else f"{age:g} min old"
+                print(f"bettingpros: board refused ({seen}, limit "
+                      f"{args.bp_max_age_min:g} min) — a price that has moved is not "
+                      "a price we can take")
+            elif bp_lines.empty:
+                print(f"bettingpros: no rows aligned onto the board "
+                      f"({bp_notes['games']} game(s) matched)")
+            else:
+                unresolved = bp_notes["unresolved_sides"]
+                tail = f" ({unresolved} row(s) dropped — side unresolved)" if unresolved else ""
+                print(f"bettingpros: {bp_notes['lines']} lines across "
+                      f"{bp_notes['games']} board games, {bp_notes['age_min']:g} min old"
+                      f"{tail}")
+                lines = pd.concat([lines, bp_lines], ignore_index=True)
+                if not args.bp_stake:
+                    bp_paper_venues = bp_book_keys(bp_lines)
+                    print(f"bettingpros: priced and graded on the board, staked at zero "
+                          f"({len(bp_paper_venues)} book(s)) — --bp-stake stakes them")
+        except Exception as exc:  # noqa: BLE001 - an optional banked board
+            print(f"bettingpros board skipped: {exc}")
+
     n_board = len(events)
     if args.max_days > 0 and not events.empty:
         kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
@@ -1344,11 +1464,15 @@ def main() -> None:
         elif paper_markets:
             print("team totals: paper — priced and graded, staked at zero until "
                   "posted closes calibrate the gate (--no-team-totals-paper to stake)")
-        paper_venues = resolve_paper_venues(args)
-        if paper_venues:
+        # The exchange venues and the BettingPros books are papered for
+        # different reasons and announce themselves separately (BP printed its
+        # own line as the board was built); the config takes the union.
+        exchange_paper = resolve_paper_venues(args)
+        paper_venues = exchange_paper | bp_paper_venues
+        if exchange_paper:
             why = ("--exchange-paper" if args.exchange_paper
                    else f"no ladder shape table fitted for {args.league}")
-            print(f"exchanges: {', '.join(sorted(paper_venues))} priced and graded on the "
+            print(f"exchanges: {', '.join(sorted(exchange_paper))} priced and graded on the "
                   f"board, staked at zero ({why})")
         elif getattr(args, "exchanges", False):
             from velocity.store.schema import LADDER_BOOKS
@@ -1446,7 +1570,16 @@ def main() -> None:
     key_to_name: dict[str, str] = {}
     prop_lines_used: pd.DataFrame | None = None
     watch_by_game: dict = {}
-    if args.fp_projections and projections and not events.empty:
+    # Which prop model runs is a property of the LEAGUE, not of which files
+    # happened to be passed. It used to be the latter, and that was a live
+    # trap: --fp-projections carries every league the collector banks, so
+    # supplying it for MLB took the football path on baseball players, found
+    # nothing, and — because this is an if/elif — silently skipped the pitcher-K
+    # slate that MLB actually has. The only thing standing between us and that
+    # was live-slate.yml gating the flag on `league = nfl`, a load-bearing
+    # condition in a shell script with nothing saying so.
+    if (args.fp_projections and args.league in FOOTBALL_PROP_LEAGUES
+            and projections and not events.empty):
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )
@@ -1917,6 +2050,83 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                   "regardless of the failure above: stake nothing today.")
 
 
+def _starter_outs(args: argparse.Namespace) -> pd.DataFrame | None:
+    """The injury frame the NFL starter map demotes an out QB1 with.
+
+    ``outs_by_team`` keys on a ``team`` column of nflverse-ish codes. The
+    FantasyPros frame already has one; the ESPN frame carries the code as
+    ``team_abbreviation``, and its two NFL divergences (LAR/WSH) are the same
+    two FantasyPros has, so the map's own fixups cover it after a rename.
+
+    ESPN is preferred where both exist: it is the report the depth chart comes
+    from, so an out flagged there and a depth chart read in the same run cannot
+    disagree with each other about who exists.
+    """
+    if args.espn_injuries_file:
+        frame = pd.read_parquet(args.espn_injuries_file)
+        if "league" in frame.columns:
+            frame = frame[frame["league"].astype(str) == "nfl"]
+        if not frame.empty:
+            return frame.rename(columns={"team_abbreviation": "team"})
+    if args.injuries_file:
+        return pd.read_parquet(args.injuries_file)
+    return None
+
+
+def _injury_report(args: argparse.Namespace, games: pd.DataFrame) -> pd.DataFrame | None:
+    """The availability evidence for this league — ESPN, FantasyPros, or neither.
+
+    Two sources, deliberately not merged into one blended view:
+
+    * **ESPN** (``--espn-injuries-file``) is keyless and covers every league we
+      price. It is the only reason an MLB, WNBA, NCAAF, NCAAB or NHL card has
+      any availability evidence at all — before it those five abstained
+      entirely, which on a baseball card meant no idea a listed starter was on
+      the 60-day IL. Its teams arrive in ESPN's key space and are resolved onto
+      the model's, scoped to this league because a team abbreviation is only
+      unique inside one.
+    * **FantasyPros** (``--injuries-file``) is NFL-only and already wired.
+
+    Where both exist (the NFL), the frames are concatenated rather than
+    reconciled. The consumer takes genuine outs and looks them up by team, so a
+    player both sources call out appears twice and vetoes once; a player only
+    one of them has is still seen. Reconciling two designations into a single
+    truth is a judgement neither feed licenses us to make.
+    """
+    frames: list[pd.DataFrame] = []
+    if args.espn_injuries_file:
+        from velocity.ingest.espn import resolve_injury_teams
+
+        known = sorted(
+            set(games["home_team"].astype(str)) | set(games["away_team"].astype(str))
+        )
+        raw = pd.read_parquet(args.espn_injuries_file)
+        espn, unresolved = resolve_injury_teams(raw, known, args.league)
+        if espn.empty:
+            print(f"\nintel: ESPN report carries no {args.league.upper()} rows "
+                  "that resolve to the model's teams")
+        else:
+            print(f"\nintel: ESPN injuries loaded — {int(espn['is_out'].sum())} genuine "
+                  f"outs across {espn['team'].nunique()} team(s)")
+            frames.append(espn)
+        if unresolved:
+            # A team nobody can look up is invisible, and silently invisible is
+            # how a whole league's report goes missing unnoticed.
+            print(f"  {len(unresolved)} ESPN team(s) unresolved: "
+                  f"{', '.join(unresolved[:6])}"
+                  f"{' …' if len(unresolved) > 6 else ''}")
+    if args.injuries_file:
+        fp = pd.read_parquet(args.injuries_file)
+        n_out = int(fp["is_out"].sum()) if "is_out" in fp.columns else 0
+        print(f"intel: FantasyPros injuries loaded ({n_out} genuine outs)")
+        frames.append(fp)
+    if not frames:
+        print("\nintel: no injuries snapshot (--espn-injuries-file / --injuries-file) "
+              "— availability signals abstain")
+        return None
+    return pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+
+
 def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's parts
     args: argparse.Namespace,
     events: pd.DataFrame,
@@ -1955,14 +2165,7 @@ def _intel_layer(  # noqa: PLR0913 - the orchestration seam takes the slate's pa
             from velocity.ingest.local import load_plays
 
             plays = load_plays(plays_path)
-        injuries = None
-        if args.injuries_file:
-            injuries = pd.read_parquet(args.injuries_file)
-            n_out = int(injuries["is_out"].sum()) if "is_out" in injuries.columns else 0
-            print(f"\nintel: injuries snapshot loaded ({n_out} genuine outs)")
-        else:
-            print("\nintel: no injuries snapshot (--injuries-file) — availability "
-                  "signals abstain")
+        injuries = _injury_report(args, games)
         lib = ContextLibrary.build(games, plays, injuries, as_of=generated_at)
 
         kickoffs = {

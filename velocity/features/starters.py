@@ -88,6 +88,33 @@ def qb_depth_by_team(
     }
 
 
+def qb_depth_from_espn(
+    depth: pd.DataFrame,
+    *,
+    position: str = "QB",
+    team_fixups: Mapping[str, str] = FP_CODE_FIXUPS,
+) -> dict[str, list[str]]:
+    """Team code → quarterbacks in **depth-chart** order, from an ESPN snapshot.
+
+    Same shape as :func:`qb_depth_by_team`, and a better answer to the same
+    question. That function *infers* QB1 from projected passing yards, which is
+    a proxy that fails exactly where it matters: a stale projection, or a
+    backup projected high in a week his starter is expected to sit, and the
+    inference disagrees with the depth chart — which is the thing the depth
+    chart says outright.
+
+    ESPN's two NFL code divergences (``LAR``/``WSH``) are the same two
+    FantasyPros has, so ``FP_CODE_FIXUPS`` serves both.
+    """
+    from velocity.ingest.espn import depth_by_position
+
+    by_team = depth_by_position(depth, position)
+    return {
+        team_fixups.get(str(team), str(team)): names
+        for team, names in by_team.items()
+    }
+
+
 def nflverse_ids(player_weeks: pd.DataFrame, *, position: str = "QB") -> dict[str, str]:
     """Normalized full name → nflverse player id, the newest season winning a tie.
 
@@ -128,19 +155,42 @@ def starter_map(
     *,
     stat: str = DEFAULT_WORKLOAD_STAT,
     team_fixups: Mapping[str, str] = FP_CODE_FIXUPS,
+    espn_depth: pd.DataFrame | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Team → the nflverse id of the quarterback to price, plus log notes.
 
-    For each team, the projected QB1 who is not on the injury report as out;
-    an out QB1 demotes to the next projected passer. A name the stats bank
-    cannot resolve to an id contributes nothing for that team (the fit's own
-    detection stands) and a note says so. Returns ``(overrides, notes)``.
+    For each team, the QB1 who is not on the injury report as out; an out QB1
+    demotes to the next passer. A name the stats bank cannot resolve to an id
+    contributes nothing for that team (the fit's own detection stands) and a
+    note says so. Returns ``(overrides, notes)``.
+
+    ``espn_depth`` — an ESPN depth-chart frame — supplies the ordering where it
+    covers a team, and the FantasyPros workload inference covers the rest. The
+    merge is per team rather than whole-frame: a partial ESPN snapshot (a fetch
+    that failed midway through the league) should improve the teams it reached
+    without blanking the others.
     """
     depth = qb_depth_by_team(fp, stat=stat, team_fixups=team_fixups)
+    notes: list[str] = []
+    if espn_depth is not None and not espn_depth.empty:
+        stated = qb_depth_from_espn(espn_depth, team_fixups=team_fixups)
+        # Where the two sources disagree about QB1, say so. The depth chart
+        # wins — it states what the inference guesses — but a disagreement is
+        # the single most useful line in this log: it is either a projection
+        # gone stale or a starter change we would otherwise price blind.
+        for team in sorted(stated):
+            inferred = depth.get(team)
+            if inferred and stated[team] and inferred[0] != stated[team][0]:
+                notes.append(
+                    f"{team}: depth chart says {stated[team][0]}, projected workload "
+                    f"implied {inferred[0]} — taking the depth chart"
+                )
+        # Per team, not whole-frame: a partial ESPN snapshot should improve the
+        # teams it reached without blanking the ones it did not.
+        depth = {**depth, **stated}
     ids = nflverse_ids(player_weeks)
     outs = outs_by_team(injuries, team_fixups=team_fixups)
     overrides: dict[str, str] = {}
-    notes: list[str] = []
     for team, names in sorted(depth.items()):
         team_outs = outs.get(team, set())
         for name in names:

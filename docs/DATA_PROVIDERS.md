@@ -1,4 +1,4 @@
-# Live data providers — BettingPros, The Odds API, FantasyPros
+# Live data providers — BettingPros, The Odds API, FantasyPros, ESPN
 
 Three paid feeds sit behind the wagering stack. They serve different jobs, and —
 critically — they must never write into this **public** repo: provider terms
@@ -7,9 +7,10 @@ paid data lives only in **private GitHub Actions artifacts**, never in git.
 
 | Provider | Job | History? | Secret(s) | Limit |
 |---|---|---|---|---|
-| **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
+| **BettingPros** | Live multi-book **game lines** (spread/total/moneyline) + player props — NFL, NCAAF, MLB | ❌ live only | `BP_API_KEY`, `BP_USER_ID`, `BP_USER_KEY` | 5k calls/day |
 | **The Odds API** | Historical + live odds, **line archive for CLV/backtest** | ✅ | `THE_ODDS_API` | 100k credits/month |
-| **FantasyPros** | Consensus **player projections** (prop inputs) | partial | `FP_API_KEY` | not published |
+| **FantasyPros** | Consensus **player projections** (prop inputs) — NFL | partial | `FP_API_KEY` | not published |
+| **ESPN** | **Injury reports** (all six leagues), **rosters and depth charts** | ❌ live only | *none — keyless* | none published |
 
 The secrets are configured as **GitHub Actions repository secrets** (see the repo
 Settings → Secrets and variables → Actions). They are injected only into workflow
@@ -20,8 +21,15 @@ an Action, not from a checkout.
 
 - **BettingPros** is the production line feed. It has **no archive** — a line
   exists only while it is live — so line *history* has to be built by snapshotting
-  the current board on a schedule (see the collector below). It covers both NFL
-  and NCAAF, and (premium tier) carries its own projections.
+  the current board on a schedule (see the collector below). It covers NFL,
+  NCAAF and MLB, and (premium tier) carries its own projections.
+
+  MLB joined on 2026-09-14. It had been outside `SPORTS` since the collector was
+  written, which meant the in-season league carrying the largest real exposure
+  (`docs/WAGERING.md` §1.3) was the one league with no second line feed — while
+  the daily call spend sat at about 1% of a 5,000/day cap. Its prop board joined
+  `PROP_SPORTS` at the same time; the `/props` sport enum had listed MLB all
+  along and nothing had ever asked for it.
 - **The Odds API** is the one with real **history**, so it is the source for the
   closing-line archive that powers CLV measurement and the market-facing backtest.
   Its 100k monthly credits are the budget to spend deliberately (historical pulls
@@ -73,7 +81,7 @@ snapshot).
 dispatch). It:
 
 1. installs the package (runtime deps only),
-2. runs `collect_bettingpros.py`, which snapshots NFL + NCAAF game lines into a
+2. runs `collect_bettingpros.py`, which snapshots NFL + NCAAF + MLB game lines into a
    single timestamped parquet under `artifacts/bp/`, tagged with `league` and
    `collected_at`,
 3. uploads that parquet as a **private Actions artifact** (`retention-days: 30`).
@@ -106,6 +114,36 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### What consumes a FantasyPros snapshot (and what does not)
+
+NFL projections feed three things: the correlated football prop sim
+(`models/props_football.py`), the DFS builds, and the projection-time QB
+starter map (`features/starters.py`). NFL injuries feed that starter map and
+the intel injury signal.
+
+**MLB projections feed nothing, and that is the right answer.** They have been
+collected since the collector was written — up to ten requests a run once the
+per-position fallback fires — and read by nothing, while a comment in
+`live-slate.yml` asserted the public tier serves no MLB players at all. Nobody
+was wrong on purpose; the contradiction simply had nowhere to surface. It does
+now: the collector emits an Actions **warning** naming any league that returns
+zero rows, and prints a standing note for any league in `UNCONSUMED_LEAGUES`.
+
+The reason MLB stays unconsumed is that better sources already exist for both
+consumers. MLB DFS prices from the contextual model (banked box scores × park ×
+lineup slot × today's probables, `docs/DFS_MODEL.md`) and MLB props from the
+banked starters frame — season-total consensus projections cannot improve
+either. Keeping the branch costs a handful of requests against a limit that has
+never bound; the decision to drop it belongs to whoever reads that warning.
+
+A related trap closed at the same time: the runner chose its prop model from
+whether `--fp-projections` was passed, not from the league. Since a snapshot
+carries every banked league, passing it for MLB took the *football* prop path
+on baseball players and — the dispatch being an if/elif — silently skipped the
+pitcher-K slate MLB actually has. The gate keeping that from happening lived in
+a shell conditional in `live-slate.yml`. It is now `FOOTBALL_PROP_LEAGUES` in
+the runner, with a test that fails if the guard is removed.
+
 ## The FantasyPros collector (`scripts/collect_fantasypros.py` + workflow)
 
 `.github/workflows/collect-fantasypros.yml` runs weekly (and on manual dispatch).
@@ -115,6 +153,140 @@ It snapshots consensus projections for both leagues into `artifacts/fp/*.parquet
 prints the raw top-level keys and first-player JSON to the log — that's how we
 verify the `FP_API_KEY` secret and tighten the tolerant normalizer against the
 real response. Same rules: never commits, `artifacts/` gitignored.
+
+## ESPN (`velocity/ingest/espn.py`)
+
+Injuries reached this system from one place — FantasyPros, NFL only — so the
+intel layer's availability signals, the ones that veto a bet when the player it
+depends on is not playing, **abstained on every other league**. An MLB card was
+priced with no idea a listed starter was on the 60-day IL.
+
+ESPN publishes an injury report per sport at
+`site.api.espn.com/apis/site/v2/sports/{sport}/{league}/injuries`. No key, no
+account, no quota, and it covers all six leagues we price. Measured on the
+first collection run: NFL 800 rows / 161 outs, MLB 283 / 272, NHL 85 / 44,
+WNBA 42 / 42, NCAAF 3 / 1, NCAAB 0.
+
+### The 403 was never about the IP
+
+`build_wnba_box.py` records that "ESPN's own edge 403s datacenter IPs" and
+routes around it through a sportsdataverse mirror. That conclusion was drawn
+with a **browser-impersonating** User-Agent — the script sets `Mozilla/5.0
+(X11; Linux x86_64) velocity-datasets` — and that is the thing being refused.
+A real browser running in a data center is exactly the shape of a scraper.
+
+Measured 2026-09-14, same host, same second, same endpoint:
+
+| User-Agent | Result |
+|---|---|
+| `Mozilla/5.0 (X11; Linux x86_64) velocity-datasets` | **403** |
+| `Mozilla/5.0 (Macintosh; …) AppleWebKit/537.36` | **403** |
+| `velocity-datasets/1.0 (+https://github.com/EdgeCash/Velocity)` | **200** |
+| `Python-urllib/3.12`, `curl/8.5.0` | **200** |
+
+So the rule is the opposite of the usual scraping instinct: **say what you
+are.** A UA naming the project and where to complain is served normally.
+
+If this endpoint ever starts returning 403, do **not** fix it by making the
+agent look more like a browser. That is the arms race this document declines
+to enter under PrizePicks, and it is precisely what gets refused here.
+
+(The WNBA box-score scripts are untouched. Their mirror works, is stable, and
+serves bulk season parquets this API does not — there is nothing to gain by
+moving them.)
+
+### Statuses, and the asymmetry that matters
+
+Vocabulary is per sport: football says `Out` / `Questionable` / `Injured
+Reserve`, baseball `10-Day-IL` / `15-Day-IL` / `60-Day-IL`, basketball
+`Day-To-Day`. `OUT_STATUSES` plus an injured-list shape match cover all of it.
+
+Two deliberate choices:
+
+- **`Questionable` and `Day-To-Day` are not outs.** They mean *probably
+  playing*, and the intel contract is that availability **vetoes** rather than
+  nudges. Treating a game-time decision as an out vetoes bets on players who
+  take the field.
+- **An unrecognized status reads as available.** A missing out costs a signal;
+  an invented one kills a good bet. MLB has changed its list lengths
+  repeatedly, so the failure mode is real.
+
+### Teams
+
+ESPN supplies both an abbreviation (`ARI`) and a display name ("Arizona
+Diamondbacks") because our leagues key differently — NFL by nflverse
+abbreviation, MLB and WNBA by full name, college by school. Both are offered to
+the same alias machinery every venue board uses, with two guards:
+
+- **Scoped to one league.** ESPN calls the Cardinals `ARI` and the
+  Diamondbacks `ARI` too. Resolving a multi-league bank in one pass hands one
+  of them the other's injury list, and there is no collision to detect because
+  there is only one `ARI` to go around.
+- **Collision-checked.** The alias fallback is prefix matching, which is what
+  lets "San Jose St." find "San Jose State" — and also what makes "Arizona
+  Cardinals" match "Arizona Diamondbacks". Two ESPN teams claiming one model
+  team is that misfire's signature, so neither is kept. Same-city pairs
+  (Cubs/White Sox, Yankees/Mets) resolve exactly and are unaffected.
+
+Everything that fails to resolve is dropped **and reported** — silently
+invisible is how a whole league's report goes missing unnoticed.
+
+### Rosters and depth charts
+
+The NFL starter map (`velocity/features/starters.py`) worked out each team's
+QB1 by **inference**: read FantasyPros' projected passing yards, take the
+busiest passer. That is a decent proxy that fails exactly where it matters — a
+stale projection, or a backup projected high in a week his starter is expected
+to sit, and the inference disagrees with the depth chart. The depth chart is
+the thing that knows.
+
+ESPN states it. Two endpoints, joined locally:
+
+| | endpoint | per call |
+|---|---|---|
+| roster | site API, `/teams/{id}/roster` | every athlete: id, name, position, jersey, ESPN's own status bucket |
+| depth chart | **core** API, `/seasons/{year}/teams/{id}/depthcharts` | per position, athlete ids in rank order |
+
+The depth chart names athletes **only by `$ref`**. Left to the API that is one
+fetch per player — hundreds a team; joined against the roster it is free. A
+league therefore costs 2 calls per team plus a teams listing (65 for the NFL),
+against no quota at all.
+
+Depth charts exist for **NFL, MLB and NHL**. WNBA 500s and college football
+400s on that route, so those leagues collect rosters only — and the collector
+stops asking after the first refusal rather than repeating it 30 times.
+
+Two things the normalizer is careful about:
+
+- **Formations.** ESPN files several units per team ("3WR 1TE", "Nickel",
+  "Base 4-3 D"). Taking whichever came first in the payload silently answers a
+  different question — a nickel package's corner ordering is not the depth
+  chart — so `depth_by_position` prefers the ordinary unit.
+- **Team codes.** ESPN writes `LAR`/`WSH` where nflverse writes `LA`/`WAS`.
+  Those are the same two divergences FantasyPros has, so the existing
+  `FP_CODE_FIXUPS` serves both.
+
+**What it changed.** `starter_map` now takes `espn_depth` and prefers it per
+team, falling back to the projection inference for teams a partial snapshot did
+not reach. Every disagreement is logged, because each one is either a stale
+projection or a starter change we would otherwise price blind. On the first
+live run it corrected three teams the fit had wrong — including KC from Chris
+Oladokun to Patrick Mahomes, the exact 5.6-points-a-game error
+`docs/SYSTEM_REVIEW.md` §3.1 documents — and it did so with **no FantasyPros
+key involved at all**: `--espn-depth-file` plus `--espn-injuries-file` is now a
+complete starter map on its own.
+
+### Collection and wiring
+
+`collect-injuries.yml` runs `scripts/collect_espn_injuries.py` alongside the
+FantasyPros step, which is marked `continue-on-error` so an expired
+`FP_API_KEY` cannot take five leagues' only injury source down with it. The
+runner takes `--espn-injuries-file` for every league and `--espn-depth-file`
+for the starter map; where both injury sources exist
+(the NFL) the frames are **concatenated, not reconciled** — the consumer takes
+genuine outs and looks them up by team, so a player both feeds call out vetoes
+once anyway, and reconciling two designations into a single truth is a
+judgement neither feed licenses us to make.
 
 ## The PrizePicks collector (`scripts/collect_prizepicks.py` + workflow)
 
@@ -150,6 +322,47 @@ backtest already consumes, so it drops straight into
 callable — swapping the historical archive for the live feed is a config change,
 not a rewrite. CLV is then the live snapshot vs the closing snapshot from the
 archive.
+
+### The BettingPros board on the live card
+
+For most of this system's life the paragraph above was aspirational: the
+collector banked `bp_lines_*.parquet` every three hours and **nothing read
+it**. The live board came from The Odds API alone, so a BettingPros price was
+never shopped, never logged and never graded — a paid multi-book feed
+accumulating in artifacts nobody opened.
+
+`bettingpros.bp_board` closes that. It takes the banked lines + events
+parquets and re-keys them onto the board the slate is already pricing, reusing
+the exchange alignment path (`docs/BUILD_EXCHANGES.md` E6) rather than
+inventing a second one:
+
+1. **League filter and age gate.** The board is refused whole if the snapshot
+   is older than `--bp-max-age-min` (default 200, just past the 3-hour
+   cadence), or carries no stamp at all — an age we cannot establish is
+   exactly the failure the gate exists to prevent. A refused board says so on
+   the run log; it is never silently dropped.
+2. **Sides, in BettingPros' own scope.** BP labels a selection by *nickname*
+   ("Chiefs") while its events name the team in full ("Kansas City Chiefs").
+   Matched as plain strings, every spread and moneyline is dropped and a board
+   of totals reaches the card looking healthy. `resolve_sides_within_game`
+   matches the label against that game's own two teams by word-subset — a
+   two-way choice from one payload, so a looser rule is safe — and drops a
+   label matching both or neither.
+3. **Teams, games, books.** Events resolve to rating keys, games re-key onto
+   the base board's ids by team pair and kickoff, and every book is prefixed
+   `bp:` (`bp:draftkings`, or `bp:10` where the `/books` listing did not
+   resolve the id). The feed is part of the book's identity: BP quotes the
+   same sportsbooks The Odds API does, and a grader must be able to tell which
+   feed a number came from.
+
+**Posture: paper.** The rows are priced, logged and graded at stake zero, per
+S2 — money does not follow a market whose evidence is not in yet, and these
+come off a snapshot up to a cadence old. `--bp-stake` flips that once the CLV
+record says something; tighten `--bp-max-age-min` hard before you do, because
+a banked price that has moved is not a price we can take.
+
+The runner takes `--bp-lines-file` / `--bp-events-file` / `--bp-books-file`,
+and `live-slate.yml` passes the freshest banked set automatically.
 
 ## The live slate runner (`scripts/run_live_slate.py`)
 

@@ -28,9 +28,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.bettingpros import BettingProsClient, normalize_props
+from velocity.ingest.bettingpros import (
+    BettingProsClient,
+    describe_slug_coverage,
+    normalize_props,
+)
 
-SPORTS = ("NFL", "NCAAF")
+# The sports snapshotted by default. MLB joined on 2026-09-14: it is an
+# in-season sport carrying the largest real exposure in the book
+# (docs/WAGERING.md §1.3) and BettingPros quotes it, yet the collector had
+# only ever asked for football — so the one league where a better number is
+# worth the most was the one league with no second line feed at all.
+#
+# Call budget: a sport costs 3 calls for game lines (markets, events, offers)
+# and a prop sport 2 more (props, markets). Three sports plus two prop sports
+# is ~13 a run, 8 runs a day — about 2% of the 5k/day cap. The cap has never
+# been the constraint here; asking for less than we pay for was.
+SPORTS = ("NFL", "NCAAF", "MLB")
 
 
 def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
@@ -54,8 +68,12 @@ def _retry_5xx(fn, label: str):  # type: ignore[no-untyped-def]
                 raise
     raise RuntimeError("unreachable")
 # The /props endpoint serves NFL/NBA/MLB/NHL only (the spec's prop sport
-# enum has no NCAAF) — college props stay model-generated.
-PROP_SPORTS = ("NFL",)
+# enum has no NCAAF) — college props stay model-generated. MLB was inside that
+# enum the whole time and was never asked for; it is now. Its slugs are not yet
+# in BP_PROP_SLUG_TO_MARKET, so the intel layer abstains on every MLB row until
+# a real snapshot names them — banked evidence first, mapping second, which is
+# the only order that does not guess.
+PROP_SPORTS = ("NFL", "MLB")
 
 
 def collect(
@@ -124,9 +142,14 @@ def probe_props() -> None:
     and football is seasonal; 429 on every sport — in-season and off — means
     the partner key has no ``/props`` provisioning at all. limit=1, one
     request per sport, spaced under the 5 RPS budget; nothing is banked.
+
+    NCAAF and WNBA are probed too, not because the spec lists them (it does
+    not, for props) but because the only honest way to learn what this key can
+    reach is to ask. A 200 on either is a finding worth acting on; a 4xx
+    confirms the spec and costs one request.
     """
     client = BettingProsClient.from_env()
-    for sport in ("NFL", "MLB", "NBA", "NHL"):
+    for sport in ("NFL", "NCAAF", "MLB", "WNBA", "NBA", "NHL"):
         time.sleep(3)
         try:
             payload = client.props(sport, limit=1)
@@ -176,6 +199,22 @@ def main() -> None:
     # needs to bridge Odds-API-keyed bets onto these snapshots for CLV.
     events.to_parquet(out / f"bp_events_{tag_now}.parquet", index=False)
     print(f"wrote {len(events)} event rows")
+    # The book id -> name listing. BettingPros identifies a book by a small
+    # integer, and a board keyed "bp:10" is unreadable on a card and
+    # un-auditable in the record. One extra call per run resolves every id to
+    # a name; a failure just leaves the board keyed by id (abstain, never
+    # guess), which is why this never raises.
+    try:
+        client_books = BettingProsClient.from_env().books(args.sports[0])
+        if client_books:
+            pd.DataFrame(
+                [{"book_id": k, "book_name": v} for k, v in sorted(client_books.items())]
+            ).assign(collected_at=stamp).to_parquet(
+                out / f"bp_books_{tag_now}.parquet", index=False
+            )
+            print(f"wrote {len(client_books)} book names")
+    except Exception as exc:  # noqa: BLE001 - labels are additive
+        print(f"  book names skipped ({exc})")
     if df.empty:
         # Off-season / no board yet is not an error — the job still succeeds so the
         # schedule keeps running; the artifact just carries an empty frame.
@@ -225,6 +264,14 @@ def main() -> None:
             n_proj = int(props["projection"].notna().sum()) if not props.empty else 0
             print(f"  {sport} props: {len(props)} rows "
                   f"({n_proj} with projections{'* premium' if n_proj else ''}) → {dest}")
+            # What this board actually serves, against what we map. The slug
+            # table was written from reasoning and never confirmed against a
+            # live snapshot (docs/INTEL.md §6), and an unmapped slug abstains
+            # silently — so a board where most markets contribute nothing
+            # reads exactly like a healthy one. Printing it every run makes
+            # the gap impossible to miss and costs nothing.
+            for line in describe_slug_coverage(props, sport):
+                print(line)
         except Exception as exc:  # noqa: BLE001 - props are additive, lines already saved
             print(f"  {sport} props skipped ({exc})")
 

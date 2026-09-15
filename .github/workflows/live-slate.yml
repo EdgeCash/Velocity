@@ -323,7 +323,21 @@ jobs:
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           INJ_FILE=$(ls -t artifacts/fp/**/fp_injuries_*.parquet 2>/dev/null | head -1 || true)
-          BP_FILE=$(ls -t artifacts/bp/**/bp_props_nfl_*.parquet 2>/dev/null | head -1 || true)
+          # ESPN's report rides in the same artifact and covers every league,
+          # so it is passed for all of them rather than NFL alone.
+          ESPN_INJ=$(ls -t artifacts/{espn,fp}/**/espn_injuries_*.parquet 2>/dev/null | head -1 || true)
+          # The NFL depth chart — names each team's QB1 outright instead of
+          # inferring it from projected workload.
+          ESPN_DEPTH=$(ls -t artifacts/{espn,fp}/**/espn_depth_*.parquet 2>/dev/null | head -1 || true)
+          # Per-league, resolved inside the loop below — the prop board is now
+          # banked for MLB as well as NFL, and a single NFL-shaped glob would
+          # have quietly fed football props to the baseball card.
+          # The BettingPros game board — banked by the 3-hourly collector and,
+          # until now, read by nothing. Paper by default: priced and graded so
+          # the CLV record accrues, staked at zero (see --bp-stake).
+          BP_LINES=$(ls -t artifacts/bp/**/bp_lines_*.parquet 2>/dev/null | head -1 || true)
+          BP_EVENTS=$(ls -t artifacts/bp/**/bp_events_*.parquet 2>/dev/null | head -1 || true)
+          BP_BOOKS=$(ls -t artifacts/bp/**/bp_books_*.parquet 2>/dev/null | head -1 || true)
           for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             echo "::group::${league} slate"
             EXTRA=""
@@ -345,14 +359,38 @@ jobs:
             # and logged as fresh (see `newest_banked_board`).
             EXTRA="$EXTRA --snapshot-dir artifacts/odds"
             EXTRA="$EXTRA --board-max-age-min ${{ github.event.inputs.board_max_age_min || '75' }}"
+            # NFL only. This gate used to be load-bearing — the runner picked
+            # its prop model from whether this flag was passed, so handing an
+            # MLB card a snapshot (which carries every banked league) took the
+            # football prop path and silently skipped MLB's pitcher-K slate.
+            # The runner now keys that off the league itself, so this is belt
+            # and braces: no other league has a consumer for these rows.
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi
             if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
               EXTRA="$EXTRA --injuries-file $INJ_FILE"
             fi
-            if [ "${league}" = "nfl" ] && [ -n "$BP_FILE" ]; then
+            if [ -n "$ESPN_INJ" ]; then
+              EXTRA="$EXTRA --espn-injuries-file $ESPN_INJ"
+            fi
+            # The runner filters the frame by league, so no per-league gate is
+            # needed here; a league with no rows just keeps its own starters.
+            if [ -n "$ESPN_DEPTH" ]; then
+              EXTRA="$EXTRA --espn-depth-file $ESPN_DEPTH"
+            fi
+            BP_FILE=$(ls -t artifacts/bp/**/bp_props_${league}_*.parquet 2>/dev/null | head -1 || true)
+            if [ -n "$BP_FILE" ]; then
               EXTRA="$EXTRA --bp-props-file $BP_FILE"
+            fi
+            # The BP game board covers the sports the collector snapshots; the
+            # runner filters by league and reports an empty board for the rest,
+            # so this needs no per-league list to drift out of date.
+            if [ -n "$BP_LINES" ] && [ -n "$BP_EVENTS" ]; then
+              EXTRA="$EXTRA --bp-lines-file $BP_LINES --bp-events-file $BP_EVENTS"
+              if [ -n "$BP_BOOKS" ]; then
+                EXTRA="$EXTRA --bp-books-file $BP_BOOKS"
+              fi
             fi
             if [ "${{ github.event.inputs.carousel || 'false' }}" = "true" ]; then
               EXTRA="$EXTRA --carousel"

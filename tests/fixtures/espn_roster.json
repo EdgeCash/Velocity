@@ -1,0 +1,104 @@
+{
+ "team": {
+  "id": "12",
+  "abbreviation": "KC",
+  "displayName": "Kansas City Chiefs"
+ },
+ "athletes": [
+  {
+   "position": "offense",
+   "items": [
+    {
+     "id": "4912218",
+     "displayName": "Cyrus Allen",
+     "fullName": "Cyrus Allen",
+     "jersey": "13",
+     "position": {
+      "abbreviation": "WR",
+      "displayName": "Wide Receiver"
+     }
+    },
+    {
+     "id": "4362887",
+     "displayName": "Justin Fields",
+     "fullName": "Justin Fields",
+     "jersey": "6",
+     "position": {
+      "abbreviation": "QB",
+      "displayName": "Quarterback"
+     }
+    },
+    {
+     "id": "4832955",
+     "displayName": "Emmett Johnson",
+     "fullName": "Emmett Johnson",
+     "jersey": "10",
+     "position": {
+      "abbreviation": "RB",
+      "displayName": "Running Back"
+     }
+    }
+   ]
+  },
+  {
+   "position": "injuredReserveOrOut",
+   "items": [
+    {
+     "id": "4885466",
+     "displayName": "Jeff Caldwell",
+     "fullName": "Jeff Caldwell",
+     "jersey": "8",
+     "position": {
+      "abbreviation": "WR",
+      "displayName": "Wide Receiver"
+     }
+    },
+    {
+     "id": "4431142",
+     "displayName": "Jimmy Holiday",
+     "fullName": "Jimmy Holiday",
+     "jersey": "82",
+     "position": {
+      "abbreviation": "WR",
+      "displayName": "Wide Receiver"
+     }
+    }
+   ]
+  },
+  {
+   "position": "practiceSquad",
+   "items": [
+    {
+     "id": "5093923",
+     "displayName": "Andrew Armstrong",
+     "fullName": "Andrew Armstrong",
+     "jersey": "85",
+     "position": {
+      "abbreviation": "WR",
+      "displayName": "Wide Receiver"
+     }
+    },
+    {
+     "id": "4605841",
+     "displayName": "Nathan Carter",
+     "fullName": "Nathan Carter",
+     "jersey": null,
+     "position": {
+      "abbreviation": "RB",
+      "displayName": "Running Back"
+     }
+    },
+    {
+     "id": "4702908",
+     "displayName": "Omari Evans",
+     "fullName": "Omari Evans",
+     "jersey": "7",
+     "position": {
+      "abbreviation": "WR",
+      "displayName": "Wide Receiver"
+     }
+    }
+   ]
+  }
+ ]
+}

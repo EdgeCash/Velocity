@@ -11,7 +11,14 @@ import pandas as pd
 from velocity.ingest.bettingpros import (
     GAME_MARKET_BY_SLUG,
     BettingProsClient,
+    bp_board,
+    bp_book_keys,
+    describe_slug_coverage,
+    normalize_books,
     normalize_offers,
+    resolve_sides_within_game,
+    slug_coverage,
+    snapshot_age_minutes,
     to_lines,
 )
 from velocity.store.schema import Lines
@@ -280,3 +287,240 @@ def test_normalize_props_flattens_the_board() -> None:
     assert pd.isna(cook["expected_value"])
     assert normalize_props(None).empty
     assert normalize_props({}).empty
+
+
+# --------------------------------------------------------------------------
+# The board — a banked snapshot aligned onto the slate's own games
+# --------------------------------------------------------------------------
+
+BASE_EVENTS = pd.DataFrame(
+    {
+        "game_id": ["odds-1"],
+        "home_team": ["Kansas City Chiefs"],
+        "away_team": ["Buffalo Bills"],
+        "kickoff": [pd.Timestamp("2026-01-05T23:00:00")],
+    }
+)
+KNOWN_TEAMS = ["KC", "BUF"]
+NOW = pd.Timestamp("2026-01-05T19:00:00")
+COLLECTED = pd.Timestamp("2026-01-05T18:00:00")
+
+
+def _banked(collected_at: pd.Timestamp = COLLECTED):
+    """The collector's two parquets, as frames: canonical lines + the events map."""
+    lines = to_lines(normalize_offers(OFFERS, MARKETS)).assign(
+        league="nfl", collected_at=collected_at
+    )
+    events = pd.DataFrame(
+        {
+            "game_id": ["1001"],
+            "home_team": ["Kansas City Chiefs"],
+            "away_team": ["Buffalo Bills"],
+            "kickoff": [pd.Timestamp("2026-01-05T23:00:00")],
+            "league": ["nfl"],
+            "collected_at": [collected_at],
+        }
+    )
+    return lines, events
+
+
+def test_bp_board_aligns_onto_the_base_board_and_prefixes_books() -> None:
+    lines, events = _banked()
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert not board.empty
+    assert notes["stale"] is False
+    # Re-keyed onto the sportsbook board's game id, not BettingPros' own.
+    assert set(board["game_id"]) == {"odds-1"}
+    # Every book carries the feed in its identity, so a grader can tell a
+    # BettingPros number from an Odds API one at the same book.
+    assert all(str(b).startswith("bp:") for b in board["book"])
+    # Sides speak the slate's language.
+    assert set(board["side"]) <= {"home", "away", "over", "under"}
+
+
+def test_bp_board_resolves_book_names_when_the_listing_is_supplied() -> None:
+    lines, events = _banked()
+    board, _ = bp_board(
+        lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl",
+        book_names={"10": "draftkings", "12": "fanduel"},
+    )
+    assert {"bp:draftkings", "bp:fanduel"} == set(board["book"])
+
+
+def test_bp_board_refuses_a_snapshot_past_the_age_gate() -> None:
+    lines, events = _banked(collected_at=pd.Timestamp("2026-01-05T10:00:00"))
+    board, notes = bp_board(
+        lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl", max_age_minutes=200.0
+    )
+    assert board.empty
+    assert notes["stale"] is True
+    assert notes["age_min"] == 540.0
+
+
+def test_bp_board_treats_an_unstamped_snapshot_as_stale() -> None:
+    """An age we cannot establish is the failure the gate exists to prevent."""
+    lines, events = _banked()
+    lines = lines.drop(columns=["collected_at"]).assign(timestamp=pd.NaT)
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert board.empty
+    assert notes["stale"] is True
+
+
+def test_bp_board_filters_to_the_league_being_priced() -> None:
+    lines, events = _banked()
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="ncaaf")
+    assert board.empty
+    assert notes["games"] == 0
+
+
+def test_bp_board_drops_a_game_the_base_board_does_not_carry() -> None:
+    lines, events = _banked()
+    other = BASE_EVENTS.assign(home_team=["Denver Broncos"], away_team=["Las Vegas Raiders"])
+    board, _ = bp_board(lines, events, ["DEN", "LV"], other, now=NOW, league="nfl")
+    assert board.empty
+
+
+def test_bp_board_output_validates_as_lines() -> None:
+    lines, events = _banked()
+    board, _ = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    Lines.validate(board)
+
+
+def test_bp_book_keys_reports_every_venue_the_runner_must_paper() -> None:
+    lines, events = _banked()
+    board, _ = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert bp_book_keys(board) == {"bp:10", "bp:12"}
+    assert bp_book_keys(board.iloc[0:0]) == frozenset()
+
+
+def test_normalize_books_slugs_names_and_abstains_on_junk() -> None:
+    assert normalize_books({"books": [{"id": 10, "name": "DraftKings"}]}) == {"10": "draftkings"}
+    assert normalize_books(
+        {"books": [{"id": 13, "name": "Caesars Sportsbook"}]}
+    ) == {"13": "caesars-sportsbook"}
+    # No id or no name contributes nothing — the board falls back to the raw id.
+    assert normalize_books({"books": [{"id": None, "name": "x"}, {"id": 4}]}) == {}
+    assert normalize_books(None) == {}
+
+
+def test_snapshot_age_prefers_collected_at_over_a_lines_own_timestamp() -> None:
+    """A book that has not repriced in a day still has a live number today."""
+    lines, _ = _banked()
+    lines = lines.assign(timestamp=pd.Timestamp("2026-01-01T00:00:00"))
+    assert snapshot_age_minutes(lines, NOW) == 60.0
+
+
+def test_bp_board_keeps_spreads_and_moneylines_despite_nickname_labels() -> None:
+    """The silent failure this board is built to avoid.
+
+    BettingPros labels selections "Chiefs"/"Bills" while its events name the
+    teams in full. Matching those as plain strings drops every spread and
+    moneyline and leaves a board of totals — priced, carded, and wrong about
+    what it is.
+    """
+    lines, events = _banked()
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert set(board["market"]) == {"spread", "total", "moneyline"}
+    assert notes["unresolved_sides"] == 0
+    # Both sides of the spread survive, from both books that quoted it.
+    spread = board[board["market"] == "spread"]
+    assert set(spread["side"]) == {"home", "away"}
+
+
+def test_within_game_side_resolution_drops_an_ambiguous_label() -> None:
+    """A label matching both teams — or neither — is never guessed."""
+    events = pd.DataFrame(
+        {"game_id": ["g1"], "home_team": ["New York Giants"], "away_team": ["New York Jets"]}
+    )
+    lines = pd.DataFrame(
+        {
+            "game_id": ["g1", "g1", "g1"],
+            "side": ["New York", "Jets", "Packers"],
+            "market": ["moneyline"] * 3,
+        }
+    )
+    out = resolve_sides_within_game(lines, events)
+    # "New York" matches both, "Packers" neither; only "Jets" resolves.
+    assert list(out["side"]) == ["away"]
+
+
+def test_bp_board_picks_its_league_out_of_a_multi_league_bank() -> None:
+    """The collector banks NFL, NCAAF and MLB into one parquet per run.
+
+    A board that ignored the league column would price baseball rows onto a
+    football card the moment MLB joined the collector.
+    """
+    nfl_lines, nfl_events = _banked()
+    mlb_lines = nfl_lines.assign(league="mlb", game_id="2002")
+    mlb_events = nfl_events.assign(
+        league="mlb", game_id="2002",
+        home_team="Kansas City Royals", away_team="Buffalo Bisons",
+    )
+    lines = pd.concat([nfl_lines, mlb_lines], ignore_index=True)
+    events = pd.concat([nfl_events, mlb_events], ignore_index=True)
+
+    board, notes = bp_board(lines, events, KNOWN_TEAMS, BASE_EVENTS, now=NOW, league="nfl")
+    assert notes["games"] == 1
+    # Only the football game's rows survived; the baseball ones never met the
+    # football board at all.
+    assert set(board["game_id"]) == {"odds-1"}
+    assert len(board) == len(nfl_lines)
+
+
+# --------------------------------------------------------------------------
+# Slug coverage — the report that makes an abstaining board visible
+# --------------------------------------------------------------------------
+
+
+def _props_frame() -> pd.DataFrame:
+    return pd.DataFrame({
+        "market_slug": (
+            ["passing-yards"] * 4 + ["receptions"] * 2 + ["anytime-touchdown"] * 3 + [""]
+        )
+    })
+
+
+def test_slug_coverage_counts_rows_and_separates_mapped_from_unmapped() -> None:
+    table = slug_coverage(_props_frame())
+    by_slug = {row["market_slug"]: row for row in table.to_dict("records")}
+    assert by_slug["passing-yards"]["rows"] == 4
+    assert by_slug["passing-yards"]["market"] == "pass_yards"
+    assert by_slug["passing-yards"]["mapped"] is True
+    assert by_slug["passing-yards"]["priced"] is True
+    # A slug the table does not name abstains — reported, never guessed at.
+    assert by_slug["anytime-touchdown"]["mapped"] is False
+    assert by_slug["anytime-touchdown"]["market"] == ""
+    # Busiest first, so the biggest gap is the first thing read.
+    assert table.iloc[0]["market_slug"] == "passing-yards"
+
+
+def test_slug_coverage_surfaces_a_snapshot_whose_market_listing_failed() -> None:
+    """An empty slug is a collector problem and must read as one."""
+    table = slug_coverage(_props_frame())
+    assert "(no slug)" in set(table["market_slug"])
+
+
+def test_slug_coverage_is_empty_for_a_board_with_no_props() -> None:
+    assert slug_coverage(pd.DataFrame()).empty
+    assert slug_coverage(pd.DataFrame({"other": [1]})).empty
+
+
+def test_describe_slug_coverage_names_every_unmapped_slug() -> None:
+    lines = "\n".join(describe_slug_coverage(_props_frame(), "NFL"))
+    # 4 distinct slugs (two mapped, one unmapped, one blank), 6 of 10 rows usable.
+    assert "2 of 4 slug(s) mapped, 6 of 10 rows usable" in lines
+    assert "UNMAPPED anytime-touchdown" in lines
+    assert "BP_PROP_SLUG_TO_MARKET" in lines
+
+
+def test_every_mapped_slug_points_at_a_market_we_actually_price() -> None:
+    """A slug mapped to a market no model prices banks rows nothing can use."""
+    from velocity.ingest.bettingpros import BP_PROP_SLUG_TO_MARKET
+    from velocity.store.schema import PROP_MARKETS
+
+    unpriced = {
+        slug: market
+        for slug, market in BP_PROP_SLUG_TO_MARKET.items()
+        if market not in PROP_MARKETS
+    }
+    assert not unpriced, unpriced
