@@ -12,8 +12,15 @@
 # accepted, because the board is re-snapshotted every three hours and the live
 # slate reads the newest (post-fix) one.
 #
-# Scope is deliberately narrow. `slate-*` artifacts upload only
-# `artifacts/slate/*` and never the raw JSON, so they are not touched.
+# Scope is bounded at BOTH ends, which the first dry run proved necessary:
+# raw banking only began 2026-09-02T13:07:46Z (aecffb0 added the collector
+# write and the upload glob together). Artifacts older than that hold only
+# normalized parquets — no URL-shaped field, so no key — and an upper bound
+# alone matched ~281 artifacts where ~89 are actually affected. Deleting the
+# other ~190 would have destroyed clean board history for no security gain.
+#
+# `slate-*` artifacts upload only `artifacts/slate/*` and never the raw JSON,
+# so they are not touched either.
 #
 # DRY RUN BY DEFAULT. It reports what it would delete and changes nothing
 # unless `confirm` is exactly DELETE.
@@ -26,8 +33,12 @@ on:
         description: 'Type DELETE to actually delete. Anything else is a dry run.'
         required: true
         default: 'dry-run'
+      since:
+        description: 'Lower bound — when raw banking began. Older artifacts carry no key.'
+        required: true
+        default: '2026-09-02T13:07:46Z'
       cutoff:
-        description: 'Delete bp-lines artifacts created strictly before this UTC instant'
+        description: 'Upper bound — when scrubbing landed. Newer artifacts are clean.'
         required: true
         default: '2026-09-15T00:56:45Z'
       prefix:
@@ -50,9 +61,15 @@ jobs:
             const confirm = context.payload.inputs.confirm;
             const prefix = context.payload.inputs.prefix;
             const cutoffRaw = context.payload.inputs.cutoff;
+            const sinceRaw = context.payload.inputs.since;
             const cutoff = Date.parse(cutoffRaw);
-            if (Number.isNaN(cutoff)) {
-              core.setFailed(`cutoff is not a parseable instant: ${cutoffRaw}`);
+            const since = Date.parse(sinceRaw);
+            if (Number.isNaN(cutoff) || Number.isNaN(since)) {
+              core.setFailed(`unparseable bound: since=${sinceRaw} cutoff=${cutoffRaw}`);
+              return;
+            }
+            if (since >= cutoff) {
+              core.setFailed(`since (${sinceRaw}) must precede cutoff (${cutoffRaw})`);
               return;
             }
             const live = confirm === 'DELETE';
@@ -67,21 +84,22 @@ jobs:
 
             // `expired` artifacts are already gone; deleting one is a 404 that
             // would abort the loop partway and leave the job half done.
-            const doomed = all.filter((a) =>
-              !a.expired &&
-              a.name.startsWith(prefix) &&
-              Date.parse(a.created_at) < cutoff
-            );
+            const doomed = all.filter((a) => {
+              if (a.expired || !a.name.startsWith(prefix)) return false;
+              const made = Date.parse(a.created_at);
+              return made >= since && made < cutoff;
+            });
 
             const bytes = doomed.reduce((n, a) => n + (a.size_in_bytes || 0), 0);
-            const kept = all.filter((a) => !a.expired && a.name.startsWith(prefix)).length
-                       - doomed.length;
+            const sameName = all.filter((a) => !a.expired && a.name.startsWith(prefix));
+            const tooOld = sameName.filter((a) => Date.parse(a.created_at) < since).length;
+            const tooNew = sameName.length - doomed.length - tooOld;
 
             core.summary.addHeading(live ? 'Purge (LIVE)' : 'Purge (dry run)');
             core.summary.addRaw(
-              `\nMatched **${doomed.length}** unexpired \`${prefix}*\` artifacts created before ` +
-              `\`${cutoffRaw}\` (${(bytes / 1048576).toFixed(1)} MiB).\n` +
-              `Left alone: ${kept} post-cutoff ${prefix}* artifacts, ` +
+              `\nMatched **${doomed.length}** unexpired \`${prefix}*\` artifacts created in ` +
+              `[\`${sinceRaw}\`, \`${cutoffRaw}\`) (${(bytes / 1048576).toFixed(1)} MiB).\n` +
+              `Left alone: ${tooOld} pre-raw-banking (no key) and ${tooNew} post-fix ${prefix}* artifacts, ` +
               `${all.filter((a) => !a.expired && !a.name.startsWith(prefix)).length} other unexpired artifacts.\n\n`
             );
 
