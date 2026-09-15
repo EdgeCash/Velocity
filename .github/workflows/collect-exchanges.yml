@@ -2,8 +2,8 @@ name: Collect exchange boards (Kalshi + Polymarket)
 
 # The exchange half of the line archive (docs/BUILD_EXCHANGES.md E1/E2).
 # Hourly: Kalshi board snapshots (raw JSON + normalized parquet) and raw
-# Polymarket events + order books. Everything lands in a PRIVATE Actions
-# artifact — the repo is public and no odds data is ever committed
+# Polymarket events + order books. Everything lands in an Actions
+# artifact — no odds data is ever committed to git
 # (docs/DATA_PROVIDERS.md). Unlike The Odds API there is no vendor archive to
 # re-pull from: Polymarket keeps no historical books at all, so every hour
 # this doesn't run is spread history lost. Both APIs are free and keyless —

@@ -408,11 +408,20 @@ judgement neither feed licenses us to make.
 
 ## The PrizePicks collector (`scripts/collect_prizepicks.py` + workflow)
 
-`.github/workflows/collect-prizepicks.yml` runs every 3 hours (and on manual
-dispatch), snapshotting the pick'em board per league — the raw material for
-the future slip-EV engine (devigged book props vs the board line, priced
-through the correlated prop sim). The board API is keyless; the client is
-deliberately polite (one request per league, spaced pagination, backoff).
+`.github/workflows/collect-prizepicks.yml` snapshots the pick'em board per
+league — the raw material for the future slip-EV engine (devigged book props vs
+the board line, priced through the correlated prop sim). The board API is
+keyless; the client is deliberately polite (one request per league, spaced
+pagination, backoff).
+
+**Its schedule is off as of 2026-09-15** — `workflow_dispatch` only. It ran
+3-hourly for 180 runs and banked nothing: every one logged the 403 below and
+exited green, because a known block is a deliberate clean skip. That was right
+while the block might have been transient. It is not, and a green run that
+collects nothing looks exactly like a working one, which is the worst shape for
+a job to sit in. Nothing downstream read the artifacts, so the ~40 minutes of
+Actions time a week was pure cost — and it bills now that the repo is private.
+The collector is unchanged and one dispatch away when the transport is solved.
 
 **Transport status: blocked from datacenter IPs.** The endpoint sits behind
 DataDome, and the first live dispatch confirmed GitHub Actions runners are

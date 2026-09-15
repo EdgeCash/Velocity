@@ -47,7 +47,6 @@ Every scheduled workflow gets its **own odd minute**, and none of them sit on
 | `:33` | `collect-injuries.yml` | 16 (Sun) |
 | `:37` | `collect-fantasypros.yml` · `collect-injuries.yml` | 12 (Tue/Thu/Sat/Sun) · 15 |
 | `:39` | `dfs-slate.yml` | 22 |
-| `:43` | `collect-prizepicks.yml` | every 3h |
 | `:47` | `consolidate-exchanges.yml` | 9 (Mon) |
 | `:53` | `live-slate.yml` | 16, 22 |
 

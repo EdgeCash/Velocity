@@ -7,8 +7,8 @@ builds the line-movement history toward close; true historical backfill uses the
 pricier ``/historical`` endpoint on demand.
 
 Runs as a **GitHub Actions** job (where ``THE_ODDS_API`` lives) and uploads its
-output as an **Actions artifact** — it never commits, because the repo is
-public and paid odds data must not land in it. Triggering the workflow manually
+output as an **Actions artifact** — it never commits, because paid odds data
+must not land in git, whose history is permanent. Triggering the workflow manually
 (``workflow_dispatch``) doubles as the in-CI verification that the key works,
 since the sandbox can't see the secret.
 

@@ -208,8 +208,8 @@ rounded-normal sim smooths over.
   collecting/storing API data only "for purposes of facilitating your
   own trading on Kalshi" and bars sharing it with third parties "in any
   manner" without written authorization; the Data Terms bar archived
-  datasets to others and ML/AI-training use. Operating posture: private
-  Actions artifacts only, **never** committed or redistributed; the
+  datasets to others and ML/AI-training use. Operating posture: Actions
+  artifacts only, **never** committed or redistributed; the
   archive's justification is this system's own trading of these
   markets (de-vig/CLV analytics of quotes, not model training on
   Kalshi data); a written research/data license is the route to
@@ -262,7 +262,7 @@ done and mints a tag (`v*-e1` … `v*-e8`, the WAGERING.md convention).
   `PropLines`, same discipline.
 - **Raw snapshots start day one** (this phase, not E2/E4): a dumb
   hourly workflow banking raw JSON verbatim for BOTH venues (Kalshi
-  `/markets` pages + Polymarket events + batch `/book`) to private
+  `/markets` pages + Polymarket events + batch `/book`) to Actions
   artifacts under the E2 durability rules — no normalizer needed, and
   the later phases backfill parquet from banked raw. Polymarket order
   books have zero history; every week this isn't running is spread

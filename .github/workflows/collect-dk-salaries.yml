@@ -1,7 +1,7 @@
 name: Collect DraftKings salaries
 
-# Snapshots DK draft groups (slates) and every player's salary into a PRIVATE
-# Actions artifact — the DFS layer's input archive (docs/FOOTBALL_CUTOVER.md
+# Snapshots DK draft groups (slates) and every player's salary into an Actions
+# artifact — the DFS layer's input archive (docs/FOOTBALL_CUTOVER.md
 # §5a). Salary-vs-projection history is the DFS analog of the CLV archive, so
 # it banks daily from before the season. Unauthenticated endpoints, no secret
 # needed; raw payloads are banked verbatim alongside the normalized parquet.

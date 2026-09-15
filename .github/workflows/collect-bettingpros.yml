@@ -3,7 +3,7 @@ name: Collect BettingPros lines
 # BettingPros has no historical archive — a line exists only while it is live —
 # so we build line history by snapshotting the current board on a schedule and
 # storing each snapshot as an Actions artifact. Nothing is committed: the
-# repo is public and paid line data must never land in it.
+# paid line data must never land in git, whose history is permanent.
 
 on:
   schedule:
