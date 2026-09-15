@@ -23,6 +23,12 @@ data/
 # public-repo-forbidden by ToS and leak our edge — they live only in private
 # Actions artifacts, never in git, in any format.
 artifacts/
+# collect_historical_odds.py DEFAULTS to --out archive/hist, so the same paid
+# payloads land here on any local run. The parquets were covered only by the
+# incidental *.parquet rule above and the raw JSON — the verbatim paid payload —
+# by nothing at all: one `git add -A` from the exact thing the line above
+# forbids. CI uses artifacts/hist; this covers the documented local default.
+archive/
 
 # ...except committed reference datasets under datasets/ (opt back in).
 # These are the real NFL/NCAAF inputs the local harness reads.

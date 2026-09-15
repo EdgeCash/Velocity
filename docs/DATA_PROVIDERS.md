@@ -181,6 +181,51 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### Credential-echo sweep, all collectors (2026-09)
+
+After the BettingPros leak, the other collectors were swept for the same
+pattern: a credential that travels in the **URL** (the string an API echoes
+back) reaching a **banked raw payload**. Both halves have to be true, so the
+sweep enumerated each separately.
+
+| provider | credential | banks raw? | verdict |
+| --- | --- | --- | --- |
+| BettingPros | `x-api-key` header, but echoes `key=`/`user=` in `_pagination.self` | yes | **was the incident** — scrubbed at collection *and* at write |
+| **The Odds API** | **`apiKey` in the query string** | yes, 3 collectors | **at risk** — now scrubbed at all three banking boundaries |
+| FantasyPros | `x-api-key` header | no (logs one normalized row) | clear |
+| CFBD | `access_token`, Bearer header | no | clear |
+| ESPN, Kalshi, Polymarket, DraftKings, PrizePicks | keyless | yes | nothing to echo |
+
+The Odds API is the **only** client that puts its credential in a URL, which
+makes it the only one that could repeat the incident. Two findings came out of
+checking it:
+
+**The scrubber had a hole exactly there.** `scrub_secrets` was written beside
+the BettingPros client and matched BettingPros' parameter names —
+`key`, `user`, `auth`, `api_key`, `token`. The match anchors on the whole
+parameter name, so **`api_key` does not cover `apiKey`**, and a verbatim Odds
+API URL passed through it unredacted. A scrubber that misses the other at-risk
+provider while reading as general protection is worse than no scrubber, because
+the collector calling it looks safe. It now lives in
+`velocity/ingest/scrub.py`, provider-neutral, matching every casing variant,
+with a test per provider shape.
+
+**No echo is observed today.** A live call with an invalid key returns
+`{"message", "error_code", "details_url"}` and echoes neither the key nor the
+request URL, in body or headers; none of the four committed response fixtures
+carries a URL-shaped field. The scrubbing does not rest on that staying true —
+nobody predicted `_pagination.self` either, and the `/historical` payload is a
+`{timestamp, previous_timestamp, next_timestamp, data}` wrapper, which is the
+same pagination-shaped envelope the BettingPros key rode in. Those files are
+kept 90 days.
+
+**A third finding, unrelated to echoing.** `collect_historical_odds.py` defaults
+to `--out archive/hist`, and `archive/` was not gitignored. The parquets were
+covered only by the incidental `*.parquet` rule; the raw JSON — the verbatim
+paid payload — by nothing at all, one `git add -A` from the permanent history
+this file's own rule forbids. CI always passed `--out artifacts/hist`, so
+nothing leaked; the documented local default is now ignored too.
+
 ### Credit accounting — the ledger (2026-09)
 
 The numbers above ("≈6 credits/run", "~9k/month") are **estimates from the

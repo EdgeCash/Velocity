@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+from velocity.ingest.scrub import scrub_secrets
 from velocity.ingest.theoddsapi import (
     TheOddsAPIClient,
     describe_usage,
@@ -65,7 +66,14 @@ def collect(
         payload = client.odds_payload(league)
         remaining = client.remaining or remaining
         if out_raw is not None:
-            (out_raw / f"odds_{league}_{tag}.json").write_text(json.dumps(payload))
+            # Scrubbed at the banking boundary. The Odds API carries its key
+            # in the QUERY STRING, which is the string an API echoes back — the
+            # shape that put BettingPros' partner key into 89 artifacts. No echo
+            # is observed in today's payloads; this does not depend on that
+            # staying true (velocity/ingest/scrub.py).
+            (out_raw / f"odds_{league}_{tag}.json").write_text(
+                json.dumps(scrub_secrets(payload))
+            )
         lines = normalize_odds_events(unwrap(payload), is_closing=False)
         lines = lines.assign(league=league, collected_at=collected_at)
         frames.append(lines)

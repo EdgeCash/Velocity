@@ -32,6 +32,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+from velocity.ingest.scrub import scrub_secrets
 from velocity.ingest.theoddsapi import (
     describe_usage,
     extract_events,
@@ -59,7 +60,13 @@ def _process(raw: object, snapshot: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 def _write(out_dir: Path, league: str, tag: str, raw: object,
            lines: pd.DataFrame, events: pd.DataFrame) -> None:
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
-    (out_dir / "raw" / f"hist_{league}_{tag}.json").write_text(json.dumps(raw))
+    # Scrubbed at the banking boundary. This one matters most: the historical
+    # payload is a {timestamp, previous_timestamp, next_timestamp, data} wrapper
+    # — a PAGINATION-shaped envelope, which is exactly where BettingPros' echoed
+    # URL lived (_pagination.self), and these files are kept 90 days.
+    (out_dir / "raw" / f"hist_{league}_{tag}.json").write_text(
+        json.dumps(scrub_secrets(raw))
+    )
     lines.to_parquet(out_dir / f"lines_{league}_{tag}.parquet", index=False)
     events.to_parquet(out_dir / f"events_{league}_{tag}.parquet", index=False)
 
