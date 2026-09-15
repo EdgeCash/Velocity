@@ -7,16 +7,23 @@ network :class:`BettingProsClient` is not touched here.
 
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 from velocity.ingest.bettingpros import (
+    BP_PROP_SLUG_TO_MARKET,
     GAME_MARKET_BY_SLUG,
+    PROPS_PAGE_LIMIT,
     BettingProsClient,
     bp_board,
     bp_book_keys,
     describe_slug_coverage,
+    merge_prop_pages,
     normalize_books,
     normalize_offers,
+    pagination,
     resolve_sides_within_game,
+    scrub_secrets,
     slug_coverage,
     snapshot_age_minutes,
     to_lines,
@@ -524,3 +531,80 @@ def test_every_mapped_slug_points_at_a_market_we_actually_price() -> None:
         if market not in PROP_MARKETS
     }
     assert not unpriced, unpriced
+
+
+# --------------------------------------------------------------------------
+# Paging and credential scrubbing — measured against a real banked payload
+# --------------------------------------------------------------------------
+
+
+def test_secrets_in_the_echoed_request_url_are_redacted() -> None:
+    """BettingPros echoes the full request URL, credentials and all.
+
+    The collector banks the raw payload to an artifact that outlives the run
+    by a month, so the partner key and user id were being written to disk on
+    every snapshot. Measured on a live 2026-09-15 response: key=, user= and
+    auth= each appeared three times.
+    """
+    payload = {"_pagination": {
+        "self": "/v3/props?auth=user&key=abc123def456&user=4455432&limit=5000",
+    }, "props": [{"nested": ["?key=abc123def456"]}]}
+    scrubbed = scrub_secrets(payload)
+    blob = json.dumps(scrubbed)
+    assert "abc123def456" not in blob
+    assert "4455432" not in blob
+    assert blob.count("REDACTED") == 4  # three in the URL, one nested
+    # Structure and everything else survive, so a scrubbed payload still
+    # normalizes identically.
+    assert list(scrubbed) == list(payload)
+
+
+def test_scrubbing_leaves_ordinary_values_alone() -> None:
+    payload = {"props": [{"player_name": "A. Keyman", "line": 249.5, "book": 10}]}
+    assert scrub_secrets(payload) == payload
+
+
+def test_pagination_reads_the_servers_own_page_count() -> None:
+    """The metadata nothing read, which is why truncation was invisible."""
+    assert pagination({"_pagination": {
+        "page": 1, "limit": 200, "total_pages": 5, "total_items": 940,
+    }}) == {"page": 1, "limit": 200, "total_pages": 5, "total_items": 940}
+    # No metadata, or junk, means "treat it as one page" — chosen, not assumed.
+    assert pagination({}) == {}
+    assert pagination({"_pagination": {"total_pages": "many"}}) == {}
+    assert pagination(None) == {}
+
+
+def test_merged_pages_concatenate_and_record_what_was_collected() -> None:
+    pages = [
+        {"label": "NFL Props", "_pagination": {"total_pages": 3, "total_items": 5},
+         "props": [{"a": 1}, {"a": 2}]},
+        {"props": [{"a": 3}, {"a": 4}]},
+        {"props": [{"a": 5}]},
+    ]
+    merged = merge_prop_pages(pages)
+    assert [p["a"] for p in merged["props"]] == [1, 2, 3, 4, 5]
+    # The envelope comes from page one...
+    assert merged["label"] == "NFL Props"
+    # ...and the merged metadata says what was actually gathered, so a
+    # truncated run is legible instead of looking like a small board.
+    assert merged["_pagination"]["pages_collected"] == 3
+    assert merged["_pagination"]["items_collected"] == 5
+    assert merged["_pagination"]["total_items"] == 5
+
+
+def test_merging_nothing_is_empty_not_a_crash() -> None:
+    assert merge_prop_pages([])["props"] == []
+
+
+def test_the_page_limit_matches_what_the_server_enforces() -> None:
+    """Asking for more is silently capped, so the constant is the real cap."""
+    assert PROPS_PAGE_LIMIT == 200
+
+
+def test_every_mapped_slug_still_points_at_a_market_we_price() -> None:
+    """Re-pinned after the strikeouts mapping landed."""
+    from velocity.store.schema import PROP_MARKETS
+
+    assert BP_PROP_SLUG_TO_MARKET["strikeouts"] == "pitcher_strikeouts"
+    assert all(m in PROP_MARKETS for m in BP_PROP_SLUG_TO_MARKET.values())
