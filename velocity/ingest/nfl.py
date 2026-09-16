@@ -275,6 +275,11 @@ _WEEKLY_STAT_COLUMNS = {
     "receiving_yards": "receiving_yards",
     "receptions": "receptions",
 }
+# Interceptions thrown, whose nflverse spelling has moved. Kept apart from the
+# map above because that one is a straight src->market rename and this needs
+# to try alternatives; the DFS normalizer below has carried both spellings for
+# a while, which is where these came from.
+_WEEKLY_INTERCEPTION_COLUMNS = ("passing_interceptions", "interceptions")
 
 
 def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
@@ -284,6 +289,12 @@ def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
     ``anytime_td`` is the rushing + receiving TD count (passing TDs don't count
     for an anytime-TD prop). Tolerates both the ``player_name`` and
     ``player_display_name`` spellings and ``team``/``recent_team``.
+
+    Every column here is a market ``grade_prop_ledger`` can settle — it looks
+    the market name up as a column of this frame, and a market with no column
+    grades ``pending`` forever. So a market added to ``PROP_MARKETS`` and left
+    out of here would stake and never settle, which is why ``rush_rec_yards``
+    and ``interceptions`` are derived below rather than left to the sim alone.
     """
     if "player_display_name" in raw.columns:
         names = raw["player_display_name"]
@@ -314,6 +325,28 @@ def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
     out["anytime_td"] = pd.Series(rushing_tds, index=raw.index).fillna(0.0) + pd.Series(
         receiving_tds, index=raw.index
     ).fillna(0.0)
+    # The combined yardage market settles on the sum of the two legs, which are
+    # already normalized above — so it cannot disagree with its own components.
+    # ``min_count=1`` keeps a row where BOTH legs are missing as NaN instead of
+    # 0.0: a zero here is a graded result, and grading a player we have no line
+    # for would hand every under a win. Missing stays pending.
+    out["rush_rec_yards"] = out[["rush_yards", "receiving_yards"]].sum(
+        axis=1, min_count=1
+    )
+    ints = next(
+        (pd.to_numeric(raw[c], errors="coerce") for c in _WEEKLY_INTERCEPTION_COLUMNS
+         if c in raw.columns),
+        None,
+    )
+    # NaN rather than 0.0 when nflverse serves neither spelling, for the same
+    # reason: "nobody threw a pick" is a claim, and if the column is simply
+    # gone it is a false one that settles every under as a winner. The other
+    # markets above default to 0.0, which is the older and more dangerous
+    # convention; this one does not inherit it.
+    out["interceptions"] = (
+        pd.Series(ints, index=raw.index) if ints is not None
+        else pd.Series(float("nan"), index=raw.index)
+    )
     return out
 
 

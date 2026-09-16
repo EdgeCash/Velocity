@@ -228,3 +228,54 @@ def test_team_totals_ride_alongside_game_markets() -> None:
     assert {"moneyline", "spread", "total", "team_total_home", "team_total_away"} <= set(
         lines["market"]
     )
+
+
+# --------------------------------------------------------------------------
+# The football market set — named rather than sliced (2026-09-16)
+# --------------------------------------------------------------------------
+
+
+def test_the_football_six_are_all_real_market_keys() -> None:
+    """The set used to be ``list(PROP_MARKET_BY_KEY)[:6]``.
+
+    That was correct only by declaration order, so adding a football market
+    above the slice would have silently changed what every NFL and NCAAF pull
+    asks for. The Odds API bills per market per region, so that mistake bills.
+    """
+    from velocity.ingest.theoddsapi import (
+        _FOOTBALL_SIX,
+        FOOTBALL_PROP_MARKETS,
+        PROP_MARKET_BY_KEY,
+    )
+
+    assert len(_FOOTBALL_SIX) == 6
+    assert all(key in PROP_MARKET_BY_KEY for key in _FOOTBALL_SIX)
+    assert ",".join(_FOOTBALL_SIX) == FOOTBALL_PROP_MARKETS
+
+
+def test_the_two_new_football_markets_map_but_are_not_pulled_by_default() -> None:
+    """Mapping is free; fetching costs credits the ledger has not sized yet.
+
+    Both are priced by the football sim, so a pull that *does* include them
+    normalizes correctly — but widening the default board from six markets to
+    eight is ~a third more credits on every prop call, and
+    scripts/report_odds_credits.py still withholds its projection.
+    """
+    from velocity.ingest.theoddsapi import (
+        DEFAULT_EVENT_MARKETS,
+        DEFAULT_PROP_MARKETS,
+        PROP_MARKET_BY_KEY,
+    )
+
+    assert PROP_MARKET_BY_KEY["player_rush_reception_yds"] == "rush_rec_yards"
+    assert PROP_MARKET_BY_KEY["player_pass_interceptions"] == "interceptions"
+    for key in ("player_rush_reception_yds", "player_pass_interceptions"):
+        assert key not in DEFAULT_PROP_MARKETS
+        assert key not in DEFAULT_EVENT_MARKETS
+
+
+def test_every_mapped_odds_api_prop_market_is_one_we_price() -> None:
+    from velocity.ingest.theoddsapi import PROP_MARKET_BY_KEY
+    from velocity.store.schema import PROP_MARKETS
+
+    assert all(m in PROP_MARKETS for m in PROP_MARKET_BY_KEY.values())

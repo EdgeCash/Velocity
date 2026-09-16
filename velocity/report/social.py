@@ -34,6 +34,12 @@ _WATCH_MARKETS = {
     "rush_yards": ("rush yards", "RUSH YDS"),
     "receiving_yards": ("receiving yards", "REC YDS"),
     "receptions": ("receptions", "REC"),
+    # A back's combined yardage is a stat a reader recognizes on sight, and
+    # leaving it out would mean a staked rush+rec play could never be named in
+    # the strip (this map is a gate, not a label lookup). Interceptions are
+    # deliberately NOT here: the strip is players to watch, and a QB INT over
+    # is not a fact it should be leading with.
+    "rush_rec_yards": ("rush + rec yards", "RU+RE YDS"),
     "pitcher_strikeouts": ("pitcher Ks", "Ks"),
     "player_shots_on_goal": ("shots on goal", "SOG"),
     "player_rebounds": ("rebounds", "REB"),

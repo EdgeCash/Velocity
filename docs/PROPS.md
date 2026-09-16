@@ -94,6 +94,48 @@ across books to a median close; the graded prop rows carry `price_clv` /
 `line_clv` like the game ledger's. `clv_trusted` stays False for props —
 this is what the shrink sweep grades against, not the yardstick.
 
+## Two markets added from the coverage report (2026-09-16)
+
+The BettingPros slug-coverage report exists to make abstention visible: an
+unmapped slug contributes nothing, silently and correctly, so a board where
+half the markets are inert reads like a healthy one. Its first honest NFL run
+(after #207 unbroke the board) showed five slugs abstaining on every row. Two
+of them could be priced with the machinery already here, and each was measured
+against `datasets/nfl/player_weeks.parquet` before it was added — not reasoned
+about, which is what #207 charged for.
+
+| Market | BP slug / Odds API key | What it cost to add | The measurement |
+|---|---|---|---|
+| `rush_rec_yards` | `rushing-receiving-yards` / `player_rush_reception_yds` | Nothing but the sum — the sim already draws both legs per player per simulation | Within-player-season residual correlation of the legs is **0.0255** (4,388 RB games, 368 player-seasons). Pooled is 0.080, but that is mostly player quality, which the projection already carries. |
+| `interceptions` | `interceptions` / `player_pass_interceptions` | A Poisson on the passer's FantasyPros projection — the shape `pass_tds` already uses | Observed variance/mean **1.020** on 3,219 QB games (≥15 attempts) against the structure's **1.012**. A closer fit than `pass_tds` itself, which is mildly *under*dispersed at 0.886. |
+
+**The 1% this knowingly gives up.** A player's rushing and receiving legs ride
+*separate* team multipliers (`rush_mult`, `pass_mult`, drawn independently), so
+the sim puts his own two legs at r≈0.00 against a measured 0.0255. That makes
+the summed market's sd about 1% narrow — the model runs slightly over-confident
+on it. No correction is applied: inducing a 0.026 correlation is more machinery
+than a 1% effect earns. It is pinned by a test so that the day someone does
+induce it, the note fails rather than going quietly stale.
+
+**Three slugs stay unmapped, each for its own reason.** `rushing-attempts` (57
+rows, the largest) and `passing-attempts` (28) are the two worth having next:
+both are ordinary count props and both have banked actuals to calibrate against
+(`player_weeks` carries `carries` and `attempts`). What is missing is the
+FantasyPros projection key — nothing reads a rush- or pass-attempt projection
+today, and `FP_API_KEY` is an Actions secret the sandbox cannot see.
+`scripts/inspect_fp_stat_keys.py` answers it from CI in one run.
+`passing-completions` (28) is the one to leave alone even then: `player_weeks`
+has no completions column at all, so there is nothing to fit the dispersion on
+and nothing to walk it forward against, and a market we cannot backtest is a
+market we cannot size.
+
+**Neither is in the default Odds API pull.** Both are mapped in
+`PROP_MARKET_BY_KEY`, so the rows normalize the moment a pull includes them,
+but widening the football board from six markets to eight is roughly a third
+more credits on every prop call. `scripts/report_odds_credits.py` still
+withholds its projection until it has a full week, and that spend should be
+decided against the number rather than ahead of it.
+
 ## Open items
 
 - NFL receptions distributional model (targets × catch rate NegBin — the
@@ -102,5 +144,10 @@ this is what the shrink sweep grades against, not the yardstick.
 - NHL SOG after the season opens (skater `sog` is in every banked
   boxscore path already).
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
+- Confirm the FantasyPros rush-attempt / pass-attempt projection keys
+  (`scripts/inspect_fp_stat_keys.py`, needs `FP_API_KEY` so it runs in CI);
+  they unblock the two largest unmapped BettingPros slugs.
+- Decide whether `player_rush_reception_yds` and `player_pass_interceptions`
+  join the default Odds API pull — needs a week of the credit ledger first.
 - ~~Prop CLV: closes for props from the banked line archive~~ — attached
   (above); the sweep needs graded weeks to accumulate.

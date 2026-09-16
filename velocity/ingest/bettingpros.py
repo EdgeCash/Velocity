@@ -246,10 +246,46 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
     # largest MLB slug there and PROP_MARKETS excludes the market outright —
     # the walk-forward found it losing at every shrink (docs/WAGERING.md
     # §1.3), so mapping it would arm a signal for a market we refuse to bet.
-    # "rushing-receiving-yards", "runs-hits-rbis" and "passing-attempts" are
-    # combined or unmodeled markets with no counterpart in PROP_MARKETS; they
-    # abstain correctly, and mapping them would need a model first.
+    # "runs-hits-rbis" is a combined market with no counterpart in
+    # PROP_MARKETS; it abstains correctly, and mapping it would need a model.
     "strikeouts": "pitcher_strikeouts",
+    # Added 2026-09-16, once the NFL board was actually being served (#207)
+    # and the coverage report showed five slugs abstaining on every row. These
+    # are the two the model can price today; both got a measurement first
+    # rather than a spec read, which is what the note above this table has
+    # been asking for.
+    #
+    #   rushing-receiving-yards (34 rows) — a player's two yardage legs added
+    #   together. The football sim already draws both per player per
+    #   simulation, so this needed no new projection at all, only the sum.
+    #   Conditional on the projection the legs are all but independent
+    #   (within-player-season residual r=0.0255 on 4,388 banked RB games), and
+    #   the ~1% of spread the sim gives up by drawing them off separate team
+    #   multipliers is documented where it happens.
+    #
+    #   interceptions (16 rows) — FantasyPros already serves the projection
+    #   (velocity/dfs/scoring.py consumes it as the DraftKings -1), and on
+    #   3,219 banked QB games the observed variance/mean is 1.020 against the
+    #   1.012 the sim's Poisson-times-pass-multiplier produces.
+    "rushing-receiving-yards": "rush_rec_yards",
+    "interceptions": "interceptions",
+    # STILL UNMAPPED, and each for its own reason — none of them is an
+    # oversight, so please read before adding:
+    #
+    #   rushing-attempts (57 rows, the largest) and passing-attempts (28) are
+    #   the two worth having next. Both have banked actuals to calibrate
+    #   against (player_weeks carries "carries" and "attempts") and both are
+    #   ordinary count props. What is missing is the FantasyPros projection
+    #   key: nothing in this codebase reads a rush-attempt or pass-attempt
+    #   projection today, FP_API_KEY is an Actions secret the sandbox cannot
+    #   see, and mapping a slug to a market the model has no mean for would
+    #   abstain anyway — just silently, instead of honestly.
+    #   scripts/inspect_fp_stat_keys.py answers it from CI in one run.
+    #
+    #   passing-completions (28) is the one to leave alone even then.
+    #   player_weeks has no completions column at all, so there is nothing to
+    #   fit the dispersion on and nothing to walk-forward it against. A market
+    #   we cannot backtest is a market we cannot size.
 }
 
 
