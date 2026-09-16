@@ -38,6 +38,57 @@ View, league filter and opened game live in the URL hash, so "no tab
 switching" does not also mean "no back button" and a view is still something
 you can link to.
 
+## The card decides on the card (2026-09)
+
+The card is the primary output of the system, and until now it was a list of
+calls with a price on each: what to bet, at what number, for how much. The
+reasoning lived one surface away in the game sheet, so answering "why this
+play" cost the card — a reader who has to leave to find the argument is being
+handed a tip rather than a model result.
+
+Every row now opens a **decision brief** in place. Expanding is the default
+gesture; the full matchup sheet is still one click further for the rest of the
+game.
+
+| block | what it answers | source |
+| --- | --- | --- |
+| Model vs market | why this is a bet at all | `p_model` vs de-vigged `p_fair` |
+| Price | where to get it, and what the board costs | every venue's quote, best first |
+| Moved since open | is the number on offer better or worse than it was | `line_moves` |
+| Ruled out | who is not playing, and on which side | `injuries` |
+| Conditions | wind and cold, when the game is outdoors | `weather` |
+| Net rating | how good the two teams actually are | `ratings` |
+| Beating the close | whether CLV means skill **in this market** | `clv_by_market` |
+
+**Nothing here is new data.** `collapseMarkets` already computed `p_model`,
+`p_fair` and every venue's quote; `buildGames` already attached moves,
+injuries, weather and ratings per game. `buildCard` was dropping all of it on
+the floor and keeping the price. The upgrade is mostly a join that already
+existed being allowed to reach the surface.
+
+Three things the brief is careful about:
+
+**The gap is against the DE-VIGGED number.** `p_fair` is the market's
+probability with the hold removed, so the gap is the edge before staking
+rather than the book's raw implied number, which would flatter every bet by
+roughly half the vig. The bar is zero-based for the same reason — a
+probability bar that starts anywhere else invents its own edge.
+
+**Movement is read from the side you are taking, and never by colour alone.**
+A total moving 44 → 45.5 is the *worse* number for the over and the *better*
+one for the under; one rule applied to both sides is confidently backwards
+half the time, so `marketMove` inverts on side and the test suite pins the
+inversion. The chip carries a glyph and a sentence because the status hues
+measure ΔE 6.2 (pos↔warn) and 3.5 (thin↔neg) under protanopia — a reader with
+the most common CVD cannot separate them, so colour only ever agrees with a
+label that already said it.
+
+**CLV is shown per market with its own caveat.** Spreads, totals and
+moneylines close efficiently enough that beating the close is skill; props and
+team totals do not (docs/WAGERING.md §6). The block prints the number when
+`clv_trusted` and says "judged on P/L instead" when it is not, rather than
+showing a prop's flattering +9.1¢ as though it meant the same thing.
+
 ## Tiers
 
 Every price, edge, stake and bankroll number on this site is derived from a

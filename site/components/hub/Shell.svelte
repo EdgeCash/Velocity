@@ -225,6 +225,7 @@
       {#if view === 'card'}
         <CardPanel
           card={cardRows} {exposure} league={activeLeague} {identity} {isPrivate}
+          {clv}
         />
       {:else if view === 'games'}
         <GamesPanel
