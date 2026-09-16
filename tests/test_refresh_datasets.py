@@ -144,3 +144,68 @@ def test_the_ncaaf_player_bank_is_topped_up_before_the_cfbd_key_is_checked(
     with pytest.raises(SystemExit):
         rd.refresh_ncaaf(out, 2026)
     assert called == [([2026], out)]
+
+
+def test_a_deleted_batter_bank_is_rebuilt_rather_than_skipped_forever(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The guard read ``batters_out=batters if batters.exists() else None``.
+
+    So a bank that was deleted or never created was never rebuilt: the refresh
+    ran clean, wrote nothing, and the home-run and DFS models went on fitting
+    whatever was left. ``bank_starters`` has always handled an absent bank
+    correctly — a game counts as banked only when both banks hold it — so the
+    only thing stopping recovery was the caller.
+    """
+    out = tmp_path / "mlb"
+    out.mkdir()
+    (out / "starters.parquet").write_bytes(b"")  # only existence is read
+    games = out / "games.parquet"
+    games.write_bytes(b"")
+    called: list[dict] = []
+    monkeypatch.setitem(
+        __import__("sys").modules, "build_mlb_pitching",
+        type("m", (), {"bank_starters": lambda *a, **k: called.append(k)})(),
+    )
+
+    rd.refresh_mlb_player_banks(out, games)
+
+    assert called and called[0]["batters_out"] == out / "batters.parquet"
+    # And the long first run is announced rather than looking hung.
+    assert "rebuilding it from scratch" in capsys.readouterr().out
+
+
+def test_an_existing_batter_bank_is_topped_up_quietly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "mlb"
+    out.mkdir()
+    (out / "starters.parquet").write_bytes(b"")
+    (out / "batters.parquet").write_bytes(b"")
+    games = out / "games.parquet"
+    games.write_bytes(b"")
+    called: list[dict] = []
+    monkeypatch.setitem(
+        __import__("sys").modules, "build_mlb_pitching",
+        type("m", (), {"bank_starters": lambda *a, **k: called.append(k)})(),
+    )
+
+    rd.refresh_mlb_player_banks(out, games)
+
+    assert called and called[0]["batters_out"] == out / "batters.parquet"
+    assert "rebuilding" not in capsys.readouterr().out
+
+
+def test_no_starters_bank_at_all_still_means_run_the_backfill(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The outer guard stays — a league is a content surface, not a surprise.
+
+    Never having been backfilled is a different thing from a bank going
+    missing, and only the second is a recovery this should attempt.
+    """
+    out = tmp_path / "mlb"
+    out.mkdir()
+    rd.refresh_mlb_player_banks(out, out / "games.parquet")
+    assert "run the backfill first" in capsys.readouterr().out
+

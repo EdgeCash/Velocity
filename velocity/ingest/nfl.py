@@ -1,13 +1,18 @@
 """NFL ingest adapter — nflverse → canonical store.
 
 nflverse is the free, deep source for NFL data: schedules, play-by-play with EPA
-back to 1999, and weekly rosters. This adapter normalizes those three feeds onto
-the canonical :class:`~velocity.store.schema.Games`,
-:class:`~velocity.store.schema.Plays` and :class:`~velocity.store.schema.Players`
-schemas.
+back to 1999, weekly player stats and injury reports. This adapter normalizes
+them onto the canonical :class:`~velocity.store.schema.Games` and
+:class:`~velocity.store.schema.Plays` schemas.
+
+A weekly-roster feed lived here too, unread by anything, from the first commit
+to 2026-09-16 (audit finding 8). Nothing needed it — positions and availability
+come from FantasyPros, the DK salary file and ESPN's depth chart — so it was a
+maintained network path that read like a capability the system had. Deleted
+rather than left to look load-bearing.
 
 Live data is fetched **directly** from nflverse's public files (a CSV for
-schedules, parquet for play-by-play and rosters) rather than via ``nfl_data_py``,
+schedules, parquet for the rest) rather than via ``nfl_data_py``,
 which pins an incompatible ``pandas<2``. Fetching the files ourselves keeps the
 project on modern pandas and avoids the dependency entirely. The ``normalize_*``
 functions are pure and offline-testable; ``load_*`` fetch and hand off to them.
@@ -27,17 +32,13 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-from velocity.store.schema import Games, Players, Plays
+from velocity.store.schema import Games, Plays
 
 # nflverse public data locations. Schedules live in the git tree (served by the
-# raw CDN); play-by-play and rosters are release assets addressed per season.
+# raw CDN); play-by-play, stats and injuries are release assets per season.
 NFLVERSE_SCHEDULE_URL = "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv"
 NFLVERSE_PBP_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{year}.parquet"
-)
-NFLVERSE_ROSTER_URL = (
-    "https://github.com/nflverse/nflverse-data/releases/download/"
-    "weekly_rosters/roster_weekly_{year}.parquet"
 )
 NFLVERSE_INJURIES_URL = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
@@ -136,31 +137,6 @@ def normalize_pbp(raw: pd.DataFrame) -> pd.DataFrame:
     return Plays.validate(out)
 
 
-def normalize_rosters(raw: pd.DataFrame) -> pd.DataFrame:
-    """Map an nflverse weekly/seasonal roster frame onto the ``Players`` schema.
-
-    Accepts either ``player_name`` or nflverse's ``player_display_name`` for the
-    name field.
-    """
-    if "player_name" in raw.columns:
-        names = raw["player_name"]
-    elif "player_display_name" in raw.columns:
-        names = raw["player_display_name"]
-    else:
-        raise ValueError("roster frame needs player_name or player_display_name")
-
-    out = pd.DataFrame(
-        {
-            "player_id": raw["player_id"].astype(str),
-            "player_name": names.astype(str),
-            "position": raw["position"] if "position" in raw.columns else pd.NA,
-            "team": raw["team"] if "team" in raw.columns else pd.NA,
-            "season": raw["season"],
-        }
-    )
-    return Players.validate(out)
-
-
 # Official game-status designations that mean genuinely unavailable — the
 # availability-adjustment trigger. "Questionable" deliberately excluded (most
 # questionables play), matching the FantasyPros snapshot's OUT_STATUSES
@@ -243,13 +219,6 @@ def load_pbp(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - networ
     frames = [_read_parquet_url(NFLVERSE_PBP_URL.format(year=year)) for year in years]
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     return normalize_pbp(combined)
-
-
-def load_rosters(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
-    """Fetch and normalize nflverse weekly rosters for ``years`` (network)."""
-    frames = [_read_parquet_url(NFLVERSE_ROSTER_URL.format(year=year)) for year in years]
-    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    return normalize_rosters(combined)
 
 
 def load_injury_reports(years: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network

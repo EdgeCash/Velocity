@@ -163,19 +163,6 @@ class Plays(pa.DataFrameModel):
         coerce = True
 
 
-class Players(pa.DataFrameModel):
-    """One row per player-season roster entry."""
-
-    player_id: Series[str] = pa.Field()
-    player_name: Series[str] = pa.Field()
-    position: Series[str] = pa.Field(nullable=True)
-    team: Series[str] = pa.Field(nullable=True)
-    season: Series[int] = pa.Field(ge=1999, le=2100)
-
-    class Config:
-        coerce = True
-
-
 class Lines(pa.DataFrameModel):
     """One row per observed line. ``timestamp`` is the point-in-time anchor.
 
