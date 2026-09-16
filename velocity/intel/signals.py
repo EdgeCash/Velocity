@@ -20,11 +20,11 @@ Weather is deliberately absent: wind is already priced *inside* the projection
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from velocity.intel.context import GameContext, InjuryOut, TeamContext
+from velocity.util.names import fold_name_words
 from velocity.wagering.bet_log import Bet
 
 _TEAM_SIDES = frozenset({"home", "away"})
@@ -340,7 +340,14 @@ class InjurySignal:
 
 
 def _name_key(name: str) -> str:
-    return re.sub(r"[^a-z ]", "", name.casefold()).strip()
+    """Fold for the availability matchers.
+
+    A missed match here is a missed VETO — the bet on a player who is not
+    playing goes through — so this folds accents like every other resolver
+    (velocity/util/names.py). Spaces are kept because ``_match_out`` falls back
+    to last name plus initial, which needs the word boundary.
+    """
+    return fold_name_words(name)
 
 
 def _match_out(player: str, outs: tuple[InjuryOut, ...]) -> InjuryOut | None:

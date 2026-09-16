@@ -20,10 +20,9 @@ CLI (``scripts/backtest_props_football.py``).
 
 from __future__ import annotations
 
-import re
-
 import pandas as pd
 
+from velocity.util.names import fold_name
 from velocity.wagering.edge import evaluate
 from velocity.wagering.odds import net_payout
 
@@ -32,7 +31,10 @@ _RESULTS = ("win", "loss", "push", "pending")
 
 
 def _normalize_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+    # Shared fold (velocity/util/names.py): accents and generational suffixes
+    # travel inconsistently between providers, and the prop slate lost
+    # twenty-one hitters to exactly that before it folded them.
+    return fold_name(name)
 
 
 def actuals_index(weekly: pd.DataFrame) -> dict[str, dict[str, float]]:
