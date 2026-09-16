@@ -252,3 +252,196 @@ def test_fetch_league_frame_mlb_falls_back_per_position() -> None:
     frame, notes = mod.fetch_league_frame(_StubMlbClient(), "mlb", 2026, 0)
     assert any("per-position" in n for n in notes)
     assert set(frame["player_name"]) == {"SP One", "OF One"}
+
+
+# --------------------------------------------------------------------------
+# Stat-key census — making an unread projection visible (2026-09-16)
+# --------------------------------------------------------------------------
+#
+# The sibling of the BettingPros slug-coverage report, and it exists for the
+# same reason: a stat key nothing maps contributes nothing, silently and
+# correctly, so a feed we read five stats out of looks exactly like a feed that
+# serves five. Two BP prop slugs are blocked on a question this answers.
+
+
+def _census_payload() -> dict:
+    return {"players": [
+        {"fpid": "1", "name": "Josh Allen", "team": "BUF", "position": "QB",
+         "pass_yds": 265.0, "pass_tds": 1.8, "pass_att": 33.4,
+         "pass_cmp": "21/33", "rush_yds": 38.0, "rush_att": 6.2, "rec": 0.0},
+        {"fpid": "2", "name": "James Cook", "team": "BUF", "position": "RB",
+         "rush_yds": 64.0, "rush_att": 14.1, "rec": 2.6, "rec_yds": 19.0,
+         "pass_att": 0.0, "pass_cmp": "0/0"},
+    ]}
+
+
+def _census_frame() -> pd.DataFrame:
+    from velocity.ingest.fantasypros import normalize_projections
+
+    return normalize_projections(_census_payload(), season=2026, week=3)
+
+
+def test_the_census_separates_what_we_read_from_what_we_do_not() -> None:
+    from velocity.ingest.fantasypros import stat_key_census
+
+    census = stat_key_census(_census_frame()).set_index("stat")
+    assert census.loc["pass_yds", "mapped"]
+    assert census.loc["pass_yds", "market"] == "pass_yards"
+    # The whole point: served, numeric, and nothing reads it.
+    assert not census.loc["rush_att", "mapped"]
+    assert census.loc["rush_att", "market"] == ""
+
+
+def test_non_zero_is_counted_apart_from_rows() -> None:
+    """A key served as a structural zero is a placeholder, not a projection.
+
+    Mapping a market onto one would abstain just as surely as leaving it
+    unmapped, only less honestly — so the report has to distinguish them.
+    """
+    from velocity.ingest.fantasypros import stat_key_census
+
+    census = stat_key_census(_census_frame()).set_index("stat")
+    assert census.loc["pass_att", "rows"] == 2
+    assert census.loc["pass_att", "non_zero"] == 1  # Cook's 0.0 does not count
+
+
+def test_an_all_zero_key_is_reported_as_a_placeholder() -> None:
+    from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
+
+    payload = {"players": [
+        {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
+         "pass_yds": 250.0, "rush_att": 0.0},
+    ]}
+    lines = "\n".join(
+        describe_stat_keys(normalize_projections(payload, season=2026, week=1), "nfl")
+    )
+    assert "SERVED BUT ALL ZERO" in lines
+    assert "AVAILABLE" not in lines
+
+
+def test_a_feed_with_no_volume_key_says_the_slugs_stay_unmapped() -> None:
+    from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
+
+    payload = {"players": [
+        {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
+         "pass_yds": 250.0, "pass_tds": 1.5},
+    ]}
+    lines = "\n".join(
+        describe_stat_keys(normalize_projections(payload, season=2026, week=1), "nfl")
+    )
+    assert "serves no attempt/completion projection" in lines
+
+
+def test_a_projection_served_as_a_compound_string_is_still_reported() -> None:
+    """``normalize_projections`` drops non-numeric values silently.
+
+    A completions projection arriving as "21/33" would vanish from the long
+    frame, and the census — which reads that frame — would answer "not served"
+    to a feed that serves it. This is the check that catches it, run where the
+    raw payload is still in scope.
+    """
+    from velocity.ingest.fantasypros import unmelted_stat_keys
+
+    assert unmelted_stat_keys(_census_payload()) == ["pass_cmp"]
+    # And it really is absent from the melted frame — that is the hazard.
+    assert "pass_cmp" not in set(_census_frame()["stat"])
+
+
+def test_unmelted_keys_ignores_numeric_and_non_volume_fields() -> None:
+    from velocity.ingest.fantasypros import unmelted_stat_keys
+
+    payload = {"players": [
+        {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
+         "pass_yds": 250.0, "player_page_url": "http://x", "notes": "questionable"},
+    ]}
+    assert unmelted_stat_keys(payload) == []
+
+
+def test_the_census_of_nothing_is_empty_not_a_crash() -> None:
+    from velocity.ingest.fantasypros import describe_stat_keys, stat_key_census
+
+    empty = pd.DataFrame(columns=["stat", "value"])
+    assert stat_key_census(empty).empty
+    assert "no projection rows" in describe_stat_keys(empty, "nfl")[0]
+
+
+def test_every_mapped_stat_key_the_census_reports_is_one_the_model_reads() -> None:
+    """The census must not invent a mapping the sim would not honour."""
+    from velocity.ingest.fantasypros import stat_key_census
+    from velocity.models.props_football import FP_STAT_TO_MARKET
+
+    census = stat_key_census(_census_frame())
+    for row in census.to_dict("records"):
+        if row["mapped"]:
+            assert FP_STAT_TO_MARKET[row["stat"]] == row["market"]
+
+
+class _TierLimitedClient:
+    """``position=ALL`` answers tier-limited and empty; per-position serves."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def raw_projections(self, league, season, position="ALL", week=0):  # type: ignore[no-untyped-def]
+        self.calls.append(position)
+        if position == "ALL":
+            return {"players": [], "limitation": "public_api_limited"}
+        if position == "QB":
+            return {"players": [{"fpid": "1", "name": "A QB", "team": "BUF",
+                                 "position": "QB", "pass_yds": 250.0,
+                                 "pass_att": 33.0, "pass_cmp": "21/33"}]}
+        if position == "RB":
+            return {"players": [{"fpid": "2", "name": "A RB", "team": "BUF",
+                                 "position": "RB", "rush_yds": 60.0,
+                                 "rush_att": 13.0, "pass_cmp": "0/0"}]}
+        return {"players": []}
+
+
+def test_the_dropped_key_check_survives_the_tier_limit_fallback() -> None:
+    """The case that matters: the ALL response is empty, so it sees nothing.
+
+    A first pass ran the check only against the ``position=ALL`` payload — the
+    one the limited public tier answers with zero players. It would have
+    reported "no dropped keys" on exactly the feed shape this collector exists
+    to handle. The re-check runs against the first per-position payload.
+    """
+    from scripts.collect_fantasypros import fetch_league_frame
+
+    frame, notes = fetch_league_frame(_TierLimitedClient(), "nfl", 2026, 3)
+    assert not frame.empty
+    dropped = [n for n in notes if "melt drops" in n]
+    assert len(dropped) == 1, f"expected exactly one note, got {notes}"
+    assert "pass_cmp" in dropped[0]
+
+
+def test_the_fallback_still_recovers_the_volume_keys() -> None:
+    """The census has to answer off the fallback board, not just off ALL."""
+    from scripts.collect_fantasypros import fetch_league_frame
+    from velocity.ingest.fantasypros import stat_key_census
+
+    frame, _ = fetch_league_frame(_TierLimitedClient(), "nfl", 2026, 3)
+    served = set(stat_key_census(frame)["stat"])
+    assert {"pass_att", "rush_att"} <= served
+
+
+def test_the_football_guidance_does_not_print_under_another_sport() -> None:
+    """The BP slugs this unblocks are football markets.
+
+    Printing "rushing-attempts stays unmapped" under the MLB census would read
+    as a finding about a feed that says nothing about it.
+    """
+    from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
+
+    mlb = normalize_projections(
+        {"players": [{"fpid": "1", "name": "A SP", "team": "NYY",
+                      "position": "SP", "k": 180.0}]},
+        season=2026, week=0,
+    )
+    lines = "\n".join(describe_stat_keys(mlb, "mlb"))
+    assert "rushing-attempts" not in lines
+    nfl = normalize_projections(
+        {"players": [{"fpid": "1", "name": "A QB", "team": "BUF",
+                      "position": "QB", "pass_yds": 250.0}]},
+        season=2026, week=1,
+    )
+    assert "rushing-attempts" in "\n".join(describe_stat_keys(nfl, "nfl"))

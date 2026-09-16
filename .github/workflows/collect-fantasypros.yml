@@ -3,9 +3,18 @@ name: Collect FantasyPros projections
 # FantasyPros consensus projections feed the props model as an external prior.
 # This snapshots them into an Actions artifact — nothing is committed (paid
 # data never lands in git). Because we don't have a pinned FantasyPros schema,
-# the manual dispatch runs with --inspect so its log shows the raw response
-# shape, doubling as the in-CI verification of the FP_API_KEY secret and the
-# way we tighten the tolerant normalizer.
+# every run passes --inspect, doubling as the in-CI verification of the
+# FP_API_KEY secret and the way we tighten the tolerant normalizer.
+#
+# --inspect now prints the STAT-KEY CENSUS: every key the feed serves, how many
+# players carry a non-zero value for it, and which keys the props model
+# actually reads. That is the open question behind the two largest unmapped
+# BettingPros prop slugs — rushing-attempts (57 rows) and passing-attempts
+# (28) — which are ordinary count props with banked actuals to calibrate
+# against, blocked only on whether FantasyPros projects the volume at all.
+# FP_API_KEY is a secret the sandbox cannot see, so the answer has to come out
+# of this log. It costs no extra request, so it rides the schedule too: read
+# the "volume-like keys (the open question)" block of any run.
 
 on:
   schedule:

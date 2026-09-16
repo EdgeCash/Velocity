@@ -5,8 +5,12 @@ This snapshots the current **NFL** projections into a private parquet (the
 public v2 API has no NCAAF projections endpoint — see the OpenAPI spec — so
 college projections come from elsewhere). The free public tier can answer a
 ``position=ALL`` request tier-limited with zero players, so the collector
-falls back to per-position fetches when that happens. ``--inspect`` dumps the
-first normalized row for schema discovery.
+falls back to per-position fetches when that happens. ``--inspect`` prints the
+stat-key census — every key the feed serves, how many players carry a non-zero
+value, and which of them the props model actually reads. That census is the
+answer to "does FantasyPros project attempts?", which is what blocks two of the
+largest unmapped BettingPros prop slugs; it costs no extra request, so it rides
+the scheduled runs as well as a manual dispatch.
 
 Runs as a **GitHub Actions** job (where ``FP_API_KEY`` lives) and uploads its
 output as an **Actions artifact**; it never commits. Triggering the
@@ -24,7 +28,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from velocity.ingest.fantasypros import FantasyProsClient, normalize_projections
+from velocity.ingest.fantasypros import (
+    FantasyProsClient,
+    describe_stat_keys,
+    normalize_projections,
+    unmelted_stat_keys,
+)
 
 # The FantasyPros public v2 API serves projections for NFL, MLB and NBA only —
 # there is no NCAAF projections path (confirmed against the published OpenAPI
@@ -125,6 +134,12 @@ def fetch_league_frame(
                                       "scoring", "players", "data"})
         if odd_keys:
             notes.append(f"non-standard response keys: {odd_keys}")
+    # A projection served as a compound string ("18/25") never reaches the long
+    # frame, so the stat-key census would call it absent. Say so where the raw
+    # payload is still in scope.
+    dropped = unmelted_stat_keys(raw)
+    if dropped:
+        notes.append(f"volume-like keys the melt drops (non-numeric values): {dropped}")
     if _players_of(raw):
         return normalize_projections(raw, season=season, week=week), notes
     positions = FALLBACK_POSITIONS.get(league)
@@ -134,6 +149,14 @@ def fetch_league_frame(
     frames = []
     for position in positions:
         part = client.raw_projections(league, season, position=position, week=week)
+        # The ALL response was empty, so the dropped-key check above saw
+        # nothing — which is precisely the tier-limited case. Re-run it here,
+        # once, on the first payload that carries any.
+        if not dropped:
+            dropped = unmelted_stat_keys(part)
+            if dropped:
+                notes.append("volume-like keys the melt drops (non-numeric values): "
+                             f"{dropped}")
         got = normalize_projections(part, season=season, week=week)
         if not got.empty:
             frames.append(got)
@@ -244,6 +267,12 @@ def main() -> None:
         if args.inspect and not df.empty:
             first = df.iloc[0].to_dict()
             print(f"  [{league}] first normalized row:\n{json.dumps(first, indent=2, default=str)}")
+            # One row of a LONG frame shows one stat key, which is a poor way
+            # to discover a schema — it was the only thing --inspect said, and
+            # it could not answer "does this feed project attempts?". The
+            # census can, and costs no extra request.
+            for line in describe_stat_keys(df, league):
+                print(line)
         df = df.assign(league=league, collected_at=stamp)
         frames.append(df)
         print(f"  {league}: {len(df)} projection rows, {df['player_name'].nunique()} players")
