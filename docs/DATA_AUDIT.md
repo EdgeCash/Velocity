@@ -236,8 +236,8 @@ NBA is honest by comparison — the vertical is openly unbuilt — but it is in
 `LEAGUE_PROP_MARKETS` all the same.
 
 **NCAAF and NHL differ in what they need.** NCAAF needs only wiring plus a
-projection: `datasets/ncaaf/player_games.parquet` is 101,121 rows over
-2023-2026 and carries `attempts`, `carries`, `interceptions`, `pass_tds`,
+projection: `datasets/ncaaf/player_games.parquet` is 90,819 rows over
+2023-2026 (after findings 9 and 10) and carries `attempts`, `carries`, `interceptions`, `pass_tds`,
 `pass_yards`, `receiving_tds`, `receiving_yards`, `receptions`, `rush_tds`,
 `rush_yards`, `targets` — which covers **10 of the 11 football prop markets**
 (everything but `pass_completions`, the same column gap the NFL bank had until
@@ -257,53 +257,128 @@ Nothing in the repo calls it. Not a data gap — nothing needs it — but it is 
 maintained network path with no consumer, and it reads like a capability the
 system has. Delete it, or wire it to the thing it was written for.
 
-## 9. NCAAF 2026 has no passing or receiving touchdowns (OPEN, live defect)
+## 9. NCAAF 2026 has no passing or receiving touchdowns (DONE)
 
-Found while checking whether finding 6's substitute is usable. It is not, yet.
+Found while checking whether finding 6's substitute is usable. It was not.
 
-`datasets/ncaaf/player_games.parquet`, touchdowns by season:
+`datasets/ncaaf/player_games.parquet` as banked, touchdowns by season:
 
-| Season | Rows | Weeks | `pass_tds` > 0 | `receiving_tds` > 0 | `rush_tds` > 0 |
+| Season | Rows | Weeks | `pass_tds` | `receiving_tds` | `rush_tds` |
 |---|---|---|---|---|---|
-| 2023 | 29,806 | 15 | 2,761 | 3,862 | 3,439 |
-| 2024 | 31,925 | 16 | 2,974 | 3,949 | 3,755 |
-| 2025 | 34,575 | 16 | 2,148 | 2,687 | 2,519 |
+| 2023 | 29,806 | 15 | 4,509 | 4,497 | 4,422 |
+| 2024 | 31,925 | 16 | 4,690 | 4,698 | 4,838 |
+| 2025 | 34,575 | 16 | 3,225 | 3,221 | 3,158 |
 | **2026** | **4,815** | **1** | **0** | **0** | 507 |
 
-Passing and receiving touchdowns are empty for the current season while rushing
-touchdowns populate — so it is not a missing `touchdown_player_id` column,
-which would zero all three. Attempts (620) and receptions (2,802) populate too,
-so the passer and receiver roles are being matched; only their scoring plays
-are not.
+Passing and receiving touchdowns were empty for the current season while
+rushing touchdowns populated — so not a missing `touchdown_player_id` column,
+which would have zeroed all three.
 
-This is live: `velocity/models/dfs_ncaaf.py` prices the college DFS board from
-this bank, and a passing touchdown is 4 DK points with a receiving touchdown at
-6. Every college quarterback and receiver is currently projected without them.
+### Root cause: upstream stopped naming one kind of scorer
 
-Root cause needs the 2026 cfbfastR play frame, which is a network fetch — the
-banked `plays.parquet` carries eleven columns and no player fields, so it
-cannot answer this offline.
+Fetched the 2026 cfbfastR play frame (41,013 rows, weeks 1-2). The schema is
+identical to 2025's, 70 columns, nothing renamed. The *contents* changed:
 
-## 10. The NCAAF player bank is stuck at week 1 (OPEN)
+| Role | Plays | Carrying `touchdown_player_id` — 2026 | — 2025 |
+|---|---|---|---|
+| `completion_player_id` | 11,067 | **0** | 3,225 |
+| `reception_player_id` | 10,952 | **0** | 3,221 |
+| `rush_player_id` | 20,406 | 1,043 | 3,158 |
 
-Same table: 2026 holds **one week** on 2026-09-16, when the college season is
-several weeks old. Prior seasons hold 15-16.
+Of 1,074 plays the column marks in 2026, 1,043 are rushes and none are
+completions or receptions. `touchdown_stat` carries the same 1,074 and no
+more. So `velocity/ingest/cfb_players.py` was reading the column correctly and
+the column had stopped answering — an upstream data-shape change, not a
+normalizer bug.
 
-Not yet established whether cfbfastR has not published the later weeks or our
-refresh is not reading them — worth one check before it is called a bug. But
-either way the practical effect today is that any model reading this bank for
-the current season is reading one week of it.
+### Fix: read the touchdown off the field, not off the play text
+
+`yards_to_goal` is the distance to the goal line at the snap, so a gain that
+covers it ended in the end zone. That is a fact about football rather than
+about ESPN's play text, and both columns are fully populated in every season
+(zero nulls). The fold now takes a scoring play as *either* signal, per role.
+
+Validated three ways:
+
+* **Against the column, on 2025, where it still works.** The geometry agrees
+  with 99.4% of its passing touchdowns and finds 15% more it missed. Those
+  extras are spread evenly over down, distance and field position — they look
+  like touchdowns the play text did not name, not like false positives.
+* **Against the seasons the column covers well.** On 2023 and 2024 taking
+  both together moves the touchdown count by under 2%.
+* **Against the rate.** On 2026 it takes the count from 1,074 to 2,149 — 6.4
+  a game, which is what 2023 scores at (6.4) and 2024 (6.3).
+
+Two-point conversions are the one false positive the rule would admit, and the
+release does not carry them: no spike at the three-yard line, and no extra
+points anywhere in the frame.
+
+### The alarm that should have caught this
+
+`season_coverage` exists for exactly this failure — it asks what share of
+team-games the release's own scoring explains. It counted touchdowns off
+`touchdown_player_id` alone, so it measured the release rather than the bank,
+and it read 0.21 on 2026: **it did fire.** `bank_player_games` printed
+`TOO THIN to price a lineup` and banked the season anyway, because the check
+only ever printed. It now counts off the same mask the fold banks, and it
+gates.
+
+## 10. The NCAAF player bank is stuck at week 1 (DONE)
+
+Two causes, one of them worse than a stale bank.
+
+### The refresh never ran
+
+The top-up lived in `refresh_datasets.refresh_inseason` under
+`if league == "ncaaf":`. That function is only ever called with `"mlb"` and
+`"wnba"` — NCAAF goes through `refresh_ncaaf` — so the branch had never
+executed once. The bank sat at whatever the last hand-run left in it while the
+board went on pricing from it. Moved into `refresh_ncaaf` and placed *ahead*
+of the `CFBD_API_KEY` check, because cfbfastR is keyless and has no business
+being held hostage by a secret it does not use.
+
+(Week 1 itself was complete — 203 games banked against 203 upstream. Only
+week 2 was missing, and only because nothing re-read the release.)
+
+### The gate was a season when the break is a week
+
+Checking coverage week by week rather than season by season showed 2025 does
+not degrade — it stops:
+
+| 2025 week | 1-8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|---|---|---|
+| coverage | 0.62-0.77 | 0.48 | 0.16 | 0.14 | 0.15 | 0.14 | 0.15 | 0.17 | 0.00 |
+
+As one number that season reads 0.49, and **either verdict on it is wrong**:
+bank it whole and 679 games price as though nobody scored in them, refuse it
+whole and eight good weeks go in the bin. So the gate is per week now, and
+only the cliff is cut.
+
+### What the bank holds after both fixes
+
+| Season | Games | `pass_tds` | `rush_tds` | `receiving_tds` | Weeks dropped |
+|---|---|---|---|---|---|
+| 2023 | 1,473 | 4,563 | 4,545 | 4,550 | — |
+| 2024 | 1,596 | 4,742 | 4,947 | 4,753 | — |
+| 2025 | 974 | 2,806 | 3,015 | 2,803 | 9-16 |
+| 2026 | 334 | 1,037 | 1,081 | 1,018 | — |
+
+90,819 player-games, down from 101,121 — the 10,302 it lost are the 2025
+games the release never attributed, which were pricing college players at
+nothing. Per game the four seasons now agree: 2.9-3.1 passing touchdowns,
+3.1-3.2 rushing, 2.9-3.1 receiving. Before, 2025 read 1.95/1.91/1.95 and 2026
+read 0.00/3.15/0.00.
 
 ## Consequence for finding 6
 
-Finding 6 says the NCAAF prop substitute "already exists and is already
-proven", pointing at this bank and at `dfs_ncaaf.py`. That is true of the
-*mechanism* and overstated about the *data*: a 6-game recency window has
-nothing to work with when the bank holds one week, and two of the eleven prop
-markets cannot be priced at all while the touchdown columns are empty.
+Finding 6 said the NCAAF prop substitute "already exists and is already
+proven", pointing at this bank and at `dfs_ncaaf.py`. That was true of the
+*mechanism* and overstated about the *data*.
 
-So finding 6 is **blocked on 9 and 10**, not merely unstarted. Stopping buying
-NCAAF prop lines remains available and needs nothing.
+With 9 and 10 closed it is true of both: the bank holds two attributed weeks
+of 2026 plus eight of 2025 behind them, and all three touchdown columns
+populate. **Finding 6 is unblocked.** Stopping buying NCAAF prop lines remains
+the alternative and still needs nothing.
 
 ## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
 
@@ -347,7 +422,7 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | Optional data flags vs. workflows | 2026-09-16 | **Finding 4** (Statcast); finding 7 (minor) |
 | NCAAF prop path | 2026-09-16 | **Finding 6 — bought, never priced** |
 | MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | 2026-09-16 | Clean — `HITTING_KEYS` maps DK's hitter scoring exactly. One micro-gap: pitcher `hitByPitch` (DK −0.6) is not collected, worth ~0.2 DK points a start. Not worth acting on. |
-| `cfb_players` / NCAAF player bank | 2026-09-16 | Clean as a bank — and it is the substitute finding 6 needs |
+| `cfb_players` / NCAAF player bank | 2026-09-16 | **Findings 9 and 10 — both fixed.** Upstream stopped attributing passing and receiving touchdowns in 2026; the weekly top-up had never once run; the coverage alarm fired and was ignored |
 | Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA join NCAAF** |
 | Kalshi / Polymarket / exchanges | 2026-09-16 | Clean — collected hourly, `--exchanges` passed by the live slate (default true), graded via `--exchanges-dir` |
 | nflverse rosters / schedules | 2026-09-16 | Schedules clean. `load_rosters()` is **dead code** — defined, called by nothing (finding 8) |
@@ -382,8 +457,7 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut — but see 9 and 10: the NCAAF half is blocked |
-| **9** | NCAAF 2026 has no passing or receiving touchdowns, and the college DFS board prices from that bank | root-cause first (needs a network fetch) |
+| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut. The NCAAF half is **unblocked** now that 9 and 10 are closed |
 
 ~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
 live-output ones: a benched hitter still prices as a starter, and three
@@ -394,7 +468,7 @@ leagues' prop lines are still bought with nothing to price them.
 | # | What | Note |
 |---|---|---|
 | **2 / 5** | Bank the BettingPros weather forecast | The HR model says it cannot model weather for lack of banked data. Banking starts the clock; the coefficient comes when there are enough games to fit rather than assume. NFL already has the careful version to copy. |
-| **6** | Point the NCAAF prop slate at `player_games` | 10 of 11 markets available; `dfs_ncaaf.py` is the template and its verdict applies — *"The missing half was data, not modelling."* |
+| **6** | Point the NCAAF prop slate at `player_games` | 10 of 11 markets available and the touchdown columns populate again; `dfs_ncaaf.py` is the template and its verdict applies — *"The missing half was data, not modelling."* |
 
 ## Small or cosmetic
 

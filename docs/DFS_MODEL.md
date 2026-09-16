@@ -216,19 +216,32 @@ the same substrate keyless**, on the identical raw-CDN transport the WNBA
 works from CI. It is play-level — one row per play with a column per role —
 and `velocity/ingest/cfb_players.py` folds it to one row per player-game in
 the **NFL DFS vocabulary**, which is also the correct scoring line: DK's
-college scoring is its NFL scoring. Banked: **101,121 player-games across
-11,885 players**, 2023–2026.
+college scoring is its NFL scoring. Banked: **90,819 player-games**,
+2023–2026 — the attributed weeks only, see coverage below.
 
 Three things about the source, each verified against it rather than assumed:
 
-* **Touchdown attribution is inconsistent.** On a passing touchdown the
-  `touchdown_player` column names the passer 57% of the time and the receiver
-  43% — whichever ESPN's play text put first. So the fold never reads that
-  column to decide *whose* touchdown it was. A completion on a scoring play is
-  a passing touchdown for the passer and a receiving one for the receiver;
-  a rush on a scoring play is a rushing touchdown. Verified safe: an
-  interception play never carries a completion (so a pick-six cannot become a
-  passing touchdown) and a fumble play never carries a touchdown.
+* **Touchdown attribution is inconsistent, and sometimes absent.** On a
+  passing touchdown the `touchdown_player` column names the passer 57% of the
+  time and the receiver 43% — whichever ESPN's play text put first. So the
+  fold never reads that column to decide *whose* touchdown it was. A
+  completion on a scoring play is a passing touchdown for the passer and a
+  receiving one for the receiver; a rush on a scoring play is a rushing
+  touchdown. Verified safe: an interception play never carries a completion
+  (so a pick-six cannot become a passing touchdown) and a fumble play never
+  carries a touchdown.
+
+  The column can also stop marking a whole kind of scoring play. Through week
+  2 of 2026 it is set on 1,043 rushes and on **zero** completions or
+  receptions, so reading it alone banked a season in which no college
+  quarterback threw a touchdown — which is what happened, and what audit
+  finding 9 is. A scoring play is therefore also read **geometrically**: a
+  gain covering the whole remaining distance to the goal line ended in the end
+  zone, per role, off `yards_to_goal` and the role's own yardage. Measured
+  against 2025 where the column still works, the geometry agrees with 99.4% of
+  its passing touchdowns and finds 15% more; on 2026 it doubles the count to
+  6.4 a game, the rate 2023 scores at. Two-point conversions would be its one
+  false positive and the release does not carry them.
 * **The passer/receiver assignment itself is sound**, which is worth checking
   before trusting any of it: the top passer holds **91%** of a team-game's
   passing yards (median 100%, 1.66 distinct passers per team-game) while
@@ -236,11 +249,17 @@ Three things about the source, each verified against it rather than assumed:
   shape football has.
 * **Coverage fills progressively, and that is the thing to watch.** Scoring a
   team-game as covered when 7×TD + 3×FG lands within a point of the final
-  score the frame itself carries: **2023 at 82%, 2024 at 75%, 2025 at 46%
-  (good only through week 8), 2026 at 24%.** An unfilled season looks exactly
-  like a season in which nobody scored, so `season_coverage()` measures it and
-  the build script refuses below half rather than banking a frame that would
-  price every player at nothing.
+  score the frame itself carries — counted off the same mask the fold banks,
+  because an alarm that counts touchdowns the bank does not get is an alarm
+  that cannot fire. An unfilled stretch looks exactly like one in which nobody
+  scored, so a player fitted on it is priced at nothing.
+
+  **The gate is per week, because that is how the release breaks.** 2025 runs
+  0.62–0.77 through week 8 and then stops: 0.48, 0.16, 0.14, 0.15, 0.14, 0.15,
+  0.17, 0.00. As one number that season reads 0.49 and either verdict on it is
+  wrong — bank it whole and 679 games price as though nobody scored, refuse it
+  whole and eight good weeks go in the bin. Weeks below 50% are cut and the
+  rest banked: 2023 at 79%, 2024 at 73%, 2025 at 69% (weeks 1–8), 2026 at 62%.
 
 Positions are read off usage rather than a second feed: a player who throws is
 a quarterback, one who is handed the ball is a back, one who is thrown to is a

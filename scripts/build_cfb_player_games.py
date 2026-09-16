@@ -13,9 +13,11 @@ the right scoring line — DK's college scoring is its NFL scoring.
 
 **Coverage is the thing to watch.** The release fills progressively, and a
 season it has not finished attributing looks like a season where nobody
-scored. The run prints the share of team-games whose final score its own
+scored. The run measures the share of team-games whose final score its own
 touchdowns and field goals explain, per season; below about half, that season
-cannot price a lineup and says so.
+cannot price a lineup and is **refused** rather than banked — a thin season in
+the bank outranks the good seasons behind it, because the projection window
+reads a player's most recent games first.
 
     python scripts/build_cfb_player_games.py --seasons 2023 2024 2025 2026
 """
@@ -27,8 +29,9 @@ from pathlib import Path
 
 import pandas as pd
 
-# Below this share of team-games explained, a season cannot price a lineup.
-MIN_COVERAGE = 0.5
+# Below this share of team-games explained, a week cannot price a lineup. Owned
+# by the ingest module, because that is where the gate is applied.
+from velocity.ingest.cfb_players import MIN_COVERAGE  # noqa: E402
 
 
 def bank_player_games(
@@ -42,13 +45,36 @@ def bank_player_games(
     frames = []
     for season in seasons:
         try:
-            frame, covered = fetch_player_games(season)
+            frame, covered, dropped = fetch_player_games(season)
         except Exception as exc:  # noqa: BLE001 - a missing season never blocks
             print(f"  {season}: unavailable ({exc})")
             continue
-        note = "usable" if covered >= MIN_COVERAGE else "TOO THIN to price a lineup"
-        print(f"  {season}: {len(frame)} player-games, "
-              f"{frame['game_id'].nunique()} games, coverage {covered:.1%} — {note}")
+        games = frame["game_id"].nunique() if not frame.empty else 0
+        print(f"  {season}: {len(frame)} player-games, {games} games, "
+              f"coverage {covered:.1%}")
+        if dropped:
+            print(f"    weeks the release has not attributed, left out: "
+                  f"{', '.join(str(w) for w in dropped)}")
+        if frame.empty or covered < MIN_COVERAGE:
+            # Printing at it was not enough. A season the release has not
+            # finished attributing does not look broken downstream — it looks
+            # like a season whose quarterbacks threw no touchdowns, and the
+            # projection prices that with a straight face. Leaving the season
+            # OUT is the loud failure: the window falls back to the player's
+            # prior seasons, which is wrong by a little instead of by four
+            # points a start.
+            print(f"    TOO THIN to price a lineup (needs {MIN_COVERAGE:.0%}) "
+                  f"— {season} left out; the board will fall back")
+            # Whatever is already banked for that season stays. A release that
+            # is thin THIS run may have been complete last one, and throwing
+            # five good weeks away over a bad fetch is the worse failure — but
+            # it is said out loud, because rows nobody refreshed are exactly
+            # the kind that keep pricing while looking healthy.
+            if not existing.empty and (existing["season"] == season).any():
+                held = int((existing["season"] == season).sum())
+                print(f"    {held} already-banked {season} player-games kept "
+                      f"as they were — NOT refreshed")
+            continue
         frames.append(frame)
     if not frames:
         print("nothing fetched; leaving the dataset as it was")

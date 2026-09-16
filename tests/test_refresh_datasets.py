@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 REPO = Path(__file__).parent.parent
 
@@ -116,3 +117,30 @@ def test_ncaaf_games_without_lines_still_join() -> None:
     games = rd.ncaaf_games_from_cfbd(games_json, [], 2026)
     assert len(games) == 1
     assert games.iloc[0]["spread_line"] is None or pd.isna(games.iloc[0]["spread_line"])
+
+
+def test_the_ncaaf_player_bank_is_topped_up_before_the_cfbd_key_is_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The top-up lived where nothing called it, and the board priced from it.
+
+    ``refresh_inseason`` carried an ``if league == "ncaaf"`` branch for its
+    whole life; that function is only ever called with "mlb" and "wnba", so
+    the branch never ran once. The bank sat at whatever the last hand-run had
+    left in it — 2026 week 1, while the season played on — and the DFS board
+    went on pricing from it, because a stale bank looks exactly like a fresh
+    one. It is also ahead of the CFBD key check: cfbfastR is keyless.
+    """
+    out = tmp_path / "ncaaf"
+    out.mkdir()
+    (out / "player_games.parquet").write_bytes(b"")  # only existence is read
+    called: list[tuple[list[int], Path]] = []
+    monkeypatch.setattr(
+        rd, "refresh_ncaaf_player_games",
+        lambda o, season: called.append(([season], o)),
+    )
+    monkeypatch.delenv("CFBD_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        rd.refresh_ncaaf(out, 2026)
+    assert called == [([2026], out)]
