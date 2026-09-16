@@ -279,17 +279,49 @@ def pagination(payload: Any) -> dict[str, int]:
     Missing or unparseable metadata yields an empty dict, and the caller then
     treats the response as a single page — the old behaviour, but chosen rather
     than assumed.
+
+    ``pages_collected`` / ``items_collected`` are :func:`merge_prop_pages`'s own
+    counters rather than the server's, and they are carried through here
+    because the collector reports against them. Dropping them (this filtered to
+    the server's four keys) made ``meta.get("pages_collected", 1)`` fall back to
+    1 on every run, so a complete 3-page NFL pull printed "1 of 3 page(s)" and
+    fired a truncation warning that was never true. A warning that is always on
+    is a warning nobody reads.
     """
     block = payload.get("_pagination") if isinstance(payload, Mapping) else None
     if not isinstance(block, Mapping):
         return {}
     out: dict[str, int] = {}
-    for key in ("page", "limit", "total_pages", "total_items"):
+    for key in ("page", "limit", "total_pages", "total_items",
+                "pages_collected", "items_collected"):
         try:
             out[key] = int(block[key])
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def prop_rows(payload: Any) -> list[Any]:
+    """The raw ``props`` array, whatever shape it came back in."""
+    rows = payload.get("props") if isinstance(payload, Mapping) else None
+    return list(rows) if isinstance(rows, list) else []
+
+
+def payload_errors(payload: Any) -> int:
+    """How many entries in ``props`` are BettingPros' error sentinel.
+
+    The endpoint answers **HTTP 200 with a healthy envelope** and a ``props``
+    array of the literal string ``"error"`` — one per page — when it cannot
+    serve a sport. Observed 2026-09-16 on MLB, NCAAF, WNBA and NHL while NFL
+    returned 551 real objects, with ``label`` reading "MLB props for September
+    16th, 2026" and ``total_items`` 2493 the whole time.
+
+    Nothing caught it, because :func:`normalize_props` skips any row that is
+    not a Mapping, so thirteen error strings normalize to zero rows and the run
+    reports an empty board. An outage and an off-day are then the same line of
+    output, which is the shape this repo has already been bitten by twice.
+    """
+    return sum(1 for row in prop_rows(payload) if not isinstance(row, Mapping))
 
 
 def merge_prop_pages(pages: Iterable[Mapping[str, Any]]) -> dict[str, Any]:

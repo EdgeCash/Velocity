@@ -181,6 +181,47 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### What the 2026-09-16 board actually returned
+
+Two bugs found by reading a banked run (`bp-lines-35090630550`) rather than the
+collector's own summary — which was, in one of the two cases, the thing lying.
+
+**The truncation warning was always on.** Every league printed `1 of N page(s)`
+and fired `::warning:: prop board truncated`, including NFL, which had fetched
+all three pages and all 551 rows. `pages_collected` and `items_collected` are
+added by `merge_prop_pages`, not by the server, and `pagination()` filtered the
+block down to the server's four keys — so the collector's
+`meta.get("pages_collected", 1)` fell back to 1 on every run forever. Paging
+itself was working the whole time. A warning that is always on is a warning
+nobody reads, which is how the second one stayed hidden.
+
+**Four of five leagues were receiving an outage, banked as an empty board.**
+BettingPros answers **HTTP 200 with a healthy envelope** and `props: ["error"]`
+— one sentinel per page — when it cannot serve a sport:
+
+| league | pages | rows served | `total_items` | verdict |
+| --- | --- | --- | --- | --- |
+| NFL | 3 of 3 | 551 objects | 551 | real board |
+| MLB | 13 of 13 | 13 × `"error"` | 2493 | **outage** |
+| NCAAF | 3 of 3 | 3 × `"error"` | 411 | **outage** |
+| WNBA | 2 of 2 | 2 × `"error"` | 236 | **outage** |
+| NHL | 1 of 1 | 1 × `"error"` | 111 | **outage** |
+
+The envelope gives nothing away — `label` read *"MLB props for September 16th,
+2026"* and `total_items` 2493 throughout. `normalize_props` skips any row that
+is not a mapping, so thirteen sentinels normalize to zero rows and the run
+prints `MLB props: 0 rows`, which is exactly what an off-day prints.
+
+`payload_errors()` counts the sentinels and the collector now emits a distinct
+`::error:: prop board unavailable` naming the count and the healthy
+`total_items`. **An outage and an empty board must never render the same** —
+the same principle that retired the PrizePicks schedule, which had spent 180
+green runs collecting nothing.
+
+Not yet known: *why* BP errors on these sports for this key. The request echo
+is unremarkable (`ev_threshold=false`, 15 market ids, limit 200), so it needs a
+probe against the live endpoint rather than a guess from a banked payload.
+
 ### Credential-echo sweep, all collectors (2026-09)
 
 After the BettingPros leak, the other collectors were swept for the same

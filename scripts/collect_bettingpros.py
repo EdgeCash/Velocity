@@ -35,6 +35,7 @@ from velocity.ingest.bettingpros import (
     describe_slug_coverage,
     normalize_props,
     pagination,
+    payload_errors,
     scrub_secrets,
 )
 
@@ -303,6 +304,19 @@ def main() -> None:
                       f"collected {collected} of {available} pages "
                       f"(--max-prop-pages {args.max_prop_pages}); the banked board "
                       "is a sample, not the board")
+            # HTTP 200 with a healthy envelope and props: ["error"] is how this
+            # endpoint says it cannot serve a sport. Left alone it normalizes to
+            # zero rows and prints as an empty board — so an outage and an
+            # off-day read identically, which is the one shape this repo has
+            # already been bitten by twice. Observed 2026-09-16 on MLB, NCAAF,
+            # WNBA and NHL while NFL served 551 real rows.
+            broken = payload_errors(payload)
+            if broken:
+                print(f"::error title={sport} prop board unavailable::"
+                      f"BettingPros returned its error sentinel on {broken} of "
+                      f"{collected} page(s). The envelope is healthy "
+                      f"(total_items {meta.get('total_items', 0)}) and no prop "
+                      "rows were served — an outage, not an empty board.")
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             # scrub_secrets already ran per page inside props_all; this is the

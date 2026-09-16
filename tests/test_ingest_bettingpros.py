@@ -22,7 +22,9 @@ from velocity.ingest.bettingpros import (
     merge_prop_pages,
     normalize_books,
     normalize_offers,
+    normalize_props,
     pagination,
+    payload_errors,
     resolve_sides_within_game,
     scrub_secrets,
     slug_coverage,
@@ -679,3 +681,58 @@ def test_events_asks_for_the_blocks_that_ride_on_the_same_call() -> None:
     src = inspect.getsource(BettingProsClient.events_payload)
     for key in ("lineups", "park_factors", "notes", "officials"):
         assert f'"{key}": "true"' in src, key
+
+
+# ---- what the 2026-09-16 board actually returned ---------------------------
+# Both of these are shapes taken from a real banked run (artifact
+# bp-lines-35090630550), not invented: the first made a complete pull report
+# itself as truncated, the second made a provider outage read as an off-day.
+
+
+def test_pagination_carries_the_merge_counters_not_just_the_servers_keys() -> None:
+    """A complete 3-page pull was printing "1 of 3 page(s)" and warning.
+
+    `pages_collected` / `items_collected` are added by `merge_prop_pages`, not
+    by the server. Filtering the block down to the server's four keys dropped
+    them, so the collector's `meta.get("pages_collected", 1)` fell back to 1
+    every single run — on a pull that had fetched everything.
+    """
+    merged = merge_prop_pages([
+        {"_pagination": {"page": 1, "limit": 200, "total_pages": 3, "total_items": 551},
+         "props": [{"market_id": 1}] * 200},
+        {"props": [{"market_id": 1}] * 200},
+        {"props": [{"market_id": 1}] * 151},
+    ])
+    meta = pagination(merged)
+    assert meta["pages_collected"] == 3
+    assert meta["items_collected"] == 551
+    # And the comparison the collector makes off it now answers correctly.
+    assert meta["pages_collected"] >= meta["total_pages"]
+
+
+def test_the_error_sentinel_is_not_an_empty_board() -> None:
+    """HTTP 200, healthy envelope, `props: ["error"]` — one per page.
+
+    Observed on MLB, NCAAF, WNBA and NHL while NFL served 551 real rows, with
+    `label` reading "MLB props for September 16th, 2026" and `total_items`
+    2493 throughout. `normalize_props` skips non-Mapping rows, so thirteen of
+    these normalize to zero and the run prints an empty board — an outage and
+    an off-day become the same line of output.
+    """
+    outage = {
+        "label": "MLB props for September 16th, 2026",
+        "_pagination": {"page": 1, "limit": 200, "total_pages": 13,
+                        "total_items": 2493, "pages_collected": 13,
+                        "items_collected": 13},
+        "props": ["error"] * 13,
+    }
+    assert payload_errors(outage) == 13
+    # The thing that made it invisible: it still normalizes to nothing.
+    assert normalize_props(outage).empty
+
+    # A real board reports no errors, and a genuinely empty one is not an
+    # outage — the two have to stay distinguishable in both directions.
+    assert payload_errors({"props": [{"market_id": 1, "participant": {"player": {}}}]}) == 0
+    assert payload_errors({"props": []}) == 0
+    assert payload_errors({}) == 0
+    assert payload_errors(None) == 0
