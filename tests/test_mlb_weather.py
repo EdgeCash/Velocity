@@ -153,3 +153,32 @@ def test_slicing_a_payload_with_nothing_in_it_does_not_raise() -> None:
     for payload in (None, {}, {"gameData": None}, {"gameData": {"venue": None}}):
         assert normalize_weather({"1": weather_slice(payload)}).shape[0] == 1
 
+
+def test_both_spellings_of_a_roof_are_a_roof() -> None:
+    """"Roof Closed" across the banked seasons, "Dome" on the live board.
+
+    Observed at Tropicana Field on 2026-09-16. Either one missed would price a
+    domed park as an outdoor calm, which is the one reading that must never be
+    modelled that way.
+    """
+    for condition in ("Roof Closed", "Dome", "dome", "  ROOF CLOSED "):
+        frame = normalize_weather({"1": _payload(
+            condition=condition, temp="72", wind="0 mph, None")})
+        assert bool(frame.iloc[0]["roof_closed"]) is True, condition
+        assert frame.iloc[0]["wind_vector"] == 0.0
+
+
+def test_a_game_too_far_out_to_forecast_reads_as_no_reading() -> None:
+    """statsapi carries a forecast from Pre-Game, and ``{}`` before that.
+
+    The live board will meet both. A game with no reading must come back null
+    rather than zero — a zero wind is a calm night, which is a claim.
+    """
+    frame = normalize_weather({"1": {"gameData": {"weather": {},
+                                                  "venue": {"name": "Wrigley Field"},
+                                                  "datetime": {}}}})
+    row = frame.iloc[0]
+    assert pd.isna(row["wind_mph"]) and pd.isna(row["temp_f"])
+    assert pd.isna(row["wind_vector"])
+    assert bool(row["roof_closed"]) is False
+

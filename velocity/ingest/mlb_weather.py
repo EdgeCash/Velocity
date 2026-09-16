@@ -25,10 +25,30 @@ answers with the right quantities:
   it meant anything.
 * ``temp`` is °F at first pitch.
 
-So the fit comes off this, now, on games already banked; BP's forecast remains
-the right input at *prediction* time, because tonight's weather can only be
-forecast. Historical fit and live application are different feeds, which is
-what the finding conflated.
+So the fit comes off this, now, on games already banked.
+
+**And so does the live side**, which is the part worth checking rather than
+assuming. The finding's plan was BettingPros for prediction time, on the
+reasoning that tonight's weather can only be forecast — but BP serves a
+compass *degree*, which means nothing about a home run until you know each
+park's orientation, so that route needed a per-stadium bearing table nobody
+had written. statsapi turns out not to need one: probed against the live
+schedule on 2026-09-16, a game in **Pre-Game** state already carries its
+forecast, in the same ballpark-relative vocabulary as a finished one —
+
+    Pre-Game, Great American Ball Park, first pitch 22:40Z
+        {'condition': 'Partly Cloudy', 'temp': '76', 'wind': '7 mph, In From LF'}
+
+— while a game still two days out carries ``{}``. One keyless feed, one
+parser and one set of units for both the historical fit and the live board,
+with no paid dependency and no orientation table.
+
+The catch is the timing, and it has to be *reported* rather than absorbed: a
+game the slate prices before it reaches Pre-Game has no reading, and a missing
+reading falls back to a multiplier of 1.0 — which is indistinguishable from a
+calm night. That is the exact shape of the Statcast prior that shipped at zero
+for months (see ``HomeRunModel.statcast_batters``), so the consumer counts how
+many boards got a real reading and says so.
 
 Pure functions of payloads; the fetch lives in ``scripts/build_mlb_weather.py``.
 """
@@ -72,7 +92,9 @@ _WIND_RE = re.compile(r"^\s*(?P<mph>-?\d+(?:\.\d+)?)\s*mph\s*,\s*(?P<dir>.+?)\s*
                       re.IGNORECASE)
 # A closed roof is weather that has been switched off: no wind, no temperature
 # swing. It is a *condition* string rather than a flag, and it is the one that
-# must never be modelled as a calm day outdoors.
+# must never be modelled as a calm day outdoors. Both spellings are observed:
+# "Roof Closed" across the banked seasons, and "Dome" on the live board
+# (Tropicana Field, 2026-09-16).
 _ROOF_CLOSED = frozenset({"roof closed", "dome"})
 
 
