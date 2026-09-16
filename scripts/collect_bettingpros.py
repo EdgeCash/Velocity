@@ -24,6 +24,7 @@ import argparse
 import json
 import time
 import urllib.error
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from velocity.ingest.bettingpros import (
     normalize_props,
     pagination,
     payload_errors,
+    prop_rows,
     scrub_secrets,
 )
 
@@ -169,32 +171,86 @@ def collect(
     return lines_out, events_out, raw_events, failed
 
 
+# One varied request each, against what production sends today. Ordered so the
+# newest and most suspicious addition is tried first: include_correlated_picks
+# arrived in #201, and NFL — the one league still served — is also the only one
+# the flag was ever exercised against.
+PROBE_VARIANTS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("as production sends it", {}),
+    ("no include_correlated_picks", {"include_correlated_picks": None}),
+    ("server default ev_threshold", {"ev_threshold": None}),
+    ("include_markets=true", {"include_markets": "true"}),
+    ("minimal (sport + limit only)", {
+        "ev_threshold": None, "include_selections": None,
+        "include_markets": None, "include_correlated_picks": None,
+    }),
+)
+
+
+def _probe_once(client: BettingProsClient, sport: str, overrides: dict[str, object]) -> str:
+    """One /props call, reported by what the rows ACTUALLY are.
+
+    The previous probe printed ``len(payload["props"])``, which counts the
+    error sentinel as a prop and renders an outage as "HTTP 200 — 1 prop(s)
+    returned". Objects and sentinels are counted separately here for exactly
+    that reason.
+    """
+    # A None override drops the parameter rather than sending "None".
+    params = {k: v for k, v in overrides.items() if v is not None}
+    drop = {k for k, v in overrides.items() if v is None}
+    try:
+        payload = client.props(sport, limit=25, **params)
+    except urllib.error.HTTPError as exc:
+        return f"HTTP {exc.code}"
+    except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
+        return f"{type(exc).__name__}: {exc}"
+
+    if drop:
+        # props() re-adds its defaults, so a "dropped" key is only really gone
+        # if the echo agrees. Say so rather than claiming an untested variant.
+        echoed = (payload.get("_parameters") or {}) if isinstance(payload, Mapping) else {}
+        still = sorted(k for k in drop if echoed.get(k) not in (None, "", []))
+        if still:
+            return f"variant not applied (server still echoed {', '.join(still)})"
+
+    rows = prop_rows(payload)
+    bad = payload_errors(payload)
+    good = len(rows) - bad
+    meta = pagination(payload)
+    total = meta.get("total_items", "?")
+    if good:
+        return f"{good} real row(s), {bad} sentinel(s), total_items {total}  <-- SERVED"
+    return f"0 real rows, {bad} sentinel(s), total_items {total}"
+
+
 def probe_props() -> None:
-    """Status-code probe of ``/props`` across sports — settles provisioning.
+    """Why does /props serve NFL and answer every other sport with "error"?
 
-    MLB runs midsummer, so a live board definitely exists for it: an MLB 200
-    (even with few props) alongside football 429s would mean the route works
-    and football is seasonal; 429 on every sport — in-season and off — means
-    the partner key has no ``/props`` provisioning at all. limit=1, one
-    request per sport, spaced under the 5 RPS budget; nothing is banked.
+    On 2026-09-16 the board returned HTTP 200, a healthy envelope and
+    ``props: ["error"]`` for MLB, NCAAF, WNBA and NHL while NFL served 551 real
+    objects — with ``total_items`` reading 2493 for MLB throughout, so nothing
+    in the response said it had failed.
 
-    NCAAF and WNBA are probed too, not because the spec lists them (it does
-    not, for props) but because the only honest way to learn what this key can
-    reach is to ask. A 200 on either is a finding worth acting on; a 4xx
-    confirms the spec and costs one request.
+    This varies ONE parameter at a time against what production sends and
+    reports whether the rows come back as objects or sentinels. NFL leads as
+    the control: if NFL also stops being served by a variant, the variant is
+    the answer for the wrong reason.
+
+    A sport stops at its first served variant — that names the culprit and
+    spends nothing further on it.
     """
     client = BettingProsClient.from_env()
-    for sport in ("NFL", "NCAAF", "MLB", "WNBA", "NBA", "NHL"):
-        time.sleep(3)
-        try:
-            payload = client.props(sport, limit=1)
-            n = len(payload.get("props") or [])
-            print(f"  {sport}: HTTP 200 — {n} prop(s) returned")
-        except urllib.error.HTTPError as exc:
-            print(f"  {sport}: HTTP {exc.code}")
-        except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
-            print(f"  {sport}: {exc}")
-
+    print("props probe — one varied request per (sport, variant), 25 rows each")
+    print(f"  control first; {len(PROBE_VARIANTS)} variants, stopping at the first served\n")
+    for sport in ("NFL", "MLB", "NCAAF", "WNBA", "NHL"):
+        print(f"  {sport}")
+        for label, overrides in PROBE_VARIANTS:
+            time.sleep(3)  # under the 5 RPS budget
+            result = _probe_once(client, sport, overrides)
+            print(f"    {label:32s} {result}")
+            if "SERVED" in result:
+                break
+        print()
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot BettingPros game lines")
