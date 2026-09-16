@@ -34,8 +34,31 @@ Discarded: `lineups` (`home_lineup`, `visitor_lineup`, `home_lineup_type`,
 `visitor_lineup_type`), `pitchers`, `park_factors`, `notes`, `weather`,
 `venue`, and ten more.
 
-**This is a correctness bug, not an enhancement.** `scripts/build_hr_board.py`
-derives a batter's lineup slot from his most recent *prior* game:
+**CORRECTION (2026-09-16).** The first version of this finding said a benched
+hitter is priced as a starter. That is wrong where statsapi has posted the
+card: `apply_confirmed_cards` already folds statsapi's confirmed order into the
+slot and team maps and returns the eligible set, so an announced bench does
+leave the board — keyed on MLBAM ids, with no name matching, which is strictly
+more reliable than any name join. I should have read that path before writing
+the finding.
+
+**What is actually true is a timing gap, and it is still worth closing.**
+Measured on 2026-09-16:
+
+| Source | Sides with a card | When |
+|---|---|---|
+| statsapi (`fetch_lineups`) | **8** of 60 | 18:55 UTC |
+| BettingPros `/events` | **38 confirmed + 22 projected = 60** of 60 | 16:53 UTC |
+
+statsapi publishes "a couple of hours before first pitch". The live slate runs
+at **16:53 and 22:53 UTC**, and 26 of today's 30 games start at 22:00 UTC or
+later — so at the 16:53 run the overwhelming majority of sides have no
+confirmed card and fall back to the batter's most recent prior game. BP had a
+card for every one of those sides two hours earlier.
+
+So the gap is not "we ignore the lineup". It is that our lineup source posts
+after the run that needs it, and a second source posts before. The fallback
+that fills the gap is:
 
 ```python
 recent.sort_values("game_id").drop_duplicates("batter_id", keep="last")

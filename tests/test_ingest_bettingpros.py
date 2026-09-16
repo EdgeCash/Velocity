@@ -21,6 +21,7 @@ from velocity.ingest.bettingpros import (
     describe_slug_coverage,
     merge_prop_pages,
     normalize_books,
+    normalize_lineups,
     normalize_offers,
     normalize_props,
     pagination,
@@ -829,3 +830,111 @@ def test_the_whole_nfl_board_is_mapped_now() -> None:
     assert not unmapped, f"still abstaining on {unmapped}"
     assert all(BP_PROP_SLUG_TO_MARKET[s] in PROP_MARKETS
                for s in served_by_the_nfl_board)
+
+
+# --------------------------------------------------------------------------
+# Today's batting order — audit finding 1 (2026-09-16)
+# --------------------------------------------------------------------------
+#
+# /events has served `lineups` all along (it defaults true), and the collector
+# kept five of the event's twenty-three fields. Meanwhile build_hr_board.py
+# took a batter's slot from his PREVIOUS game, so a hitter who moved in the
+# order was priced at the wrong plate appearances and a benched hitter was
+# priced as a starter.
+#
+# The shape here is copied from a real banked payload (run 35124718421), not
+# imagined — which is the discipline the slug table cost this repo twice.
+
+
+def _lineup_event(game_id="98076", home_type="confirmed", visitor_type="projected"):
+    def slot(n, name, pid, team, pos):
+        return {"slot": n, "position": pos,
+                "participant": {"id": pid, "name": name,
+                                "player": {"team": team, "position": pos}}}
+    return {
+        "id": game_id,
+        "lineups": {
+            "home_lineup": [slot(1, "Carlos Jorge", "45120", "CIN", "CF"),
+                            slot(2, "Elly De La Cruz", "44884", "CIN", "SS")],
+            "visitor_lineup": [slot(1, "Josue De Paula", "46763", "LAD", "DH")],
+            "home_lineup_type": home_type,
+            "visitor_lineup_type": visitor_type,
+        },
+    }
+
+
+def test_lineups_normalize_to_one_row_per_slot() -> None:
+    frame = normalize_lineups({"events": [_lineup_event()]}, "mlb")
+    assert len(frame) == 3
+    assert set(frame["side"]) == {"home", "away"}, "BP says visitor; we say away"
+    assert sorted(frame[frame["side"] == "home"]["slot"]) == [1, 2]
+    assert frame["league"].eq("mlb").all()
+
+
+def test_confirmed_and_projected_are_distinguishable() -> None:
+    """The half that makes this better than a scraped order.
+
+    A projected card is a guess the book is publishing; a confirmed one is the
+    manager's. A veto on absence has to tell them apart, so it is a column
+    rather than a filter applied at normalize time.
+    """
+    frame = normalize_lineups({"events": [_lineup_event()]}, "mlb")
+    home = frame[frame["side"] == "home"]
+    away = frame[frame["side"] == "away"]
+    assert home["is_confirmed"].all()
+    assert not away["is_confirmed"].any()
+    assert set(frame["lineup_type"]) == {"confirmed", "projected"}
+
+
+def test_the_provider_id_is_kept_but_is_not_ours() -> None:
+    """BP numbers players itself — four to five digits, not six-digit MLBAM.
+
+    Kept because it is the stable key if a crosswalk ever appears; a consumer
+    joins on the folded NAME today.
+    """
+    frame = normalize_lineups({"events": [_lineup_event()]}, "mlb")
+    assert set(frame["bp_player_id"]) == {"45120", "44884", "46763"}
+
+
+def test_a_sport_without_lineups_yields_no_rows() -> None:
+    """Football events carry no `lineups` key at all — that is not an error."""
+    assert normalize_lineups({"events": [{"id": "1", "home": "KC"}]}, "nfl").empty
+
+
+def test_malformed_payloads_are_empty_not_a_crash() -> None:
+    for payload in (None, {}, [], {"events": None}, {"events": [None]},
+                    {"events": [{"id": "1", "lineups": "nope"}]},
+                    {"events": [{"id": "1", "lineups": {"home_lineup": "nope"}}]}):
+        assert normalize_lineups(payload, "mlb").empty, payload
+
+
+def test_an_entry_without_a_name_is_dropped() -> None:
+    """A nameless slot cannot be joined to anything, so it is not a row."""
+    event = _lineup_event()
+    event["lineups"]["home_lineup"].append(
+        {"slot": 3, "position": "1B", "participant": {"id": "99"}})
+    frame = normalize_lineups({"events": [event]}, "mlb")
+    assert len(frame) == 3
+    assert frame["player_name"].notna().all()
+
+
+def test_the_payload_or_its_event_list_both_work() -> None:
+    event = _lineup_event()
+    assert len(normalize_lineups({"events": [event]}, "mlb")) == 3
+    assert len(normalize_lineups([event], "mlb")) == 3
+
+
+def test_lineup_names_resolve_to_the_banked_batters() -> None:
+    """The join that makes this usable — and it needs the accent fold.
+
+    BettingPros serves unaccented names and statsapi banks accented ones; on a
+    real slate that gap was 90.7% against 100% folded.
+    """
+    from velocity.util.names import fold_name
+
+    event = _lineup_event()
+    event["lineups"]["home_lineup"][0]["participant"]["name"] = "Jose Ramirez"
+    frame = normalize_lineups({"events": [event]}, "mlb")
+    banked = {fold_name("José Ramírez"): "660670"}
+    keys = [fold_name(n) for n in frame["player_name"]]
+    assert banked.get(keys[0]) == "660670"

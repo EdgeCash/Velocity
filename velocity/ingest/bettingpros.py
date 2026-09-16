@@ -300,6 +300,97 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
 _SECRET_QUERY_PARAMS = SECRET_QUERY_PARAMS
 
 
+LINEUP_COLUMNS = [
+    "game_id", "league", "side", "slot", "player_name", "bp_player_id",
+    "team", "position", "lineup_type", "is_confirmed",
+]
+
+# BettingPros names the away side "visitor"; the rest of this repo says "away".
+_SIDES = (("home", "home"), ("visitor", "away"))
+
+
+def normalize_lineups(events: Any, league: str = "") -> pd.DataFrame:
+    """Today's batting orders from a ``/events`` payload.
+
+    The endpoint has served these all along — ``lineups`` defaults true — and
+    the collector kept five of the event's twenty-three fields, so they were
+    dropped unrecorded. What that cost: ``build_hr_board.py`` takes a batter's
+    lineup slot from his most recent PRIOR game, and slot sets expected plate
+    appearances, which drives P(>=1 HR) directly. A hitter who batted second
+    yesterday and seventh today is priced at the wrong number of chances, and a
+    hitter who is not in today's lineup at all is priced as a starter.
+
+    ``lineup_type`` is the other half, and the reason this beats a scraped
+    order: BettingPros says whether the card is **confirmed** or still
+    **projected**. On the 2026-09-16 slate that split 38 to 22 across sixty
+    sides, every one of which carried a full nine.
+
+    Player identity is the provider's own — ``bp_player_id`` is BettingPros'
+    numbering (four to five digits), NOT the six-digit MLBAM id the banks use,
+    so a consumer joins on the folded NAME (velocity/util/names.py). Kept here
+    anyway: it is the stable key if BettingPros ever publishes a crosswalk.
+    """
+    rows: list[dict[str, object]] = []
+    for event in _iter_events(events):
+        lineups = event.get("lineups")
+        if not isinstance(lineups, Mapping):
+            continue
+        game_id = str(event.get("id") or "")
+        for provider_side, side in _SIDES:
+            order = lineups.get(f"{provider_side}_lineup")
+            if not isinstance(order, list):
+                continue
+            kind = str(lineups.get(f"{provider_side}_lineup_type") or "").strip().lower()
+            for entry in order:
+                if not isinstance(entry, Mapping):
+                    continue
+                participant = entry.get("participant")
+                participant = participant if isinstance(participant, Mapping) else {}
+                player = participant.get("player")
+                player = player if isinstance(player, Mapping) else {}
+                rows.append({
+                    "game_id": game_id,
+                    "league": str(league).lower(),
+                    "side": side,
+                    "slot": _int_or_none(entry.get("slot")),
+                    "player_name": participant.get("name"),
+                    "bp_player_id": None if participant.get("id") is None
+                    else str(participant.get("id")),
+                    "team": player.get("team"),
+                    "position": entry.get("position") or player.get("position"),
+                    "lineup_type": kind,
+                    # A projected card is a guess the book is publishing; a
+                    # confirmed one is the manager's. Consumers that veto on
+                    # absence must be able to tell them apart, so this is a
+                    # column rather than a filter applied here.
+                    "is_confirmed": kind == "confirmed",
+                })
+    frame = pd.DataFrame(rows, columns=LINEUP_COLUMNS)
+    if frame.empty:
+        return frame
+    return frame.dropna(subset=["player_name"]).reset_index(drop=True)
+
+
+def _iter_events(events: Any) -> list[Mapping[str, Any]]:
+    """The event list, whether handed the payload or the list itself."""
+    if isinstance(events, Mapping):
+        events = events.get("events") or []
+    if not isinstance(events, list):
+        return []
+    return [e for e in events if isinstance(e, Mapping)]
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def pagination(payload: Any) -> dict[str, int]:
     """``{page, limit, total_pages, total_items}`` from a ``/props`` response.
 
