@@ -106,28 +106,18 @@ def test_no_lookahead(season_games, season_lines, plays, config) -> None:
     )
 
 
-def test_projections_carry_the_finals_and_the_models_own_state(
+def test_projections_carry_the_models_own_state(
         season_games, season_lines, plays, config) -> None:
-    """Projection ERROR has to be recoverable from this frame alone.
+    """Projection ERROR has to be answerable off this same leak-safe pass.
 
     "How good is the projection" is a different question from "did the bet
-    win", and both get answered off the same leak-safe pass rather than a
-    second one. Everything added here is model-internal on purpose: nothing
-    the market said belongs in a measure of how sure the model is entitled to
-    be.
+    win". Everything recorded here is model-internal on purpose: nothing the
+    market said belongs in a measure of how sure the model is entitled to be.
     """
     proj = walk_forward(season_games, plays, season_lines, _factory, config).projections
-    for column in ("home_score", "away_score", "mu_home", "mu_away",
-                   "sd_margin", "sd_total", "train_games"):
+    for column in ("mu_home", "mu_away", "sd_margin", "sd_total", "train_games"):
         assert column in proj.columns, column
         assert proj[column].notna().all()
-
-    # The finals are the games' own, joined back by game_id.
-    finals = season_games.set_index("game_id")
-    for row in proj.to_dict("records"):
-        game = finals.loc[row["game_id"]]
-        assert row["home_score"] == float(game["home_score"])
-        assert row["away_score"] == float(game["away_score"])
 
     # Dispersion is a positive width, and the training count only ever grows
     # as the walk-forward moves through the season.
@@ -135,3 +125,30 @@ def test_projections_carry_the_finals_and_the_models_own_state(
     assert (proj["sd_total"] > 0).all()
     ordered = proj.sort_values(["season", "week"])["train_games"]
     assert ordered.is_monotonic_increasing
+
+
+def test_projections_do_not_collide_with_the_games_frame(
+        season_games, season_lines, plays, config) -> None:
+    """This frame is merged onto ``games`` by game_id all over the codebase.
+
+    A column that exists on BOTH sides is not an additive change: pandas
+    answers the collision by suffixing both to _x/_y rather than raising, so
+    every ``df["home_score"]`` downstream turns into a KeyError at runtime and
+    nothing here would have noticed. Pinning the overlap at exactly the join
+    key is what makes a new column on this frame safe to add.
+    """
+    proj = walk_forward(season_games, plays, season_lines, _factory, config).projections
+    # season/week overlap too and always have, but no consumer pulls them from
+    # games -- every site names the columns it wants. game_id is the join key
+    # and is meant to be on both sides. Anything else is a live collision.
+    overlap = set(proj.columns) & set(season_games.columns)
+    assert overlap == {"game_id", "season", "week"}, (
+        f"would suffix on merge: {sorted(overlap - {'game_id', 'season', 'week'})}")
+
+    # The merge shape consumers actually use: the finals and the closing lines,
+    # named, joined on game_id. Nothing may come back suffixed.
+    wanted = [c for c in ("game_id", "home_score", "away_score", "spread_line",
+                          "total_line") if c in season_games.columns]
+    merged = proj.merge(season_games[wanted], on="game_id", how="inner")
+    assert not [c for c in merged.columns if c.endswith(("_x", "_y"))]
+    assert (merged["home_score"] - merged["away_score"]).notna().all()
