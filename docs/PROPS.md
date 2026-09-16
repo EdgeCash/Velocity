@@ -200,11 +200,10 @@ use. The census now names the consumer, and separates three states:
   compute DK points from the components rather than trust a served total).
   "Declined" and "nobody looked" are different findings and should not read
   the same.
-- **UNREAD** — `fg`, `fga`, `xpt`. The kicker projections are the only thing
-  in this feed genuinely unexamined, and DK's Showdown board has a kicker
-  slot — `dst.py`'s own note calls a kicker "routinely a live captain". This
-  is the DST gap again, one position over. A test pins the unexamined set so
-  it cannot quietly grow.
+- **UNREAD** — nothing. `fg` / `fga` / `xpt` were the last block, and
+  `velocity/dfs/kicker.py` closed it (below). A test now fails on any key
+  nobody has looked at, so a new one the feed starts serving cannot go
+  unnoticed.
 
 Eight milestone keys (`pass_yds_300`, `rush_yds_100`, `scrimage_yards_100` …)
 are **all zero on every row** — placeholders in a weekly projection, not
@@ -242,6 +241,42 @@ more credits on every prop call. `scripts/report_odds_credits.py` still
 withholds its projection until it has a full week, and that spend should be
 decided against the number rather than ahead of it.
 
+## The kicker projection (2026-09-16)
+
+The Showdown board's missing position, and the same bug as the DST one slot
+over: `DK_POINTS_PER_STAT` carries no kicking weight and the correlated prop
+sim has no kicker markets, so a kicker collapsed to **0.00 expected points**
+and the optimizer took whichever was cheapest. Verified before building —
+a kicker priced at 0.00 beside a receiver at 11.2 on the same frame.
+
+Two things had to be right, and neither is the projection itself.
+
+**DK pays by distance; FantasyPros projects a total.** The feed serves `fg`
+(made) with no split, while DK pays 3 / 4 / 5 for 0-39, 40-49 and 50+. The
+banked kicks give the mix — 56.0% / 26.9% / 17.2% over 2020-2025, which is
+**3.612 points per made field goal**. Scoring every make at 3.0 would
+under-price a kicker by ~17%, and under-price the long-range ones most —
+exactly the captain plays.
+
+**Kicking counts are *under*dispersed, so a Poisson is the wrong shape.**
+Within player-season the banked attempts run variance/mean **0.80** (field
+goals) and **0.74** (extra points): a kicker's workload is bounded and regular
+in a way a receiver's targets are not, and a Poisson would say 1.0 and price
+both tails far too wide. Attempts are drawn as a binomial whose trial
+probability is `1 - var/mean`, read straight off the measurement, and makes are
+a binomial on those attempts at the kicker's own rate (`fg`/`fga`, league rate
+as fallback) — so a make can never exceed an attempt.
+
+That meant banking `fg_att` and `pat_att`, which nflverse publishes in the file
+we already read. Same shape as `pass_completions`: without attempt actuals
+there is no dispersion to calibrate, which is what kept completions waiting.
+
+Checked: made variance/mean **0.832** (FG) and **0.755** (PAT) against banked
+0.827 and 0.768, and the expectation reproduces the banked **8.366** DK points
+per active kicker game exactly. The band lottery is drawn per simulation rather
+than averaged, because three makes all landing 50+ scores 15 against the 10.8
+the mean implies, and that tail is the whole reason a kicker is ever a captain.
+
 ## Open items
 
 - NFL receptions distributional model (targets × catch rate NegBin — the
@@ -266,9 +301,6 @@ decided against the number rather than ahead of it.
   (`scripts/report_odds_credits.py`) now reads straight off the ledger. Going
   from the football six to ten is **+67% on every prop call**. What still needs
   a week is the denominator: what that percentage is of the monthly plan.
-- Price a **kicker projection** off `fg` / `fga` / `xpt` — the last unread
-  block in the feed, and DK Showdown has a kicker slot it currently fills
-  blind. Same shape as the DST gap that `velocity/dfs/dst.py` closed.
 - The live slate was spending credits from four call sites and banking **none**
   of them (fixed 2026-09-16) — so ledgers banked before that date understate
   the real total, by however much the live slate costs. Treat the first full

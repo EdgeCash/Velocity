@@ -259,6 +259,9 @@ _OTHER_CONSUMERS: Mapping[str, str] = {
     "def_safety": "DFS: DST", "def_td": "DFS: DST", "def_retd": "DFS: DST",
     "rush_tds": "props: anytime_td", "rec_tds": "props: anytime_td",
     "fumbles": "DFS: DK scoring",
+    # The last block in this feed that nothing read. The census is what found
+    # it, and velocity/dfs/kicker.py is what closed it.
+    "fg": "DFS: kicker", "fga": "DFS: kicker", "xpt": "DFS: kicker",
     # Read as a FALLBACK only: dst.py takes the points-allowed bracket from the
     # game sim, which is sharper, and uses FantasyPros' own bracket
     # probabilities when there is no sim.

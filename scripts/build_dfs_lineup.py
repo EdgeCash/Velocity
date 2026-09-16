@@ -168,7 +168,9 @@ def nfl_sim_projections(
     array for the GPP builder; players below the sim's volume floors keep
     the linear scorer's number. Defenses price from the FantasyPros DST
     projection plus DK's points-allowed bracket on the opponent's simulated
-    score when the live run's projections are on hand (§6.1).
+    score when the live run's projections are on hand (§6.1), and kickers from
+    the FantasyPros kicking projection at DK's distance bands — the two
+    positions neither the sim nor the linear scorer covers.
     """
     from velocity.dfs.dst import (
         dst_expected_points,
@@ -176,6 +178,7 @@ def nfl_sim_projections(
         opponent_scores_from_projections,
         project_dst,
     )
+    from velocity.dfs.kicker import kicker_expected_points, kicker_samples
     from velocity.dfs.scoring import dk_expected_points, nfl_sim_points
     from velocity.models.props_football import FootballPropConfig
     from velocity.util.seed import make_rng
@@ -218,10 +221,25 @@ def nfl_sim_projections(
         points = pd.concat([points[points["position"].astype(str).str.upper() != "DST"],
                             dst_points], ignore_index=True)
         samples.update(dst_samples(dst_proj, keyed, rng, n_sims))
+
+    # Kickers, for the same reason as defenses: the prop sim has no kicker
+    # markets and the linear scorer has no kicking weights, so a Showdown
+    # board's kicker joined at 0.00 and the optimizer took whichever was
+    # cheapest (velocity/dfs/kicker.py).
+    kicker_points = kicker_expected_points(fp)
+    if not kicker_points.empty:
+        priced = set(kicker_points["player_name"])
+        points = pd.concat(
+            [points[~points["player_name"].isin(priced)], kicker_points],
+            ignore_index=True,
+        )
+        samples.update(kicker_samples(fp, rng, n_sims))
+
     sources = {p.pa_source for p in dst_proj}
     print(f"NFL sim projections: {simulated} games simulated, "
           f"{len(samples)} players with sample arrays, {len(dst_points)} defenses "
-          f"(points allowed from {', '.join(sorted(sources)) or 'nothing'})")
+          f"(points allowed from {', '.join(sorted(sources)) or 'nothing'}), "
+          f"{len(kicker_points)} kickers")
     return points, samples
 
 

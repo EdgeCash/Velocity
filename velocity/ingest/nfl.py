@@ -392,6 +392,14 @@ _DFS_STAT_COLUMNS = {
     "carries": ("carries",),
     "targets": ("targets",),
     "attempts": ("attempts",),
+    # Kicking ATTEMPTS. Banked 2026-09-16 so the kicker projection can draw
+    # makes as a binomial on attempts rather than as a free count — the same
+    # structure pass_completions uses, and for the same two reasons: makes can
+    # never exceed attempts, and the two move together. Without these there is
+    # no attempt dispersion to calibrate, which is exactly what kept
+    # completions waiting.
+    "fg_att": ("fg_att",),
+    "pat_att": ("pat_att",),
 }
 # Columns DK scores that nflverse splits across several of its own.
 _DFS_SUMMED_COLUMNS = {
