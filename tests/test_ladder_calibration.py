@@ -247,9 +247,13 @@ def test_rung_bias_charges_each_side_only_its_own_tail() -> None:
     assert rung_bias("nfl", "total", "over", deep_over) == over
     assert rung_bias("nfl", "total", "under", deep_over) == -over
     # Spread sides mirror the same way once the contract is home-normalized.
+    # Read from the table rather than pinned as a literal: this test is about
+    # the MIRRORING, and a hand-copied 0.0368 makes it fail on every dataset
+    # refresh for a reason that has nothing to do with what it checks.
     threshold = residual_threshold("spread", -10.5, -6.0)
-    assert rung_bias("nfl", "spread", "home", threshold) == pytest.approx(0.0368)
-    assert rung_bias("nfl", "spread", "away", threshold) == pytest.approx(-0.0368)
+    spread_over = OFFSET_BIAS[("nfl", "spread")][4.5][0]
+    assert rung_bias("nfl", "spread", "home", threshold) == pytest.approx(spread_over)
+    assert rung_bias("nfl", "spread", "away", threshold) == pytest.approx(-spread_over)
     # Team totals still borrow the game total's shape, sides and all.
     assert rung_bias("nfl", "team_total_home", "under", deep_under) == under
     # And the unmeasured answers are unchanged: a moneyline has no number to be
