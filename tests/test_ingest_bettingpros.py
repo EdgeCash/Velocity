@@ -614,6 +614,36 @@ def test_every_mapped_slug_still_points_at_a_market_we_price() -> None:
     assert all(m in PROP_MARKETS for m in BP_PROP_SLUG_TO_MARKET.values())
 
 
+def test_the_two_football_slugs_added_from_the_coverage_report_are_mapped() -> None:
+    """Both were measured against the banked player-weeks before being added.
+
+    ``rushing-receiving-yards`` needed no new projection — the sim already
+    draws both legs — and ``interceptions`` rides a FantasyPros key the DFS
+    scorer has been consuming all along.
+    """
+    assert BP_PROP_SLUG_TO_MARKET["rushing-receiving-yards"] == "rush_rec_yards"
+    assert BP_PROP_SLUG_TO_MARKET["interceptions"] == "interceptions"
+
+
+def test_the_slugs_without_a_projection_stay_unmapped() -> None:
+    """The point of the table is that an unmodelable slug abstains honestly.
+
+    ``rushing-attempts`` and ``passing-attempts`` are worth having and are
+    blocked only on confirming the FantasyPros projection key
+    (scripts/inspect_fp_stat_keys.py). ``passing-completions`` has no banked
+    actuals to calibrate against at all — player_weeks carries no completions
+    column — so it cannot be sized even if the feed served a projection.
+
+    Mapping any of them early would look like coverage and deliver abstention,
+    which is the exact failure mode the coverage report exists to surface.
+    """
+    for slug in ("rushing-attempts", "passing-attempts", "passing-completions"):
+        assert slug not in BP_PROP_SLUG_TO_MARKET, (
+            f"{slug} was mapped — confirm the projection key and the banked "
+            "actuals first, then price it"
+        )
+
+
 # --------------------------------------------------------------------------
 # Payload shape reporting — the OpenAPI document types every array as [{}]
 # --------------------------------------------------------------------------

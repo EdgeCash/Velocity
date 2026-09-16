@@ -86,10 +86,29 @@ PROP_MARKET_BY_KEY = {
     "batter_home_runs": "batter_home_runs",
     "player_shots_on_goal": "shots_on_goal",
     "player_rebounds": "rebounds",
+    # Mapped so the rows normalize if they arrive, but NOT in the default
+    # fetch set below — see the note there. Both markets are priced by the
+    # football sim as of 2026-09-16.
+    "player_rush_reception_yds": "rush_rec_yards",
+    "player_pass_interceptions": "interceptions",
 }
 # The football six — the historical default; per-league prop pulls pass
 # their own market subsets (docs/PROPS.md).
-FOOTBALL_PROP_MARKETS = ",".join(list(PROP_MARKET_BY_KEY)[:6])
+#
+# Named rather than sliced. This was ``list(PROP_MARKET_BY_KEY)[:6]``, which
+# was correct only because the six happened to be declared first: adding a
+# football market anywhere above would have silently redefined "the six" and
+# changed what every NFL and NCAAF pull asks for — and the cost of a market
+# set is measured in credits, so that mistake bills.
+_FOOTBALL_SIX = (
+    "player_pass_yds",
+    "player_pass_tds",
+    "player_rush_yds",
+    "player_reception_yds",
+    "player_receptions",
+    "player_anytime_td",
+)
+FOOTBALL_PROP_MARKETS = ",".join(_FOOTBALL_SIX)
 DEFAULT_PROP_MARKETS = FOOTBALL_PROP_MARKETS
 # The per-event snapshot markets: props plus the team-total derivative. One
 # /events/{id}/odds call carries them all, so team totals ride the prop
@@ -97,6 +116,16 @@ DEFAULT_PROP_MARKETS = FOOTBALL_PROP_MARKETS
 # are what calibrates the ``min_team_total_disagreement`` gate
 # (docs/BACKTEST_NCAAF.md addendum).
 DEFAULT_EVENT_MARKETS = DEFAULT_PROP_MARKETS + ",team_totals"
+
+# Deliberately NOT added to the default pull: ``player_rush_reception_yds`` and
+# ``player_pass_interceptions``. The Odds API bills credits per market per
+# region, so widening the football board from six markets to eight is roughly a
+# third more on every prop call — and the ledger that would say whether the
+# plan has that headroom (scripts/report_odds_credits.py) is still filling and
+# withholds its projection until it has a full week. Mapping them costs
+# nothing and makes the rows normalize the moment a pull does include them;
+# spending the credits is a decision that should be made against the number,
+# not ahead of it.
 
 _PROP_SIDES = {"over": "over", "under": "under"}
 

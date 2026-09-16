@@ -30,6 +30,7 @@ def _fp_frame() -> pd.DataFrame:
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_yds", 280.0),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_tds", 2.1),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "rush_yds", 18.0),
+        ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_int", 0.72),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec", 6.5),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec_yds", 72.0),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec_tds", 0.55),
@@ -218,3 +219,120 @@ def test_a_missing_bank_is_the_normal_not_an_error(tmp_path) -> None:  # type: i
     from velocity.models.props_football import load_rush_pool
 
     assert load_rush_pool(tmp_path / "absent.parquet") is None
+
+
+# --- rush + receiving yards, and interceptions -------------------------------
+#
+# Both markets were added on 2026-09-16 after the BettingPros coverage report
+# showed their boards being served and abstained on. Each was measured against
+# the banked player-weeks before it was added rather than reasoned about, which
+# is the lesson #207 charged for: a test that pins a guess keeps the guess.
+
+
+def test_combined_yards_is_the_per_sim_sum_of_the_two_legs() -> None:
+    """Not a convolution of two marginals — the identity has to hold per draw.
+
+    This is the whole reason the market is cheap to add: the legs are already
+    simulated jointly, so summing them is exact whatever their dependence.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(5), CFG
+    )
+    combined = samples[("kc_rb", "rush_rec_yards")]
+    legs = samples[("kc_rb", "rush_yards")] + samples[("kc_rb", "receiving_yards")]
+    assert np.array_equal(combined, legs)
+
+
+def test_combined_yards_recovers_the_summed_projection() -> None:
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(5), CFG
+    )
+    # Pacheco: 62 rushing + 18 receiving. Rushing is clipped at zero, which
+    # lifts its mean, so the band matches the rush_yards test's.
+    assert np.mean(samples[("kc_rb", "rush_rec_yards")]) == pytest.approx(80.0, rel=0.15)
+
+
+def test_combined_yards_is_gated_on_the_combined_projection() -> None:
+    """A back under both single-leg floors still prices if the sum clears.
+
+    Gating on either leg alone would drop exactly the receiving backs this
+    market exists for.
+    """
+    rows = [
+        ("split", "Split Back", "NE", "RB", "rush_yds", 4.0),   # under the 5.0 floor
+        ("split", "Split Back", "NE", "RB", "rec", 3.0),
+        ("split", "Split Back", "NE", "RB", "rec_yds", 24.0),
+        ("tiny", "Tiny Role", "NE", "RB", "rush_yds", 6.0),
+        ("tiny", "Tiny Role", "NE", "RB", "rec", 0.6),
+        ("tiny", "Tiny Role", "NE", "RB", "rec_yds", 5.0),      # 11.0 combined
+    ]
+    fp = pd.DataFrame(
+        rows, columns=["player_id", "player_name", "team", "position", "stat", "value"]
+    )
+    samples = simulate_team_props(
+        team_player_means(fp, "NE"), np.random.default_rng(5), CFG
+    )
+    # 4 + 24 = 28 clears the 20.0 combined floor even though the rushing leg
+    # never cleared its own and contributes nothing.
+    assert ("split", "rush_yards") not in samples
+    assert ("split", "rush_rec_yards") in samples
+    # 6 + 5 = 11 does not clear it.
+    assert ("tiny", "rush_rec_yards") not in samples
+
+
+def test_the_two_yardage_legs_are_near_independent_in_the_sim() -> None:
+    """Pins the ~1% of spread this market knowingly gives up.
+
+    The legs ride separate team multipliers, so the sim puts a player's own
+    rushing against his own receiving at r~0. The banked RB games say the
+    within-player-season residual correlation is 0.0255 (the pooled 0.080 is
+    mostly player quality, which the projection already carries), so the sum's
+    sd comes out ~1% narrow. That was measured and declined, not missed — and
+    if someone later induces the correlation, this test should fail and be
+    updated rather than quietly keep passing.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(13), CFG
+    )
+    rush = samples[("kc_rb", "rush_yards")]
+    rec = samples[("kc_rb", "receiving_yards")]
+    corr = float(np.corrcoef(rush, rec)[0, 1])
+    assert abs(corr) < 0.03, f"the legs correlate at {corr:.4f} — the ~1% note is stale"
+
+
+def test_interceptions_recover_the_projection_and_stay_poisson() -> None:
+    """Observed variance/mean on 3,219 banked QB games is 1.020.
+
+    Poisson times the lognormal pass multiplier gives 1.012, which is why this
+    market rides the structure pass_tds already uses — it is in fact a closer
+    fit than pass_tds itself, which is mildly UNDERdispersed at 0.886.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(17),
+        FootballPropConfig(n_sims=200_000),
+    )
+    ints = samples[("kc_qb", "interceptions")]
+    assert np.mean(ints) == pytest.approx(0.72, rel=0.05)
+    assert float(np.var(ints) / np.mean(ints)) == pytest.approx(1.012, abs=0.02)
+    # A count market: whole numbers only, never negative.
+    assert np.all(ints >= 0)
+    assert np.array_equal(ints, np.round(ints))
+
+
+def test_interceptions_read_either_spelling() -> None:
+    """``pass_int`` and ``pass_ints`` both appear in the wild (dfs/scoring.py)."""
+    for key in ("pass_int", "pass_ints"):
+        fp = pd.DataFrame(
+            [("qb", "A QB", "NE", "QB", key, 0.9)],
+            columns=["player_id", "player_name", "team", "position", "stat", "value"],
+        )
+        players = team_player_means(fp, "NE")
+        assert players[0].means["interceptions"] == 0.9, key
+
+
+def test_a_qb_without_an_interception_projection_abstains() -> None:
+    """Josh Allen carries no ``pass_int`` row — no projection, no market."""
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "BUF"), np.random.default_rng(5), CFG
+    )
+    assert ("buf_qb", "interceptions") not in samples

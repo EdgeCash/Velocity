@@ -53,12 +53,22 @@ FP_STAT_TO_MARKET = {
     "rec_rec": "receptions",
     "rec": "receptions",
     "receptions": "receptions",
+    # Interceptions thrown. Both spellings are tolerated for the same reason
+    # receptions carries three: velocity/dfs/scoring.py already reads
+    # ``pass_int``/``pass_ints`` off the pivoted live frame for the DraftKings
+    # -1, so the key is known to arrive — this only promotes it from a scoring
+    # penalty to a market of its own.
+    "pass_int": "interceptions",
+    "pass_ints": "interceptions",
 }
 _TD_STATS = ("rush_tds", "rec_tds")
 
 # Below this projected stat volume a player is noise, not a prop — skip them.
+# ``rush_rec_yards`` is floored on the *combined* projection, not on either
+# leg, so a receiving back who clears neither floor alone still prices.
 _MIN_MEAN = {"pass_yards": 25.0, "pass_tds": 0.05, "rush_yards": 5.0,
-             "receiving_yards": 5.0, "receptions": 0.5, "anytime_td": 0.02}
+             "receiving_yards": 5.0, "receptions": 0.5, "anytime_td": 0.02,
+             "interceptions": 0.05, "rush_rec_yards": 20.0}
 
 
 def _normalize_name(name: str) -> str:
@@ -222,6 +232,12 @@ def simulate_team_props(
     receiving_yards_total = np.zeros(n)
 
     for p in players:
+        # Held across both legs so the combined rushing+receiving market can be
+        # summed per simulation. Kept even when a leg falls under its own
+        # market's floor — the combined market has its own, lower bar.
+        leg_rec_yards: np.ndarray | None = None
+        leg_rush_yards: np.ndarray | None = None
+
         rec_mean = p.means.get("receptions", 0.0)
         rec_yds_mean = p.means.get("receiving_yards", 0.0)
         if rec_mean >= _MIN_MEAN["receptions"]:
@@ -238,6 +254,7 @@ def simulate_team_props(
             rec_yards = np.clip(receptions * ypr + noise, 0.0, None)
             if rec_yds_mean >= _MIN_MEAN["receiving_yards"]:
                 samples[(p.key, "receiving_yards")] = rec_yards
+            leg_rec_yards = rec_yards
             receiving_yards_total += rec_yards
 
         rush_mean = p.means.get("rush_yards", 0.0)
@@ -253,11 +270,49 @@ def simulate_team_props(
             else:
                 z = rng.standard_normal(n)
             rush = rush_mean * rush_mult + sd * z
-            samples[(p.key, "rush_yards")] = np.clip(rush, 0.0, None)
+            leg_rush_yards = np.clip(rush, 0.0, None)
+            samples[(p.key, "rush_yards")] = leg_rush_yards
+
+        # Rushing + receiving yards, summed per simulation rather than
+        # convolved from two marginals — the per-sim sum is exact whatever the
+        # dependence between the legs, so it costs nothing to do it this way.
+        #
+        # On the dependence itself, since the summing hides it: these two legs
+        # ride SEPARATE team multipliers (``rush_mult`` and ``pass_mult``, drawn
+        # independently), so the sim puts a player's own rushing and receiving
+        # at r~0.00. The banked RB games put the within-player-season residual
+        # correlation at 0.0255 — the pooled number is 0.080, but that is
+        # mostly player quality and the projection already carries it. At
+        # r=0.026 the sum's sd is ~1% wider than the independent case, so the
+        # sim runs about 1% too confident on this market and no correction is
+        # applied: inducing a 0.026 correlation is more machinery than a 1%
+        # effect earns. Recorded so the next reader knows it was measured and
+        # declined, not missed.
+        #
+        # Gated on the COMBINED projection so a receiving back under both
+        # single-leg floors still prices; a leg that fell under its own floor
+        # contributes zero, which costs at most a few yards and only ever
+        # shades the over.
+        combined_mean = rush_mean + rec_yds_mean
+        if combined_mean >= _MIN_MEAN["rush_rec_yards"] and (
+            leg_rush_yards is not None or leg_rec_yards is not None
+        ):
+            zeros = np.zeros(n)
+            samples[(p.key, "rush_rec_yards")] = (
+                (leg_rush_yards if leg_rush_yards is not None else zeros)
+                + (leg_rec_yards if leg_rec_yards is not None else zeros)
+            )
 
         pass_tds_mean = p.means.get("pass_tds", 0.0)
         if pass_tds_mean >= _MIN_MEAN["pass_tds"]:
             samples[(p.key, "pass_tds")] = rng.poisson(pass_tds_mean * pass_mult).astype(float)
+
+        # Interceptions thrown: the same Poisson-on-the-team-multiplier shape
+        # as pass_tds. The banked QB games make that the right shape — observed
+        # variance/mean 1.020 against the structure's 1.012.
+        ints_mean = p.means.get("interceptions", 0.0)
+        if ints_mean >= _MIN_MEAN["interceptions"]:
+            samples[(p.key, "interceptions")] = rng.poisson(ints_mean * pass_mult).astype(float)
 
         if p.td_rate >= _MIN_MEAN["anytime_td"]:
             # Scoring rides the game script too: blend of the two multipliers.

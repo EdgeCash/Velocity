@@ -105,3 +105,92 @@ def test_sweep_requires_fair_probability() -> None:
     graded.loc[:, "p_fair"] = float("nan")
     table = sweep_shrink(graded, [1.0])
     assert (table["n_bets"] == 0).all()  # no de-vigged pair → no qualified bet
+
+
+# --------------------------------------------------------------------------
+# rush_rec_yards and interceptions must SETTLE, not just price (2026-09-16)
+# --------------------------------------------------------------------------
+#
+# grade_prop_ledger looks the market name up as a COLUMN of the weekly
+# actuals, so a market added to PROP_MARKETS and left out of
+# normalize_weekly_stats would price, stake, and then sit `pending` forever —
+# a bet the record can never close. These pin the settlement path.
+
+
+def test_the_two_new_markets_are_columns_of_the_weekly_actuals() -> None:
+    weekly = normalize_weekly_stats(WEEKLY_RAW)
+    assert "rush_rec_yards" in weekly.columns
+    assert "interceptions" in weekly.columns
+
+
+def test_combined_yards_actual_is_the_sum_of_its_own_legs() -> None:
+    weekly = normalize_weekly_stats(WEEKLY_RAW)
+    pacheco = weekly[weekly["player_name"] == "Isiah Pacheco"].iloc[0]
+    assert pacheco["rush_rec_yards"] == 71.0 + 22.0
+    # It can never disagree with the legs it is made of.
+    for row in weekly.to_dict("records"):
+        assert row["rush_rec_yards"] == row["rush_yards"] + row["receiving_yards"]
+
+
+def test_the_new_markets_actually_settle() -> None:
+    weekly = normalize_weekly_stats(WEEKLY_RAW)
+    raw = WEEKLY_RAW.assign(passing_interceptions=[1.0, 0.0, 0.0])
+    ledger = pd.DataFrame(
+        [
+            # Pacheco 71 + 22 = 93 against 88.5 → the over wins.
+            {"player": "Isiah Pacheco", "market": "rush_rec_yards", "side": "over",
+             "point": 88.5, "price": -110},
+            {"player": "Isiah Pacheco", "market": "rush_rec_yards", "side": "under",
+             "point": 88.5, "price": -110},
+            # Allen threw 1 against 0.5 → the over wins.
+            {"player": "Josh Allen", "market": "interceptions", "side": "over",
+             "point": 0.5, "price": 120},
+        ]
+    )
+    graded = grade_prop_ledger(ledger, normalize_weekly_stats(raw))
+    assert list(graded["result"]) == ["win", "loss", "win"]
+    assert list(graded["actual"]) == [93.0, 93.0, 1.0]
+    assert weekly["rush_rec_yards"].notna().all()
+
+
+def test_a_missing_interceptions_column_stays_pending_not_a_free_under() -> None:
+    """nflverse has already moved this spelling once.
+
+    Defaulting an absent column to 0.0 — the convention the older markets in
+    this normalizer use — would settle every interception UNDER as a winner on
+    a feed change. "Nobody threw a pick" is a claim, and the record does not
+    guess (inactive is not under).
+    """
+    weekly = normalize_weekly_stats(WEEKLY_RAW)  # carries neither spelling
+    graded = grade_prop_ledger(
+        pd.DataFrame(
+            [{"player": "Josh Allen", "market": "interceptions", "side": "under",
+              "point": 0.5, "price": -110}]
+        ),
+        weekly,
+    )
+    assert graded["result"].iloc[0] == "pending"
+
+
+def test_either_interception_spelling_is_read() -> None:
+    for column in ("passing_interceptions", "interceptions"):
+        raw = WEEKLY_RAW.assign(**{column: [2.0, 0.0, 0.0]})
+        weekly = normalize_weekly_stats(raw)
+        allen = weekly[weekly["player_name"] == "Josh Allen"].iloc[0]
+        assert allen["interceptions"] == 2.0, column
+
+
+def test_a_player_with_no_stat_line_grades_neither_new_market() -> None:
+    raw = pd.concat(
+        [
+            WEEKLY_RAW,
+            pd.DataFrame([{
+                "player_id": "00-004", "player_display_name": "Inactive Back",
+                "position": "RB", "recent_team": "KC", "season": 2026, "week": 1,
+            }]),
+        ],
+        ignore_index=True,
+    )
+    index = actuals_index(normalize_weekly_stats(raw))
+    assert "rush_rec_yards" not in index["inactiveback"]
+    assert "interceptions" not in index["inactiveback"]

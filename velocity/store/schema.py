@@ -46,6 +46,27 @@ PROP_MARKETS = [
     # The lottery-ticket prop, modeled off batted-ball skill
     # (velocity/models/props_hr.py, docs/PROPS_HR.md).
     "batter_home_runs",
+    # Added once the BettingPros slug-coverage report showed both boards being
+    # served and abstained on, and the banked player-weeks showed both are
+    # priceable with the machinery already here (docs/PROPS.md):
+    #
+    # * ``rush_rec_yards`` is a player's rushing and receiving yards added
+    #   together. It needs no new projection — the football sim already draws
+    #   both legs per player per simulation, so the market is their sum.
+    #   Conditional on the projections the legs are very nearly independent:
+    #   within player-season the residual correlation is 0.0255 (4,388 RB
+    #   games, 368 player-seasons, 2020-2025). The pooled figure is 0.080, but
+    #   most of that is player quality, which the projection already carries.
+    #   The sim draws the legs off separate team multipliers and so reproduces
+    #   ~0.00, understating the sum's sd by about 1% — left alone deliberately,
+    #   see the note in props_football.py.
+    # * ``interceptions`` is a Poisson on the passer's projection, the same
+    #   shape ``pass_tds`` already uses. On 3,219 QB games (>=15 attempts) the
+    #   observed variance/mean is 1.020, and Poisson x the sim's lognormal
+    #   pass multiplier gives 1.012 — a closer fit than pass_tds itself, which
+    #   is mildly UNDERdispersed at 0.886.
+    "rush_rec_yards",
+    "interceptions",
 ]
 PROP_SIDES = ["over", "under"]
 
