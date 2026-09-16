@@ -123,7 +123,20 @@ both are ordinary count props and both have banked actuals to calibrate against
 (`player_weeks` carries `carries` and `attempts`). What is missing is the
 FantasyPros projection key — nothing reads a rush- or pass-attempt projection
 today, and `FP_API_KEY` is an Actions secret the sandbox cannot see.
-`scripts/inspect_fp_stat_keys.py` answers it from CI in one run.
+The answer now prints in
+the "Collect FantasyPros projections" log: `--inspect` prints the stat-key
+census (every key served, how many players carry a non-zero value, which keys
+the model reads), that workflow always passes `--inspect`, and it costs no
+extra request — so the census rides the existing 4x/week schedule as well as a
+manual dispatch. Read the **volume-like keys (the open question)** block.
+`scripts/inspect_fp_stat_keys.py` prints the same census from a downloaded
+`fp_projections_*.parquet` when you want the table as a CSV.
+
+One trap the census covers: `normalize_projections` silently drops any value
+it cannot coerce to a number, so a completions projection served as `"21/33"`
+would vanish from the long frame and the census would answer "not served" to a
+feed that serves it. `unmelted_stat_keys` runs against the raw payload, where
+that is still visible, and the collector reports it as a note.
 `passing-completions` (28) is the one to leave alone even then: `player_weeks`
 has no completions column at all, so there is nothing to fit the dispersion on
 and nothing to walk it forward against, and a market we cannot backtest is a
@@ -144,9 +157,9 @@ decided against the number rather than ahead of it.
 - NHL SOG after the season opens (skater `sog` is in every banked
   boxscore path already).
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
-- Confirm the FantasyPros rush-attempt / pass-attempt projection keys
-  (`scripts/inspect_fp_stat_keys.py`, needs `FP_API_KEY` so it runs in CI);
-  they unblock the two largest unmapped BettingPros slugs.
+- Confirm the FantasyPros rush-attempt / pass-attempt projection keys — read
+  the stat-key census in any "Collect FantasyPros projections" run log; they
+  unblock the two largest unmapped BettingPros slugs.
 - Decide whether `player_rush_reception_yds` and `player_pass_interceptions`
   join the default Odds API pull — needs a week of the credit ledger first.
 - ~~Prop CLV: closes for props from the banked line archive~~ — attached

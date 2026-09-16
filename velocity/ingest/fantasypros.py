@@ -224,3 +224,149 @@ class FantasyProsClient:
         """Fetch and normalize player projections into the long ``(player, stat, value)`` frame."""
         payload = self.raw_projections(sport, season, position=position, week=week)
         return normalize_projections(payload, season=season, week=week)
+
+
+# --------------------------------------------------------------------------
+# Stat-key coverage — which projections the feed serves, and which we read
+# --------------------------------------------------------------------------
+#
+# The sibling of ``bettingpros.slug_coverage``, and it exists for the same
+# reason: a stat key nothing maps contributes nothing, silently and correctly,
+# so a feed we read five stats out of looks exactly like a feed that serves
+# five. On 2026-09-16 two BettingPros prop slugs (``rushing-attempts``, 57 rows
+# and the largest unmapped one, and ``passing-attempts``, 28) were blocked on a
+# question nobody could answer from the sandbox: does FantasyPros project
+# attempts at all? ``FP_API_KEY`` is an Actions secret, so the answer has to
+# come out of a run log or a banked snapshot rather than a spec read — which is
+# the habit #207 charged for.
+
+_STAT_REPORT_COLUMNS = ["stat", "rows", "non_zero", "mean", "max", "market", "mapped"]
+
+# Substrings that mark a key as a plausible attempt/completion volume stat.
+# Deliberately loose: the point is to surface candidates for a human to read,
+# not to pre-judge which spelling the feed uses.
+VOLUME_HINTS = ("att", "cmp", "comp", "carr", "target", "tgt", "rush_a", "pass_a")
+
+
+def looks_like_volume(stat: object) -> bool:
+    """Whether a stat key reads like an attempt/completion count."""
+    key = str(stat).lower()
+    return any(hint in key for hint in VOLUME_HINTS)
+
+
+def stat_key_census(projections: pd.DataFrame) -> pd.DataFrame:
+    """Per stat key of a normalized projections frame, busiest first.
+
+    Columns: the key, how many player rows carry it, how many are non-zero,
+    its mean and max, the canonical prop market it feeds (empty when nothing
+    reads it), and whether it is mapped at all.
+
+    ``non_zero`` is the column that matters. A key the feed serves as a
+    structural zero for every player is not a projection, it is a placeholder,
+    and mapping a market onto it would abstain just as surely as leaving it
+    unmapped — only less honestly.
+    """
+    if projections.empty or "stat" not in projections.columns:
+        return pd.DataFrame(columns=_STAT_REPORT_COLUMNS)
+    # Imported here rather than at module scope: the models package imports
+    # this module's client, and a top-level import would close the loop.
+    from velocity.models.props_football import FP_STAT_TO_MARKET  # noqa: PLC0415
+
+    value = pd.to_numeric(projections["value"], errors="coerce")
+    frame = projections.assign(_v=value)
+    rows = []
+    for stat, part in frame.groupby(projections["stat"].astype(str)):
+        market = FP_STAT_TO_MARKET.get(str(stat), "")
+        values = part["_v"]
+        rows.append({
+            "stat": str(stat),
+            "rows": int(len(part)),
+            "non_zero": int((values.fillna(0.0) != 0).sum()),
+            "mean": round(float(values.mean()), 3) if len(values) else 0.0,
+            "max": round(float(values.max()), 2) if len(values) else 0.0,
+            "market": market,
+            "mapped": bool(market),
+        })
+    out = pd.DataFrame(rows, columns=_STAT_REPORT_COLUMNS)
+    return out.sort_values(["mapped", "non_zero"], ascending=[False, False]).reset_index(
+        drop=True
+    )
+
+
+def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]:
+    """The census as printable lines — what a run log should say.
+
+    Loud about the volume-like keys specifically, because those are the ones
+    with an open question attached to them.
+    """
+    census = stat_key_census(projections)
+    label = f"{league.upper()} " if league else ""
+    if census.empty:
+        return [f"  {label}stat keys: no projection rows to report"]
+
+    mapped = census[census["mapped"]]
+    lines = [
+        f"  {label}stat-key census: {len(census)} key(s) served, "
+        f"{len(mapped)} read by the props model"
+    ]
+    for r in census.to_dict("records"):
+        mark = "read    " if r["mapped"] else "UNREAD  "
+        target = f" -> {r['market']}" if r["market"] else ""
+        lines.append(
+            f"    {mark} {str(r['stat']):<22} {int(r['non_zero']):>5} non-zero "
+            f"of {int(r['rows']):>5}  mean {r['mean']}  max {r['max']}{target}"
+        )
+
+    # The BettingPros slugs this unblocks are football markets, so that
+    # guidance is only true under NFL. Printing it under MLB would read as a
+    # finding about a feed it says nothing about.
+    football = str(league).lower() in ("", "nfl")
+    candidates = census[census["stat"].map(looks_like_volume)]
+    lines.append(f"  {label}volume-like keys (the open question):")
+    if candidates.empty:
+        lines.append("    none — this feed serves no attempt/completion projection.")
+        if football:
+            lines.append("    BP 'rushing-attempts' and 'passing-attempts' stay unmapped;")
+            lines.append("    mapping them would abstain silently rather than honestly.")
+    else:
+        for r in candidates.to_dict("records"):
+            if r["mapped"]:
+                state = f"already read as {r['market']}"
+            elif r["non_zero"] == 0:
+                state = "SERVED BUT ALL ZERO — a placeholder, not a projection"
+            else:
+                state = "AVAILABLE — this unblocks a market"
+            lines.append(f"    {str(r['stat']):<22} {int(r['non_zero']):>5} non-zero, "
+                         f"mean {r['mean']}  [{state}]")
+        if football:
+            lines.append("    A rush-attempt key unblocks BP 'rushing-attempts' (57 rows);")
+            lines.append("    a pass-attempt key unblocks 'passing-attempts' (28). Calibrate")
+            lines.append("    against player_weeks 'carries' / 'attempts' before pricing.")
+    return lines
+
+
+def unmelted_stat_keys(payload: Any) -> list[str]:
+    """Volume-like keys present on a player object that the melt would drop.
+
+    ``normalize_projections`` keeps only values :func:`_as_number` can coerce,
+    so a projection served as a compound string ("18/25" for completions over
+    attempts) vanishes from the long frame without a trace. That is exactly the
+    shape a completions or attempts projection might arrive in, so the census
+    would otherwise answer "not served" to a feed that serves it.
+    """
+    seen: dict[str, None] = {}
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            if _first(node, _NAME_KEYS) is not None or _first(node, _ID_KEYS) is not None:
+                for key, raw in _stat_items(node).items():
+                    if _as_number(raw) is None and looks_like_volume(key):
+                        seen.setdefault(str(key), None)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(payload)
+    return sorted(seen)
