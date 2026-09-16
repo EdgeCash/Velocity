@@ -104,3 +104,34 @@ def test_no_lookahead(season_games, season_lines, plays, config) -> None:
     pd.testing.assert_series_equal(
         full_early.loc[common, "p_home_win"], partial_early.loc[common, "p_home_win"]
     )
+
+
+def test_projections_carry_the_finals_and_the_models_own_state(
+        season_games, season_lines, plays, config) -> None:
+    """Projection ERROR has to be recoverable from this frame alone.
+
+    "How good is the projection" is a different question from "did the bet
+    win", and both get answered off the same leak-safe pass rather than a
+    second one. Everything added here is model-internal on purpose: nothing
+    the market said belongs in a measure of how sure the model is entitled to
+    be.
+    """
+    proj = walk_forward(season_games, plays, season_lines, _factory, config).projections
+    for column in ("home_score", "away_score", "mu_home", "mu_away",
+                   "sd_margin", "sd_total", "train_games"):
+        assert column in proj.columns, column
+        assert proj[column].notna().all()
+
+    # The finals are the games' own, joined back by game_id.
+    finals = season_games.set_index("game_id")
+    for row in proj.to_dict("records"):
+        game = finals.loc[row["game_id"]]
+        assert row["home_score"] == float(game["home_score"])
+        assert row["away_score"] == float(game["away_score"])
+
+    # Dispersion is a positive width, and the training count only ever grows
+    # as the walk-forward moves through the season.
+    assert (proj["sd_margin"] > 0).all()
+    assert (proj["sd_total"] > 0).all()
+    ordered = proj.sort_values(["season", "week"])["train_games"]
+    assert ordered.is_monotonic_increasing

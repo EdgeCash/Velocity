@@ -130,6 +130,26 @@ def walk_forward(
                     "home_win": home_win,
                     "fair_spread": proj.fair_spread(),
                     "fair_total": proj.fair_total(),
+                    # The finals, and what the model believed before them. Held
+                    # so that projection ERROR is recoverable from this frame
+                    # alone -- "how good is the projection" is a different
+                    # question from "did the bet win", and the two get answered
+                    # off the same leak-safe pass rather than a second one.
+                    #
+                    # Everything here is model-internal on purpose. Nothing the
+                    # market said belongs in a measure of how sure the MODEL is
+                    # entitled to be: a coin-flip spread can sit on a
+                    # projection the model has every right to be certain of.
+                    "home_score": float(g.home_score),
+                    "away_score": float(g.away_score),
+                    "mu_home": float(proj.mu_home),
+                    "mu_away": float(proj.mu_away),
+                    "sd_margin": float(np.std(proj.sim.margin)),
+                    "sd_total": float(np.std(proj.sim.total)),
+                    # How much history the fit had when it made this call --
+                    # the obvious suspect for an early-season projection being
+                    # worse than a late-season one.
+                    "train_games": int(train["game_id"].nunique()),
                 }
             )
 
