@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from velocity.report.social import SPREAD_EDGE_PTS, TOTAL_EDGE_PTS
+from velocity.report.social import SPREAD_EDGE_PTS, TOTAL_EDGE_PTS, SocialCard
 
 # Above this model-vs-market gap the number is a data-quality flag rather than
 # a bigger edge — the adverse-selection finding, in points. Set at the spread
@@ -212,3 +212,326 @@ class MatchupCard:
         if when is None:
             return ""
         return f"GENERATED {when.strftime('%d %b %Y').upper()} · {when.strftime('%H:%M')} UTC"
+
+
+# --- building a card from the slate's own objects ---------------------------
+
+# Card rank key → (epa_form column, lower_is_better). Direction is the whole
+# point of this table: ``off_epa`` is EPA gained, so 1st is the HIGHEST, while
+# every defensive column is EPA *allowed*, so 1st is the LOWEST. Rank a
+# defense the offensive way and the card prints the league's leakiest unit as
+# its best — a mistake nothing downstream would catch, because a rank is a
+# plausible small integer either way.
+RANK_UNITS: tuple[tuple[str, str, bool], ...] = (
+    ("off", "off_epa", False),
+    ("def", "def_epa", True),
+    ("off_pass", "pass_off", False),
+    ("off_rush", "rush_off", False),
+    ("def_pass", "pass_def", True),
+    ("def_rush", "rush_def", True),
+)
+
+# The card's fixed player shape: a quarterback, a back, and two pass-catchers,
+# each with the two markets that describe his night. Positions are the
+# projection provider's own labels.
+PLAYER_SLOTS: tuple[tuple[str, tuple[str, ...], str, str, str, str], ...] = (
+    ("QB", ("QB",), "pass_yards", "PASS YDS", "pass_tds", "PASS TD"),
+    ("RB", ("RB",), "rush_yards", "RUSH YDS", "anytime_td", "TOT TD"),
+    ("", ("WR", "TE"), "receiving_yards", "REC YDS", "receptions", "REC"),
+)
+# Markets printed as whole numbers; everything else gets a decimal, because
+# "1.8 passing touchdowns" is a projection and "2" looks like a claim.
+_WHOLE = frozenset({"pass_yards", "rush_yards", "receiving_yards", "rush_rec_yards"})
+
+# A unit mismatch has to be worth a sentence. Eight places on a 32-team board
+# is a quarter of the league between the two units; below that the ranks are
+# inside their own noise and the note would be filler.
+NOTE_GAP_MIN = 8
+_NOTE_PAIRS = (("off_pass", "def_pass", "passing game"),
+               ("off_rush", "def_rush", "running game"))
+
+
+def split_name(full_name: str, code: str) -> tuple[str, str]:
+    """``"Dallas Cowboys"`` → ``("Dallas", "Cowboys")``.
+
+    The nickname is the last word and the place is everything before it, which
+    is right for every club in the leagues this renders and wrong for a team
+    whose nickname is two words. There is no such team in the NFL or in the
+    FBS, so the simple rule stands until one appears; a name with no space at
+    all falls back to the club code as the place.
+    """
+    parts = str(full_name).split()
+    if len(parts) < 2:
+        return code, str(full_name)
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def unit_ranks(epa: pd.DataFrame | None) -> dict[str, dict[str, UnitRank]]:
+    """Team → card rank key → :class:`UnitRank`, over one ``epa_form`` frame.
+
+    Ties take the better (lower) rank, and the field size is the number of
+    teams the frame actually covers, so a partial week reads "of 27" rather
+    than claiming a full league.
+    """
+    if epa is None or epa.empty:
+        return {}
+    out: dict[str, dict[str, UnitRank]] = {}
+    for key, column, lower_is_better in RANK_UNITS:
+        if column not in epa.columns:
+            continue
+        values = pd.to_numeric(epa[column], errors="coerce").dropna()
+        if values.empty:
+            continue
+        ranks = values.rank(ascending=lower_is_better, method="min")
+        of = int(len(values))
+        for (team, rank), value in zip(ranks.items(), values, strict=True):
+            out.setdefault(str(team), {})[key] = UnitRank(
+                rank=int(rank), of=of, value=float(value))
+    return out
+
+
+def form_games(games: pd.DataFrame | None, team: str, season: int, n: int = 3,
+               codes: Mapping[str, str] | None = None) -> tuple[FormGame, ...]:
+    """The team's last ``n`` completed games in ``season``, oldest first.
+
+    Oldest-first matches :func:`velocity.report.deepdive.team_form` and reads
+    left-to-right toward today, which is how the chips are laid out.
+    """
+    if games is None or games.empty:
+        return ()
+    played = games[
+        (games["season"] == season)
+        & games["home_score"].notna() & games["away_score"].notna()
+        & ((games["home_team"] == team) | (games["away_team"] == team))
+    ]
+    if played.empty:
+        return ()
+    order = "kickoff" if "kickoff" in played.columns else ["season", "week"]
+    played = played.sort_values(order).tail(n)
+    short = dict(codes or {})
+    out: list[FormGame] = []
+    for g in played.to_dict("records"):
+        at_home = g["home_team"] == team
+        us = int(g["home_score"] if at_home else g["away_score"])
+        them = int(g["away_score"] if at_home else g["home_score"])
+        other = str(g["away_team"] if at_home else g["home_team"])
+        out.append(FormGame(
+            result="W" if us > them else ("L" if us < them else "T"),
+            points_for=us, points_against=them,
+            opponent=short.get(other, other)[:5], at_home=at_home))
+    return tuple(out)
+
+
+def roster_from_projections(fp: pd.DataFrame) -> pd.DataFrame:
+    """The projection frame reduced to identity: key, name, position, team.
+
+    :class:`~velocity.models.props_football.FootballPropSim` is keyed by player
+    key alone and carries no position, so the card cannot fill a QB/RB/WR shape
+    from the sim by itself. This is the smallest thing that closes that gap.
+    """
+    from velocity.models.props_football import player_key
+
+    rows = fp.drop_duplicates(subset=["player_name"]).to_dict("records")
+    return pd.DataFrame([{
+        "player_key": player_key(r.get("player_id"), r.get("player_name")),
+        "player_name": str(r.get("player_name")),
+        "position": str(r.get("position") or ""),
+        "team": str(r.get("team") or ""),
+    } for r in rows])
+
+
+def _sim_mean(sim: object, key: str, market: str) -> float | None:
+    """The sim's mean for one market, or None when it does not price it.
+
+    A market under its floor is simply absent from the sim, and the card says
+    nothing rather than reaching past the model for the provider's raw number.
+    """
+    if not getattr(sim, "has", lambda *_: False)(key, market):
+        return None
+    return float(sim.mean(key, market))  # type: ignore[attr-defined]
+
+
+def _format(value: float, market: str) -> str:
+    return f"{value:.0f}" if market in _WHOLE else f"{value:.1f}"
+
+
+def player_lines(sim: object | None, roster: pd.DataFrame | None,
+                 team: str) -> tuple[PlayerLine, ...]:
+    """One team's four projected rows: QB, RB, and the top two pass-catchers.
+
+    Each slot goes to whoever the model projects for the most of that slot's
+    primary market, which is what a depth chart is by the time it reaches a
+    projection. A slot with nobody priced is simply left out.
+    """
+    if sim is None or roster is None or roster.empty:
+        return ()
+    mine = roster[roster["team"].astype(str) == str(team)]
+    if mine.empty:
+        return ()
+    rows: list[PlayerLine] = []
+    taken: set[str] = set()
+    for label, positions, market, stat, market2, stat2 in PLAYER_SLOTS:
+        # The catcher slot runs twice; every other slot once.
+        wanted = 2 if not label else 1
+        pool = [
+            (value, r) for r in mine.to_dict("records")
+            if str(r["position"]) in positions
+            and str(r["player_key"]) not in taken
+            and (value := _sim_mean(sim, str(r["player_key"]), market)) is not None
+        ]
+        pool.sort(key=lambda pair: pair[0], reverse=True)
+        for value, r in pool[:wanted]:
+            key = str(r["player_key"])
+            taken.add(key)
+            second = _sim_mean(sim, key, market2)
+            rows.append(PlayerLine(
+                position=label or str(r["position"]),
+                name=str(r["player_name"]),
+                stat=stat, value=_format(value, market),
+                stat2=None if second is None else stat2,
+                value2=None if second is None else _format(second, market2),
+            ))
+    return tuple(rows)
+
+
+def unit_notes(away: TeamSide, home: TeamSide) -> tuple[str, ...]:
+    """Up to three sentences on the widest unit mismatches, largest first.
+
+    Derived from the ranks already on the card rather than written: the card
+    should not assert anything the reader cannot check against the tracks a few
+    inches above the sentence.
+    """
+    found: list[tuple[int, str]] = []
+    for attack, defend in ((away, home), (home, away)):
+        for off_key, def_key, phase in _NOTE_PAIRS:
+            off = attack.ranks.get(off_key)
+            against = defend.ranks.get(def_key)
+            if off is None or against is None:
+                continue
+            gap = against.rank - off.rank
+            if gap < NOTE_GAP_MIN:
+                continue
+            found.append((gap, (
+                f"{attack.code}'s {phase} ranks {_ordinal(off.rank)} and meets a "
+                f"{defend.code} defense ranked {_ordinal(against.rank)} against it."
+            )))
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return tuple(text for _, text in found[:3])
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:  # noqa: PLR2004 - the teens all take "th"
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slate
+    cards: Sequence[SocialCard],
+    projections: Mapping[str, object],
+    games: pd.DataFrame | None = None,
+    plays: pd.DataFrame | None = None,
+    *,
+    week_label: str = "",
+    league: str = "nfl",
+    props_by_game: Mapping[str, object] | None = None,
+    roster: pd.DataFrame | None = None,
+    team_names: Mapping[str, str] | None = None,
+    espn_ids: Mapping[str, int] | None = None,
+    venue_by_game: Mapping[str, str] | None = None,
+    notes_by_game: Mapping[str, Sequence[str]] | None = None,
+    confidence_by_game: Mapping[str, Mapping[str, float]] | None = None,
+    generated_at: pd.Timestamp | None = None,
+) -> list[MatchupCard]:
+    """One :class:`MatchupCard` per social card, from the slate's own objects.
+
+    Deliberately built on top of :class:`~velocity.report.social.SocialCard`
+    rather than beside it, exactly as :func:`velocity.report.deepdive.build_deep_dives`
+    is: the card has already resolved display codes, kickoff, the projected
+    means and the market view, and resolving them a second time is how two
+    surfaces start disagreeing about which team is which.
+
+    ``games``/``plays`` supply the records, the form chips and the EPA ranks;
+    ``props_by_game`` + ``roster`` the player rows. Each is optional and its
+    absence costs only its own section. ``team_names`` maps a card's display
+    code back to the datasets' team key where they differ (NFL codes match;
+    NCAAF cards carry abbreviations while the datasets key by school).
+    """
+    from velocity.report.deepdive import _record, epa_form, scoring_form
+
+    season, scoring = (0, pd.DataFrame()) if games is None else scoring_form(games)
+    ranks = unit_ranks(epa_form(plays, season) if plays is not None else None)
+    names = dict(team_names or {})
+    # The datasets' key → the card's display code, for the opponent on a chip.
+    codes = {key: code for code, key in names.items()}
+    stamp = pd.Timestamp.now(tz="UTC").tz_localize(None) if generated_at is None \
+        else generated_at
+
+    out: list[MatchupCard] = []
+    for card in cards:
+        proj = projections.get(card.game_id)
+        if proj is None:
+            continue
+        sim = proj.sim  # type: ignore[attr-defined]
+        margin = sim.margin.astype(int)
+        total = sim.total.astype(int)
+        sides = []
+        for code, full_name in ((card.away_code, card.away_name),
+                                (card.home_code, card.home_name)):
+            key = names.get(code, code)
+            city, nickname = split_name(full_name, code)
+            sides.append(TeamSide(
+                code=code, city=city, nickname=nickname,
+                record=_record(scoring, key) if not scoring.empty else "",
+                color=(card.away_color if code == card.away_code
+                       else card.home_color) or "#8b96a3",
+                espn_id=(espn_ids or {}).get(code),
+                last3=form_games(games, key, season, codes=codes),
+                ranks=ranks.get(key, {}),
+                projections=player_lines(
+                    (props_by_game or {}).get(card.game_id), roster, key),
+            ))
+        away, home = sides
+        view = card.market_view
+        built = MatchupCard(
+            game_id=card.game_id, league=league, week_label=week_label,
+            away=away, home=home,
+            mu_away=card.mu_away, mu_home=card.mu_home,
+            # SocialCard states the fair spread the way a book would (negative
+            # for the favorite); this card's field is positive when the home
+            # side is favored, so the sign flips here and nowhere else.
+            fair_spread_home=-card.fair_spread,
+            fair_total=card.fair_total,
+            p_home_win=card.p_home_win,
+            margin_pmf=_pmf_of(margin), total_pmf=_pmf_of(total),
+            # Both spread fields flip here, and nowhere else. The board and
+            # SocialCard state a spread the way a book does -- NEGATIVE for the
+            # favorite -- while this card's two spread fields are positive when
+            # the home side is favored so that model and market subtract
+            # directly in ``spread_lean``. Mixing the conventions would not
+            # crash: it would quietly print the other team's side.
+            market=MarketNumbers(
+                spread_home=(None if view is None or view.spread_home is None
+                             else -view.spread_home),
+                total=None if view is None else view.total),
+            # Counted off the draws the curves are actually drawn from, not
+            # copied from the card: the number under "MARGIN" is a claim about
+            # this panel, and the two should not be able to drift apart.
+            n_sims=int(len(margin)),
+            venue=(venue_by_game or {}).get(card.game_id),
+            kickoff=card.kickoff,
+            generated_at=stamp,
+            notes=tuple((notes_by_game or {}).get(card.game_id,
+                                                  unit_notes(away, home))),
+            confidence=dict((confidence_by_game or {}).get(card.game_id, {})),
+        )
+        out.append(built)
+    return out
+
+
+def _pmf_of(values: object) -> dict[int, float]:
+    """An integer sample array as a probability mass function."""
+    import numpy as np
+
+    arr = np.asarray(values)
+    uniques, counts = np.unique(arr, return_counts=True)
+    return {int(v): float(c) / len(arr) for v, c in zip(uniques, counts, strict=True)}
