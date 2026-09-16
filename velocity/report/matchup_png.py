@@ -301,7 +301,12 @@ def render_matchup_card(card: MatchupCard, path: Path | str,
 
     # 1 — masthead
     _display(fig, 0.033, 0.968, "MATCHUP LABS", color=BRAND, fontsize=23)
-    _text(fig, 0.967, 0.972, f"{card.league.upper()} · {card.week_label.upper()}",
+    # No week label (a league without weeks, or a schedule that cannot say
+    # which one) prints the league alone rather than a dangling separator.
+    heading = card.league.upper()
+    if card.week_label:
+        heading += f" · {card.week_label.upper()}"
+    _text(fig, 0.967, 0.972, heading,
           color=INK, fontsize=13, ha="right", fontweight="bold")
     where = " · ".join(p for p in (card.venue,
                                    card.kickoff.strftime("%a %b %-d · %-I:%M%p")
