@@ -50,7 +50,21 @@ def main() -> None:
         return
     print(f"fit on season {season}: {len(model.batter_rate)} batters, "
           f"league rate {model.league_rate:.4f}, "
-          f"{len(model.park_factor)} parks, {len(model.pitcher_factor)} arms")
+          f"{len(model.park_factor)} parks, {len(model.pitcher_factor)} arms, "
+          f"{model.statcast_batters} on a Statcast prior")
+    # The batted-ball prior IS this model — barrel rate predicts next season's
+    # HR/PA at r^2 ~ 0.39 against prior-season HR/PA's 0.36, and that gap is the
+    # edge over a market anchored on the counting stat. Without it the model
+    # degrades to plain shrinkage, silently, and looks exactly like a healthy
+    # fit: the live board ran that way for months because the workflow
+    # collected the Savant snapshot and then called this script without
+    # --statcast. Say so where a run log will show it.
+    if not model.statcast_batters:
+        print("::warning title=Home-run board has no Statcast prior::"
+              "every batter fell back to the league rate — the board is running "
+              "on plain shrinkage, which is the thing the model exists to beat. "
+              + ("--statcast was not passed." if args.statcast is None else
+                 f"--statcast {args.statcast} had no usable barrel_rate rows."))
 
     # Today's probables give each side's opposing starter; the venue is the
     # home club. A game with no announced probable still boards — the batter

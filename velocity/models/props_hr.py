@@ -64,6 +64,13 @@ class HomeRunModel:
     park_factor: Mapping[str, float]  # home-team (venue) → HR multiplier
     slot_pa: Mapping[int, float]  # lineup slot → expected PA for a starter
     default_pa: float = 4.0
+    # How many batters got a Statcast-informed prior instead of the league
+    # rate. Reported, not used: without it the model cannot say whether the
+    # thing it exists for actually ran. The live board shipped for months with
+    # this at zero — the workflow collected the Savant snapshot and called the
+    # board without --statcast — and nothing could tell, because the fallback
+    # is deliberate, silent and indistinguishable from a healthy fit.
+    statcast_batters: int = 0
 
     def rate(
         self,
@@ -194,6 +201,8 @@ class HomeRunModel:
             slot_pa=slot_pa,
             default_pa=float(frame.loc[frame["started"].astype(bool), "pa"].mean())
             if "started" in frame.columns and frame["started"].any() else 4.0,
+            statcast_batters=sum(1 for pid in by_batter.index
+                                 if str(pid) in prior),
         )
 
 
