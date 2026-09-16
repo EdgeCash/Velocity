@@ -194,3 +194,61 @@ def test_a_player_with_no_stat_line_grades_neither_new_market() -> None:
     index = actuals_index(normalize_weekly_stats(raw))
     assert "rush_rec_yards" not in index["inactiveback"]
     assert "interceptions" not in index["inactiveback"]
+
+
+# --------------------------------------------------------------------------
+# Attempt counts must settle too (2026-09-16)
+# --------------------------------------------------------------------------
+
+
+def test_the_attempt_markets_are_columns_of_the_weekly_actuals() -> None:
+    weekly = normalize_weekly_stats(
+        WEEKLY_RAW.assign(attempts=[38.0, 0.0, 0.0], carries=[5.0, 0.0, 17.0])
+    )
+    assert "rush_attempts" in weekly.columns
+    assert "pass_attempts" in weekly.columns
+
+
+def test_the_attempt_markets_actually_settle() -> None:
+    weekly = normalize_weekly_stats(
+        WEEKLY_RAW.assign(attempts=[38.0, 0.0, 0.0], carries=[5.0, 0.0, 17.0])
+    )
+    graded = grade_prop_ledger(
+        pd.DataFrame([
+            {"player": "Josh Allen", "market": "pass_attempts", "side": "over",
+             "point": 35.5, "price": -110},
+            {"player": "Isiah Pacheco", "market": "rush_attempts", "side": "under",
+             "point": 15.5, "price": -110},
+        ]),
+        weekly,
+    )
+    assert list(graded["result"]) == ["win", "loss"]
+    assert list(graded["actual"]) == [38.0, 17.0]
+
+
+def test_a_missing_attempts_column_stays_pending_not_a_free_under() -> None:
+    """nflverse has moved these spellings before.
+
+    Defaulting an absent column to 0.0 would settle every attempts UNDER as a
+    winner on a feed rename. "He had no carries" is a graded result; "the
+    column is gone" is not.
+    """
+    weekly = normalize_weekly_stats(WEEKLY_RAW)  # carries neither column
+    graded = grade_prop_ledger(
+        pd.DataFrame([
+            {"player": "Josh Allen", "market": "pass_attempts", "side": "under",
+             "point": 35.5, "price": -110},
+            {"player": "Isiah Pacheco", "market": "rush_attempts", "side": "under",
+             "point": 15.5, "price": -110},
+        ]),
+        weekly,
+    )
+    assert list(graded["result"]) == ["pending", "pending"]
+
+
+def test_alternate_attempt_spellings_are_read() -> None:
+    for column, market in (("rushing_attempts", "rush_attempts"),
+                           ("passing_attempts", "pass_attempts")):
+        weekly = normalize_weekly_stats(WEEKLY_RAW.assign(**{column: [9.0, 0.0, 0.0]}))
+        allen = weekly[weekly["player_name"] == "Josh Allen"].iloc[0]
+        assert allen[market] == 9.0, column

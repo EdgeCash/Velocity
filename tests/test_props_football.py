@@ -10,6 +10,8 @@ parlay ``player_samples`` hook. Seeded → deterministic.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -31,6 +33,8 @@ def _fp_frame() -> pd.DataFrame:
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_tds", 2.1),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "rush_yds", 18.0),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_int", 0.72),
+        ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_att", 34.0),
+        ("kc_rb", "Isiah Pacheco", "KC", "RB", "rush_att", 14.0),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec", 6.5),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec_yds", 72.0),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec_tds", 0.55),
@@ -336,3 +340,118 @@ def test_a_qb_without_an_interception_projection_abstains() -> None:
         team_player_means(_fp_frame(), "BUF"), np.random.default_rng(5), CFG
     )
     assert ("buf_qb", "interceptions") not in samples
+
+
+# --- attempt counts -----------------------------------------------------------
+#
+# Added once the FantasyPros stat-key census (run 35108513721) confirmed the
+# feed serves rush_att and pass_att. Dispersion is FITTED from the banked
+# player-weeks, not assumed, and these pin the fit rather than the happy path.
+
+
+def test_attempt_projections_are_recovered_in_expectation() -> None:
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(23),
+        FootballPropConfig(n_sims=200_000),
+    )
+    assert np.mean(samples[("kc_qb", "pass_attempts")]) == pytest.approx(34.0, rel=0.02)
+    assert np.mean(samples[("kc_rb", "rush_attempts")]) == pytest.approx(14.0, rel=0.02)
+
+
+def test_attempts_are_counts_not_continuous() -> None:
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(23), CFG
+    )
+    for market in ("pass_attempts", "rush_attempts"):
+        key = "kc_qb" if market == "pass_attempts" else "kc_rb"
+        draws = samples[(key, market)]
+        assert np.all(draws >= 0)
+        assert np.array_equal(draws, np.round(draws))
+
+
+def test_attempt_dispersion_matches_the_banked_fit() -> None:
+    """The reason these markets could be added at all.
+
+    Within player-season on the banked weeks, QB pass attempts run
+    variance/mean 2.332 at a median 31.7 attempts. The structure — a
+    gamma-mixed Poisson on the passing multiplier, phi 0.0260 — reproduces it.
+    A bare Poisson would say 1.0 and price the tails far too tight.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(29),
+        FootballPropConfig(n_sims=400_000),
+    )
+    draws = samples[("kc_qb", "pass_attempts")]
+    ratio = float(np.var(draws) / np.mean(draws))
+    assert ratio == pytest.approx(2.39, abs=0.15), f"var/mean {ratio:.3f}"
+    assert ratio > 2.0, "a bare Poisson (1.0) would under-price every tail"
+
+
+def test_carries_ride_the_rushing_multiplier_not_the_passing_one() -> None:
+    """Crossing them would be backwards.
+
+    The script that lifts a passing game suppresses the running game. If
+    carries were drawn off ``pass_mult`` a back's workload would rise with his
+    quarterback's, so this pins that carries move with a teammate's RUSHING
+    yards more than with the team's passing volume.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(31),
+        FootballPropConfig(n_sims=200_000),
+    )
+    carries = samples[("kc_rb", "rush_attempts")]
+    with_rush = float(np.corrcoef(carries, samples[("kc_rb", "rush_yards")])[0, 1])
+    with_pass = float(np.corrcoef(carries, samples[("kc_qb", "pass_yards")])[0, 1])
+    assert with_rush > with_pass, (
+        f"carries correlate {with_rush:.3f} with rushing and {with_pass:.3f} "
+        "with passing — they are riding the wrong multiplier"
+    )
+
+
+def test_a_receiver_end_around_is_not_a_rushing_attempts_prop() -> None:
+    """No book posts one, and the bank barely has the data.
+
+    WR carries are 24 player-seasons against the backs' 365, so the floor
+    keeps this market to players who actually carry it.
+    """
+    rows = [
+        ("wr", "A Receiver", "NE", "WR", "rec", 5.0),
+        ("wr", "A Receiver", "NE", "WR", "rec_yds", 60.0),
+        ("wr", "A Receiver", "NE", "WR", "rush_att", 0.4),
+    ]
+    fp = pd.DataFrame(
+        rows, columns=["player_id", "player_name", "team", "position", "stat", "value"]
+    )
+    samples = simulate_team_props(
+        team_player_means(fp, "NE"), np.random.default_rng(3), CFG
+    )
+    assert ("wr", "rush_attempts") not in samples
+
+
+def test_a_player_without_an_attempt_projection_abstains() -> None:
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "BUF"), np.random.default_rng(5), CFG
+    )
+    assert ("buf_qb", "pass_attempts") not in samples
+
+
+def test_the_shipped_dispersion_is_what_the_fitter_measures() -> None:
+    """These constants are a measurement, so they must stay regenerable.
+
+    If the fitter and the config drift apart, one of them is lying about the
+    bank — and the config is the one that prices bets.
+    """
+    import pandas as _pd
+    from scripts.fit_prop_dispersion import fit
+
+    weeks = Path("datasets/nfl/player_weeks.parquet")
+    if not weeks.exists():  # pragma: no cover - the bank is committed
+        pytest.skip("player_weeks bank not present")
+    fitted, _ = fit(_pd.read_parquet(weeks))
+    config = FootballPropConfig()
+    assert fitted["rush_attempts_phi"]["RB"] == pytest.approx(
+        config.rush_att_phi("RB"), abs=5e-4)
+    assert fitted["rush_attempts_phi"]["QB"] == pytest.approx(
+        config.rush_att_phi("QB"), abs=5e-4)
+    assert fitted["pass_attempts_phi"] == pytest.approx(
+        config.pass_attempts_phi, abs=5e-4)

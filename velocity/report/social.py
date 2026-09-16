@@ -40,6 +40,8 @@ _WATCH_MARKETS = {
     # deliberately NOT here: the strip is players to watch, and a QB INT over
     # is not a fact it should be leading with.
     "rush_rec_yards": ("rush + rec yards", "RU+RE YDS"),
+    "rush_attempts": ("carries", "CAR"),
+    "pass_attempts": ("pass attempts", "ATT"),
     "pitcher_strikeouts": ("pitcher Ks", "Ks"),
     "player_shots_on_goal": ("shots on goal", "SOG"),
     "player_rebounds": ("rebounds", "REB"),

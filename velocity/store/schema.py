@@ -67,6 +67,19 @@ PROP_MARKETS = [
     #   is mildly UNDERdispersed at 0.886.
     "rush_rec_yards",
     "interceptions",
+    # The two volume counts, added 2026-09-16 once the FantasyPros stat-key
+    # census (run 35108513721) showed the feed serves ``rush_att`` on 309 of
+    # 422 skill players and ``pass_att`` on 70 of 82 passers. Until that run
+    # nothing in this codebase read an attempt projection and nobody knew
+    # whether one existed; the two BettingPros slugs waiting on it are the
+    # largest that were abstaining on every row.
+    #
+    # Both are ordinary negative-binomial counts, the same shape receptions
+    # already uses, and both have banked actuals to grade against
+    # (``player_weeks`` carries ``carries`` and ``attempts``). Dispersion is
+    # fitted, not assumed — see ``FootballPropConfig``.
+    "rush_attempts",
+    "pass_attempts",
 ]
 PROP_SIDES = ["over", "under"]
 

@@ -71,6 +71,24 @@ def receptions_phi(pw: pd.DataFrame, position: str, *, min_mean: float = 1.5) ->
     return float(max(phi.median(), 0.0))
 
 
+def count_phi(pw: pd.DataFrame, column: str, position: str, *, min_mean: float) -> float:
+    """Negative-binomial overdispersion of any count within player-seasons.
+
+    ``receptions_phi`` generalized — carries and pass attempts are the same
+    kind of quantity and want the same measurement. Returned GROSS of the team
+    multiplier; the caller nets it against whichever multiplier that market
+    rides (carries the rushing one, attempts the passing one).
+    """
+    stats = (pw[pw["position"] == position]
+             .groupby(["player_id", "season"])[column]
+             .agg(["mean", "var", "size"]))
+    stats = stats[(stats["size"] >= MIN_GAMES) & (stats["mean"] >= min_mean)]
+    if stats.empty:
+        return 0.0
+    phi = (stats["var"] - stats["mean"]) / stats["mean"] ** 2
+    return float(max(phi.median(), 0.0))
+
+
 def per_catch_sd(pw: pd.DataFrame, position: str) -> float:
     """sd of (receiving yards − receptions × season ypr) / √receptions."""
     d = pw[pw["position"] == position]
@@ -111,6 +129,18 @@ def fit(pw: pd.DataFrame) -> tuple[dict[str, object], pd.DataFrame]:
                            for p in ("WR", "TE", "RB")},
         "yards_sd_per_reception": {p: per_catch_sd(pw, p) for p in ("WR", "TE", "RB")},
     }
+    # Attempt counts. Carries ride the RUSH multiplier and dropbacks the PASS
+    # one, so each is netted against its own rather than against a shared one
+    # — crossing them would make a back's workload swing with the passing
+    # game, which is backwards.
+    rush_mult_phi = float(np.exp(rush_sigma**2) - 1.0)
+    out["rush_attempts_phi"] = {
+        p: max(count_phi(pw, "carries", p, min_mean=m) - rush_mult_phi, 0.0)
+        for p, m in (("RB", 5.0), ("QB", 2.0))
+    }
+    out["pass_attempts_phi"] = max(
+        count_phi(pw, "attempts", "QB", min_mean=15.0) - mult_phi, 0.0
+    )
     pools = []
     cv: dict[str, float] = {}
     for position, min_mean in (("RB", 15.0), ("QB", 8.0)):

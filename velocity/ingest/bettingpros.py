@@ -269,23 +269,26 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
     #   1.012 the sim's Poisson-times-pass-multiplier produces.
     "rushing-receiving-yards": "rush_rec_yards",
     "interceptions": "interceptions",
-    # STILL UNMAPPED, and each for its own reason — none of them is an
-    # oversight, so please read before adding:
+    # Added 2026-09-16 after the FantasyPros stat-key census answered the
+    # question these were waiting on. The feed serves both projections — run
+    # 35108513721 measured rush_att non-zero on 309 of 422 skill players and
+    # pass_att on 70 of 82 passers — and both markets have banked actuals to
+    # grade against, so the dispersion could be fitted rather than assumed
+    # (within-player-season, net of each market's own team multiplier: carries
+    # RB 0.0914 / QB 0.0247, attempts QB 0.0260).
+    "rushing-attempts": "rush_attempts",
+    "passing-attempts": "pass_attempts",
+    # STILL UNMAPPED, and not an oversight:
     #
-    #   rushing-attempts (57 rows, the largest) and passing-attempts (28) are
-    #   the two worth having next. Both have banked actuals to calibrate
-    #   against (player_weeks carries "carries" and "attempts") and both are
-    #   ordinary count props. What is missing is the FantasyPros projection
-    #   key: nothing in this codebase reads a rush-attempt or pass-attempt
-    #   projection today, FP_API_KEY is an Actions secret the sandbox cannot
-    #   see, and mapping a slug to a market the model has no mean for would
-    #   abstain anyway — just silently, instead of honestly.
-    #   scripts/inspect_fp_stat_keys.py answers it from CI in one run.
-    #
-    #   passing-completions (28) is the one to leave alone even then.
-    #   player_weeks has no completions column at all, so there is nothing to
-    #   fit the dispersion on and nothing to walk-forward it against. A market
-    #   we cannot backtest is a market we cannot size.
+    #   passing-completions (28 rows). The census found the projection — the
+    #   feed serves pass_cmp as a plain number on the same 70 of 82 passers,
+    #   not as the "21/33" compound string that would have hidden it. So the
+    #   blocker is no longer the feed. It is that player_weeks has no
+    #   completions column, which means no dispersion to fit and nothing to
+    #   walk the market forward against. A market we cannot backtest is a
+    #   market we cannot size, and a market we cannot GRADE would stake and
+    #   sit pending forever (#208). Banking completions into player_weeks
+    #   unblocks it; until then this abstains on purpose.
 }
 
 
