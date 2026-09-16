@@ -256,3 +256,134 @@ def test_report_prices_the_league_axis(tmp_path):
     out = _report(tmp_path)
     by_league = out.split("by league:")[1]
     assert "90.0" in by_league and "10.0" in by_league
+
+
+# --------------------------------------------------------------------------
+# What one market costs — the axis a board change actually uses (2026-09-16)
+# --------------------------------------------------------------------------
+
+
+def _market_ledger() -> pd.DataFrame:
+    """Calls whose cost equals their market count — the real billing shape."""
+    from velocity.ingest.theoddsapi import usage_frame
+
+    return usage_frame([
+        {"at": pd.Timestamp("2026-09-16T12:00"), "kind": "*/sports/*/odds",
+         "endpoint": "e", "league": "nfl", "markets": "h2h,spreads,totals",
+         "regions": "us", "cost": 3, "used": 3, "remaining": 100},
+        {"at": pd.Timestamp("2026-09-16T12:01"), "kind": "*/sports/*/events/*/odds",
+         "endpoint": "e", "league": "nfl", "markets": "player_pass_yds,player_rush_yds",
+         "regions": "us", "cost": 2, "used": 5, "remaining": 98},
+        {"at": pd.Timestamp("2026-09-16T12:02"), "kind": "*/sports/*/events/*/odds",
+         "endpoint": "e", "league": "nfl", "markets": "player_pass_yds,player_rush_yds",
+         "regions": "us", "cost": 2, "used": 7, "remaining": 96},
+    ])
+
+
+def test_one_market_costs_one_credit() -> None:
+    """The billing rule, read off the ledger rather than off the docs.
+
+    This is what makes a board decision answerable without waiting a week: the
+    per-market rate falls out of the billing shape, not out of the traffic.
+    """
+    from scripts.report_odds_credits import cost_per_market
+
+    table = cost_per_market(_market_ledger()).set_index("kind")
+    assert table.loc["*/sports/*/events/*/odds", "credits_per_market"] == pytest.approx(1.0)
+    assert table.loc["*/sports/*/odds", "credits_per_market"] == pytest.approx(1.0)
+    assert table.loc["*/sports/*/events/*/odds", "markets_per_call"] == pytest.approx(2.0)
+
+
+def test_credit_free_calls_do_not_drag_the_rate_down() -> None:
+    """A /sports call costs nothing and lists no markets.
+
+    Counting it would report a per-market rate below the real one and make
+    every board change look cheaper than it is.
+    """
+    from scripts.report_odds_credits import cost_per_market
+    from velocity.ingest.theoddsapi import usage_frame
+
+    rows = _market_ledger().to_dict("records") + [
+        {"at": pd.Timestamp("2026-09-16T12:03"), "kind": "*/sports", "endpoint": "s",
+         "league": "", "markets": "", "regions": "", "cost": 0,
+         "used": 7, "remaining": 96},
+    ]
+    table = cost_per_market(usage_frame(rows))
+    assert "*/sports" not in set(table["kind"])
+    assert table["credits_per_market"].eq(1.0).all()
+
+
+def test_cost_per_market_of_nothing_is_empty_not_a_crash() -> None:
+    from scripts.report_odds_credits import cost_per_market
+    from velocity.ingest.theoddsapi import usage_frame
+
+    assert cost_per_market(usage_frame([])).empty
+    assert cost_per_market(pd.DataFrame()).empty
+
+
+# --------------------------------------------------------------------------
+# The live slate must bank what it spends (2026-09-16)
+# --------------------------------------------------------------------------
+
+
+def _live_slate_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_live_slate_ledger",
+        Path(__file__).resolve().parents[1] / "scripts" / "run_live_slate.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_live_slate_banks_every_call_site(monkeypatch, tmp_path) -> None:
+    """It spent credits from four call sites and banked none of them.
+
+    Each site built its own client and dropped that client's ``usage`` when it
+    went out of scope, so the two collectors banked ledgers and the live slate
+    — which runs far more often than either — banked nothing. Any projection
+    off those ledgers understated the real spend, which is worse than no
+    accounting because it reads like a number.
+    """
+    monkeypatch.setenv("THE_ODDS_API", "test-key")
+    mod = _live_slate_module()
+    headers = {"last": "3", "used": "30", "remaining": "900"}
+
+    first, second = mod._odds_client(), mod._odds_client()
+    first._record("/v4/sports/americanfootball_nfl/odds",
+                  {"markets": "h2h,spreads,totals", "regions": "us"}, headers)
+    second._record("/v4/sports/americanfootball_nfl/events/x/odds",
+                   {"markets": "player_pass_yds,player_rush_yds", "regions": "us"},
+                   {"last": "2", "used": "32", "remaining": "898"})
+
+    ledger = mod.bank_odds_usage(tmp_path, "nfl_test")
+    assert ledger is not None
+    banked = pd.read_parquet(ledger)
+    assert len(banked) == 2, "a client's calls went missing between sites"
+    assert set(banked["kind"]) == {"*/sports/*/odds", "*/sports/*/events/*/odds"}
+    assert int(banked["cost"].sum()) == 5
+
+
+def test_a_slate_that_spent_nothing_banks_nothing(monkeypatch, tmp_path) -> None:
+    """An offline slate (``--snapshot-file``) makes no calls and writes no file."""
+    monkeypatch.setenv("THE_ODDS_API", "test-key")
+    mod = _live_slate_module()
+    assert mod.bank_odds_usage(tmp_path, "nfl_test") is None
+    assert not list(tmp_path.glob("*.parquet"))
+
+
+def test_no_call_site_bypasses_the_accumulator() -> None:
+    """A new ``from_env()`` call site would silently stop being accounted for.
+
+    The helper exists precisely because four of them drifted out of the ledger
+    once already, so the property worth pinning is that only the helper builds
+    a client.
+    """
+    source = (Path(__file__).resolve().parents[1]
+              / "scripts" / "run_live_slate.py").read_text()
+    assert source.count("TheOddsAPIClient.from_env()") == 1, (
+        "a call site is building its own client again — route it through "
+        "_odds_client() or its spend will not reach the ledger"
+    )

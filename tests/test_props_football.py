@@ -34,6 +34,7 @@ def _fp_frame() -> pd.DataFrame:
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "rush_yds", 18.0),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_int", 0.72),
         ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_att", 34.0),
+        ("kc_qb", "Patrick Mahomes", "KC", "QB", "pass_cmp", 22.1),
         ("kc_rb", "Isiah Pacheco", "KC", "RB", "rush_att", 14.0),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec", 6.5),
         ("kc_te", "Travis Kelce", "KC", "TE", "rec_yds", 72.0),
@@ -455,3 +456,97 @@ def test_the_shipped_dispersion_is_what_the_fitter_measures() -> None:
         config.rush_att_phi("QB"), abs=5e-4)
     assert fitted["pass_attempts_phi"] == pytest.approx(
         config.pass_attempts_phi, abs=5e-4)
+
+
+# --- completions: a binomial on attempts, not a count of its own --------------
+
+
+def test_completions_can_never_exceed_attempts() -> None:
+    """A separate Poisson would happily print 30 completions on 25 attempts.
+
+    The constraint is structural, so the sim has to honour it in every draw,
+    not on average.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(41),
+        FootballPropConfig(n_sims=100_000),
+    )
+    attempts = samples[("kc_qb", "pass_attempts")]
+    completions = samples[("kc_qb", "pass_completions")]
+    assert np.all(completions <= attempts)
+    assert np.all(completions >= 0)
+    assert np.array_equal(completions, np.round(completions))
+
+
+def test_completions_recover_the_projection() -> None:
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(41),
+        FootballPropConfig(n_sims=200_000),
+    )
+    assert np.mean(samples[("kc_qb", "pass_completions")]) == pytest.approx(22.1, rel=0.02)
+
+
+def test_completions_are_strongly_tied_to_attempts() -> None:
+    """The reason this is a binomial and not an independent count.
+
+    Within player-season the banked QB games put the correlation at 0.844.
+    Drawn independently, an "over attempts + over completions" parlay would
+    price as two bets when it is nearly one — so a LOW correlation here is the
+    failure, not a high one.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(43),
+        FootballPropConfig(n_sims=200_000),
+    )
+    corr = float(np.corrcoef(samples[("kc_qb", "pass_attempts")],
+                             samples[("kc_qb", "pass_completions")])[0, 1])
+    assert corr > 0.8, f"completions correlate only {corr:.3f} with attempts"
+
+
+def test_completion_dispersion_lands_near_the_banked_figure() -> None:
+    """Banked var/mean is 1.753 at a median 20.3 completions.
+
+    The binomial-on-attempts structure returns ~1.85 — about 6% wide, which is
+    the safe direction for a price. Real completion% wobbles game to game by
+    more than binomial noise allows; that gap is left uncorrected rather than
+    papered over, and this pins the size of it.
+    """
+    samples = simulate_team_props(
+        team_player_means(_fp_frame(), "KC"), np.random.default_rng(47),
+        FootballPropConfig(n_sims=400_000),
+    )
+    draws = samples[("kc_qb", "pass_completions")]
+    ratio = float(np.var(draws) / np.mean(draws))
+    assert ratio == pytest.approx(1.85, abs=0.2), f"var/mean {ratio:.3f}"
+
+
+def test_completions_abstain_without_an_attempts_projection() -> None:
+    """No denominator, no market — never an invented one."""
+    fp = pd.DataFrame(
+        [("qb", "A QB", "NE", "QB", "pass_cmp", 15.0),
+         ("qb", "A QB", "NE", "QB", "pass_yds", 200.0)],
+        columns=["player_id", "player_name", "team", "position", "stat", "value"],
+    )
+    samples = simulate_team_props(
+        team_player_means(fp, "NE"), np.random.default_rng(3), CFG
+    )
+    assert ("qb", "pass_completions") not in samples
+
+
+def test_the_completion_rate_comes_from_the_players_own_projection() -> None:
+    """A checkdown passer and a deep thrower must not share a league rate."""
+    rows = []
+    for key, att, cmp_ in (("dink", 30.0, 22.5), ("bomb", 30.0, 16.5)):
+        rows += [
+            (key, key, "NE", "QB", "pass_att", att),
+            (key, key, "NE", "QB", "pass_cmp", cmp_),
+        ]
+    fp = pd.DataFrame(
+        rows, columns=["player_id", "player_name", "team", "position", "stat", "value"]
+    )
+    samples = simulate_team_props(
+        team_player_means(fp, "NE"), np.random.default_rng(7),
+        FootballPropConfig(n_sims=100_000),
+    )
+    assert np.mean(samples[("dink", "pass_completions")]) == pytest.approx(22.5, rel=0.03)
+    assert np.mean(samples[("bomb", "pass_completions")]) == pytest.approx(16.5, rel=0.03)

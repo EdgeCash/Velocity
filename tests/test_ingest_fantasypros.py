@@ -220,40 +220,6 @@ def test_normalize_injuries_flags_out_statuses() -> None:
     assert normalize_injuries({}).empty
 
 
-class _StubMlbClient:
-    """MLB position=ALL is tier-limited (proven live 2026-08-23); per-position works."""
-
-    def raw_projections(self, sport, season, position="ALL", week=0):
-        assert sport == "mlb"
-        if position == "ALL":
-            return {"public_api_limited": True, "players": []}
-        if position in ("SP", "OF"):
-            return {"players": [{
-                "fpid": f"{position}-1", "name": f"{position} One",
-                "team_id": "NYY", "position_id": position,
-                "stats": ({"ip": 180.0, "k": 200.0, "gs": 30.0}
-                          if position == "SP" else
-                          {"h": 150.0, "hr": 30.0, "g": 140.0}),
-            }]}
-        return {"players": []}
-
-
-def test_fetch_league_frame_mlb_falls_back_per_position() -> None:
-    import importlib.util
-    from pathlib import Path
-
-    spec = importlib.util.spec_from_file_location(
-        "collect_fantasypros_mlb",
-        Path(__file__).resolve().parents[1] / "scripts" / "collect_fantasypros.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    frame, notes = mod.fetch_league_frame(_StubMlbClient(), "mlb", 2026, 0)
-    assert any("per-position" in n for n in notes)
-    assert set(frame["player_name"]) == {"SP One", "OF One"}
-
-
 # --------------------------------------------------------------------------
 # Stat-key census — making an unread projection visible (2026-09-16)
 # --------------------------------------------------------------------------
@@ -323,9 +289,13 @@ def test_an_all_zero_key_is_reported_as_a_placeholder() -> None:
     """
     from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
 
+    # NOT pass_cmp: that was this test's placeholder until completions became
+    # a market, which is the third time a census pin has been invalidated by
+    # the very change it was describing. ``targets`` is volume-like, plausible
+    # for this feed to serve, and nothing prices it.
     payload = {"players": [
         {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
-         "pass_yds": 250.0, "pass_cmp": 0.0},
+         "pass_yds": 250.0, "targets": 0.0},
     ]}
     lines = "\n".join(
         describe_stat_keys(normalize_projections(payload, season=2026, week=1), "nfl")
@@ -346,9 +316,10 @@ def test_the_census_guidance_reflects_what_is_actually_still_open() -> None:
     from velocity.ingest.fantasypros import describe_stat_keys
 
     lines = "\n".join(describe_stat_keys(_census_frame(), "nfl"))
-    assert "rush_att / pass_att are priced" in lines
-    assert "player_weeks has no completions column" in lines
+    assert "all priced" in lines
+    assert "whole NFL BettingPros board is mapped" in lines
     assert "unblocks a market" not in lines
+    assert "no completions column" not in lines
 
 
 def test_a_feed_with_no_volume_key_says_the_slugs_stay_unmapped() -> None:
@@ -470,8 +441,8 @@ def test_the_football_guidance_does_not_print_under_another_sport() -> None:
         season=2026, week=0,
     )
     lines = "\n".join(describe_stat_keys(mlb, "mlb"))
-    assert "completions" not in lines
-    assert "rushing-attempts" not in lines
+    assert "BettingPros" not in lines
+    assert "priced" not in lines
     # The same shape under NFL does carry the football guidance. A volume-like
     # key has to be present for that block to have anything to say.
     nfl = normalize_projections(
@@ -480,5 +451,122 @@ def test_the_football_guidance_does_not_print_under_another_sport() -> None:
         season=2026, week=1,
     )
     nfl_lines = "\n".join(describe_stat_keys(nfl, "nfl"))
-    assert "rushing-attempts" in nfl_lines
-    assert "player_weeks has no completions column" in nfl_lines
+    assert "BettingPros board is mapped" in nfl_lines
+
+
+# --------------------------------------------------------------------------
+# The collector must not spend requests on rows nothing reads (2026-09-16)
+# --------------------------------------------------------------------------
+
+
+def test_the_collector_only_fetches_leagues_something_reads() -> None:
+    """MLB cost ten requests a run for months to bank zero rows.
+
+    It was documented the whole time — UNCONSUMED_LEAGUES carried a correct
+    note about it — which is the point: saying a thing in a log is not the
+    same as not doing it. MLB DFS prices from collect_mlb_player_stats.py and
+    MLB props from the banked starters frame, so nothing here was ever read.
+    """
+    from scripts.collect_fantasypros import FALLBACK_POSITIONS, LEAGUES
+
+    assert LEAGUES == ("nfl",)
+    assert "mlb" not in FALLBACK_POSITIONS, (
+        "a per-position fallback for a league we do not fetch is the expensive "
+        "half of the bug — one request, then one per position"
+    )
+
+
+def test_nothing_is_fetched_while_marked_unconsumed() -> None:
+    """The invariant the old note failed to enforce.
+
+    If a league is known to have no consumer, it must not be in the fetch set.
+    Re-adding one is a decision to spend requests on it.
+    """
+    from scripts.collect_fantasypros import LEAGUES, UNCONSUMED_LEAGUES
+
+    still_fetched = [lg for lg in UNCONSUMED_LEAGUES if lg in LEAGUES]
+    assert not still_fetched, (
+        f"{still_fetched} are marked unconsumed and still fetched — either "
+        "something reads them (drop the note) or nothing does (drop the fetch)"
+    )
+
+
+# --------------------------------------------------------------------------
+# The census must know about every consumer, not just the props model
+# --------------------------------------------------------------------------
+
+
+def _multi_consumer_frame():
+    from velocity.ingest.fantasypros import normalize_projections
+
+    return normalize_projections({"players": [
+        {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
+         "pass_yds": 265.0, "rush_tds": 0.3, "fumbles": 0.1, "points_ppr": 23.2},
+        {"fpid": "2", "name": "BUF D/ST", "team": "BUF", "position": "DST",
+         "def_sack": 2.5, "def_int": 0.8, "def_ff": 0.7, "def_tyda": 330.0},
+        {"fpid": "3", "name": "A K", "team": "BUF", "position": "K",
+         "fg": 1.3, "fga": 1.6, "xpt": 2.1},
+    ]}, season=2026, week=2)
+
+
+def test_the_dfs_layer_counts_as_a_consumer() -> None:
+    """The census first shipped reporting the props model's view as the feed's.
+
+    velocity/dfs/dst.py has been reading the team-defense block since the DST
+    projection landed — DK classic needs a defense, and the pool used to join
+    it at 0.0 points. Calling those keys UNREAD invites someone to wire up a
+    second consumer for data already in use.
+    """
+    from velocity.ingest.fantasypros import stat_key_census
+
+    census = stat_key_census(_multi_consumer_frame()).set_index("stat")
+    assert census.loc["def_sack", "read"]
+    assert census.loc["def_sack", "consumer"] == "DFS: DST"
+    assert not census.loc["def_sack", "mapped"], "it is not a prop market"
+    assert census.loc["fumbles", "consumer"] == "DFS: DK scoring"
+    assert census.loc["rush_tds", "consumer"] == "props: anytime_td"
+
+
+def test_deliberately_unread_keys_read_as_declined_not_unread() -> None:
+    """"Declined" and "nobody looked" are different findings.
+
+    DK scores neither forced fumbles nor yards allowed, and we compute DK
+    points from the components rather than trusting a scoring variant. Leaving
+    those as UNREAD makes a reader re-derive the same conclusion every time.
+    """
+    from velocity.ingest.fantasypros import describe_stat_keys
+
+    lines = "\n".join(describe_stat_keys(_multi_consumer_frame(), "nfl"))
+    assert "declined def_ff" in lines
+    assert "DK does not score forced fumbles" in lines
+    assert "declined def_tyda" in lines
+    assert "declined points_ppr" in lines
+
+
+def test_the_kicker_keys_are_the_only_thing_genuinely_unexamined() -> None:
+    """The gap this report exists to surface.
+
+    fg / fga / xpt are projections nothing reads and nothing has declined —
+    while DK's Showdown board has a kicker slot and dst.py's own note calls a
+    kicker "routinely a live captain". If a consumer appears, this test should
+    fail and be updated; that is the point of it.
+    """
+    from velocity.ingest.fantasypros import stat_key_census
+
+    census = stat_key_census(_multi_consumer_frame())
+    unread = set(census[~census["read"]]["stat"]) - {"def_ff", "def_tyda", "points_ppr"}
+    assert unread == {"fg", "fga", "xpt"}, f"the unexamined set moved: {unread}"
+
+
+def test_the_guidance_does_not_still_advertise_priced_markets() -> None:
+    """Third time this text has gone stale one commit after its own change."""
+    from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
+
+    frame = normalize_projections({"players": [
+        {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
+         "pass_yds": 265.0, "pass_att": 33.0, "pass_cmp": 21.0},
+    ]}, season=2026, week=2)
+    lines = "\n".join(describe_stat_keys(frame, "nfl"))
+    assert "all priced" in lines
+    assert "no completions column" not in lines
+    assert "unblocks a market" not in lines

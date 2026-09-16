@@ -22,7 +22,7 @@ import argparse
 import json
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -70,13 +70,45 @@ def _find_games(folder: Path) -> Path:
     raise SystemExit(f"need a games file in {folder}/ to fit the model")
 
 
-def _load_snapshot(args: argparse.Namespace) -> object:
-    if args.snapshot_file:
-        return json.loads(Path(args.snapshot_file).read_text())
+# Every Odds API call this script makes, for the credit ledger.
+#
+# The live slate spends credits from four separate call sites, each of which
+# built its own client and dropped that client's ``usage`` on the floor when it
+# went out of scope. So the two collectors banked ledgers and the live slate —
+# which runs far more often than either — banked nothing, and any projection
+# off those ledgers understated the real spend by however much this costs.
+# An accounting with a known hole in it is worse than none, because it reads
+# like a number.
+_ODDS_USAGE: list[Mapping[str, object]] = []
+
+
+def _odds_client() -> object:
+    """A client whose usage reaches the ledger. Use this, never from_env directly."""
     from velocity.ingest.theoddsapi import TheOddsAPIClient  # network path
 
     client = TheOddsAPIClient.from_env()
-    return client.odds_payload(args.league)
+    _ODDS_USAGE.append(client.usage)  # the client's own list, filled as it calls
+    return client
+
+
+def bank_odds_usage(out_dir: Path, tag: str) -> Path | None:
+    """Write everything this run spent, flattened across all four call sites."""
+    from velocity.ingest.theoddsapi import describe_usage, write_usage
+
+    calls = [call for usage in _ODDS_USAGE for call in usage]
+    if not calls:
+        return None
+    ledger = write_usage(calls, out_dir, tag)
+    print(describe_usage(calls))
+    if ledger is not None:
+        print(f"credit ledger → {ledger}")
+    return ledger
+
+
+def _load_snapshot(args: argparse.Namespace) -> object:
+    if args.snapshot_file:
+        return json.loads(Path(args.snapshot_file).read_text())
+    return _odds_client().odds_payload(args.league)
 
 
 # A banked ``/odds`` payload is named ``odds_{league}_{YYYYmmdd}T{HHMMSS}Z.json``
@@ -1324,9 +1356,7 @@ def main() -> None:
     if (args.team_totals and not args.snapshot_file
             and args.league in ("nfl", "ncaaf")):
         try:
-            from velocity.ingest.theoddsapi import TheOddsAPIClient
-
-            team_lines = TheOddsAPIClient.from_env().team_totals(args.league)
+            team_lines = _odds_client().team_totals(args.league)
             if not team_lines.empty:
                 lines = pd.concat([lines, team_lines], ignore_index=True)
                 print(f"team totals: {len(team_lines)} lines joined the board")
@@ -2362,9 +2392,7 @@ def _prop_slate(
             print("prop slate skipped: offline run needs --prop-lines-file")
             return None, {}, {}, None
         else:
-            from velocity.ingest.theoddsapi import TheOddsAPIClient
-
-            prop_lines = TheOddsAPIClient.from_env().player_props(args.league)
+            prop_lines = _odds_client().player_props(args.league)
         if prop_lines.empty:
             print("prop slate: no prop lines on the board")
             return None, {}, {}, None
@@ -2470,9 +2498,7 @@ def _mlb_k_slate(
             print("K prop slate skipped: offline run needs --prop-lines-file")
             return None, {}
         else:
-            from velocity.ingest.theoddsapi import TheOddsAPIClient
-
-            prop_lines = TheOddsAPIClient.from_env().player_props(
+            prop_lines = _odds_client().player_props(
                 args.league, markets="pitcher_strikeouts")
         if prop_lines.empty:
             print("K prop slate: no pitcher_strikeouts lines on the board")
@@ -2908,6 +2934,18 @@ def _parlay_slate(
             print(f"wrote {len(frame)} parlay rows to {dest}")
     except Exception as exc:  # noqa: BLE001 - parlays are additive; never break the slate
         print(f"parlay slate skipped: {exc}")
+
+    # Last, and outside every per-surface try: a call that failed downstream
+    # still spent its credit, and those are exactly the ones worth banking.
+    # Never let the accounting break the slate it is accounting for.
+    if args.out:
+        try:
+            bank_odds_usage(
+                Path(args.out),
+                f"{args.league}_{now.strftime('%Y%m%dT%H%M%SZ')}",
+            )
+        except Exception as exc:  # noqa: BLE001 - the ledger is never the point
+            print(f"credit ledger skipped: {exc}")
 
 
 if __name__ == "__main__":

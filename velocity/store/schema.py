@@ -80,6 +80,16 @@ PROP_MARKETS = [
     # fitted, not assumed — see ``FootballPropConfig``.
     "rush_attempts",
     "pass_attempts",
+    # Completions, added once the actuals were banked (2026-09-16). This was
+    # the last slug on the NFL board still abstaining, and the only thing
+    # missing was a column: the projection has been served all along.
+    #
+    # NOT an independent count. Completions are a fraction of attempts — they
+    # correlate 0.844 within player-season on 2,682 banked QB games and can
+    # never exceed them — so the sim draws them as a binomial on the attempts
+    # it already simulated. Pricing them independently would sell an "over
+    # attempts + over completions" parlay as two bets when it is nearly one.
+    "pass_completions",
 ]
 PROP_SIDES = ["over", "under"]
 

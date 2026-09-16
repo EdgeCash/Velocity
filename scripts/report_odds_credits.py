@@ -74,6 +74,44 @@ def marginal_costs(usage: pd.DataFrame) -> pd.DataFrame:
     return by_league.sort_values("credits", ascending=False).reset_index(drop=True)
 
 
+def cost_per_market(usage: pd.DataFrame) -> pd.DataFrame:
+    """What ONE market costs, per endpoint kind — the axis a board change uses.
+
+    :func:`marginal_costs` prices the league axis and :func:`usage_summary` the
+    kind axis. Neither answers the question that actually comes up: *what would
+    adding a market to the board cost?* The Odds API bills per market per
+    region per call, so widening a six-market football board to ten is a ~67%
+    increase on every prop call — a decision worth pricing before making, and
+    one that does NOT need a week of data, because it falls out of the billing
+    shape rather than the traffic.
+
+    Rows without a cost or without markets are skipped: a credit-free call
+    (``/sports``) would otherwise drag the per-market rate toward zero.
+    """
+    columns = ["kind", "markets_per_call", "credits_per_market", "calls", "credits"]
+    if usage.empty or not {"markets", "cost", "kind"} <= set(usage.columns):
+        return pd.DataFrame({c: pd.Series(dtype="float64") for c in columns})
+    frame = usage.copy()
+    frame["cost"] = pd.to_numeric(frame["cost"], errors="coerce")
+    frame["n_markets"] = (
+        frame["markets"].fillna("").astype(str).str.strip()
+        .apply(lambda m: len([p for p in m.split(",") if p.strip()]))
+    )
+    frame = frame[(frame["n_markets"] > 0) & frame["cost"].notna() & (frame["cost"] > 0)]
+    if frame.empty:
+        return pd.DataFrame({c: pd.Series(dtype="float64") for c in columns})
+    out = frame.groupby("kind", as_index=False).agg(
+        markets_per_call=("n_markets", "mean"),
+        credits=("cost", "sum"),
+        calls=("cost", "size"),
+    )
+    out["credits_per_market"] = (
+        out["credits"] / (out["markets_per_call"] * out["calls"])
+    ).round(3)
+    out["markets_per_call"] = out["markets_per_call"].round(2)
+    return out[columns].sort_values("credits", ascending=False).reset_index(drop=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Report The Odds API credit consumption")
     parser.add_argument("--ledgers", default="artifacts/odds",
@@ -100,6 +138,11 @@ def main() -> None:
 
     print("\nby league:")
     print(marginal_costs(usage).to_string(index=False))
+
+    per_market = cost_per_market(usage)
+    if not per_market.empty:
+        print("\nwhat one market costs (price a board change before making it):")
+        print(per_market.to_string(index=False))
 
     proj = project_monthly(usage, plan=args.plan, min_hours=args.min_hours)
     print(f"\nobserved: {int(proj['credits'])} credits over {proj['days']:.2f} days")
