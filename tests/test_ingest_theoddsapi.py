@@ -279,3 +279,13 @@ def test_every_mapped_odds_api_prop_market_is_one_we_price() -> None:
     from velocity.store.schema import PROP_MARKETS
 
     assert all(m in PROP_MARKETS for m in PROP_MARKET_BY_KEY.values())
+
+
+def test_the_attempt_markets_map_but_are_not_pulled_by_default() -> None:
+    """Same reasoning as the two markets before them: mapping is free."""
+    from velocity.ingest.theoddsapi import DEFAULT_EVENT_MARKETS, PROP_MARKET_BY_KEY
+
+    assert PROP_MARKET_BY_KEY["player_rush_attempts"] == "rush_attempts"
+    assert PROP_MARKET_BY_KEY["player_pass_attempts"] == "pass_attempts"
+    for key in ("player_rush_attempts", "player_pass_attempts"):
+        assert key not in DEFAULT_EVENT_MARKETS

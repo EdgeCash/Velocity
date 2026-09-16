@@ -117,6 +117,62 @@ on it. No correction is applied: inducing a 0.026 correlation is more machinery
 than a 1% effect earns. It is pinned by a test so that the day someone does
 induce it, the note fails rather than going quietly stale.
 
+## The census answered it, and two more markets landed (2026-09-16)
+
+Run [35108513721](https://github.com/EdgeCash/Velocity/actions/runs/35108513721)
+printed the first stat-key census. FantasyPros serves **37 keys; we read 6** —
+and all three volume keys are there:
+
+| Key | Non-zero | Mean | Max |
+|---|---|---|---|
+| `rush_att` | 309 of 422 | 2.12 | 19.19 |
+| `pass_att` | 70 of 82 | 12.84 | 35.22 |
+| `pass_cmp` | 70 of 82 | 8.30 | 23.09 |
+
+`pass_cmp` arrives as a plain number, not the `"21/33"` compound string the
+melt would have dropped — so the guard was not needed, but it was not wrong to
+have.
+
+**`rush_attempts` and `pass_attempts` are now priced.** Both are gamma-mixed
+Poissons on a team multiplier — the negative binomial `receptions` already
+uses — with dispersion fitted from the bank rather than assumed
+(`scripts/fit_prop_dispersion.py`, within player-season, net of each market's
+own multiplier):
+
+| Market | φ | Player-seasons |
+|---|---|---|
+| carries, RB | 0.0914 | 365 |
+| carries, QB | 0.0247 | 169 |
+| attempts, QB | 0.0260 | 212 |
+
+A back's workload swings with the script about as hard as his targets do
+(`receptions` RB φ is 0.083), which is the shape you would expect and a useful
+sign the measurement is real. At the banked median volumes the structure
+returns var/mean **2.331** for QB attempts against a measured **2.332**, and
+2.63 for RB carries against 2.28 — the carries side runs a little wide, which
+is the safe direction for a price. A bare Poisson would say 1.0 and price every
+tail far too tight.
+
+Each rides the multiplier for its **own** phase: carries with `rush_mult`,
+dropbacks with `pass_mult`. Crossing them would make a back's workload rise
+with his quarterback's, when the script that lifts one suppresses the other.
+A test pins that ordering.
+
+**`passing-completions` still stays out, for a reason that survived the
+census.** The projection exists, so the feed is no longer the blocker;
+`player_weeks` has no completions column, so there is no dispersion to fit and
+nothing to settle against. A market that prices but cannot grade would stake
+and sit `pending` forever. Banking completions into `player_weeks` unblocks it.
+
+**Other keys the feed serves and nothing reads**, noted so they are a choice
+rather than an oversight: three DraftKings scoring variants (`points`,
+`points_half`, `points_ppr`); a full team-defense block (`def_sack` 2.51 mean,
+`def_int`, `def_pa` 22.9, `def_tyda` 334.8, `def_td`, `def_ff`, `def_fr`,
+`def_safety` — 32 rows each, one per team); kicker projections (`fg`, `fga`,
+`xpt`). Eight milestone keys (`pass_yds_300`, `rush_yds_100`,
+`scrimage_yards_100` …) are **all zero on every row** — placeholders in a
+weekly projection, not projections, and the census flags exactly that case.
+
 **Three slugs stay unmapped, each for its own reason.** `rushing-attempts` (57
 rows, the largest) and `passing-attempts` (28) are the two worth having next:
 both are ordinary count props and both have banked actuals to calibrate against
@@ -157,9 +213,13 @@ decided against the number rather than ahead of it.
 - NHL SOG after the season opens (skater `sog` is in every banked
   boxscore path already).
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
-- Confirm the FantasyPros rush-attempt / pass-attempt projection keys — read
-  the stat-key census in any "Collect FantasyPros projections" run log; they
-  unblock the two largest unmapped BettingPros slugs.
+- ~~Confirm the FantasyPros rush-attempt / pass-attempt projection keys~~ —
+  answered by the census (above); both markets are priced.
+- Bank a completions column into `player_weeks` to unblock
+  `passing-completions` — the projection is served, the actuals are not.
+- MLB projections return 0 rows every run and fall back through all nine
+  positions first: ~10 wasted requests per run on a league whose snapshot
+  nothing reads. Drop it from `LEAGUES` or fix the call.
 - Decide whether `player_rush_reception_yds` and `player_pass_interceptions`
   join the default Odds API pull — needs a week of the credit ledger first.
 - ~~Prop CLV: closes for props from the banked line archive~~ — attached

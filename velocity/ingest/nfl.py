@@ -280,6 +280,14 @@ _WEEKLY_STAT_COLUMNS = {
 # to try alternatives; the DFS normalizer below has carried both spellings for
 # a while, which is where these came from.
 _WEEKLY_INTERCEPTION_COLUMNS = ("passing_interceptions", "interceptions")
+# Attempt counts, same treatment: nflverse spells carries "carries" and
+# dropbacks "attempts" today, and has moved both before. A market that prices
+# but cannot settle is worse than one that abstains (#208), so these are
+# normalized here the moment they become markets, not later.
+_WEEKLY_ATTEMPT_COLUMNS = {
+    "rush_attempts": ("carries", "rushing_attempts", "rush_attempts"),
+    "pass_attempts": ("attempts", "passing_attempts", "pass_attempts"),
+}
 
 
 def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
@@ -347,6 +355,18 @@ def normalize_weekly_stats(raw: pd.DataFrame) -> pd.DataFrame:
         pd.Series(ints, index=raw.index) if ints is not None
         else pd.Series(float("nan"), index=raw.index)
     )
+    # NaN when the feed serves no spelling, never 0.0 — the same reasoning as
+    # interceptions above. "He had no carries" is a graded result; "the column
+    # is gone" is not, and conflating them settles every under as a winner.
+    for market, sources in _WEEKLY_ATTEMPT_COLUMNS.items():
+        series = next(
+            (pd.to_numeric(raw[c], errors="coerce") for c in sources if c in raw.columns),
+            None,
+        )
+        out[market] = (
+            pd.Series(series, index=raw.index) if series is not None
+            else pd.Series(float("nan"), index=raw.index)
+        )
     return out
 
 

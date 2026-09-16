@@ -625,23 +625,32 @@ def test_the_two_football_slugs_added_from_the_coverage_report_are_mapped() -> N
     assert BP_PROP_SLUG_TO_MARKET["interceptions"] == "interceptions"
 
 
-def test_the_slugs_without_a_projection_stay_unmapped() -> None:
-    """The point of the table is that an unmodelable slug abstains honestly.
+def test_the_attempt_slugs_are_mapped_now_the_census_confirmed_the_feed() -> None:
+    """These waited on a measurement, and got one.
 
-    ``rushing-attempts`` and ``passing-attempts`` are worth having and are
-    blocked only on confirming the FantasyPros projection key
-    (scripts/inspect_fp_stat_keys.py). ``passing-completions`` has no banked
-    actuals to calibrate against at all — player_weeks carries no completions
-    column — so it cannot be sized even if the feed served a projection.
-
-    Mapping any of them early would look like coverage and deliver abstention,
-    which is the exact failure mode the coverage report exists to surface.
+    The FantasyPros stat-key census (run 35108513721) found ``rush_att`` on
+    309 of 422 skill players and ``pass_att`` on 70 of 82 passers. Before that
+    nothing in this codebase read an attempt projection, so mapping either
+    would have abstained silently rather than honestly — which is the failure
+    mode the coverage report exists to surface.
     """
-    for slug in ("rushing-attempts", "passing-attempts", "passing-completions"):
-        assert slug not in BP_PROP_SLUG_TO_MARKET, (
-            f"{slug} was mapped — confirm the projection key and the banked "
-            "actuals first, then price it"
-        )
+    assert BP_PROP_SLUG_TO_MARKET["rushing-attempts"] == "rush_attempts"
+    assert BP_PROP_SLUG_TO_MARKET["passing-attempts"] == "pass_attempts"
+
+
+def test_completions_stays_unmapped_for_the_reason_that_still_holds() -> None:
+    """The feed serves it; we still cannot grade it.
+
+    The census found ``pass_cmp`` as a plain number on the same 70 of 82
+    passers, so the projection is no longer the blocker. ``player_weeks`` has
+    no completions column, so there is no dispersion to fit and nothing to
+    settle against — and a market that prices but cannot settle would stake
+    and sit pending forever (#208). Bank completions first.
+    """
+    assert "passing-completions" not in BP_PROP_SLUG_TO_MARKET, (
+        "passing-completions was mapped — bank a completions column into "
+        "player_weeks first, or it will price and never settle"
+    )
 
 
 # --------------------------------------------------------------------------

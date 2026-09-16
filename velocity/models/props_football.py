@@ -60,6 +60,12 @@ FP_STAT_TO_MARKET = {
     # penalty to a market of its own.
     "pass_int": "interceptions",
     "pass_ints": "interceptions",
+    # Attempt volume. Confirmed served by the stat-key census (run 35108513721,
+    # 2026-09-16): rush_att on 309 of 422 skill players, pass_att on 70 of 82
+    # passers. Nothing read an attempt projection before that run, which is
+    # exactly why the two BettingPros slugs waiting on it stayed unmapped.
+    "rush_att": "rush_attempts",
+    "pass_att": "pass_attempts",
 }
 _TD_STATS = ("rush_tds", "rec_tds")
 
@@ -68,7 +74,12 @@ _TD_STATS = ("rush_tds", "rec_tds")
 # leg, so a receiving back who clears neither floor alone still prices.
 _MIN_MEAN = {"pass_yards": 25.0, "pass_tds": 0.05, "rush_yards": 5.0,
              "receiving_yards": 5.0, "receptions": 0.5, "anytime_td": 0.02,
-             "interceptions": 0.05, "rush_rec_yards": 20.0}
+             "interceptions": 0.05, "rush_rec_yards": 20.0,
+             # A receiver with an end-around on his projection is not a
+             # rushing-attempts prop, and no book posts one: the banked WR
+             # carries are 24 player-seasons against the backs' 365. The floor
+             # keeps the market to players who actually carry it.
+             "rush_attempts": 3.0, "pass_attempts": 10.0}
 
 
 def _normalize_name(name: str) -> str:
@@ -130,6 +141,21 @@ class FootballPropConfig:
     receptions_phi_by_position: Mapping[str, float] = field(
         default_factory=lambda: {"WR": 0.027, "TE": 0.0, "RB": 0.083})
     receptions_phi: float = 0.03
+    # Attempt-count overdispersion, fitted the same way and on the same bank:
+    # the within-player-season (var - mean)/mean^2, net of the team
+    # multiplier's own exp(sigma^2)-1. Carries ride the RUSH multiplier and
+    # attempts the PASS one, so each is netted against its own.
+    #
+    #   carries   RB 0.0914 (365 player-seasons), QB 0.0247 (169)
+    #   attempts  QB 0.0260 (212)
+    #
+    # A back's workload swings with the game script about as hard as his
+    # targets do (receptions RB phi is 0.083), which is the shape you would
+    # expect and a useful check that this is measuring something real.
+    rush_attempts_phi_by_position: Mapping[str, float] = field(
+        default_factory=lambda: {"RB": 0.0914, "QB": 0.0247})
+    rush_attempts_phi: float = 0.0914
+    pass_attempts_phi: float = 0.0260
     # Per-reception yardage noise, scaled by √receptions. A deep threat is
     # not a slot receiver (was 6.0 for everyone; measured 10.6 / 7.9 / 7.6).
     yards_sd_by_position: Mapping[str, float] = field(
@@ -150,6 +176,11 @@ class FootballPropConfig:
 
     def phi(self, position: str) -> float:
         return float(self.receptions_phi_by_position.get(position, self.receptions_phi))
+
+    def rush_att_phi(self, position: str) -> float:
+        return float(
+            self.rush_attempts_phi_by_position.get(position, self.rush_attempts_phi)
+        )
 
     def per_catch_sd(self, position: str) -> float:
         return float(self.yards_sd_by_position.get(position, self.yards_sd_per_reception))
@@ -313,6 +344,34 @@ def simulate_team_props(
         ints_mean = p.means.get("interceptions", 0.0)
         if ints_mean >= _MIN_MEAN["interceptions"]:
             samples[(p.key, "interceptions")] = rng.poisson(ints_mean * pass_mult).astype(float)
+
+        # Attempt counts. Gamma-mixed Poisson on the team multiplier — the
+        # negative binomial receptions already uses — but each rides the
+        # multiplier for its OWN phase of the game: carries with rush_mult,
+        # dropbacks with pass_mult. Crossing them would make a back's workload
+        # swing with the passing game, which is backwards: the script that
+        # lifts one suppresses the other.
+        #
+        # Checked against the bank rather than assumed. At the banked median
+        # volumes the structure returns var/mean 2.331 for QB attempts against
+        # a measured 2.332, and 2.63 for RB carries against 2.28 — the carries
+        # side runs a little wide, which is the safe direction for a price.
+        rush_att_mean = p.means.get("rush_attempts", 0.0)
+        if rush_att_mean >= _MIN_MEAN["rush_attempts"]:
+            lam = rush_att_mean * rush_mult
+            att_phi = config.rush_att_phi(p.position)
+            if att_phi > 0:
+                lam = lam * rng.gamma(1.0 / att_phi, att_phi, n)
+            samples[(p.key, "rush_attempts")] = rng.poisson(lam).astype(float)
+
+        pass_att_mean = p.means.get("pass_attempts", 0.0)
+        if pass_att_mean >= _MIN_MEAN["pass_attempts"]:
+            lam = pass_att_mean * pass_mult
+            if config.pass_attempts_phi > 0:
+                lam = lam * rng.gamma(
+                    1.0 / config.pass_attempts_phi, config.pass_attempts_phi, n
+                )
+            samples[(p.key, "pass_attempts")] = rng.poisson(lam).astype(float)
 
         if p.td_rate >= _MIN_MEAN["anytime_td"]:
             # Scoring rides the game script too: blend of the two multipliers.
