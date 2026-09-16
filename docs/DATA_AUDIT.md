@@ -257,6 +257,54 @@ Nothing in the repo calls it. Not a data gap — nothing needs it — but it is 
 maintained network path with no consumer, and it reads like a capability the
 system has. Delete it, or wire it to the thing it was written for.
 
+## 9. NCAAF 2026 has no passing or receiving touchdowns (OPEN, live defect)
+
+Found while checking whether finding 6's substitute is usable. It is not, yet.
+
+`datasets/ncaaf/player_games.parquet`, touchdowns by season:
+
+| Season | Rows | Weeks | `pass_tds` > 0 | `receiving_tds` > 0 | `rush_tds` > 0 |
+|---|---|---|---|---|---|
+| 2023 | 29,806 | 15 | 2,761 | 3,862 | 3,439 |
+| 2024 | 31,925 | 16 | 2,974 | 3,949 | 3,755 |
+| 2025 | 34,575 | 16 | 2,148 | 2,687 | 2,519 |
+| **2026** | **4,815** | **1** | **0** | **0** | 507 |
+
+Passing and receiving touchdowns are empty for the current season while rushing
+touchdowns populate — so it is not a missing `touchdown_player_id` column,
+which would zero all three. Attempts (620) and receptions (2,802) populate too,
+so the passer and receiver roles are being matched; only their scoring plays
+are not.
+
+This is live: `velocity/models/dfs_ncaaf.py` prices the college DFS board from
+this bank, and a passing touchdown is 4 DK points with a receiving touchdown at
+6. Every college quarterback and receiver is currently projected without them.
+
+Root cause needs the 2026 cfbfastR play frame, which is a network fetch — the
+banked `plays.parquet` carries eleven columns and no player fields, so it
+cannot answer this offline.
+
+## 10. The NCAAF player bank is stuck at week 1 (OPEN)
+
+Same table: 2026 holds **one week** on 2026-09-16, when the college season is
+several weeks old. Prior seasons hold 15-16.
+
+Not yet established whether cfbfastR has not published the later weeks or our
+refresh is not reading them — worth one check before it is called a bug. But
+either way the practical effect today is that any model reading this bank for
+the current season is reading one week of it.
+
+## Consequence for finding 6
+
+Finding 6 says the NCAAF prop substitute "already exists and is already
+proven", pointing at this bank and at `dfs_ncaaf.py`. That is true of the
+*mechanism* and overstated about the *data*: a 6-game recency window has
+nothing to work with when the bank holds one week, and two of the eleven prop
+markets cannot be priced at all while the touchdown columns are empty.
+
+So finding 6 is **blocked on 9 and 10**, not merely unstarted. Stopping buying
+NCAAF prop lines remains available and needs nothing.
+
 ## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
 
 `refresh_datasets.py` tops the batter bank up with
@@ -334,7 +382,8 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut |
+| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut — but see 9 and 10: the NCAAF half is blocked |
+| **9** | NCAAF 2026 has no passing or receiving touchdowns, and the college DFS board prices from that bank | root-cause first (needs a network fetch) |
 
 ~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
 live-output ones: a benched hitter still prices as a starter, and three
