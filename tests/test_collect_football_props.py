@@ -142,3 +142,71 @@ def test_pre_cutover_payloads_write_no_team_totals_file(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert not list(out.glob("team_totals_nfl_*.parquet"))
+
+
+# --- what we buy, and the trap in cutting it ---------------------------------
+
+
+def _collector():  # type: ignore[no-untyped-def]
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("collect_football_props", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_league_is_bought_only_when_something_can_price_it() -> None:
+    """Audit finding 6b: NHL and NBA prop lines were bought and never read.
+
+    No slate produced ``player_shots_on_goal`` or ``player_rebounds`` and no
+    bank existed to produce one from — ``datasets/nhl/starters.parquet`` is
+    goalies and the NBA vertical is unbuilt — so every scheduled run paid
+    per-event credits for lines nothing could price.
+    """
+    markets = _collector().LEAGUE_PROP_MARKETS
+    assert set(markets) == {"nfl", "ncaaf", "mlb"}
+    assert "nhl" not in markets and "nba" not in markets
+
+
+def test_the_schedule_does_not_buy_what_the_config_dropped() -> None:
+    """Both halves, or the cut is only half made.
+
+    The market set says what a league costs; the workflow's --leagues says
+    whether it is bought at all. Leaving the league in the schedule is what
+    actually spends the credits.
+    """
+    workflow = (REPO / ".github" / "workflows"
+                / "collect-football-props.yml").read_text()
+    assert "nfl ncaaf mlb nhl" not in workflow
+    assert workflow.count("nfl ncaaf mlb") == 2  # the input default and the run line
+
+
+def test_an_unconfigured_league_buys_nothing_rather_than_the_football_board() -> None:
+    """The trap the cut would otherwise have set.
+
+    ``LEAGUE_PROP_MARKETS.get(league, DEFAULT_EVENT_MARKETS)`` meant a league
+    dropped from the config but left in --leagues would pull SIX FOOTBALL
+    MARKETS against its events: strictly more expensive than the one market
+    being cut, and invisible in a log that just says the league was
+    snapshotted.
+    """
+    source = SCRIPT.read_text()
+    assert 'LEAGUE_PROP_MARKETS.get(league, DEFAULT_EVENT_MARKETS)' not in source
+    assert 'LEAGUE_PROP_MARKETS.get(league, "")' in source
+    assert "no prop markets configured" in source
+
+
+def test_the_way_back_in_is_kept() -> None:
+    """Cutting the purchase is not the same as deleting the capability.
+
+    SOG is in every banked NHL boxscore (docs/BUILD_NHL.md), so the skater
+    bank is a build away. The normalizer mapping and the display label cost
+    nothing and are what a future vertical re-enters through.
+    """
+    from velocity.ingest.theoddsapi import PROP_MARKET_BY_KEY
+
+    assert PROP_MARKET_BY_KEY["player_shots_on_goal"] == "shots_on_goal"
+    assert PROP_MARKET_BY_KEY["player_rebounds"] == "rebounds"
+

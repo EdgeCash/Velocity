@@ -307,7 +307,7 @@ committed, so the runner's default resolves in a fresh checkout, and adding a
 flag pointing at a path nobody checked. A test asserts the default exists
 instead.
 
-## 6b. The same shape, one league over: NHL (OPEN, costs credits)
+## 6b. The same shape, one league over: NHL (DONE — cut)
 
 Finding 6 is not a one-off. Mapping every league we BUY prop lines for against
 every league a slate can PRICE:
@@ -320,14 +320,35 @@ every league a slate can PRICE:
 | nhl | `player_shots_on_goal` | **NO** | **goalie starters only — no skater data at all** |
 | nba | `player_rebounds` | **NO** | none (vertical not built) |
 
-`run_live_slate.py` contains **zero** references to `shots_on_goal`. NHL prop
-lines are bought on the default schedule (`--leagues 'nfl ncaaf mlb nhl'`) and
-there is no slate to price them and no bank to price them from:
+`run_live_slate.py` contained **zero** references to `shots_on_goal`. NHL prop
+lines were bought on the default schedule (`--leagues 'nfl ncaaf mlb nhl'`)
+with no slate to price them and no bank to price them from:
 `datasets/nhl/starters.parquet` is goalies (saves, shots_against), not skaters.
-`shots_on_goal` sits in `PROP_MARKETS` and nothing produces it.
-
-NBA is honest by comparison — the vertical is openly unbuilt — but it is in
+NBA was honest by comparison — the vertical is openly unbuilt — but it sat in
 `LEAGUE_PROP_MARKETS` all the same.
+
+### Cut, 2026-09-16
+
+NCAAF took the other option (finding 6, done). These two had no such option —
+there is nothing to price them *from* — so they stopped being bought. Both
+halves, because either alone leaves the spend in place: `nhl` is out of
+`LEAGUE_PROP_MARKETS`, and out of the collector workflow's `--leagues`
+default, which is the half that actually spends.
+
+**And the fallback had to go with them.** `LEAGUE_PROP_MARKETS.get(league,
+DEFAULT_EVENT_MARKETS)` meant a league dropped from the config but left in
+`--leagues` would have pulled the **six-market football board** against its
+events — strictly more expensive than the one market being cut, and invisible
+in a log that only says the league was snapshotted. An unconfigured league now
+buys nothing and says why.
+
+**The way back in is kept.** Cutting a purchase is not deleting a capability:
+the normalizer mapping (`theoddsapi.PROP_MARKET_BY_KEY`) and the display
+labels (`report/social.py`) stay, because they cost nothing and are what a
+future vertical re-enters through. SOG is in every banked NHL boxscore
+(docs/BUILD_NHL.md), so the skater bank is a build away; restoring the league
+means adding it back to `LEAGUE_PROP_MARKETS` **and** to the workflow's
+`--leagues`, in that order.
 
 **NCAAF and NHL differ in what they need.** NCAAF needs only wiring plus a
 projection: `datasets/ncaaf/player_games.parquet` is 90,819 rows over
@@ -550,7 +571,7 @@ every banked game and takes a while, so it says so rather than looking hung.
 | NCAAF prop path | 2026-09-16 | **Finding 6 — bought, never priced** |
 | MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | 2026-09-16 | Clean — `HITTING_KEYS` maps DK's hitter scoring exactly. One micro-gap: pitcher `hitByPitch` (DK −0.6) is not collected, worth ~0.2 DK points a start. Not worth acting on. |
 | `cfb_players` / NCAAF player bank | 2026-09-16 | **Findings 9 and 10 — both fixed.** Upstream stopped attributing passing and receiving touchdowns in 2026; the weekly top-up had never once run; the coverage alarm fired and was ignored |
-| Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA.** NCAAF left the list when finding 6 closed |
+| Prop lines bought vs. priceable | 2026-09-16 | **Clean.** NCAAF was wired (finding 6); NHL and NBA were cut (6b). Every league bought is now a league something prices |
 | Kalshi / Polymarket / exchanges | 2026-09-16 | Clean — collected hourly, `--exchanges` passed by the live slate (default true), graded via `--exchanges-dir` |
 | nflverse rosters / schedules | 2026-09-16 | Schedules clean. The roster chain was **dead code** — fetch, normalizer, fixture, tests and the `Players` schema, none of it reachable. Deleted (finding 8) |
 | NCAAB / WNBA / NHL game markets | 2026-09-16 | Clean — priced by `ScoresGameModel` + `fit_scores_ratings`; NCAAB adds Torvik, NHL adds starting goalies. No prop lines bought for NCAAB/WNBA, which is consistent. |
@@ -584,7 +605,7 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **6b** | NHL and NBA prop lines bought every run, no slate can price them and no bank to price them from | a decision: build the skater bank, or cut the market from `LEAGUE_PROP_MARKETS`. NCAAF (finding 6) is **done** |
+| ~~**6b**~~ | ~~NHL and NBA prop lines bought every run~~ — **cut** 2026-09-16. Nothing could price them and nothing existed to price them from |
 
 ~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
 live-output ones: a benched hitter still prices as a starter, and three

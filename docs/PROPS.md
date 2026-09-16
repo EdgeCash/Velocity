@@ -368,12 +368,14 @@ the mean implies, and that tail is the whole reason a kicker is ever a captain.
   generic engine in `velocity/models/props.py` is built for this; needs
   `targets` added to the nflverse weekly normalizer).
 - NHL SOG after the season opens (skater `sog` is in every banked
-  boxscore path already). Until then it is audit finding 6b: `player_shots_on_goal`
-  is bought on the default schedule with no slate to price it and no skater
-  bank to price it from (`datasets/nhl/starters.parquet` is goalies). Same for
-  NBA `player_rebounds`, where the vertical is openly unbuilt. Both want
-  deciding — build the bank, or cut the market from `LEAGUE_PROP_MARKETS` and
-  stop paying for it.
+  boxscore path already). Until then we no longer **buy** it: audit finding 6b
+  was that `player_shots_on_goal` and NBA `player_rebounds` were pulled on
+  every scheduled run with no slate to price them and no bank to price them
+  from, and both were **cut** on 2026-09-16 — from `LEAGUE_PROP_MARKETS` and
+  from the collector workflow's `--leagues`. The normalizer mapping and the
+  display labels stay: they cost nothing and are the re-entry path once the
+  skater bank exists. Restoring a league means adding it to both, in that
+  order.
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
 - ~~NCAAF prop lines bought every run and never priced~~ — closed
   (above): the slate projects from the college player bank with college-fitted

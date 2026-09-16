@@ -50,14 +50,25 @@ from velocity.ingest.theoddsapi import (
 _TEAM_TOTAL_MARKETS = ("team_total_home", "team_total_away")
 
 # Per-league default market sets: the football leagues pull the six-market
-# board + team totals; the other sports pull their HEADLINE prop
-# (docs/PROPS.md) — the archive the per-sport prop models backtest on.
+# board + team totals; MLB pulls its two HEADLINE props (docs/PROPS.md) — the
+# archive the per-sport prop models backtest on.
+#
+# **A league is in here only when something can price what it buys.** NHL
+# (`player_shots_on_goal`) and NBA (`player_rebounds`) were here and were not:
+# no slate produced either market and no bank existed to produce one from —
+# `datasets/nhl/starters.parquet` is goalies, and the NBA vertical is openly
+# unbuilt. So those lines were bought on every scheduled run, banked, and
+# never read by anything (audit finding 6b). Cut 2026-09-16.
+#
+# The normalizer mapping and the display labels stay (`theoddsapi.py`,
+# `report/social.py`): they cost nothing, they are the re-entry path, and SOG
+# is in every banked NHL boxscore (docs/BUILD_NHL.md), so the skater bank is a
+# build away. Putting a league back means adding it here AND to the workflow's
+# `--leagues`, in that order.
 LEAGUE_PROP_MARKETS = {
     "nfl": DEFAULT_EVENT_MARKETS,
     "ncaaf": DEFAULT_EVENT_MARKETS,
     "mlb": "pitcher_strikeouts,batter_home_runs",
-    "nhl": "player_shots_on_goal",
-    "nba": "player_rebounds",
 }
 
 
@@ -154,7 +165,16 @@ def main() -> None:
     leagues = args.leagues.split()
     print(f"prop snapshot @ {now.isoformat()} — leagues: {leagues}")
     for league in leagues:
-        markets = args.markets or LEAGUE_PROP_MARKETS.get(league, DEFAULT_EVENT_MARKETS)
+        # No silent fallback to the football board. It used to default there,
+        # so cutting a league from LEAGUE_PROP_MARKETS while leaving it in
+        # --leagues would have bought SIX FOOTBALL MARKETS against that
+        # league's events — strictly worse than the one market being cut, and
+        # invisible in a log that just says the league was snapshotted.
+        markets = args.markets or LEAGUE_PROP_MARKETS.get(league, "")
+        if not markets:
+            print(f"  {league}: no prop markets configured — nothing here can "
+                  "price it, so nothing is bought (see LEAGUE_PROP_MARKETS)")
+            continue
         try:
             payloads = client.event_odds_payloads(league, markets)
         except Exception as exc:  # noqa: BLE001 - one league's board never blocks the other
