@@ -368,6 +368,18 @@ jobs:
             if [ "${league}" = "nfl" ] && [ -n "$FP_FILE" ]; then
               EXTRA="$EXTRA --fp-projections $FP_FILE"
             fi
+            # NCAAF props: the projection comes from the committed college
+            # player bank (FantasyPros has no college endpoint, which is why
+            # that board went unpriced for as long as it did), and the LINES
+            # come from the boards the props collector already bought and we
+            # already downloaded above for grading. Never a live pull — the
+            # finding being fixed here is that we bought this board and never
+            # read it, so buying it a second time to read it would be a poor
+            # trade. Too stale for --board-max-age-min and the slate says so
+            # and skips, rather than pricing against prices that have moved.
+            if [ "${league}" = "ncaaf" ] && [ -d artifacts/props ]; then
+              EXTRA="$EXTRA --prop-lines-dir artifacts/props"
+            fi
             if [ "${league}" = "nfl" ] && [ -n "$INJ_FILE" ]; then
               EXTRA="$EXTRA --injuries-file $INJ_FILE"
             fi

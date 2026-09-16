@@ -94,6 +94,91 @@ across books to a median close; the graded prop rows carry `price_clv` /
 `line_clv` like the game ledger's. `clv_trusted` stays False for props —
 this is what the shrink sweep grades against, not the yardstick.
 
+## The college board, and the dispersion that is not the NFL's (2026-09-16)
+
+Audit finding 6: the collector bought the full NCAAF event-market prop board
+every live run — per-market, per-event Odds API credits — and the slate could
+price none of it. It read FantasyPros, and **the FantasyPros public API has no
+college endpoint at all**, so the league filter came back empty, the slate
+skipped, and the lines were banked and never read.
+
+The DFS board hit the identical wall and solved it with
+`datasets/ncaaf/player_games.parquet`. The prop slate now does the same. Two
+pieces, neither a new model:
+
+**The projection.** `velocity/models/props_ncaaf.py:player_prop_means` emits
+the long `(player, stat, value)` frame `team_player_means` already eats —
+per-game means over the same six-game recency window the college DFS board
+swept walk-forward. Nothing downstream can tell it did not come from a
+provider. Ten of the eleven football prop markets are available; the missing
+one is `pass_completions`, because cfbfastR records an incompletion's passer
+but never a completion count, and a league-average completion rate is a guess
+rather than a projection.
+
+Two filters, both there to stop a line being priced on the wrong man:
+
+- **Only players active in the current season.** The window may still reach
+  back into last season for a player's *games* — a roster turns over every
+  August and six games beats one — but a player who has not taken a snap this
+  season is not projected off a two-year-old mean. 11,697 banked players
+  become 4,177 active ones.
+- **No ambiguous names.** The prop line carries a name and no id, so a name
+  held by two banked players cannot be resolved, only guessed, and
+  `name_index_from_fp` would silently keep whichever came first. 180 names
+  across the four banked seasons are held by more than one player, 20 of them
+  live in 2026. Both are dropped. Skipped and reported, never guessed.
+
+**The dispersion, which is the part that would have gone wrong quietly.**
+Re-fitting `scripts/fit_prop_dispersion.py --league ncaaf` on the college bank:
+
+| quantity | NFL | college |
+|---|---|---|
+| pass-volume σ (team multiplier) | 0.118 | **0.242** |
+| rush-volume σ | 0.175 | **0.228** |
+| receptions φ (WR / RB) | 0.027 / 0.083 | **0.000 / 0.035** |
+| per-catch yards sd (WR / RB) | 10.57 / 7.56 | **11.66 / 9.80** |
+| rushing CV (RB / QB) | 0.72 / 0.87 | **0.72 / 0.80** |
+| rush-attempt φ (RB / QB) | 0.091 / 0.025 | **0.067 / 0.060** |
+| rushing shape | banked pool, skew 1.55 / 1.42 | **banked pool** (`datasets/ncaaf/prop_residuals.parquet`, 18,487 residuals), skew 1.25 / 1.22 |
+
+College team volume swings about **twice** as hard as the NFL's, while the
+per-player numbers come in at or below it. That is a coherent story rather
+than noise: blowouts, tempo and talent gaps move the whole team's pie far
+harder, but *conditional* on the pie a player's share is no noisier than a
+professional's. The one place college is clearly wilder per player is the
+quarterback run (φ 0.060 against 0.025) — designed QB runs, which the NFL has
+far fewer of.
+
+Running `FootballPropConfig()` on a college board would have simulated
+distributions roughly half as wide as they are. That failure does not announce
+itself: a too-narrow distribution **manufactures edge**, on every market at
+once, and the board would have looked like it was finding value everywhere.
+
+**And it prices the board we already bought, rather than buying it twice.**
+The finding is that NCAAF prop lines were bought every run and never read, so
+pulling them a second time in order to read them would be a poor trade. NCAAF
+never pulls prop lines live: `--prop-lines-dir` points at the props
+collector's banked boards (already downloaded beside the odds archive for
+grading), the freshest one inside `--board-max-age-min` is priced, and
+anything staler is refused with its age named — pricing against a line that
+moved six hours ago is worse than not pricing. Freshness comes off the
+filename stamp, never the mtime, for the same reason the game board learned
+it: these arrive by unzipping Actions artifacts, so every mtime is extraction
+time. NFL still pulls live and is unchanged; pointing it at the same banked
+boards would save credits too and is a separate call.
+
+**What it prices.** Dry-run on Alabama/Georgia off the real bank, with a
+synthetic book board built at the model's own medians: **0 bets, 0 unresolved
+names** — no phantom edge against a fair line, and every player resolved.
+Shade that same board 15% high and it returns 53 bets, **all unders**; at 30%
+the edges pile up against the 0.12 `max_edge` ceiling and the group cap starts
+zeroing stakes. De-vig, edge, Kelly and the ceilings all behave. A 60-game
+Saturday slate simulates in about two seconds.
+
+Not a backtest — the NCAAF prop line archive has nothing to replay yet, same
+as the NFL constants when they landed. These set the shape; the shrink sweep
+tunes the confidence once graded weeks accumulate.
+
 ## Two markets added from the coverage report (2026-09-16)
 
 The BettingPros slug-coverage report exists to make abstention visible: an
@@ -283,8 +368,16 @@ the mean implies, and that tail is the whole reason a kicker is ever a captain.
   generic engine in `velocity/models/props.py` is built for this; needs
   `targets` added to the nflverse weekly normalizer).
 - NHL SOG after the season opens (skater `sog` is in every banked
-  boxscore path already).
+  boxscore path already). Until then it is audit finding 6b: `player_shots_on_goal`
+  is bought on the default schedule with no slate to price it and no skater
+  bank to price it from (`datasets/nhl/starters.parquet` is goalies). Same for
+  NBA `player_rebounds`, where the vertical is openly unbuilt. Both want
+  deciding — build the bank, or cut the market from `LEAGUE_PROP_MARKETS` and
+  stop paying for it.
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
+- ~~NCAAF prop lines bought every run and never priced~~ — closed
+  (above): the slate projects from the college player bank with college-fitted
+  dispersion. Blocked until findings 9 and 10 put the touchdown columns back.
 - ~~Confirm the FantasyPros rush-attempt / pass-attempt projection keys~~ —
   answered by the census (above); both markets are priced.
 - ~~Bank a completions column into `player_weeks`~~ — banked; the market is

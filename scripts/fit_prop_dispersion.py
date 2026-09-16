@@ -67,6 +67,8 @@ def receptions_phi(pw: pd.DataFrame, position: str, *, min_mean: float = 1.5) ->
              .groupby(["player_id", "season"])["receptions"]
              .agg(["mean", "var", "size"]))
     stats = stats[(stats["size"] >= MIN_GAMES) & (stats["mean"] >= min_mean)]
+    if stats.empty:
+        return 0.0  # never NaN: a NaN reaching a config mis-prices in silence
     phi = (stats["var"] - stats["mean"]) / stats["mean"] ** 2
     return float(max(phi.median(), 0.0))
 
@@ -79,6 +81,11 @@ def count_phi(pw: pd.DataFrame, column: str, position: str, *, min_mean: float) 
     multiplier; the caller nets it against whichever multiplier that market
     rides (carries the rushing one, attempts the passing one).
     """
+    if column not in pw.columns:
+        # A bank that does not carry the column has no fit for it — the
+        # college one has no completions, which is exactly the market it
+        # cannot price. Zero, and the caller's floor keeps it at zero.
+        return 0.0
     stats = (pw[pw["position"] == position]
              .groupby(["player_id", "season"])[column]
              .agg(["mean", "var", "size"]))
@@ -99,7 +106,8 @@ def per_catch_sd(pw: pd.DataFrame, position: str) -> float:
     d = d.merge(key[["ypr"]], left_on=["player_id", "season"], right_index=True)
     d = d[d["receptions"] > 0]
     z = (d["receiving_yards"] - d["receptions"] * d["ypr"]) / np.sqrt(d["receptions"])
-    return float(z.std())
+    sd = float(z.std())
+    return sd if sd == sd else 0.0  # the college bank has no tight ends
 
 
 def rush_deviations(pw: pd.DataFrame, position: str, *, min_mean: float) -> pd.DataFrame:
@@ -164,13 +172,19 @@ def fit(pw: pd.DataFrame) -> tuple[dict[str, object], pd.DataFrame]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fit the football prop dispersion")
-    parser.add_argument("--player-weeks", default="datasets/nfl/player_weeks.parquet")
+    parser.add_argument("--league", default="nfl", choices=["nfl", "ncaaf"],
+                        help="which bank to fit; picks the default paths")
+    parser.add_argument("--player-weeks", default=None)
     parser.add_argument("--bank", action="store_true",
-                        help="write datasets/nfl/prop_residuals.parquet (the rush pool)")
-    parser.add_argument("--out", default="datasets/nfl/prop_residuals.parquet")
+                        help="write the rush residual pool for --league")
+    parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
-    pw = pd.read_parquet(args.player_weeks)
+    bank = {"nfl": "datasets/nfl/player_weeks.parquet",
+            "ncaaf": "datasets/ncaaf/player_games.parquet"}[args.league]
+    out = f"datasets/{args.league}/prop_residuals.parquet"
+    pw = pd.read_parquet(args.player_weeks or bank)
+    args.out = args.out or out
     fitted, pool = fit(pw)
     print(f"player-weeks: {len(pw)} rows, seasons "
           f"{int(pw['season'].min())}–{int(pw['season'].max())}\n")

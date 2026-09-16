@@ -86,3 +86,30 @@ def test_the_board_reports_whether_the_prior_ran() -> None:
         "a board with no Statcast prior must say so loudly — a silent fallback "
         "is what let this run for months"
     )
+
+
+def test_the_ncaaf_prop_projection_defaults_to_a_bank_that_is_actually_there() -> None:
+    """The same failure shape, one board over — and the reason for no flag.
+
+    NCAAF props project from the committed college player bank rather than
+    from a workflow artifact, so ``live-slate.yml`` passes nothing and the
+    runner's default is what runs in CI. That is only safe while the default
+    resolves in a fresh checkout: if it ever does not, the slate prints a
+    reason and skips, the collector goes on buying the board, and it looks
+    exactly like a quiet league — which is the whole of audit finding 6.
+
+    Adding a ``--ncaaf-player-games`` line to the workflow would NOT fix that
+    and would repeat the Statcast mistake in reverse: a flag pointing at a
+    path nobody checked.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    script = (repo / "scripts" / "run_live_slate.py").read_text()
+    default = re.search(
+        r'"--ncaaf-player-games",\s*\n\s*default="([^"]+)"', script)
+    assert default, "the NCAAF prop projection has no default source"
+    assert (repo / default.group(1)).exists(), (
+        f"{default.group(1)} is the NCAAF prop board's only source and it is "
+        "not committed — the board would skip in CI and say nothing louder "
+        "than one printed line"
+    )
+
