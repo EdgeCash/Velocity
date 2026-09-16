@@ -9,6 +9,7 @@ only asserts a real PNG of the right frame lands.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -548,3 +549,96 @@ def test_builder_skips_a_card_with_no_projection() -> None:
     from velocity.report.matchup import build_matchup_cards
 
     assert build_matchup_cards([_social()], {}) == []
+
+
+# --- the slate wiring ------------------------------------------------------
+
+def test_roster_from_projections_keeps_only_identity() -> None:
+    from velocity.report.matchup import roster_from_projections
+
+    fp = pd.DataFrame([
+        {"player_id": "1", "player_name": "Dak Prescott", "position": "QB",
+         "team": "DAL", "stat": "pass_yds", "value": 271.0},
+        {"player_id": "1", "player_name": "Dak Prescott", "position": "QB",
+         "team": "DAL", "stat": "pass_tds", "value": 1.8},
+        {"player_id": "2", "player_name": "CeeDee Lamb", "position": "WR",
+         "team": "DAL", "stat": "rec_yds", "value": 88.0},
+    ])
+    roster = roster_from_projections(fp)
+    # One row per player, not per stat — the sim is keyed by player.
+    assert list(roster["player_name"]) == ["Dak Prescott", "CeeDee Lamb"]
+    assert set(roster.columns) == {"player_key", "player_name", "position", "team"}
+
+
+def test_roster_keys_match_the_sims_keys() -> None:
+    # The roster is only useful if its keys are the sim's keys; they are both
+    # built with player_key, and this pins that they stay that way.
+    from velocity.models.props_football import player_key
+    from velocity.report.matchup import roster_from_projections
+
+    fp = pd.DataFrame([{"player_id": "17", "player_name": "Jared Goff",
+                        "position": "QB", "team": "DET", "stat": "pass_yds",
+                        "value": 258.0}])
+    assert roster_from_projections(fp)["player_key"].iloc[0] == player_key(
+        "17", "Jared Goff")
+
+
+def _schedule() -> pd.DataFrame:
+    played = _games()
+    upcoming = pd.DataFrame([
+        {"season": 2025, "week": 14, "kickoff": pd.Timestamp("2025-12-07"),
+         "home_team": "DET", "away_team": "DAL",
+         "home_score": None, "away_score": None},
+        {"season": 2025, "week": 14, "kickoff": pd.Timestamp("2025-12-07"),
+         "home_team": "KC", "away_team": "GB",
+         "home_score": None, "away_score": None},
+    ])
+    return pd.concat([played, upcoming], ignore_index=True)
+
+
+def test_slate_week_label_reads_the_schedule_not_a_count() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_live_slate", Path(__file__).parent.parent / "scripts" / "run_live_slate.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # Three completed games sit in weeks 11-13, but the week being PRICED is
+    # the one with no finals yet.
+    assert module._slate_week_label(_schedule()) == "Week 14"
+    # The committed frames carry only completed games, so the fallback has to
+    # work: newest completed week (13) plus one.
+    assert module._slate_week_label(_games()) == "Week 14"
+    # A bye cannot shift it, because the max is read rather than the weeks
+    # counted -- weeks 11 and 13 with nothing in 12 still says 14.
+    bye = _games()[_games()["week"] != 12]
+    assert module._slate_week_label(bye) == "Week 14"
+    # No week column, or no frame at all: say nothing rather than guess, and
+    # the masthead drops the separator.
+    assert module._slate_week_label(_games().drop(columns=["week"])) == ""
+    assert module._slate_week_label(None) == ""
+    assert module._slate_week_label(pd.DataFrame()) == ""
+
+
+def test_masthead_without_a_week_has_no_dangling_separator(tmp_path: Path) -> None:
+    # Rendering is the only check that matters here; the assertion is that a
+    # blank label does not reach the frame as "NFL · ".
+    from velocity.report import matchup_png
+
+    captured: list[str] = []
+    real = matchup_png._text
+
+    def spy(fig: object, x: float, y: float, s: str, **kw: object) -> None:
+        captured.append(s)
+        real(fig, x, y, s, **kw)  # type: ignore[arg-type]
+
+    matchup_png._text = spy  # type: ignore[assignment]
+    try:
+        matchup_png.render_matchup_card(
+            replace(_card(), week_label=""), tmp_path / "a.png")
+    finally:
+        matchup_png._text = real  # type: ignore[assignment]
+    assert "NFL" in captured
+    assert not any(s.endswith(" · ") for s in captured)

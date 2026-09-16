@@ -1635,6 +1635,7 @@ def main() -> None:
     props_by_game: dict = {}
     key_to_name: dict[str, str] = {}
     prop_lines_used: pd.DataFrame | None = None
+    prop_roster: pd.DataFrame | None = None
     watch_by_game: dict = {}
     # Which prop model runs is a property of the LEAGUE, not of which files
     # happened to be passed. It used to be the latter, and that was a live
@@ -1648,9 +1649,8 @@ def main() -> None:
     # and never will, so each league's source is resolved inside the slate
     # (_prop_projection_frame) and says why when it has none.
     if args.league in FOOTBALL_PROP_LEAGUES and projections and not events.empty:
-        props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
-            args, events, projections, now, generated_at
-        )
+        (props_frame, props_by_game, key_to_name, prop_lines_used,
+         prop_roster) = _prop_slate(args, events, projections, now, generated_at)
     elif args.league == "mlb" and projections and not events.empty:
         # The headline MLB prop (docs/PROPS.md): pitcher strikeouts, priced
         # from the banked starters history — no FantasyPros dependency. The
@@ -1774,7 +1774,7 @@ def main() -> None:
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
                 game_log=game_log, convictions=convictions,
-                watch_by_game=watch_by_game,
+                watch_by_game=watch_by_game, prop_roster=prop_roster,
             )
 
 
@@ -2497,29 +2497,35 @@ def _prop_slate(
     projections: dict,
     now: datetime,
     generated_at: pd.Timestamp,
-) -> tuple[pd.DataFrame | None, dict, dict[str, str], pd.DataFrame | None]:
+) -> tuple[pd.DataFrame | None, dict, dict[str, str], pd.DataFrame | None,
+           pd.DataFrame | None]:
     """Price the prop board off the FantasyPros-driven correlated sim.
 
-    Returns ``(frame, props_by_game, key_to_name, prop_lines)`` — the persisted
-    prop-slate frame (it carries the raw ``p_model``/``p_fair`` per bet, which
-    is exactly what the shrink-sweep backtest replays) plus the per-game sims
-    and the name index, which the social cards' watch strip reuses. Empty
-    results when the board or projections don't materialize.
+    Returns ``(frame, props_by_game, key_to_name, prop_lines, roster)`` — the
+    persisted prop-slate frame (it carries the raw ``p_model``/``p_fair`` per
+    bet, which is exactly what the shrink-sweep backtest replays) plus the
+    per-game sims and the name index, which the social cards' watch strip
+    reuses. ``roster`` is the projection frame reduced to identity (key,
+    name, position, team): the prop sim is keyed by player key alone and
+    carries no position, so the matchup card cannot fill a QB/RB/WR shape
+    without it. Empty results when the board or projections don't
+    materialize.
     """
     try:
         from velocity.models.props_football import game_props, name_index_from_fp
+        from velocity.report.matchup import roster_from_projections
         from velocity.wagering.props_slate import build_prop_slate, prop_slate_to_frame
 
         fp = _prop_projection_frame(args)
         if fp is None:
-            return None, {}, {}, None
+            return None, {}, {}, None, None
 
         lines_path = _resolve_prop_lines_path(args, generated_at)
         if lines_path is not None:
             prop_lines = pd.read_parquet(lines_path)
         elif args.snapshot_file:
             print("prop slate skipped: offline run needs --prop-lines-file")
-            return None, {}, {}, None
+            return None, {}, {}, None, None
         elif args.league == "ncaaf":
             # Never a live pull. The collector already buys this exact board
             # twice a day (audit finding 6 is that we bought it and never read
@@ -2527,12 +2533,12 @@ def _prop_slate(
             # here would double the spend to fix a finding about wasted spend.
             print("prop slate skipped: no fresh banked ncaaf prop board; "
                   "not pulling live (the collector's board is the one to price)")
-            return None, {}, {}, None
+            return None, {}, {}, None, None
         else:
             prop_lines = _odds_client().player_props(args.league)
         if prop_lines.empty:
             print("prop slate: no prop lines on the board")
-            return None, {}, {}, None
+            return None, {}, {}, None, None
 
         fp_teams = set(fp["team"].astype(str))
         to_team = _prop_team_resolver(args, events, fp_teams)
@@ -2549,7 +2555,7 @@ def _prop_slate(
                                             _prop_config(args))
         if not props_by_game:
             print("prop slate: no games matched the projection's team coverage")
-            return None, {}, {}, None
+            return None, {}, {}, None, None
 
         key_to_name = {}
         for r in fp.drop_duplicates(subset=["player_name"]).to_dict("records"):
@@ -2593,10 +2599,11 @@ def _prop_slate(
                 dest, index=False
             )
             print(f"wrote {len(frame)} prop rows to {dest}")
-        return frame, props_by_game, key_to_name, prop_lines
+        return (frame, props_by_game, key_to_name, prop_lines,
+                roster_from_projections(fp))
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"prop slate skipped: {exc}")
-        return None, {}, {}, None
+        return None, {}, {}, None, None
 
 
 def _mlb_k_slate(
@@ -2831,6 +2838,38 @@ def _prop_config(args: argparse.Namespace):  # type: ignore[no-untyped-def]
     return FootballPropConfig(n_sims=args.n_sims)
 
 
+def _slate_week_label(games: pd.DataFrame | None) -> str:
+    """``"Week 14"`` for the slate about to be played, or "" when unknown.
+
+    Preferred source is the schedule itself: the modal week among the newest
+    season's games with no final yet is the week being priced, whatever the
+    byes did. The committed frames carry only COMPLETED games, though (checked:
+    datasets/nfl/games.parquet holds week 1 of 2026 and nothing forward), so
+    the fallback is the newest completed week plus one. That reads the max
+    rather than counting distinct weeks, so a bye week — which other clubs
+    still play — cannot shift it.
+
+    It can overshoot by one in the gap after a season's last week, which is a
+    wrong masthead on a card for a game that does not exist. Nothing else on
+    the card depends on it, and "" is the answer whenever the frame cannot
+    say.
+    """
+    if games is None or games.empty or "week" not in games.columns:
+        return ""
+    try:
+        season = int(games["season"].max())
+        current = games[games["season"] == season]
+        unplayed = current[current["home_score"].isna() & current["away_score"].isna()]
+        if not unplayed.empty:
+            return f"Week {int(unplayed['week'].mode().iloc[0])}"
+        played = current[current["home_score"].notna()]
+        if played.empty:
+            return ""
+        return f"Week {int(played['week'].max()) + 1}"
+    except Exception:  # noqa: BLE001 - a masthead label, never worth raising
+        return ""
+
+
 def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     args: argparse.Namespace,
     events: pd.DataFrame,
@@ -2844,6 +2883,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     game_log: object = None,
     convictions: list | None = None,
     watch_by_game: dict | None = None,
+    prop_roster: pd.DataFrame | None = None,
 ) -> None:
     """Render the per-game social model cards + captions into the out folder.
 
@@ -2925,17 +2965,27 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                         for card, path in zip(cards, paths, strict=True)}
         dive_by_game: dict[str, Path] = {}
 
+        # Form and EPA inputs, loaded once and shared by the deep dive and the
+        # standalone matchup card. Hoisted out of the dive's own block so one
+        # surface failing never silently costs the other its inputs.
+        games = plays = None
+        try:
+            from velocity.ingest.local import load_games, load_plays
+
+            games = load_games(_find_games(Path(args.data)), league=args.league)
+            if args.league == "nfl":
+                plays_path = _find_plays(Path(args.data))
+                plays = load_plays(plays_path) if plays_path is not None else None
+        except Exception as exc:  # noqa: BLE001 - both consumers degrade without it
+            print(f"form inputs unavailable: {exc}")
+
         # Deep Dive companions — the analytical page behind each matchup card
         # (form/EPA table, margin vs the market, extended props). Best-effort
         # like everything else on this surface.
         try:
-            from velocity.ingest.local import load_games, load_plays
             from velocity.report.deepdive import build_deep_dives
             from velocity.report.deepdive_png import render_deep_dives
 
-            games = load_games(_find_games(Path(args.data)), league=args.league)
-            plays_path = _find_plays(Path(args.data)) if args.league == "nfl" else None
-            plays = load_plays(plays_path) if plays_path is not None else None
             starters = probables = None
             if args.league == "mlb":
                 # The reference-genre pitcher row: each probable's banked
@@ -2967,6 +3017,39 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                             for dive, path in zip(dives, dive_paths, strict=True)}
         except Exception as exc:  # noqa: BLE001 - the companion never blocks the card run
             print(f"deep dives skipped: {exc}")
+
+        # The matchup card — the 4:5 portrait graphic for @MatchUpLabs. Its own
+        # artifact, NOT folded into the sheet: the sheet is the analyst's page
+        # and this is the one a reader forms a view from on its own. Logos are
+        # club marks only; the college path passes no ESPN ids, so NCAAF cards
+        # render the school abbreviation in its brand color and no mark at all
+        # (the licensing posture report/assets.py sets, kept here).
+        #
+        # Football only, and deliberately so: every label on it is a football
+        # noun (PASS OFFENSE, RUSH DEFENSE, a QB/RB/WR row shape). Rendered for
+        # baseball it would not fail — it would print those headings over empty
+        # panels, which is worse than not posting a card.
+        try:
+            if args.league not in FOOTBALL_PROP_LEAGUES:
+                raise RuntimeError(f"{args.league} is not a football league")
+            from velocity.report.matchup import build_matchup_cards
+            from velocity.report.matchup_png import render_matchup_cards
+
+            matchups = build_matchup_cards(
+                cards, projections, games, plays,
+                week_label=_slate_week_label(games),
+                league=args.league,
+                props_by_game=props_by_game, roster=prop_roster,
+                team_names=code_to_team,
+                # The stamp is left to the builder's default (now, UTC), which
+                # is what the line on the card claims: when this graphic was
+                # generated, not when the slate run began.
+            )
+            made = render_matchup_cards(matchups, Path(args.out), stamp,
+                                        asset_dir=asset_dir, league=args.league)
+            print(f"wrote {len(made)} matchup card(s) to {args.out}")
+        except Exception as exc:  # noqa: BLE001 - never blocks the card run
+            print(f"matchup cards skipped: {exc}")
 
         # The sheet: ONE all-inclusive graphic per game (card + deep dive
         # stacked), the artifact's only pregame PNG — the intermediate
