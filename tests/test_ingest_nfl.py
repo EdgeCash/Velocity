@@ -12,9 +12,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from velocity.features.team import fit_ratings
-from velocity.ingest.nfl import normalize_pbp, normalize_rosters, normalize_schedules
+from velocity.ingest.nfl import normalize_pbp, normalize_schedules
 from velocity.store.io import read_table, write_table
-from velocity.store.schema import Games, Players, Plays
+from velocity.store.schema import Games, Plays
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -27,11 +27,6 @@ def raw_schedules() -> pd.DataFrame:
 @pytest.fixture
 def raw_pbp() -> pd.DataFrame:
     return pd.read_csv(FIXTURES / "raw_nfl_pbp.csv")
-
-
-@pytest.fixture
-def raw_rosters() -> pd.DataFrame:
-    return pd.read_csv(FIXTURES / "raw_nfl_rosters.csv")
 
 
 def test_schedules_validate_against_games(raw_schedules: pd.DataFrame) -> None:
@@ -117,32 +112,6 @@ def test_pbp_without_a_passer_column_still_validates(raw_pbp: pd.DataFrame) -> N
     plays = normalize_pbp(raw_pbp)
     assert plays["passer_player_id"].isna().all()
     Plays.validate(plays)
-
-
-def test_rosters_validate_against_players(raw_rosters: pd.DataFrame) -> None:
-    players = normalize_rosters(raw_rosters)
-    Players.validate(players)
-    assert set(players["player_id"]) >= {"00-0033873"}
-
-
-def test_rosters_accept_display_name_fallback() -> None:
-    raw = pd.DataFrame(
-        {
-            "player_id": ["00-0000001"],
-            "player_display_name": ["Patrick Mahomes"],
-            "position": ["QB"],
-            "team": ["KC"],
-            "season": [2023],
-        }
-    )
-    players = normalize_rosters(raw)
-    assert players.loc[0, "player_name"] == "Patrick Mahomes"
-
-
-def test_rosters_without_name_column_raise() -> None:
-    raw = pd.DataFrame({"player_id": ["x"], "position": ["QB"], "season": [2023]})
-    with pytest.raises(ValueError, match="player_name or player_display_name"):
-        normalize_rosters(raw)
 
 
 def test_ingest_feeds_store_round_trip(raw_schedules: pd.DataFrame, tmp_path) -> None:

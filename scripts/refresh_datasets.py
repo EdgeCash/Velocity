@@ -270,6 +270,45 @@ def refresh_ncaaf(out: Path, season: int) -> None:  # pragma: no cover - network
         print(f"  ncaaf plays skipped ({exc}); games refreshed alone")
 
 
+def refresh_mlb_player_banks(out: Path, games_path: Path) -> None:
+    """Top up the starters and batter banks that ride on one boxscore call.
+
+    Incremental — only unseen game ids are fetched, and a single call feeds
+    both banks. Best-effort: a statsapi hiccup never sinks the games refresh.
+
+    The batter bank is not optional here: it is what the contextual DFS
+    projection and the home-run model are fit on, and leaving it out of this
+    call once froze it at the last manual backfill while the lineups those
+    models priced moved on without it.
+
+    It is also no longer conditioned on the batter file already existing
+    (audit finding 7). That guard meant a deleted or never-created bank was
+    never rebuilt — the refresh ran clean, wrote nothing, and the models went
+    on fitting whatever was left. ``bank_starters`` handles an absent bank
+    correctly on its own: a game counts as banked only when *both* banks hold
+    it, so a missing one re-walks history once and then stays incremental.
+    That first run is long, so it says so rather than looking hung.
+    """
+    starters = out / "starters.parquet"
+    batters = out / "batters.parquet"
+    if not starters.exists():
+        # The outer guard stays: the summer leagues are content surfaces, not
+        # silently-appearing datasets. No starters bank means no backfill has
+        # ever been run here, which is a different thing from one going missing.
+        print("  mlb: no committed starters bank — run the backfill first")
+        return
+    if not batters.exists():
+        print(f"  mlb: no batter bank at {batters} — rebuilding it from "
+              "scratch, which re-walks every banked game once and will take "
+              "a while. Subsequent runs are incremental again.")
+    try:
+        from build_mlb_pitching import bank_starters
+
+        bank_starters(games_path, starters, batters_out=batters)
+    except Exception as exc:  # noqa: BLE001 - additive surface
+        print(f"  mlb starters top-up skipped ({exc})")
+
+
 def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no cover
     """Top up an in-season league (mlb/wnba) from its free keyless feed.
 
@@ -291,26 +330,7 @@ def refresh_inseason(out: Path, season: int, league: str) -> None:  # pragma: no
         return
     _refresh_file(path, fresh, season, f"{league} games")
     if league == "mlb":
-        # Starters and batters ride along (incremental — only unseen game ids
-        # are fetched, and one boxscore call feeds both banks). Best-effort: a
-        # statsapi hiccup never sinks the refresh.
-        #
-        # The batter bank is not optional here: it is what the contextual DFS
-        # projection and the home-run model are fit on, and leaving it out of
-        # this call froze it at the last manual backfill while the lineups
-        # those models priced moved on without it.
-        starters = out / "starters.parquet"
-        batters = out / "batters.parquet"
-        if starters.exists():
-            try:
-                from build_mlb_pitching import bank_starters
-
-                bank_starters(
-                    path, starters,
-                    batters_out=batters if batters.exists() else None,
-                )
-            except Exception as exc:  # noqa: BLE001 - additive surface
-                print(f"  mlb starters top-up skipped ({exc})")
+        refresh_mlb_player_banks(out, path)
     if league == "wnba":
         # Team boxes ride along (one release-parquet request for the current
         # season). Best-effort like the starters top-up.

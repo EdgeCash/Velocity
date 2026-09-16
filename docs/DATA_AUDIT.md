@@ -108,17 +108,60 @@ Same shape as `pass_completions` (#211): the blocker was a column, not a feed.
 Banking it starts the clock; the coefficient comes later, once there are
 enough games to fit rather than assume.
 
-## 3. BettingPros `/props` — form splits and opposition rank (OPEN, additive)
+## 3. BettingPros `/props` — form splits and opposition rank (DECLINED)
 
 `_PROP_COLUMNS` keeps 22 fields — the lines and BP's projection block — and
 discards `performance` (`last_1`, `last_5`, `last_10`, `last_15`, `last_20`,
 `season`, `prior_season`, `h2h`) and `extra.opposition_rank`.
 
-We have a `FormSignal` and a `PropMatchupSignal`. Those are precisely their
-inputs, arriving pre-computed on the row we already bank.
+### This finding's premise was wrong, and it was mine
 
-Lower priority than 1 and 2: the signals abstain safely without it, so this is
-additive rather than a correction.
+It said: *"We have a `FormSignal` and a `PropMatchupSignal`. Those are
+precisely their inputs, arriving pre-computed on the row we already bank."*
+Neither half survives reading the two signals.
+
+**`FormSignal` is a team signal.** It evaluates only `spread`, `moneyline` and
+`total`, and it reads `TeamContext.recent_net_ppg()` against `net_ppg()` — net
+points per game. It never sees a player prop, so a per-player `last_5` is not
+its input and could not be passed to it. There is **no** player-level form
+signal in the set (`MatchupSignal`, `FormSignal`, `RestSignal`,
+`InjurySignal`, `PropAvailabilitySignal`, `PropMatchupSignal`,
+`ExternalRatingSignal`, `PropExternalSignal`, `PropLineOutlierSignal`).
+
+**`PropMatchupSignal` already computes the matchup from our own fit.** It
+takes the opponent's `pass_def`/`rush_def`/`def_epa` — EPA per play allowed,
+fitted here — and z-scores it against the slate's own dispersion. BP's
+`opposition_rank` is a served ordinal on an undisclosed basis; it does not fit
+that machinery, and it is the same category this repo already declines by
+name two sections below: *"BP `park_factors` — we fit our own from banked
+games, shrunk by sample. A served, unshrunk number is not an improvement."*
+
+### And the form block is a copy of something we already own
+
+`datasets/nfl/player_weeks.parquet` holds **113,581 player-weeks, 2020–2026**,
+carrying `pass_yards`, `pass_tds`, `rush_yards`, `receiving_yards` and
+`receptions` — every market BP's `performance` block covers. So every one of
+those windows is ours to compute, for any player, any market, retrospectively
+and at any window length, with no provider dependency. Checked on the 2025
+receiving leader: last-1 165.0, last-5 91.0, last-10 119.7, season 107.7.
+`prior_season` is a season filter; `h2h` is an `opponent` filter, and the bank
+carries that column too.
+
+Banking BP's copy would add nine columns nothing reads to a bank whose audited
+property today is that **every banked column is read** — which is the same
+defect as finding 6, one table over. Unlike finding 2/5 (weather), there is no
+clock to start: this data does not have to accumulate forward, because we
+already have all of it.
+
+**Declined.** Moved to "Deliberately not used" below.
+
+### What is actually worth doing here, if anything
+
+The gap the finding half-found is real and is *not* about BettingPros: there
+is no player-level form signal at all, and the data to build one is already
+banked. That is new modelling with a validation question attached (does recent
+form predict a prop outcome beyond the projection already in the sim?), not a
+wiring job, so it wants deciding rather than doing quietly.
 
 ## 4. Statcast is collected every live run and never handed to the model (DONE)
 
@@ -301,12 +344,23 @@ league-agnostic; it takes a long `(player, stat, value)` frame.
 NHL needs a skater bank first. `docs/BUILD_NHL.md` notes shots on goal are "in
 every boxscore" — they are simply not collected.
 
-## 8. `load_rosters()` is dead code (OPEN, trivial)
+## 8. `load_rosters()` is dead code (DONE)
 
-`velocity/ingest/nfl.py:248` defines a network fetch for nflverse rosters.
-Nothing in the repo calls it. Not a data gap — nothing needs it — but it is a
-maintained network path with no consumer, and it reads like a capability the
-system has. Delete it, or wire it to the thing it was written for.
+`velocity/ingest/nfl.py` defined a network fetch for nflverse weekly rosters
+that nothing in the repo called. Not a data gap — nothing needs it — but a
+maintained network path with no consumer reads like a capability the system
+has.
+
+Deleted, and it was a whole chain rather than one function: `load_rosters`,
+`normalize_rosters`, `NFLVERSE_ROSTER_URL`, the `raw_nfl_rosters.csv` fixture,
+three tests, **and the `Players` schema itself** — every real reference to
+`Players` outside `schema.py` was in that chain, no `players` table is written
+anywhere, and a schema nothing validates against is the same kind of thing as
+a fetch nobody calls. Deleting only the function would have left a tested
+normalizer nobody could reach, which reads *more* maintained, not less.
+
+Positions and availability come from FantasyPros, the DK salary file and
+ESPN's depth chart, which is why this was never wired up.
 
 ## 9. NCAAF 2026 has no passing or receiving touchdowns (DONE)
 
@@ -436,18 +490,28 @@ right even about the mechanism: the *dispersion* is modelling, not data, and
 the NFL's would have been wrong here by about a factor of two on team volume.
 The projection was a wiring job; the sim's width was not.
 
-## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
+## 7. `bank_starters` cannot recreate a deleted batter bank (DONE)
 
-`refresh_datasets.py` tops the batter bank up with
+`refresh_datasets.py` topped the batter bank up with
 `batters_out=batters if batters.exists() else None`. The bank is current today,
 and the comment beside it records that leaving it out of this call once froze
 it "at the last manual backfill while the lineups those models priced moved on
-without it" — so the guard is there for a good reason.
+without it" — so the guard was there for a good reason.
 
-But the `exists()` condition means a deleted or never-created bank is never
-rebuilt: the refresh would run clean, write nothing, and the home-run and DFS
-models would fit on whatever was left. Low priority — it is a recovery path,
-not a live defect — but the failure mode is silent, which is this list's theme.
+But the `exists()` condition meant a deleted or never-created bank was never
+rebuilt: the refresh ran clean, wrote nothing, and the home-run and DFS models
+went on fitting whatever was left.
+
+**`bank_starters` had handled this correctly all along** — a game counts as
+banked only when *both* banks hold it, so an absent batter bank re-walks
+history once and then stays incremental, which is exactly how the bank was
+first added. The only thing preventing recovery was the caller.
+
+Now `refresh_mlb_player_banks` passes it unconditionally. The outer
+`starters.exists()` guard stays, because never having been backfilled is a
+different thing from a bank going missing and only the second is a recovery
+worth attempting. And the rebuild announces itself: that first run re-walks
+every banked game and takes a while, so it says so rather than looking hung.
 
 ---
 
@@ -455,6 +519,13 @@ not a live defect — but the failure mode is silent, which is this list's theme
 
 - **BP `park_factors`** — we fit our own from banked games, shrunk by sample
   (`props_hr.py`). A served, unshrunk number is not an improvement.
+- **BP prop `performance` splits** (`last_1`/`last_5`/`last_10`/`last_15`/
+  `last_20`/`season`/`prior_season`/`h2h`) — a provider's copy of windows we
+  can compute ourselves from `datasets/nfl/player_weeks.parquet` (113,581
+  player-weeks, every market they cover). See finding 3.
+- **BP `extra.opposition_rank`** — a served ordinal where `PropMatchupSignal`
+  already z-scores the opponent's fitted defensive EPA. Same reasoning as
+  `park_factors`.
 - **FantasyPros `def_ff` / `def_tyda`** — DK scores neither.
 - **FantasyPros `points` / `points_half` / `points_ppr`** — we compute DK
   points from the components rather than trust a served total.
@@ -469,7 +540,7 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | The Odds API | 2026-09-16 | Complete — every mapped key priced |
 | nflverse weekly player stats | 2026-09-16 | Complete — attempts, completions, kicking banked |
 | BettingPros `/events` | 2026-09-16 | **3 findings above** |
-| BettingPros `/props` | 2026-09-16 | **1 finding above** |
+| BettingPros `/props` | 2026-09-16 | Finding 3 — re-examined and **declined**; the discarded fields are a copy of what we own plus a served ordinal |
 | nflverse play-by-play | 2026-09-16 | Clean — the 12-column narrowing is deliberate and documented |
 | NFL weather / roof handling | 2026-09-16 | Clean — dome-aware live forecast, well built |
 | Baseball Savant (Statcast) | 2026-09-16 | **Finding 4 — collected, not passed** |
@@ -481,7 +552,7 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | `cfb_players` / NCAAF player bank | 2026-09-16 | **Findings 9 and 10 — both fixed.** Upstream stopped attributing passing and receiving touchdowns in 2026; the weekly top-up had never once run; the coverage alarm fired and was ignored |
 | Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA.** NCAAF left the list when finding 6 closed |
 | Kalshi / Polymarket / exchanges | 2026-09-16 | Clean — collected hourly, `--exchanges` passed by the live slate (default true), graded via `--exchanges-dir` |
-| nflverse rosters / schedules | 2026-09-16 | Schedules clean. `load_rosters()` is **dead code** — defined, called by nothing (finding 8) |
+| nflverse rosters / schedules | 2026-09-16 | Schedules clean. The roster chain was **dead code** — fetch, normalizer, fixture, tests and the `Players` schema, none of it reachable. Deleted (finding 8) |
 | NCAAB / WNBA / NHL game markets | 2026-09-16 | Clean — priced by `ScoresGameModel` + `fit_scores_ratings`; NCAAB adds Torvik, NHL adds starting goalies. No prop lines bought for NCAAB/WNBA, which is consistent. |
 
 **The audit is complete.** Every ingest module, every banked dataset, every
@@ -530,9 +601,9 @@ leagues' prop lines are still bought with nothing to price them.
 
 | # | What |
 |---|---|
-| **3** | BP per-prop form splits and `opposition_rank` — `FormSignal` and `PropMatchupSignal` want exactly these |
-| **7** | Batter bank cannot be recreated if deleted (`exists()` guard) |
-| **8** | `load_rosters()` dead code |
+| ~~**3**~~ | ~~BP per-prop form splits and `opposition_rank`~~ — **declined.** The premise was wrong: `FormSignal` is a team signal that never sees a prop, and we can compute every form window ourselves |
+| ~~**7**~~ | ~~Batter bank cannot be recreated if deleted (`exists()` guard)~~ — **done** |
+| ~~**8**~~ | ~~`load_rosters()` dead code~~ — **done**, and the whole unreachable chain with it |
 | — | Pitcher `hitByPitch` uncollected (~0.2 DK points a start) — recorded, not worth acting on |
 
 ## What the audit says about the system
