@@ -132,6 +132,54 @@ effects there is. The MLB path simply never got the NFL path's treatment, and
 the forecast it would need is already arriving on every BettingPros event
 (finding 2).
 
+## 6. NCAAF prop lines are bought every run and never priced (OPEN, costs credits)
+
+`FOOTBALL_PROP_LEAGUES = ("nfl", "ncaaf")`, and the collector buys the full
+event-market board for both (`LEAGUE_PROP_MARKETS["ncaaf"] = DEFAULT_EVENT_MARKETS`,
+`--leagues "nfl ncaaf mlb nhl"`). Those are per-market, per-event Odds API
+credits, spent every run.
+
+The prop slate then cannot price any of it. It reads FantasyPros:
+
+```python
+fp = fp[fp["league"].astype(str) == args.league]
+if fp.empty:
+    print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
+```
+
+and the FantasyPros public API **has no NCAAF projections endpoint at all** —
+the collector skips college by design and says so every run. So the filter is
+always empty, the slate always skips, and the lines we paid for are banked and
+never read.
+
+**The substitute already exists and is already proven.** The DFS board hit the
+same wall and solved it:
+
+```yaml
+# dfs-slate.yml:120 — "FantasyPros serves no college players at all, so the
+# board never built (velocity/models/dfs_ncaaf.py)."
+if [ "${league}" = "ncaaf" ]; then PROJ_FILE="datasets/ncaaf/player_games.parquet"; fi
+```
+
+`datasets/ncaaf/player_games.parquet` is banked, current, and 20 columns wide.
+The prop slate never got the same treatment. Two honest options, and they want
+deciding rather than drifting: point the NCAAF prop slate at the banked player
+games the way DFS does, or stop buying NCAAF prop markets. Doing neither is the
+only choice that costs money for nothing.
+
+## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
+
+`refresh_datasets.py` tops the batter bank up with
+`batters_out=batters if batters.exists() else None`. The bank is current today,
+and the comment beside it records that leaving it out of this call once froze
+it "at the last manual backfill while the lineups those models priced moved on
+without it" — so the guard is there for a good reason.
+
+But the `exists()` condition means a deleted or never-created bank is never
+rebuilt: the refresh would run clean, write nothing, and the home-run and DFS
+models would fit on whatever was left. Low priority — it is a recovery path,
+not a live defect — but the failure mode is silent, which is this list's theme.
+
 ---
 
 ## Deliberately not used
@@ -156,10 +204,26 @@ the forecast it would need is already arriving on every BettingPros event
 | nflverse play-by-play | 2026-09-16 | Clean — the 12-column narrowing is deliberate and documented |
 | NFL weather / roof handling | 2026-09-16 | Clean — dome-aware live forecast, well built |
 | Baseball Savant (Statcast) | 2026-09-16 | **Finding 4 — collected, not passed** |
-| nflverse rosters / injuries / schedules | — | not yet audited |
-| CFBD (NCAAF) | — | not yet audited |
-| ESPN | — | not yet audited |
-| MLB statsapi / Savant | — | not yet audited |
+| ESPN injuries + depth | 2026-09-16 | Clean — collected and passed for every league it covers |
+| Banked datasets vs. consumers | 2026-09-16 | **Clean — every banked column is read.** See the note below |
+| Optional data flags vs. workflows | 2026-09-16 | **Finding 4** (Statcast); finding 7 (minor) |
+| NCAAF prop path | 2026-09-16 | **Finding 6 — bought, never priced** |
+| MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | — | not yet audited |
+| CFBD / `cfb_players` (`STAT_COLUMNS`) | — | not yet audited |
 | Kalshi / Polymarket | — | not yet audited |
+| nflverse rosters / schedules | — | not yet audited |
 | NHL / NCAAB / WNBA | — | not yet audited |
-| Banked datasets vs. consumers | — | not yet audited |
+
+### The structural finding
+
+Every column in every banked parquet is referenced by something — 26 datasets,
+no exceptions. **The banks are tight; the losses happen at the ingest boundary**,
+where a normalizer names the fields it keeps and the rest of the payload is
+dropped unrecorded. That is where the remaining audit should look, and it is
+why the allow-lists (`_PROP_COLUMNS`, `_EVENT_COLUMNS`, `_PBP_COLUMNS`,
+`STAT_COLUMNS`, …) are the map.
+
+A corollary worth keeping: a repo-wide grep is NOT enough to check a flag is
+passed. `--statcast` appears in the workflows directory, so a naive search says
+"passed" — it is passed by `dfs-slate.yml` and omitted by `live-slate.yml`.
+Finding 4 hid behind exactly that.
