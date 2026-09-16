@@ -32,13 +32,14 @@ the confidence actually bet on, exactly as it did for MLB.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from velocity.util.names import fold_name
 
 # FantasyPros stat keys → the canonical prop market they feed. TD components
 # fold into the anytime-TD rate rather than being markets of their own.
@@ -85,7 +86,10 @@ _MIN_MEAN = {"pass_yards": 25.0, "pass_tds": 0.05, "rush_yards": 5.0,
 
 
 def _normalize_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+    # Shared fold (velocity/util/names.py): accents and generational suffixes
+    # travel inconsistently between providers, and the prop slate lost
+    # twenty-one hitters to exactly that before it folded them.
+    return fold_name(name)
 
 
 def player_key(player_id: object, player_name: object) -> str:

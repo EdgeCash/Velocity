@@ -28,6 +28,9 @@ def main() -> None:
     parser.add_argument("--games", default="datasets/mlb/games.parquet")
     parser.add_argument("--starters", default="datasets/mlb/starters.parquet")
     parser.add_argument("--statcast", default=None, help="Statcast snapshot parquet")
+    parser.add_argument("--lineups", default=None,
+                        help="banked bp_lineups_*.parquet — today's batting "
+                             "orders, used where statsapi has not posted yet")
     parser.add_argument("--out", required=True, help="output folder")
     parser.add_argument("--roster-size", type=int, default=3,
                         help="picks for the DK single-stat contest")
@@ -35,7 +38,7 @@ def main() -> None:
                         help="season to fit (0 = the newest in the bank)")
     args = parser.parse_args()
 
-    from build_dfs_lineup import apply_confirmed_cards
+    from build_dfs_lineup import apply_confirmed_cards, apply_projected_cards
     from build_mlb_pitching import fetch_probables
     from velocity.models.props_hr import HomeRunModel
 
@@ -43,6 +46,9 @@ def main() -> None:
     games = pd.read_parquet(args.games)
     starters = pd.read_parquet(args.starters)
     statcast = pd.read_parquet(args.statcast) if args.statcast else None
+    lineups = pd.read_parquet(args.lineups) if args.lineups else None
+    if lineups is not None and "league" in lineups.columns:
+        lineups = lineups[lineups["league"].astype(str) == "mlb"]
     season = args.season or int(games["season"].max())
     model = HomeRunModel.fit(batters, games, starters, statcast, season=season)
     if not model.batter_rate:
@@ -92,9 +98,32 @@ def main() -> None:
     name_of = dict(zip(recent["batter_id"].astype(str),
                        recent["batter_name"].astype(str), strict=False))
 
-    # The posted card, where statsapi has it: the slot becomes a fact and a
-    # bat that never leaves the bench leaves the board (docs/DFS_FORMATS.md).
-    eligible = apply_confirmed_cards(slot_of, team_of, str(today), str(tomorrow))
+    # Two card sources, layered lowest-priority first.
+    #
+    # BettingPros posts hours earlier than statsapi and covers the whole slate
+    # (2026-09-16: sixty of sixty sides at 16:53 UTC against statsapi's eight
+    # at 18:55), so it fills the window the live slate actually runs in. Then
+    # statsapi's confirmed card overrides it wherever it exists — it is the
+    # manager's order rather than the book's read of it, and it is keyed on the
+    # same MLBAM ids the banks use, with no name matching in between.
+    #
+    # Both layers express "no opinion" the same way — a team nobody carded
+    # stays unrestricted — which is what lets them compose.
+    eligible = None
+    if lineups is not None and not lineups.empty:
+        from velocity.wagering.props_slate import build_name_index
+
+        index = build_name_index(
+            batters.rename(columns={"batter_id": "player_id",
+                                    "batter_name": "player_name"})
+        )
+        eligible = apply_projected_cards(slot_of, team_of, lineups, index)
+    confirmed = apply_confirmed_cards(slot_of, team_of, str(today), str(tomorrow))
+    if confirmed is not None:
+        # Intersect rather than replace: statsapi calls every bat on an
+        # unposted team eligible, which would otherwise undo the restriction
+        # BettingPros already has for that team.
+        eligible = confirmed if eligible is None else (eligible & confirmed)
 
     rows: list[dict[str, object]] = []
     for (home, away, _k), (home_sp, away_sp) in probables.items():

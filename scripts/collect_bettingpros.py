@@ -30,9 +30,11 @@ from pathlib import Path
 import pandas as pd
 from velocity.ingest.bettingpros import (
     _PROP_COLUMNS,
+    LINEUP_COLUMNS,
     BettingProsClient,
     describe_payload_shape,
     describe_slug_coverage,
+    normalize_lineups,
     normalize_props,
     pagination,
     payload_errors,
@@ -111,6 +113,7 @@ def collect(
     client = BettingProsClient.from_env()
     frames: list[pd.DataFrame] = []
     event_rows: list[dict[str, object]] = []
+    lineup_frames: list[pd.DataFrame] = []
     raw_events: dict[str, object] = {}
     failed: list[str] = []
     for sport in sports:
@@ -138,7 +141,21 @@ def collect(
                 "kickoff": e.get("scheduled"),
                 "league": sport.lower(),
             })
-        # What an event carries beyond the four fields we keep. lineups and
+        # Today's batting order, which this collector dropped for months while
+        # the home-run board inferred a hitter's slot from his PREVIOUS game —
+        # so a hitter who moved in the order was priced at the wrong number of
+        # plate appearances, and one who was benched was priced as a starter.
+        # Normalized now that the shape has actually been read (audit finding
+        # 1, docs/DATA_AUDIT.md), not guessed at.
+        lineups = normalize_lineups(events, sport.lower())
+        if not lineups.empty:
+            lineup_frames.append(lineups.assign(collected_at=collected_at))
+            confirmed = int(lineups["is_confirmed"].sum())
+            print(f"  {sport}: {len(lineups)} lineup slots across "
+                  f"{lineups['game_id'].nunique()} games "
+                  f"({confirmed} confirmed, {len(lineups) - confirmed} projected)")
+
+        # What an event carries beyond the fields we keep. lineups and
         # park_factors default TRUE on this endpoint, so they have been arriving
         # all along; notes (weather, trends) and officials are now asked for.
         # Reported, not parsed: a normalizer written against an unseen shape is
@@ -168,7 +185,9 @@ def collect(
     events_out = pd.DataFrame(
         event_rows, columns=["game_id", "home_team", "away_team", "kickoff", "league"]
     ).assign(collected_at=collected_at)
-    return lines_out, events_out, raw_events, failed
+    lineups_out = (pd.concat(lineup_frames, ignore_index=True)
+                   if lineup_frames else pd.DataFrame(columns=LINEUP_COLUMNS))
+    return lines_out, events_out, lineups_out, raw_events, failed
 
 
 # COMPLETE parameter sets, not overrides. The first probe passed overrides to
@@ -281,7 +300,7 @@ def main() -> None:
     now = datetime.now(UTC)
     stamp = pd.Timestamp(now).tz_localize(None)
     print(f"BettingPros snapshot @ {now.isoformat()}")
-    df, events, raw_events, failed = collect(tuple(args.sports), stamp)
+    df, events, lineups, raw_events, failed = collect(tuple(args.sports), stamp)
     if failed and len(failed) == len(args.sports):
         # Every sport failed after retries — a real outage worth a red run.
         raise SystemExit(f"all sports failed after retries: {failed}")
@@ -305,6 +324,9 @@ def main() -> None:
     # needs to bridge Odds-API-keyed bets onto these snapshots for CLV.
     events.to_parquet(out / f"bp_events_{tag_now}.parquet", index=False)
     print(f"wrote {len(events)} event rows")
+    if not lineups.empty:
+        lineups.to_parquet(out / f"bp_lineups_{tag_now}.parquet", index=False)
+        print(f"wrote {len(lineups)} lineup slots")
     # The book id -> name listing. BettingPros identifies a book by a small
     # integer, and a board keyed "bp:10" is unreadable on a card and
     # un-auditable in the record. One extra call per run resolves every id to

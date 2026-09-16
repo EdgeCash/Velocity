@@ -465,8 +465,14 @@ jobs:
         run: |
           python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
           STATCAST=$(ls -t artifacts/statcast/*.parquet 2>/dev/null | head -1 || true)
+          # Today's batting order from the BettingPros snapshot. statsapi posts
+          # a couple of hours before first pitch and this job runs well before
+          # that, so without it most of the slate falls back to each batter's
+          # PREVIOUS game — wrong slot, and bats who are not playing.
+          LINEUPS=$(ls -t artifacts/bp/**/bp_lineups_*.parquet 2>/dev/null | head -1 || true)
           PYTHONPATH=scripts python scripts/build_hr_board.py \
-            ${STATCAST:+--statcast "$STATCAST"} --out artifacts/slate || true
+            ${STATCAST:+--statcast "$STATCAST"} \
+            ${LINEUPS:+--lineups "$LINEUPS"} --out artifacts/slate || true
 
       - name: Build DFS lineups
         continue-on-error: true

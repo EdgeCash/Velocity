@@ -26,6 +26,70 @@ import numpy as np
 import pandas as pd
 
 
+def apply_projected_cards(
+    slot_of: dict[str, int], team_of: dict[str, str],
+    lineups: pd.DataFrame, name_to_id: dict[str, str],
+) -> set[str] | None:
+    """Fold BettingPros' batting orders in UNDER statsapi's.
+
+    Same contract as :func:`apply_confirmed_cards` and deliberately called
+    before it, so a confirmed card always wins: this fills the window where
+    statsapi has posted nothing.
+
+    That window is most of the slate. statsapi publishes "a couple of hours
+    before first pitch"; the live slate runs at 16:53 and 22:53 UTC, and on
+    2026-09-16 twenty-six of thirty games started at 22:00 UTC or later. At
+    the 16:53 run statsapi had EIGHT of sixty sides while BettingPros had all
+    sixty — thirty-eight confirmed, twenty-two projected — two hours earlier.
+    Without this the board falls back to the batter's most recent prior game,
+    which is a guess about both his slot and whether he is playing at all.
+
+    BettingPros numbers players in its own id space, so the join is on the
+    folded name (velocity/util/names.py — the accent fold matters here: an
+    unfolded match loses Jose Ramirez and twenty others). Teams arrive as
+    abbreviations and the banks use full names, so they resolve through
+    MLB_IDENTITY.
+
+    Returns the eligible bat ids, or ``None`` when there is nothing usable —
+    in which case the caller is exactly as it was.
+    """
+    if lineups is None or lineups.empty:
+        return None
+    from velocity.report.league_identity import MLB_IDENTITY
+    from velocity.util.names import fold_name
+
+    full_name = {abbr: team for team, (abbr, *_rest) in MLB_IDENTITY.items()}
+    covered: set[str] = set()
+    eligible: set[str] = set()
+    unresolved = 0
+    for row in lineups.to_dict("records"):
+        pid = name_to_id.get(fold_name(row.get("player_name")))
+        if pid is None:
+            unresolved += 1
+            continue
+        slot = row.get("slot")
+        if slot is not None and not pd.isna(slot):
+            slot_of[str(pid)] = int(slot)
+        team = full_name.get(str(row.get("team") or ""))
+        if team:
+            team_of[str(pid)] = team
+            covered.add(team)
+        eligible.add(str(pid))
+    if not eligible:
+        print("projected lineups: nothing resolved; using recent slots")
+        return None
+    # A team BettingPros did not card is unrestricted, exactly as statsapi
+    # leaves an unposted one — the two layers compose because both express
+    # "no opinion" the same way.
+    eligible |= {pid for pid, team in team_of.items() if team not in covered}
+    confirmed = int(lineups["is_confirmed"].sum()) if "is_confirmed" in lineups else 0
+    print(f"projected lineups: {len(covered)} teams carded "
+          f"({confirmed} of {len(lineups)} slots confirmed by the book), "
+          f"{len(eligible)} eligible bats"
+          + (f"; {unresolved} unresolved names" if unresolved else ""))
+    return eligible
+
+
 def apply_confirmed_cards(
     slot_of: dict[str, int], team_of: dict[str, str], start: str, end: str,
 ) -> set[str] | None:

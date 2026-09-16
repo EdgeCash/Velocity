@@ -15,12 +15,12 @@ grades them against.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Protocol
 
 import pandas as pd
 
+from velocity.util.names import fold_name
 from velocity.wagering.bet_log import Bet, BetLog
 from velocity.wagering.devig import devig
 from velocity.wagering.edge import evaluate
@@ -42,7 +42,14 @@ class PropDistributions(Protocol):
 
 
 def _normalize(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+    """The shared fold — providers disagree about accents, and we lost on it.
+
+    This stripped case and punctuation but left diacritics, so BettingPros'
+    "Jose Ramirez" never matched statsapi's "José Ramírez" and the prop simply
+    abstained. On one live board that cost twenty-one hitters, among them José
+    Ramírez, Julio Rodríguez, Eugenio Suárez and Jeremy Peña.
+    """
+    return fold_name(name)
 
 
 def build_name_index(*stats_frames: pd.DataFrame) -> dict[str, str]:

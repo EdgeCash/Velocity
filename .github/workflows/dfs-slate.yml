@@ -168,6 +168,10 @@ jobs:
         run: |
           python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
           STATCAST=$(ls -t artifacts/statcast/*.parquet 2>/dev/null | head -1 || true)
+          # No --lineups here: this job does not download the BettingPros
+          # artifact, so the flag would resolve empty on every run and pass
+          # nothing — which is exactly how --statcast hid in live-slate.yml for
+          # months. Wire the bp download in first, then add the flag.
           PYTHONPATH=scripts python scripts/build_hr_board.py \
             ${STATCAST:+--statcast "$STATCAST"} --out artifacts/slate || true
 
