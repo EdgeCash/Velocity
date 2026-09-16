@@ -87,7 +87,7 @@ def test_collect_isolates_a_dead_sport(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         bp.BettingProsClient, "from_env", staticmethod(lambda: FakeClient())
     )
-    lines, events, raw_events, failed = bp.collect(
+    lines, events, lineups, raw_events, failed = bp.collect(
         ("NFL", "NCAAF"), pd.Timestamp("2026-09-10")
     )
     assert failed == ["NCAAF"]
@@ -99,3 +99,6 @@ def test_collect_isolates_a_dead_sport(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "lineups" in raw_events["NFL"]["events"][0]
     # And it is scrubbed on the way out — /events echoes the request URL too.
     assert "SECRET" not in json.dumps(raw_events)
+    # Football serves no batting orders, so the lineup frame is empty rather
+    # than absent — the collector banks it only when a sport actually has one.
+    assert lineups.empty

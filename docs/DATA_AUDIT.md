@@ -21,7 +21,7 @@ PR), **DECLINED** (deliberately not used, with the reason).
 
 ---
 
-## 1. BettingPros `/events` — today's lineup (OPEN, correctness)
+## 1. BettingPros `/events` — today's lineup (DONE)
 
 `scripts/collect_bettingpros.py` keeps five fields of the twenty-three the MLB
 payload carries:
@@ -57,8 +57,21 @@ confirmed card and fall back to the batter's most recent prior game. BP had a
 card for every one of those sides two hours earlier.
 
 So the gap is not "we ignore the lineup". It is that our lineup source posts
-after the run that needs it, and a second source posts before. The fallback
-that fills the gap is:
+after the run that needs it, and a second source posts before.
+
+**Fixed 2026-09-16.** `normalize_lineups` banks the order, and
+`apply_projected_cards` folds it in **under** `apply_confirmed_cards` — filling
+the early window and overridden the moment statsapi posts, because a confirmed
+card is the manager's order on MLBAM ids while the book's is a read on names.
+The board intersects the two eligible sets rather than replacing, since
+statsapi calls every bat on an unposted team eligible and that would otherwise
+undo the book's restriction.
+
+On the 2026-09-16 slate the fallback corrected **208 slots** and excluded
+**554 bats** who were on a carded team but not in its lineup, out of 899 the
+board would otherwise have priced.
+
+The original fallback, for the record:
 
 ```python
 recent.sort_values("game_id").drop_duplicates("batter_id", keep="last")
@@ -321,7 +334,6 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **1** | Today's lineup discarded; a benched hitter is priced as a starter | small — bank `lineups`, join on it, extend the availability veto |
 | **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut |
 
 ~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
