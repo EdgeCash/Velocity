@@ -24,7 +24,6 @@ import argparse
 import json
 import time
 import urllib.error
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -171,83 +170,88 @@ def collect(
     return lines_out, events_out, raw_events, failed
 
 
-# One varied request each, against what production sends today. Ordered so the
-# newest and most suspicious addition is tried first: include_correlated_picks
-# arrived in #201, and NFL — the one league still served — is also the only one
-# the flag was ever exercised against.
+# COMPLETE parameter sets, not overrides. The first probe passed overrides to
+# props(), which re-applies its own defaults for anything the caller omits — so
+# "drop include_correlated_picks" dropped nothing and the server echoed it back.
+# The guard caught that and reported "variant not applied" rather than scoring a
+# test that never ran, but three of five variants were wasted. These go straight
+# to _get, so what is listed is exactly what is sent.
 PROBE_VARIANTS: tuple[tuple[str, dict[str, object]], ...] = (
-    ("as production sends it", {}),
-    ("no include_correlated_picks", {"include_correlated_picks": None}),
-    ("server default ev_threshold", {"ev_threshold": None}),
-    ("include_markets=true", {"include_markets": "true"}),
-    ("minimal (sport + limit only)", {
-        "ev_threshold": None, "include_selections": None,
-        "include_markets": None, "include_correlated_picks": None,
+    ("as production sends it", {
+        "limit": 200, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
     }),
+    # The 11:30 board answered limit=200 with the "error" sentinel and the
+    # 13:02 probe answered limit=25 with an empty array. Same sport, same key,
+    # 90 minutes apart — so page size is worth isolating rather than assuming.
+    ("production, limit 25", {
+        "limit": 25, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
+    }),
+    ("without include_correlated_picks", {
+        "limit": 200, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false",
+    }),
+    ("without ev_threshold", {
+        "limit": 200, "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
+    }),
+    ("bare (sport + limit only)", {"limit": 200}),
 )
 
 
-def _probe_once(client: BettingProsClient, sport: str, overrides: dict[str, object]) -> str:
-    """One /props call, reported by what the rows ACTUALLY are.
+def _probe_once(client: BettingProsClient, sport: str, params: dict[str, object]) -> str:
+    """One /props call with EXACTLY these parameters, reported by what came back.
 
-    The previous probe printed ``len(payload["props"])``, which counts the
-    error sentinel as a prop and renders an outage as "HTTP 200 — 1 prop(s)
-    returned". Objects and sentinels are counted separately here for exactly
-    that reason.
+    Objects and sentinels are counted separately: the probe this replaced
+    printed ``len(payload["props"])``, which counts the error sentinel as a
+    prop and renders an outage as "HTTP 200 - 1 prop(s) returned".
     """
-    # A None override drops the parameter rather than sending "None".
-    params = {k: v for k, v in overrides.items() if v is not None}
-    drop = {k for k, v in overrides.items() if v is None}
     try:
-        payload = client.props(sport, limit=25, **params)
+        payload = client._get("props", sport=sport, **params)  # noqa: SLF001 - a probe
     except urllib.error.HTTPError as exc:
         return f"HTTP {exc.code}"
     except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
         return f"{type(exc).__name__}: {exc}"
-
-    if drop:
-        # props() re-adds its defaults, so a "dropped" key is only really gone
-        # if the echo agrees. Say so rather than claiming an untested variant.
-        echoed = (payload.get("_parameters") or {}) if isinstance(payload, Mapping) else {}
-        still = sorted(k for k in drop if echoed.get(k) not in (None, "", []))
-        if still:
-            return f"variant not applied (server still echoed {', '.join(still)})"
 
     rows = prop_rows(payload)
     bad = payload_errors(payload)
     good = len(rows) - bad
     meta = pagination(payload)
     total = meta.get("total_items", "?")
+    tail = f"total_items {total}"
     if good:
-        return f"{good} real row(s), {bad} sentinel(s), total_items {total}  <-- SERVED"
-    return f"0 real rows, {bad} sentinel(s), total_items {total}"
+        return f"{good} real row(s), {bad} sentinel(s), {tail}  <-- SERVED"
+    if bad:
+        return f"0 real rows, {bad} SENTINEL(s), {tail}"
+    return f"0 rows at all (empty array), {tail}"
 
 
 def probe_props() -> None:
-    """Why does /props serve NFL and answer every other sport with "error"?
+    """Why does /props serve NFL and nothing else?
 
-    On 2026-09-16 the board returned HTTP 200, a healthy envelope and
-    ``props: ["error"]`` for MLB, NCAAF, WNBA and NHL while NFL served 551 real
-    objects — with ``total_items`` reading 2493 for MLB throughout, so nothing
-    in the response said it had failed.
+    First pass (run 35099226165) established two things. NFL served 25 real
+    rows; MLB, NCAAF, WNBA and NHL returned ZERO rows with a large non-zero
+    ``total_items`` (MLB 2667), under both the production parameters and
+    ``include_markets=true``. And the 11:30 collector saw the ``"error"``
+    sentinel at limit=200 where the 13:02 probe saw an empty array at limit=25,
+    which is why page size is now a variant of its own.
 
-    This varies ONE parameter at a time against what production sends and
-    reports whether the rows come back as objects or sentinels. NFL leads as
-    the control: if NFL also stops being served by a variant, the variant is
-    the answer for the wrong reason.
+    What that pass could NOT test, because props() re-adds its defaults, was
+    actually dropping a parameter. These variants bypass props() entirely.
 
-    A sport stops at its first served variant — that names the culprit and
-    spends nothing further on it.
+    NFL leads as the control: a variant that also stops NFL being served is
+    answering the wrong question. A sport stops at its first served variant.
     """
     client = BettingProsClient.from_env()
-    print("props probe — one varied request per (sport, variant), 25 rows each")
+    print("props probe — complete parameter sets, sent verbatim")
     print(f"  control first; {len(PROBE_VARIANTS)} variants, stopping at the first served\n")
     for sport in ("NFL", "MLB", "NCAAF", "WNBA", "NHL"):
         print(f"  {sport}")
-        for label, overrides in PROBE_VARIANTS:
+        for label, params in PROBE_VARIANTS:
             time.sleep(3)  # under the 5 RPS budget
-            result = _probe_once(client, sport, overrides)
-            print(f"    {label:32s} {result}")
+            result = _probe_once(client, sport, dict(params))
+            print(f"    {label:34s} {result}")
             if "SERVED" in result:
                 break
         print()
