@@ -326,8 +326,8 @@ def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]
     if candidates.empty:
         lines.append("    none — this feed serves no attempt/completion projection.")
         if football:
-            lines.append("    BP 'rushing-attempts' and 'passing-attempts' stay unmapped;")
-            lines.append("    mapping them would abstain silently rather than honestly.")
+            lines.append("    If rush_att or pass_att has disappeared, the markets priced")
+            lines.append("    off them are now abstaining: check before assuming a quiet slate.")
     else:
         for r in candidates.to_dict("records"):
             if r["mapped"]:
@@ -335,13 +335,19 @@ def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]
             elif r["non_zero"] == 0:
                 state = "SERVED BUT ALL ZERO — a placeholder, not a projection"
             else:
-                state = "AVAILABLE — this unblocks a market"
+                state = "AVAILABLE — nothing reads this yet"
             lines.append(f"    {str(r['stat']):<22} {int(r['non_zero']):>5} non-zero, "
                          f"mean {r['mean']}  [{state}]")
         if football:
-            lines.append("    A rush-attempt key unblocks BP 'rushing-attempts' (57 rows);")
-            lines.append("    a pass-attempt key unblocks 'passing-attempts' (28). Calibrate")
-            lines.append("    against player_weeks 'carries' / 'attempts' before pricing.")
+            # The original open question — does this feed project attempts? —
+            # was answered yes on 2026-09-16 (run 35108513721) and both markets
+            # are priced. What remains is completions, and its blocker is on
+            # OUR side, so the report should stop implying the feed decides it.
+            lines.append("    rush_att / pass_att are priced (BP rushing-attempts,")
+            lines.append("    passing-attempts). pass_cmp is served but NOT priced:")
+            lines.append("    player_weeks has no completions column, so there is nothing")
+            lines.append("    to fit dispersion on and nothing to settle against.")
+            lines.append("    Anything else AVAILABLE here needs a model before a mapping.")
     return lines
 
 

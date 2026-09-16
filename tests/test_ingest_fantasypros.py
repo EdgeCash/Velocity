@@ -268,10 +268,14 @@ def _census_payload() -> dict:
     return {"players": [
         {"fpid": "1", "name": "Josh Allen", "team": "BUF", "position": "QB",
          "pass_yds": 265.0, "pass_tds": 1.8, "pass_att": 33.4,
-         "pass_cmp": "21/33", "rush_yds": 38.0, "rush_att": 6.2, "rec": 0.0},
+         "pass_cmp": "21/33", "rush_yds": 38.0, "rush_att": 6.2, "rec": 0.0,
+         # Real keys the live feed serves that nothing reads — the census's
+         # whole purpose is making these visible rather than invisible.
+         "fumbles": 0.11, "points_ppr": 23.16},
         {"fpid": "2", "name": "James Cook", "team": "BUF", "position": "RB",
          "rush_yds": 64.0, "rush_att": 14.1, "rec": 2.6, "rec_yds": 19.0,
-         "pass_att": 0.0, "pass_cmp": "0/0"},
+         "pass_att": 0.0, "pass_cmp": "0/0", "fumbles": 0.04,
+         "points_ppr": 12.4},
     ]}
 
 
@@ -287,9 +291,13 @@ def test_the_census_separates_what_we_read_from_what_we_do_not() -> None:
     census = stat_key_census(_census_frame()).set_index("stat")
     assert census.loc["pass_yds", "mapped"]
     assert census.loc["pass_yds", "market"] == "pass_yards"
+    # Attempts were the open question this census was built to answer; it did
+    # (run 35108513721), and they are priced now.
+    assert census.loc["rush_att", "market"] == "rush_attempts"
+    assert census.loc["pass_att", "market"] == "pass_attempts"
     # The whole point: served, numeric, and nothing reads it.
-    assert not census.loc["rush_att", "mapped"]
-    assert census.loc["rush_att", "market"] == ""
+    assert not census.loc["fumbles", "mapped"]
+    assert census.loc["fumbles", "market"] == ""
 
 
 def test_non_zero_is_counted_apart_from_rows() -> None:
@@ -306,17 +314,41 @@ def test_non_zero_is_counted_apart_from_rows() -> None:
 
 
 def test_an_all_zero_key_is_reported_as_a_placeholder() -> None:
+    """The live feed really does this — eight milestone keys are all zero.
+
+    ``pass_yds_300``, ``rush_yds_100``, ``scrimage_yards_100`` and friends are
+    structural zeros in a weekly projection. Mapping a market onto one would
+    abstain just as surely as leaving it unmapped, only less honestly, so the
+    report has to tell a placeholder apart from a projection.
+    """
     from velocity.ingest.fantasypros import describe_stat_keys, normalize_projections
 
     payload = {"players": [
         {"fpid": "1", "name": "A QB", "team": "BUF", "position": "QB",
-         "pass_yds": 250.0, "rush_att": 0.0},
+         "pass_yds": 250.0, "pass_cmp": 0.0},
     ]}
     lines = "\n".join(
         describe_stat_keys(normalize_projections(payload, season=2026, week=1), "nfl")
     )
     assert "SERVED BUT ALL ZERO" in lines
-    assert "AVAILABLE" not in lines
+    # The per-key verdict, not the closing guidance — which mentions the word
+    # in a different sense ("Anything else AVAILABLE here needs a model").
+    assert "AVAILABLE — nothing reads this yet" not in lines
+
+
+def test_the_census_guidance_reflects_what_is_actually_still_open() -> None:
+    """This text prints four times a week; stale guidance misleads at that rate.
+
+    Attempts WERE the open question and are priced now, so the report must not
+    keep advertising them as an unblocked opportunity. Completions is the live
+    one, and its blocker is on our side — the feed serves it.
+    """
+    from velocity.ingest.fantasypros import describe_stat_keys
+
+    lines = "\n".join(describe_stat_keys(_census_frame(), "nfl"))
+    assert "rush_att / pass_att are priced" in lines
+    assert "player_weeks has no completions column" in lines
+    assert "unblocks a market" not in lines
 
 
 def test_a_feed_with_no_volume_key_says_the_slugs_stay_unmapped() -> None:
@@ -438,10 +470,15 @@ def test_the_football_guidance_does_not_print_under_another_sport() -> None:
         season=2026, week=0,
     )
     lines = "\n".join(describe_stat_keys(mlb, "mlb"))
+    assert "completions" not in lines
     assert "rushing-attempts" not in lines
+    # The same shape under NFL does carry the football guidance. A volume-like
+    # key has to be present for that block to have anything to say.
     nfl = normalize_projections(
         {"players": [{"fpid": "1", "name": "A QB", "team": "BUF",
-                      "position": "QB", "pass_yds": 250.0}]},
+                      "position": "QB", "pass_yds": 250.0, "pass_cmp": 21.0}]},
         season=2026, week=1,
     )
-    assert "rushing-attempts" in "\n".join(describe_stat_keys(nfl, "nfl"))
+    nfl_lines = "\n".join(describe_stat_keys(nfl, "nfl"))
+    assert "rushing-attempts" in nfl_lines
+    assert "player_weeks has no completions column" in nfl_lines
