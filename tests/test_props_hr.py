@@ -312,3 +312,47 @@ def test_an_unusable_statcast_frame_still_reports_zero() -> None:
     useless = pd.DataFrame({"player_id": ["b0"], "side": ["batter"]})
     model = HomeRunModel.fit(batters, games, starters, useless, season=2026)
     assert model.statcast_batters == 0
+
+
+# --- weather reaches the board, or it may as well not exist -------------------
+
+
+def test_weather_multiplies_into_the_rate() -> None:
+    """The term has to change the number, not merely exist on the model."""
+    from velocity.models.props_hr import HomeRunModel
+
+    model = HomeRunModel(league_rate=0.03, batter_rate={"b": 0.04},
+                         pitcher_factor={}, park_factor={}, slot_pa={})
+    flat = model.rate("b")
+    assert flat is not None
+    out = model.rate("b", wind_out=10.0, temp_f=90.0)
+    into = model.rate("b", wind_out=-10.0, temp_f=50.0)
+    assert out is not None and into is not None
+    assert into < flat < out
+
+
+def test_the_probability_path_carries_weather_too() -> None:
+    """The Statcast failure exactly: a capability nothing passes through.
+
+    ``rate`` taking the argument is worth nothing if ``probability`` and
+    ``expected_home_runs`` — the two the board actually calls — drop it.
+    """
+    from velocity.models.props_hr import HomeRunModel
+
+    model = HomeRunModel(league_rate=0.03, batter_rate={"b": 0.04},
+                         pitcher_factor={}, park_factor={}, slot_pa={1: 4.0})
+    for method in ("probability", "expected_home_runs"):
+        call = getattr(model, method)
+        flat = call("b", lineup_slot=1)
+        windy = call("b", lineup_slot=1, wind_out=10.0, temp_f=90.0)
+        assert flat is not None and windy is not None
+        assert windy > flat, f"{method} drops the weather arguments"
+
+
+def test_a_batter_with_no_rate_is_still_none_whatever_the_weather() -> None:
+    from velocity.models.props_hr import HomeRunModel
+
+    model = HomeRunModel(league_rate=0.03, batter_rate={}, pitcher_factor={},
+                         park_factor={}, slot_pa={})
+    assert model.rate("nobody", wind_out=10.0, temp_f=90.0) is None
+

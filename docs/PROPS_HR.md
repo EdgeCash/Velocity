@@ -141,10 +141,38 @@ backtest cannot measure, because Savant publishes no as-of snapshots.
 
 ## 6. Open items
 
-* **Weather.** Temperature and wind genuinely move home-run distance, but we
-  have no banked historical weather to FIT a coefficient on, so the model
-  states nothing about it rather than importing someone else's number.
-  Backfilling game-time conditions onto the batter bank is the unlock.
+* ~~**Weather.**~~ **Done (2026-09-16).** *"Backfilling game-time conditions
+  onto the batter bank is the unlock"* was right; the backfill is
+  `scripts/build_mlb_weather.py`, off statsapi rather than a paid feed — free,
+  keyless, and answering for **7,219 of 7,219** committed games. Fitted
+  against each game's own park × season × month baseline:
+
+  | | per unit | se | t |
+  |---|---|---|---|
+  | wind | +0.00743 per mph blowing out | 0.00145 | 5.1 |
+  | temperature | +0.00351 per °F above 70 | 0.00070 | 5.0 |
+
+  Closed-roof games — weather switched off — land at 0.993 ± 0.019 of their
+  own baseline, which is what says the baseline is absorbing park, ball and
+  calendar rather than leaving them in the weather terms.
+
+  Both are straight lines, and that is a result rather than a default. In
+  sample the data argues for an asymmetric wind curve (blowing in suppresses
+  without limit; blowing out saturates by ~6 mph) and a convex temperature
+  one, and an interpolated curve cuts in-sample error twenty-fold — but
+  trained on two seasons and scored on the third it **loses to the plain line
+  in five of six comparisons**, because its knots were the bins it was scored
+  against. Nothing more elaborate generalises, so nothing more elaborate
+  ships. The one addition is a clamp at the edge of the fitted data, which
+  stops the line predicting ×1.19 for a 25 mph tailwind where the games above
+  12 mph come in at ×1.03.
+
+  Live, it costs **no extra request**: statsapi carries the forecast from
+  Pre-Game onward and the *schedule* endpoint hydrates it, so it arrives
+  beside the probables the board already fetches. Coverage is partial by
+  nature (8 of 15 games on the 2026-09-16 slate) and is **counted in the run
+  log**, because a game with no reading gets a multiplier of exactly 1.0 —
+  the same number a calm 70 °F night gets.
 * **Handedness splits.** Batter-vs-LHP/RHP and handedness-specific park
   factors are the largest missing context term.
 * **Confirmed lineups.** The board currently projects each batter's most
