@@ -210,7 +210,7 @@ def ncaaf_day_index(slate_date: datetime) -> _Index:  # pragma: no cover - netwo
     from velocity.ingest.cfb_players import fetch_player_games
 
     season = slate_date.year if slate_date.month >= 8 else slate_date.year - 1
-    games, _covered = fetch_player_games(season)
+    games, _covered, _dropped = fetch_player_games(season)
     if games.empty:
         return {}
     # Every college game is played on one calendar day, and the slate's own

@@ -12,9 +12,12 @@ from __future__ import annotations
 import pandas as pd
 from velocity.ingest.cfb_players import (
     CFB_POSITIONS,
+    fold_usable_weeks,
     infer_positions,
     player_games,
+    scoring_plays,
     season_coverage,
+    week_coverage,
 )
 from velocity.models.dfs_ncaaf import RECENT_GAMES, dk_expected_points_ncaaf, recent_games
 
@@ -26,7 +29,12 @@ def _plays(rows: list[dict]) -> pd.DataFrame:
     base: dict[str, object] = {"game_id": "g1", "team": "Georgia",
                                "opponent": "Alabama", "season": 2024, "week": 1,
                                "team_score": 28, "completion_yds": 0.0,
-                               "rush_yds": 0.0, "reception_yds": 0.0}
+                               "rush_yds": 0.0, "reception_yds": 0.0,
+                               # Distance to the goal line at the snap: the
+                               # column the fold reads a touchdown off when
+                               # the release names no scorer. Midfield here,
+                               # so nothing scores unless a row says so.
+                               "yards_to_goal": 75.0}
     for role in roles:
         base[f"{role}_player_id"] = None
         base[f"{role}_player"] = None
@@ -140,10 +148,10 @@ def test_only_the_three_positions_dk_rosters_are_used() -> None:
 def test_a_season_the_release_has_not_finished_looks_like_nobody_scored() -> None:
     """Coverage is what tells a thin season from a low-scoring one.
 
-    cfbfastR fills progressively: the banked seasons come in at 0.82 (2023)
-    and 0.75 (2024), while 2025 sits at 0.46 and the current 2026 at 0.24. A
-    projection fitted on an unfilled season prices every player at nothing,
-    so the build refuses rather than shipping that.
+    cfbfastR fills progressively: measured off the same mask the fold banks,
+    the seasons read 0.79 (2023), 0.73 (2024), 0.49 (2025) and 0.62 (2026
+    through week 2). A projection fitted on an unfilled season prices every
+    player at nothing, so the build refuses rather than shipping that.
     """
     covered = _plays([{"touchdown_player_id": "a", "touchdown_player": "A",
                        "team_score": 14},
@@ -227,3 +235,116 @@ def test_the_league_is_priceable_now() -> None:
     spec, scorer = LEAGUE_SPECS["ncaaf"]
     assert spec is CFB_CLASSIC
     assert scorer(_bank(6)).shape[0] == 1
+
+
+# --- the season the release stopped attributing ------------------------------
+
+
+def test_a_touchdown_still_counts_when_the_release_names_nobody() -> None:
+    """2026's shape: ``touchdown_player_id`` set on rushes and nothing else.
+
+    Through week 2 of 2026 the column marks 1,043 rushing plays and **zero**
+    completions or receptions, so a fold that read only that column banked a
+    season in which no college quarterback threw a touchdown. The geometry
+    does not care what ESPN's text named: a twelve-yard completion from the
+    twelve ended in the end zone.
+    """
+    frame = player_games(_plays([{
+        "completion_player_id": "qb", "completion_player": "A QB",
+        "reception_player_id": "wr", "reception_player": "A WR",
+        "completion_yds": 12.0, "reception_yds": 12.0, "yards_to_goal": 12.0,
+        "touchdown_player_id": None, "touchdown_player": None,
+    }]))
+    by = frame.set_index("player_id")
+    assert by.loc["qb", "pass_tds"] == 1.0
+    assert by.loc["wr", "receiving_tds"] == 1.0
+
+
+def test_a_gain_short_of_the_goal_line_is_not_a_touchdown() -> None:
+    """The other half of the rule, or every long completion becomes a score."""
+    frame = player_games(_plays([{
+        "completion_player_id": "qb", "completion_player": "A QB",
+        "reception_player_id": "wr", "reception_player": "A WR",
+        "completion_yds": 60.0, "reception_yds": 60.0, "yards_to_goal": 61.0,
+    }]))
+    by = frame.set_index("player_id")
+    assert by.loc["qb", "pass_tds"] == 0.0
+    assert by.loc["wr", "receiving_tds"] == 0.0
+    assert by.loc["wr", "receiving_yards"] == 60.0  # the yards are still his
+
+
+def test_the_geometry_reads_each_role_off_its_own_gain() -> None:
+    """A rush that reached the end zone must not score the passing play too.
+
+    ``scored`` was one play-level flag before this; with the gain-based rule
+    it has to be per role, or a role's touchdown would be decided by another
+    role's yardage.
+    """
+    frame = player_games(_plays([
+        {"rush_player_id": "rb", "rush_player": "A RB",
+         "rush_yds": 3.0, "yards_to_goal": 3.0},
+        {"completion_player_id": "qb", "completion_player": "A QB",
+         "reception_player_id": "wr", "reception_player": "A WR",
+         "completion_yds": 3.0, "reception_yds": 3.0, "yards_to_goal": 40.0},
+    ]))
+    by = frame.set_index("player_id")
+    assert by.loc["rb", "rush_tds"] == 1.0
+    assert by.loc["qb", "pass_tds"] == 0.0
+    assert by.loc["wr", "receiving_tds"] == 0.0
+
+
+def test_the_coverage_alarm_counts_a_throw_once() -> None:
+    """The passer and the receiver share one play, and one touchdown.
+
+    The mask is per play rather than per role for exactly this reason: count
+    it twice and a fourteen-point game explains twenty-eight, which would
+    read as *worse* coverage the better the attribution got.
+    """
+    two_unnamed_passing_scores = _plays([
+        {"completion_player_id": "qb", "completion_player": "A QB",
+         "reception_player_id": "wr", "reception_player": "A WR",
+         "completion_yds": 8.0, "reception_yds": 8.0, "yards_to_goal": 8.0,
+         "team_score": 14},
+        {"completion_player_id": "qb", "completion_player": "A QB",
+         "reception_player_id": "wr", "reception_player": "A WR",
+         "completion_yds": 20.0, "reception_yds": 20.0, "yards_to_goal": 20.0,
+         "team_score": 14},
+    ])
+    assert int(scoring_plays(two_unnamed_passing_scores).sum()) == 2
+    assert season_coverage(two_unnamed_passing_scores) == 1.0
+
+
+# --- the cliff, and cutting only the cliff -----------------------------------
+
+
+def _week(week: int, attributed: bool) -> list[dict]:
+    """One two-touchdown, fourteen-point team-game in ``week``."""
+    kind = {"touchdown_player_id": "rb", "touchdown_player": "A RB"} if attributed else {}
+    return [{"game_id": f"g{week}", "week": week, "team_score": 14,
+             "rush_player_id": "rb", "rush_player": "A RB",
+             "rush_yds": 4.0, "yards_to_goal": 40.0, **kind}
+            for _ in range(2)]
+
+
+def test_a_season_is_gated_by_week_because_that_is_how_it_breaks() -> None:
+    """2025 does not degrade — it stops.
+
+    Weeks 1-8 run 0.62-0.77 and weeks 9-16 run 0.48, 0.16, 0.14, 0.15, 0.14,
+    0.15, 0.17, 0.00: the release simply stopped attributing mid-season. As
+    one number that season reads 0.49, and both verdicts on it are wrong —
+    bank it whole and two thirds of a season prices as though nobody scored,
+    refuse it whole and eight good weeks go in the bin.
+    """
+    raw = _plays(_week(1, True) + _week(2, True) + _week(9, False) + _week(10, False))
+    by_week = week_coverage(raw)
+    assert by_week.loc[1] == 1.0 and by_week.loc[9] == 0.0
+
+    folded, covered, dropped = fold_usable_weeks(raw)
+    assert dropped == [9, 10]
+    assert covered == 1.0
+    assert sorted(folded["week"].unique()) == [1, 2]
+
+
+def test_an_empty_release_drops_no_weeks() -> None:
+    folded, covered, dropped = fold_usable_weeks(pd.DataFrame())
+    assert folded.empty and covered == 0.0 and dropped == []

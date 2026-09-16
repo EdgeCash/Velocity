@@ -16,16 +16,35 @@ scoring is its NFL scoring.
 
 Three things about the source are worth stating before trusting a number:
 
-* **Touchdowns are attributed inconsistently.** On a passing touchdown the
-  ``touchdown_player`` column names the passer 57% of the time and the
-  receiver 43% — whichever ESPN's play text put first. So this never reads
-  that column to decide *whose* touchdown it was. A play carrying a
-  completion and a touchdown is a passing touchdown for the passer and a
-  receiving touchdown for the receiver, which is what football says; a play
-  carrying a rush and a touchdown is a rushing touchdown. Verified safe: an
-  interception play never carries a completion (so a pick-six cannot become a
-  passing touchdown) and a fumble play never carries a touchdown (so a
+* **Touchdowns are attributed inconsistently, and sometimes not at all.** On
+  a passing touchdown the ``touchdown_player`` column names the passer 57% of
+  the time and the receiver 43% — whichever ESPN's play text put first. So
+  this never reads that column to decide *whose* touchdown it was. A play
+  carrying a completion and a touchdown is a passing touchdown for the passer
+  and a receiving touchdown for the receiver, which is what football says; a
+  play carrying a rush and a touchdown is a rushing touchdown. Verified safe:
+  an interception play never carries a completion (so a pick-six cannot become
+  a passing touchdown) and a fumble play never carries a touchdown (so a
   fumble return cannot become a rushing one).
+
+  The column can also stop naming a whole *kind* of scoring play, which is
+  worse, because it looks like football rather than like a hole. Through week
+  2 of 2026 it is set on rushing plays and nowhere else — 1,043 of its 1,074
+  marked plays are rushes and **zero** are completions or receptions — so a
+  fold that read only that column banked a season in which no college
+  quarterback threw a touchdown and no receiver caught one. Which is what
+  happened.
+
+  So a scoring play is *also* recognised geometrically, from two columns that
+  did not go anywhere: a gain covering the whole remaining distance to the
+  goal line ended in the end zone. Measured against 2025, where the column
+  still works, the geometry agrees with 99.4% of its passing touchdowns and
+  finds 15% more that it missed; on 2023 and 2024, which it attributes well,
+  taking both together moves the count under 2%. On 2026 it doubles it, from
+  1,074 to 2,149 — 6.4 a game, the same rate 2023 scores at. Two-point
+  conversions would be the one false positive this admits, and the release
+  does not carry them (no spike at the three-yard line, no extra points
+  anywhere in the frame).
 * **A target is only recorded on an incompletion.** ``target_player`` is the
   intended receiver on an incomplete pass and is empty on every completion,
   so a target is a reception plus an incompletion aimed at him.
@@ -72,6 +91,40 @@ IDENTITY_COLUMNS = ("season", "week", "game_id", "player_id", "player_name",
 CFB_POSITIONS = ("QB", "RB", "WR")
 
 
+def reached_end_zone(plays: pd.DataFrame, yards_column: str) -> pd.Series:
+    """Whether the gain in ``yards_column`` covered the whole field left.
+
+    ``yards_to_goal`` is the distance to the goal line at the snap, so a gain
+    that matches or exceeds it put the ball in the end zone. That is a fact
+    about football rather than about ESPN's play text, which is the point:
+    it keeps working on a season where ``touchdown_player_id`` stops naming
+    passing and receiving scorers.
+    """
+    if yards_column not in plays.columns or "yards_to_goal" not in plays.columns:
+        return pd.Series(False, index=plays.index)
+    gain = pd.to_numeric(plays[yards_column], errors="coerce")
+    to_goal = pd.to_numeric(plays["yards_to_goal"], errors="coerce")
+    return (gain.notna() & to_goal.notna() & (gain >= to_goal)).astype(bool)
+
+
+def scoring_plays(plays: pd.DataFrame) -> pd.Series:
+    """The plays on which the offense scored a touchdown, however it is told.
+
+    One mask per *play*, not per role, so counting it never double-counts the
+    passer and the receiver on the same throw. Shared by the fold and by
+    :func:`season_coverage`, so the alarm measures the touchdowns the bank
+    actually gets rather than the ones the release happens to name.
+    """
+    if plays.empty:
+        return pd.Series(False, index=plays.index, dtype=bool)
+    named = (plays["touchdown_player_id"].notna()
+             if "touchdown_player_id" in plays.columns
+             else pd.Series(False, index=plays.index))
+    return (named.astype(bool)
+            | reached_end_zone(plays, "completion_yds")
+            | reached_end_zone(plays, "rush_yds"))
+
+
 def _role(
     plays: pd.DataFrame, id_column: str, name_column: str, stats: dict[str, pd.Series]
 ) -> pd.DataFrame:
@@ -114,7 +167,18 @@ def player_games(plays: pd.DataFrame) -> pd.DataFrame:
         return (frame[column].notna() if column in frame.columns
                 else pd.Series(False, index=frame.index)).astype(float)
 
-    scored = present("touchdown_player_id")
+    named_a_scorer = present("touchdown_player_id").astype(bool)
+
+    def scored(yards_column: str) -> pd.Series:
+        """Whether this role's play ended in the end zone, as a 1.0/0.0 count.
+
+        Either the release said so, or the geometry does: a gain covering the
+        whole remaining distance to the goal line *is* a touchdown. The second
+        half is not a refinement — it is the only half that works on a season
+        the release has stopped attributing (see the module docstring).
+        """
+        return (named_a_scorer | reached_end_zone(frame, yards_column)).astype(float)
+
     one = pd.Series(1.0, index=frame.index)
 
     parts = [
@@ -122,18 +186,20 @@ def player_games(plays: pd.DataFrame) -> pd.DataFrame:
         # scoring play is his passing touchdown, whoever the source named.
         _role(frame, "completion_player_id", "completion_player",
               {"attempts": one, "pass_yards": num("completion_yds"),
-               "pass_tds": scored}),
+               "pass_tds": scored("completion_yds")}),
         _role(frame, "incompletion_player_id", "incompletion_player",
               {"attempts": one}),
         _role(frame, "interception_thrown_player_id", "interception_thrown_player",
               {"attempts": one, "interceptions": one}),
         _role(frame, "rush_player_id", "rush_player",
-              {"carries": one, "rush_yards": num("rush_yds"), "rush_tds": scored}),
+              {"carries": one, "rush_yards": num("rush_yds"),
+               "rush_tds": scored("rush_yds")}),
         # The receiver: a reception is a target too, and the intended man on
         # an incompletion is the only other place a target is recorded.
         _role(frame, "reception_player_id", "reception_player",
               {"receptions": one, "targets": one,
-               "receiving_yards": num("reception_yds"), "receiving_tds": scored}),
+               "receiving_yards": num("reception_yds"),
+               "receiving_tds": scored("reception_yds")}),
         _role(frame, "target_player_id", "target_player", {"targets": one}),
     ]
     stacked = pd.concat([p for p in parts if not p.empty], ignore_index=True)
@@ -185,12 +251,8 @@ def infer_positions(player_games_frame: pd.DataFrame) -> pd.Series:
     return frame["player_id"].map(best).fillna("").astype(str)
 
 
-def fetch_player_games(season: int) -> tuple[pd.DataFrame, float]:  # pragma: no cover - network
-    """One season of cfbfastR player plays, folded, with its coverage.
-
-    The coverage rides along because it can only be measured on the raw frame
-    — the folded one carries no score to check the attribution against.
-    """
+def fetch_season_plays(season: int) -> pd.DataFrame:  # pragma: no cover - network
+    """One season of the cfbfastR player-stats release, raw."""
     req = urllib.request.Request(CFBFASTR_PLAYER_STATS_URL.format(season=season),
                                  headers={"User-Agent": _USER_AGENT})
     for attempt, delay in enumerate((0, 5, 15)):
@@ -198,12 +260,38 @@ def fetch_player_games(season: int) -> tuple[pd.DataFrame, float]:  # pragma: no
             time.sleep(delay)
         try:
             with urllib.request.urlopen(req, timeout=180) as resp:  # noqa: S310
-                raw = pd.read_parquet(io.BytesIO(resp.read()))
-                return player_games(raw), season_coverage(raw)
+                return pd.read_parquet(io.BytesIO(resp.read()))
         except Exception:  # noqa: BLE001 - retried; the last attempt raises
             if attempt == 2:
                 raise
     raise RuntimeError("unreachable")
+
+
+def fold_usable_weeks(raw: pd.DataFrame) -> tuple[pd.DataFrame, float, list[int]]:
+    """Fold a raw season, keeping only the weeks the release has attributed.
+
+    Returns the folded player-games, the coverage of what was kept, and the
+    weeks refused — the third one because a caller that cannot say what it
+    dropped will report a clean run over a half-missing season.
+    """
+    if raw.empty:
+        return player_games(raw), 0.0, []
+    by_week = week_coverage(raw)
+    dropped = sorted(int(w) for w in by_week.index[by_week < MIN_COVERAGE])
+    kept = raw[~pd.to_numeric(raw["week"], errors="coerce").isin(dropped)]
+    return player_games(kept), season_coverage(kept), dropped
+
+
+def fetch_player_games(  # pragma: no cover - network
+    season: int,
+) -> tuple[pd.DataFrame, float, list[int]]:
+    """One season of cfbfastR player plays, folded, minus its unattributed weeks.
+
+    The coverage is measured on the raw frame because that is the only place
+    the score lives — the folded one carries no score to check the attribution
+    against.
+    """
+    return fold_usable_weeks(fetch_season_plays(season))
 
 
 def load_player_games(seasons: Iterable[int]) -> pd.DataFrame:  # pragma: no cover - network
@@ -211,12 +299,39 @@ def load_player_games(seasons: Iterable[int]) -> pd.DataFrame:  # pragma: no cov
     frames = []
     for season in seasons:
         try:
-            frame, _covered = fetch_player_games(season)
+            frame, _covered, _dropped = fetch_player_games(season)
             frames.append(frame)
         except Exception as exc:  # noqa: BLE001 - a missing season never blocks
             print(f"cfbfastR player stats {season} unavailable ({exc})")
     return (pd.concat(frames, ignore_index=True) if frames
             else player_games(pd.DataFrame()))
+
+
+# A week whose scoring the release explains less often than this cannot price
+# a lineup: it is not a low-scoring week, it is an unattributed one. The
+# healthy weeks of 2023 and 2024 sit at 0.66-0.92.
+MIN_COVERAGE = 0.5
+
+
+def week_coverage(plays: pd.DataFrame) -> pd.Series:
+    """:func:`season_coverage`, per week — which is the granularity it breaks at.
+
+    A season does not degrade evenly. 2025 runs 0.62-0.77 through week 8 and
+    then falls off a cliff: 0.48, 0.16, 0.14, 0.15, 0.14, 0.15, 0.17, 0.00
+    from week 9 to the end, because the release simply stopped attributing.
+    Judged as one number that season reads 0.49 — a little thin — and either
+    verdict on it is wrong: bank it whole and two thirds of a season of games
+    price as though nobody scored in them, refuse it whole and eight good
+    weeks go in the bin. So the gate is per week, and only the cliff is cut.
+    """
+    if plays.empty or "week" not in plays.columns:
+        return pd.Series(dtype=float)
+    weeks = pd.to_numeric(plays["week"], errors="coerce")
+    return pd.Series(
+        {int(w): season_coverage(plays[weeks == w])
+         for w in sorted(weeks.dropna().unique())},
+        dtype=float,
+    )
 
 
 def season_coverage(plays: pd.DataFrame) -> float:
@@ -229,16 +344,19 @@ def season_coverage(plays: pd.DataFrame) -> float:
     per touchdown plus three per field goal lands within a point of the final
     score the frame itself carries.
 
-    Measured on the RAW play frame, which is the only place the score lives.
-    The banked seasons come in at 0.82 (2023) and 0.75 (2024); a season below
-    about half cannot price a lineup, and the build script says so.
+    Measured on the RAW play frame, which is the only place the score lives,
+    and off the same :func:`scoring_plays` mask the fold banks — an alarm that
+    counts touchdowns the bank does not get is an alarm that cannot fire. It
+    reads 0.79 (2023), 0.73 (2024), 0.49 (2025) and 0.62 (2026 through week
+    2); a season below half cannot price a lineup, and the build script now
+    refuses to bank one rather than printing at it.
     """
     if plays.empty or "touchdown_player_id" not in plays.columns:
         return 0.0
     finals = plays.groupby(["game_id", "team"])["team_score"].max()
     if finals.empty:
         return 0.0
-    tds = plays[plays["touchdown_player_id"].notna()].groupby(["game_id", "team"]).size()
+    tds = plays[scoring_plays(plays)].groupby(["game_id", "team"]).size()
     explained = 7.0 * tds.reindex(finals.index).fillna(0.0)
     if "field_goal_made_player_id" in plays.columns:
         fgs = (plays[plays["field_goal_made_player_id"].notna()]
