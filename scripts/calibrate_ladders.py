@@ -52,40 +52,78 @@ def measure(path: str, market: str) -> tuple[pd.DataFrame, int, float]:
     return table, len(frame), float(residual.std(ddof=1))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", action="store_true", help="print the full measurement")
-    parser.add_argument("--root", default=".", help="repo root holding datasets/")
-    args = parser.parse_args()
-    root = Path(args.root)
+LITERAL_HEAD = "OFFSET_BIAS: Mapping[tuple[str, str], Mapping[float, tuple[float, float]]] = {"
+TARGET = Path("velocity/eval/ladders.py")
 
-    if not args.report:
-        print("OFFSET_BIAS: Mapping[tuple[str, str], Mapping[float, tuple[float, float]]] = {")
+
+def literal(root: Path) -> str:
+    """The whole ``OFFSET_BIAS`` assignment, as it should appear in the module."""
+    lines = [LITERAL_HEAD]
     for league, relative in SOURCES:
         for market in ("spread", "total"):
             table, n, sd = measure(str(root / relative), market)
-            if args.report:
-                print(f"== {league} {market}  n={n}  residual sd {sd:.2f}")
-                print(
-                    table[
-                        ["offset", "over_bias", "under_bias", "error", "price", "ev_error"]
-                    ].to_string(index=False, float_format=lambda v: f"{v:+.4f}")
-                )
-                continue
-            print(f"    # n={n} completed games, residual sd {sd:.2f}")
-            print(f'    ("{league}", "{market}"): {{')
+            lines.append(f"    # n={n} completed games, residual sd {sd:.2f}")
+            lines.append(f'    ("{league}", "{market}"): {{')
             rows = list(table.itertuples())
             for start in range(0, len(rows), 3):
-                print(
+                lines.append(
                     "        "
                     + " ".join(
                         f"{r.offset}: ({r.over_bias:+.4f}, {r.under_bias:+.4f}),"
                         for r in rows[start : start + 3]
                     )
                 )
-            print("    },")
-    if not args.report:
-        print("}")
+            lines.append("    },")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def rewrite(root: Path) -> bool:
+    """Replace the literal in ladders.py in place. True when the file changed.
+
+    Wholesale replacement is safe ONLY because the generated block holds
+    nothing hand-written: the notes that used to live inside it now sit above
+    the assignment, where this cannot reach them. Putting a note back inside
+    means losing it on the next refresh.
+    """
+    path = root / TARGET
+    source = path.read_text()
+    start = source.index(LITERAL_HEAD)
+    end = source.index("\n}\n", start) + len("\n}\n")
+    fresh = literal(root)
+    if source[start:end] == fresh:
+        return False
+    path.write_text(source[:start] + fresh + source[end:])
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", action="store_true", help="print the full measurement")
+    parser.add_argument("--write", action="store_true",
+                        help="rewrite velocity/eval/ladders.py in place")
+    parser.add_argument("--root", default=".", help="repo root holding datasets/")
+    args = parser.parse_args()
+    root = Path(args.root)
+
+    if args.report:
+        for league, relative in SOURCES:
+            for market in ("spread", "total"):
+                table, n, sd = measure(str(root / relative), market)
+                print(f"== {league} {market}  n={n}  residual sd {sd:.2f}")
+                print(
+                    table[
+                        ["offset", "over_bias", "under_bias", "error", "price", "ev_error"]
+                    ].to_string(index=False, float_format=lambda v: f"{v:+.4f}")
+                )
+        return
+
+    if args.write:
+        changed = rewrite(root)
+        print(f"{TARGET}: {'rewritten' if changed else 'already current'}")
+        return
+
+    print(literal(root), end="")
 
 
 if __name__ == "__main__":

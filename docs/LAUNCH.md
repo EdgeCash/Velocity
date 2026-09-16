@@ -13,9 +13,44 @@ turning it on, verifying it, and running it week to week.
 | `collect-odds.yml` | hourly | `THE_ODDS_API` | line snapshots + CLV archive → Actions artifact |
 | `collect-fantasypros.yml` | weekly | `FP_API_KEY` | projections → Actions artifact |
 | `live-slate.yml` | game days | `THE_ODDS_API` | **staked slate of recommended bets** → Actions artifact |
-| `refresh-datasets.yml` | daily 09:29 UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` |
+| `refresh-datasets.yml` | daily 09:29 UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` — **self-verifying, see below** |
 | `collect-football-props.yml` | daily 15:19/22:19 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → Actions artifact |
 | `collect-dk-salaries.yml` | daily 15:31 UTC | — | DK salary snapshots → Actions artifact |
+
+### The one job that writes to main (2026-09)
+
+`refresh-datasets.yml` is the only workflow that commits and pushes. That makes
+it the only one that can break `main`, and — because **a push made with
+`GITHUB_TOKEN` deliberately does not trigger workflows** — the only one whose
+breakage no CI run would catch.
+
+It happened on 2026-09-16. `fd1c4f6` ("Data: refresh current-season dataset
+rows") moved `datasets/` and left `velocity/eval/ladders.py` behind.
+`OFFSET_BIAS` in that file is a **cache of those datasets**, and the commit
+staged `git add datasets/` only. Main went red with no CI run at all and stayed
+red until an unrelated PR — the card upgrade — was tested against the merged
+result and failed on two NFL ladder assertions that had nothing to do with it.
+
+The job now does three things before it writes anything:
+
+1. **Asks whether the data actually moved.** Everything downstream is gated on
+   it, so an unchanged refresh costs nothing and cannot make an empty commit.
+2. **Regenerates what it invalidates** — `scripts/calibrate_ladders.py --write`,
+   a no-op when the table is already current.
+3. **Runs `ruff`, `mypy` and `pytest` and pushes nothing if they fail.** A
+   breaking refresh now costs a failed job, which is visible, instead of a
+   broken `main`, which was not.
+
+The commit stages `datasets/` **and** `velocity/eval/ladders.py`, because
+committing the data without the table it feeds is the exact shape of the bug.
+
+`tests/test_refresh_workflow.py` pins all of it, including the *order* —
+deleting the verify step would otherwise look like tidying.
+
+**If you add another derived-from-`datasets/` artifact**, regenerate it in step
+2. And keep generated blocks free of hand-written notes: the ones explaining
+why the NFL sim uses 13.0 and the NCAAF sim 18.2 now live *above* `OFFSET_BIAS`
+precisely because a regeneration deleted them once.
 
 ### The minute map
 

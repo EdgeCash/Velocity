@@ -10,6 +10,14 @@ name: Refresh datasets (current season)
 # The push goes straight to the branch the run checked out (the default
 # branch on schedule). If branch protection blocks the github-actions bot,
 # either allow it to bypass or convert the push step to open a PR instead.
+#
+# THIS JOB CHECKS ITSELF, because nothing downstream will. A push made with
+# GITHUB_TOKEN deliberately does not trigger workflows, so a refresh that
+# breaks the repo lands on main with NO CI run at all and stays red until an
+# unrelated PR trips over it — which is exactly what happened on 2026-09-16
+# (fd1c4f6 moved datasets/ and left velocity/eval/ladders.py, a cache OF those
+# datasets, behind). So the job now regenerates what it invalidates and runs
+# the suite before it writes anything.
 
 on:
   schedule:
@@ -61,10 +69,12 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install (runtime only)
+      # Dev extras, not runtime-only: this job verifies itself before pushing,
+      # which needs ruff, mypy and pytest.
+      - name: Install (with dev extras, for the pre-push check)
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e '.[dev]'
 
       - name: Refresh datasets
         if: ${{ github.event.inputs.ncaaf_pbp_seasons == '' && github.event.inputs.inseason_seasons == '' && github.event.inputs.mlb_pitching != 'true' && github.event.inputs.cfbd_lines_years == '' && github.event.inputs.cfbd_sp_years == '' }}
@@ -111,15 +121,42 @@ jobs:
           python scripts/pull_cfbd_sp.py \
             --years ${{ github.event.inputs.cfbd_sp_years }}
 
-      - name: Commit refreshed datasets
+      - name: Did the data actually move?
+        id: moved
         run: |
-          if git diff --quiet -- datasets/ && [ -z "$(git status --porcelain datasets/)" ]; then
-            echo "datasets unchanged — nothing to commit"
-            exit 0
+          if [ -z "$(git status --porcelain datasets/)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "datasets unchanged — nothing to regenerate, verify or commit"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --porcelain datasets/
           fi
+
+      # OFFSET_BIAS is a cache of datasets/, and `git add datasets/` never
+      # touched it. Regenerating here is what stops the cache going stale the
+      # moment the data grows; --write is a no-op when it is already current.
+      - name: Regenerate the tables derived from datasets/
+        if: steps.moved.outputs.changed == 'true'
+        run: python scripts/calibrate_ladders.py --write
+
+      # The gate this job was missing. A red suite fails the run and pushes
+      # NOTHING, so a breaking refresh costs a failed job rather than a broken
+      # main that nobody is told about.
+      - name: Verify before pushing
+        if: steps.moved.outputs.changed == 'true'
+        run: |
+          ruff check .
+          mypy
+          pytest -q
+
+      - name: Commit refreshed datasets
+        if: steps.moved.outputs.changed == 'true'
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add datasets/
+          # Both, always: committing the data without the table it feeds is
+          # the exact shape of the 2026-09-16 breakage.
+          git add datasets/ velocity/eval/ladders.py
           git commit -m "Data: refresh current-season dataset rows"
           # Rebase before pushing: a merge landing mid-run otherwise rejects
           # the push and throws away the whole fetch (it happened).
