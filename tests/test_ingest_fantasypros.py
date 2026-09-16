@@ -543,19 +543,24 @@ def test_deliberately_unread_keys_read_as_declined_not_unread() -> None:
     assert "declined points_ppr" in lines
 
 
-def test_the_kicker_keys_are_the_only_thing_genuinely_unexamined() -> None:
-    """The gap this report exists to surface.
+def test_the_kicker_keys_are_read_now_and_nothing_is_left_unexamined() -> None:
+    """This test used to assert the opposite, and was the reason the gap closed.
 
-    fg / fga / xpt are projections nothing reads and nothing has declined —
-    while DK's Showdown board has a kicker slot and dst.py's own note calls a
-    kicker "routinely a live captain". If a consumer appears, this test should
-    fail and be updated; that is the point of it.
+    fg / fga / xpt were the last block in the feed nothing read, while DK's
+    Showdown board has a kicker slot and dst.py's own note calls a kicker
+    "routinely a live captain". velocity/dfs/kicker.py closed it. Everything
+    still UNREAD here would be a NEW key the feed started serving — which is
+    exactly the thing worth failing on.
     """
     from velocity.ingest.fantasypros import stat_key_census
 
-    census = stat_key_census(_multi_consumer_frame())
-    unread = set(census[~census["read"]]["stat"]) - {"def_ff", "def_tyda", "points_ppr"}
-    assert unread == {"fg", "fga", "xpt"}, f"the unexamined set moved: {unread}"
+    census = stat_key_census(_multi_consumer_frame()).set_index("stat")
+    for key in ("fg", "fga", "xpt"):
+        assert census.loc[key, "consumer"] == "DFS: kicker"
+    unexamined = set(
+        census[~census["read"]].index
+    ) - {"def_ff", "def_tyda", "points_ppr"}
+    assert not unexamined, f"a key nobody has looked at: {unexamined}"
 
 
 def test_the_guidance_does_not_still_advertise_priced_markets() -> None:
