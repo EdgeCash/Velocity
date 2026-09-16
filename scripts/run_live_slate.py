@@ -115,6 +115,8 @@ def _load_snapshot(args: argparse.Namespace) -> object:
 # by the collector (scripts/collect_theoddsapi.py). The stamp is the only honest
 # record of when the board was bought.
 _SNAPSHOT_RE = re.compile(r"^odds_(?P<league>[a-z]+)_(?P<stamp>\d{8}T\d{6}Z)\.json$")
+_PROP_BOARD_RE = re.compile(
+    r"^props_(?P<league>[a-z]+)_(?P<stamp>\d{8}T\d{6}Z)\.parquet$")
 
 
 def parse_snapshot_stamp(name: str, league: str) -> pd.Timestamp | None:
@@ -149,6 +151,31 @@ def newest_banked_board(
         stamp = parse_snapshot_stamp(path.name, league)
         if stamp is None:
             continue
+        if best is None or stamp > best[1]:
+            best = (path, stamp)
+    if best is None:
+        return None, None
+    age_minutes = (now - best[1]).total_seconds() / 60.0
+    return (best[0] if age_minutes <= max_age_minutes else None), best[1]
+
+
+def newest_banked_props(
+    root: Path, league: str, now: pd.Timestamp, max_age_minutes: float
+) -> tuple[Path | None, pd.Timestamp | None]:
+    """The freshest banked PROP board for ``league`` → ``(path_if_fresh, newest_stamp)``.
+
+    :func:`newest_banked_board` for the props collector's output, and read off
+    the filename stamp for the identical reason: these arrive by unzipping
+    Actions artifacts, so every mtime is extraction time.
+    """
+    best: tuple[Path, pd.Timestamp] | None = None
+    if not root.exists():
+        return None, None
+    for path in root.rglob("props_*.parquet"):
+        match = _PROP_BOARD_RE.match(path.name)
+        if match is None or match["league"] != league:
+            continue
+        stamp = pd.Timestamp(datetime.strptime(match["stamp"], "%Y%m%dT%H%M%SZ"))
         if best is None or stamp > best[1]:
             best = (path, stamp)
     if best is None:
@@ -866,8 +893,17 @@ def build_parser() -> argparse.ArgumentParser:
     # through the NFL alias table; unresolved teams are skipped, never guessed.
     parser.add_argument("--fp-projections",
                         help="FantasyPros projections parquet (enables the prop slate)")
+    parser.add_argument("--ncaaf-player-games",
+                        default="datasets/ncaaf/player_games.parquet",
+                        help="banked college player-games; the NCAAF prop "
+                             "projection's source (FantasyPros has no college)")
     parser.add_argument("--prop-lines-file",
                         help="banked PropLines parquet (offline prop board)")
+    parser.add_argument("--prop-lines-dir",
+                        help="folder of banked prop boards; the freshest one "
+                             "inside --board-max-age-min is priced, spending "
+                             "no credits. The only NCAAF source — that league "
+                             "never pulls prop lines live")
     # Confidence calibration for props. 1.0 = the raw model: deliberately
     # untuned until the football prop backtest's shrink sweep picks the values
     # (docs/FOOTBALL_CUTOVER.md Phase 3) — the MLB numbers do not carry over.
@@ -1607,9 +1643,11 @@ def main() -> None:
     # nothing, and — because this is an if/elif — silently skipped the pitcher-K
     # slate that MLB actually has. The only thing standing between us and that
     # was live-slate.yml gating the flag on `league = nfl`, a load-bearing
-    # condition in a shell script with nothing saying so.
-    if (args.fp_projections and args.league in FOOTBALL_PROP_LEAGUES
-            and projections and not events.empty):
+    # condition in a shell script with nothing saying so. The flag is gone
+    # from the condition entirely now: NCAAF has no FantasyPros file to pass
+    # and never will, so each league's source is resolved inside the slate
+    # (_prop_projection_frame) and says why when it has none.
+    if args.league in FOOTBALL_PROP_LEAGUES and projections and not events.empty:
         props_frame, props_by_game, key_to_name, prop_lines_used = _prop_slate(
             args, events, projections, now, generated_at
         )
@@ -2351,6 +2389,108 @@ def _projections_frame(projections: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _resolve_prop_lines_path(
+    args: argparse.Namespace, now: pd.Timestamp
+) -> Path | None:
+    """The banked prop board to price, or ``None`` to fall through.
+
+    An explicit ``--prop-lines-file`` always wins. Otherwise ``--prop-lines-dir``
+    is searched under the same freshness bar the game board uses — a prop line
+    that moved six hours ago is not a price, and pricing against it is worse
+    than not pricing at all.
+    """
+    if args.prop_lines_file:
+        return Path(args.prop_lines_file)
+    root = getattr(args, "prop_lines_dir", None)
+    if not root:
+        return None
+    path, stamp = newest_banked_props(
+        Path(root), args.league, now, args.board_max_age_min
+    )
+    if path is not None and stamp is not None:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"prop board: reusing banked {path} (captured "
+              f"{stamp:%Y-%m-%d %H:%M}Z, {age:.0f}min old; no credits spent)")
+        return path
+    if stamp is not None:
+        age = (now - stamp).total_seconds() / 60.0
+        print(f"prop board: newest banked {args.league} board is {age:.0f}min "
+              f"old (bar {args.board_max_age_min:g}min) — too stale to price")
+    return None
+
+
+def _prop_team_resolver(
+    args: argparse.Namespace, events: pd.DataFrame, known: set[str]
+) -> Callable[[str], str | None]:
+    """Board team name → the projection's team key, by the league's own rule.
+
+    The NFL path is the alias table. College cannot use it: the Odds API
+    writes "Georgia Bulldogs" and the bank keys by school ("Georgia"), which
+    is exactly what :func:`nickname_aliases` was built for — longest
+    prefix-matching school wins, so "Georgia Southern Eagles" cannot land on
+    Georgia. A name that matches nothing resolves to ``None`` and the caller
+    skips that game rather than guessing a team.
+    """
+    from velocity.wagering.live import NFL_TEAM_ALIASES, nickname_aliases, resolve_team
+
+    if args.league == "ncaaf":
+        board = {str(n) for column in ("home_team", "away_team")
+                 for n in events[column].astype(str)} if not events.empty else set()
+        table = nickname_aliases(board, known)
+        return lambda name: table.get(str(name))
+
+    codes = sorted(set(NFL_TEAM_ALIASES.values()))
+    return lambda name: resolve_team(str(name), codes, NFL_TEAM_ALIASES)
+
+
+def _prop_projection_frame(args: argparse.Namespace) -> pd.DataFrame | None:
+    """The per-player prop projection for this league, in FantasyPros' shape.
+
+    NFL reads the banked FantasyPros snapshot. NCAAF cannot: the FantasyPros
+    public API has no college endpoint at all, which is why the league filter
+    came back empty and the prop slate skipped every run while the collector
+    kept buying the board (audit finding 6). It reads the banked college
+    player-games instead, projected over the same six-game recency window the
+    college DFS board uses — nothing downstream can tell the difference,
+    because both emit the long ``(player, stat, value)`` frame the sim eats.
+
+    ``None`` with a printed reason when the league has no usable source.
+    """
+    if args.league == "ncaaf":
+        from velocity.models.props_ncaaf import player_prop_means
+
+        path = Path(args.ncaaf_player_games)
+        if not path.exists():
+            print(f"prop slate skipped: no college player bank at {path}")
+            return None
+        fp = player_prop_means(pd.read_parquet(path))
+        if fp.empty:
+            print(f"prop slate skipped: {path} projects no active players")
+            return None
+        print(f"ncaaf props: {fp['player_id'].nunique()} active players over "
+              f"{fp['team'].nunique()} teams, projected from {path}")
+        return fp
+
+    if not args.fp_projections:
+        print("prop slate skipped: --fp-projections not supplied")
+        return None
+    fp = pd.read_parquet(args.fp_projections)
+    if "league" in fp.columns:
+        fp = fp[fp["league"].astype(str) == args.league]
+    if fp.empty:
+        print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
+        return None
+    from velocity.dfs.pipeline import is_season_long
+
+    if is_season_long(fp):
+        # Season totals would price a 4,800-yard passing prop as a weekly
+        # mean — refuse rather than misprice (same guard as the DFS lineup).
+        print("prop slate skipped: FP snapshot is season-long (week 0); "
+              "weekly props can't be priced from season totals")
+        return None
+    return fp
+
+
 def _prop_slate(
     args: argparse.Namespace,
     events: pd.DataFrame,
@@ -2368,28 +2508,25 @@ def _prop_slate(
     """
     try:
         from velocity.models.props_football import game_props, name_index_from_fp
-        from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
         from velocity.wagering.props_slate import build_prop_slate, prop_slate_to_frame
 
-        fp = pd.read_parquet(args.fp_projections)
-        if "league" in fp.columns:
-            fp = fp[fp["league"].astype(str) == args.league]
-        if fp.empty:
-            print(f"prop slate skipped: no {args.league} rows in {args.fp_projections}")
-            return None, {}, {}, None
-        from velocity.dfs.pipeline import is_season_long
-
-        if is_season_long(fp):
-            # Season totals would price a 4,800-yard passing prop as a weekly
-            # mean — refuse rather than misprice (same guard as the DFS lineup).
-            print("prop slate skipped: FP snapshot is season-long (week 0); "
-                  "weekly props can't be priced from season totals")
+        fp = _prop_projection_frame(args)
+        if fp is None:
             return None, {}, {}, None
 
-        if args.prop_lines_file:
-            prop_lines = pd.read_parquet(args.prop_lines_file)
+        lines_path = _resolve_prop_lines_path(args, generated_at)
+        if lines_path is not None:
+            prop_lines = pd.read_parquet(lines_path)
         elif args.snapshot_file:
             print("prop slate skipped: offline run needs --prop-lines-file")
+            return None, {}, {}, None
+        elif args.league == "ncaaf":
+            # Never a live pull. The collector already buys this exact board
+            # twice a day (audit finding 6 is that we bought it and never read
+            # it), so pricing it costs nothing more — but pulling it AGAIN
+            # here would double the spend to fix a finding about wasted spend.
+            print("prop slate skipped: no fresh banked ncaaf prop board; "
+                  "not pulling live (the collector's board is the one to price)")
             return None, {}, {}, None
         else:
             prop_lines = _odds_client().player_props(args.league)
@@ -2397,21 +2534,21 @@ def _prop_slate(
             print("prop slate: no prop lines on the board")
             return None, {}, {}, None
 
-        codes = sorted(set(NFL_TEAM_ALIASES.values()))
         fp_teams = set(fp["team"].astype(str))
+        to_team = _prop_team_resolver(args, events, fp_teams)
         props_by_game: dict[str, object] = {}
         for event in events.to_dict("records"):
             gid = str(event["game_id"])
             if gid not in projections:
                 continue
-            home = resolve_team(str(event["home_team"]), codes, NFL_TEAM_ALIASES)
-            away = resolve_team(str(event["away_team"]), codes, NFL_TEAM_ALIASES)
+            home = to_team(str(event["home_team"]))
+            away = to_team(str(event["away_team"]))
             if home not in fp_teams or away not in fp_teams:
-                continue  # a team FP doesn't cover is skipped, never guessed
+                continue  # a team the bank doesn't cover is skipped, never guessed
             props_by_game[gid] = game_props(fp, home, away, make_rng(),
                                             _prop_config(args))
         if not props_by_game:
-            print("prop slate: no games matched FantasyPros team coverage")
+            print("prop slate: no games matched the projection's team coverage")
             return None, {}, {}, None
 
         key_to_name = {}
@@ -2676,6 +2813,19 @@ def _pickem_slate(
 
 
 def _prop_config(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    """The prop sim's dispersion for this league — college's is not the NFL's.
+
+    Re-fitting `scripts/fit_prop_dispersion.py` on the college bank puts the
+    team volume swing at roughly twice the NFL's (pass σ 0.242 against 0.118),
+    which is what college blowouts and tempo gaps should do. Running the NFL
+    config on a college board would simulate distributions about half as wide
+    as they are, and a too-narrow distribution does not fail loudly — it
+    manufactures edge, on every market at once.
+    """
+    if args.league == "ncaaf":
+        from velocity.models.props_ncaaf import ncaaf_prop_config
+
+        return ncaaf_prop_config(n_sims=args.n_sims)
     from velocity.models.props_football import FootballPropConfig
 
     return FootballPropConfig(n_sims=args.n_sims)

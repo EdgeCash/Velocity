@@ -178,7 +178,7 @@ effects there is. The MLB path simply never got the NFL path's treatment, and
 the forecast it would need is already arriving on every BettingPros event
 (finding 2).
 
-## 6. NCAAF prop lines are bought every run and never priced (OPEN, costs credits)
+## 6. NCAAF prop lines are bought every run and never priced (DONE)
 
 `FOOTBALL_PROP_LEAGUES = ("nfl", "ncaaf")`, and the collector buys the full
 event-market board for both (`LEAGUE_PROP_MARKETS["ncaaf"] = DEFAULT_EVENT_MARKETS`,
@@ -208,10 +208,61 @@ if [ "${league}" = "ncaaf" ]; then PROJ_FILE="datasets/ncaaf/player_games.parque
 ```
 
 `datasets/ncaaf/player_games.parquet` is banked, current, and 20 columns wide.
-The prop slate never got the same treatment. Two honest options, and they want
-deciding rather than drifting: point the NCAAF prop slate at the banked player
-games the way DFS does, or stop buying NCAAF prop markets. Doing neither is the
-only choice that costs money for nothing.
+The prop slate never got the same treatment. Two honest options: point the
+NCAAF prop slate at the banked player games the way DFS does, or stop buying
+NCAAF prop markets. Doing neither is the only choice that costs money for
+nothing.
+
+### Done — the first option, once 9 and 10 unblocked it
+
+`velocity/models/props_ncaaf.py` projects the bank into the long
+`(player, stat, value)` frame the prop sim already eats, over the same
+six-game window the college DFS board swept walk-forward. **Ten of the eleven
+football prop markets** price; `pass_completions` is the exception, because
+cfbfastR records an incompletion's passer but never a completion count.
+
+Two decisions that were the NFL's by default are now the league's:
+
+* **Where the projection comes from.** `_prop_projection_frame` resolves it
+  per league and prints why when it has none. The old gate also required
+  `--fp-projections` to be passed at all, which NCAAF will never have — that
+  condition is gone, which is what the comment above it had already argued
+  for on the MLB near-miss.
+* **How a board name becomes a team.** The Odds API writes "Georgia
+  Bulldogs"; the bank keys by school. `nickname_aliases` — already in the repo
+  for the exchange boards — resolves it by longest prefix, so "Georgia
+  Southern Eagles" cannot land on Georgia. No match resolves to nothing and
+  the game is skipped, never guessed.
+
+Two filters keep a line off the wrong man: only players active this season
+(11,697 banked → 4,177 active), and no name held by two banked players (180
+across four seasons, 20 live in 2026 — both dropped rather than coin-flipped).
+
+**And the dispersion is college's own.** This is the part that would have gone
+wrong quietly. Re-fitting on the college bank puts team volume σ at roughly
+**twice** the NFL's (pass 0.242 against 0.118) while the per-player numbers
+come in at or below it — blowouts and tempo move the whole pie, but a player's
+share of it is no noisier than a professional's. Shipping `FootballPropConfig()`
+would have simulated distributions about half as wide as they are, and a
+too-narrow distribution does not fail loudly: it **manufactures edge**, on
+every market at once. Full table in docs/PROPS.md.
+
+**And it prices the board already bought, not a second copy of it.** This is
+the part that would have quietly made the finding worse: the league gate used
+to require `--fp-projections`, which NCAAF never has, so removing it also let
+NCAAF reach the live prop-line pull — doubling the spend on the exact board
+this finding says we waste. NCAAF now never pulls prop lines live.
+`--prop-lines-dir` points at the props collector's banked boards, already
+downloaded in the same job for grading; the freshest inside
+`--board-max-age-min` is priced and anything staler is refused with its age
+named, off the filename stamp rather than the mtime (the game board learned
+that one the hard way). NFL is unchanged and still pulls live.
+
+The projection needed **no** workflow flag, deliberately: the bank is
+committed, so the runner's default resolves in a fresh checkout, and adding a
+`--ncaaf-player-games` line would repeat the Statcast mistake in reverse — a
+flag pointing at a path nobody checked. A test asserts the default exists
+instead.
 
 ## 6b. The same shape, one league over: NHL (OPEN, costs credits)
 
@@ -377,8 +428,13 @@ proven", pointing at this bank and at `dfs_ncaaf.py`. That was true of the
 
 With 9 and 10 closed it is true of both: the bank holds two attributed weeks
 of 2026 plus eight of 2025 behind them, and all three touchdown columns
-populate. **Finding 6 is unblocked.** Stopping buying NCAAF prop lines remains
-the alternative and still needs nothing.
+populate. That unblocked finding 6, which is now **done** — see its section
+above.
+
+One correction the work earned, though. "Already proven" was still not quite
+right even about the mechanism: the *dispersion* is modelling, not data, and
+the NFL's would have been wrong here by about a factor of two on team volume.
+The projection was a wiring job; the sim's width was not.
 
 ## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
 
@@ -423,7 +479,7 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | NCAAF prop path | 2026-09-16 | **Finding 6 — bought, never priced** |
 | MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | 2026-09-16 | Clean — `HITTING_KEYS` maps DK's hitter scoring exactly. One micro-gap: pitcher `hitByPitch` (DK −0.6) is not collected, worth ~0.2 DK points a start. Not worth acting on. |
 | `cfb_players` / NCAAF player bank | 2026-09-16 | **Findings 9 and 10 — both fixed.** Upstream stopped attributing passing and receiving touchdowns in 2026; the weekly top-up had never once run; the coverage alarm fired and was ignored |
-| Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA join NCAAF** |
+| Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA.** NCAAF left the list when finding 6 closed |
 | Kalshi / Polymarket / exchanges | 2026-09-16 | Clean — collected hourly, `--exchanges` passed by the live slate (default true), graded via `--exchanges-dir` |
 | nflverse rosters / schedules | 2026-09-16 | Schedules clean. `load_rosters()` is **dead code** — defined, called by nothing (finding 8) |
 | NCAAB / WNBA / NHL game markets | 2026-09-16 | Clean — priced by `ScoresGameModel` + `fit_scores_ratings`; NCAAB adds Torvik, NHL adds starting goalies. No prop lines bought for NCAAB/WNBA, which is consistent. |
@@ -457,7 +513,7 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut. The NCAAF half is **unblocked** now that 9 and 10 are closed |
+| **6b** | NHL and NBA prop lines bought every run, no slate can price them and no bank to price them from | a decision: build the skater bank, or cut the market from `LEAGUE_PROP_MARKETS`. NCAAF (finding 6) is **done** |
 
 ~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
 live-output ones: a benched hitter still prices as a starter, and three
@@ -468,7 +524,7 @@ leagues' prop lines are still bought with nothing to price them.
 | # | What | Note |
 |---|---|---|
 | **2 / 5** | Bank the BettingPros weather forecast | The HR model says it cannot model weather for lack of banked data. Banking starts the clock; the coefficient comes when there are enough games to fit rather than assume. NFL already has the careful version to copy. |
-| **6** | Point the NCAAF prop slate at `player_games` | 10 of 11 markets available and the touchdown columns populate again; `dfs_ncaaf.py` is the template and its verdict applies — *"The missing half was data, not modelling."* |
+| ~~**6**~~ | ~~Point the NCAAF prop slate at `player_games`~~ | **Done.** 10 of 11 markets priced, dispersion re-fitted on college. `dfs_ncaaf.py` was the template and its verdict held — *"The missing half was data, not modelling"* — with one correction: the *dispersion* was modelling, and the NFL's would have been wrong. |
 
 ## Small or cosmetic
 
