@@ -167,6 +167,43 @@ deciding rather than drifting: point the NCAAF prop slate at the banked player
 games the way DFS does, or stop buying NCAAF prop markets. Doing neither is the
 only choice that costs money for nothing.
 
+## 6b. The same shape, one league over: NHL (OPEN, costs credits)
+
+Finding 6 is not a one-off. Mapping every league we BUY prop lines for against
+every league a slate can PRICE:
+
+| League | Lines bought | Priced by a slate? | Bank to price from |
+|---|---|---|---|
+| nfl | six-market board | `_prop_slate` (FantasyPros) | player_weeks + FP |
+| ncaaf | six-market board | **NO** (FP has no college) | `player_games` — banked, unused for props |
+| mlb | `pitcher_strikeouts`, `batter_home_runs` | `_mlb_k_slate` (banked starters) | starters + batters |
+| nhl | `player_shots_on_goal` | **NO** | **goalie starters only — no skater data at all** |
+| nba | `player_rebounds` | **NO** | none (vertical not built) |
+
+`run_live_slate.py` contains **zero** references to `shots_on_goal`. NHL prop
+lines are bought on the default schedule (`--leagues 'nfl ncaaf mlb nhl'`) and
+there is no slate to price them and no bank to price them from:
+`datasets/nhl/starters.parquet` is goalies (saves, shots_against), not skaters.
+`shots_on_goal` sits in `PROP_MARKETS` and nothing produces it.
+
+NBA is honest by comparison — the vertical is openly unbuilt — but it is in
+`LEAGUE_PROP_MARKETS` all the same.
+
+**NCAAF and NHL differ in what they need.** NCAAF needs only wiring plus a
+projection: `datasets/ncaaf/player_games.parquet` is 101,121 rows over
+2023-2026 and carries `attempts`, `carries`, `interceptions`, `pass_tds`,
+`pass_yards`, `receiving_tds`, `receiving_yards`, `receptions`, `rush_tds`,
+`rush_yards`, `targets` — which covers **10 of the 11 football prop markets**
+(everything but `pass_completions`, the same column gap the NFL bank had until
+2026-09-16). `velocity/models/dfs_ncaaf.py` already solved the projection half
+of this and says why it worked: *"The missing half was data, not modelling"* —
+it runs the NFL rate model on the college bank with a bounded recency window,
+because a college roster turns over every August. The prop sim is
+league-agnostic; it takes a long `(player, stat, value)` frame.
+
+NHL needs a skater bank first. `docs/BUILD_NHL.md` notes shots on goal are "in
+every boxscore" — they are simply not collected.
+
 ## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
 
 `refresh_datasets.py` tops the batter bank up with
@@ -208,11 +245,12 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | Banked datasets vs. consumers | 2026-09-16 | **Clean — every banked column is read.** See the note below |
 | Optional data flags vs. workflows | 2026-09-16 | **Finding 4** (Statcast); finding 7 (minor) |
 | NCAAF prop path | 2026-09-16 | **Finding 6 — bought, never priced** |
-| MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | — | not yet audited |
-| CFBD / `cfb_players` (`STAT_COLUMNS`) | — | not yet audited |
-| Kalshi / Polymarket | — | not yet audited |
+| MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | 2026-09-16 | Clean — `HITTING_KEYS` maps DK's hitter scoring exactly. One micro-gap: pitcher `hitByPitch` (DK −0.6) is not collected, worth ~0.2 DK points a start. Not worth acting on. |
+| `cfb_players` / NCAAF player bank | 2026-09-16 | Clean as a bank — and it is the substitute finding 6 needs |
+| Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA join NCAAF** |
+| Kalshi / Polymarket / exchanges | — | not yet audited |
 | nflverse rosters / schedules | — | not yet audited |
-| NHL / NCAAB / WNBA | — | not yet audited |
+| NCAAB / WNBA | — | not yet audited |
 
 ### The structural finding
 
