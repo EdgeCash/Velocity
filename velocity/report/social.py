@@ -42,6 +42,7 @@ _WATCH_MARKETS = {
     "rush_rec_yards": ("rush + rec yards", "RU+RE YDS"),
     "rush_attempts": ("carries", "CAR"),
     "pass_attempts": ("pass attempts", "ATT"),
+    "pass_completions": ("completions", "CMP"),
     "pitcher_strikeouts": ("pitcher Ks", "Ks"),
     "player_shots_on_goal": ("shots on goal", "SOG"),
     "player_rebounds": ("rebounds", "REB"),

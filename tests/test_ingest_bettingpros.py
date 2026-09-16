@@ -638,19 +638,16 @@ def test_the_attempt_slugs_are_mapped_now_the_census_confirmed_the_feed() -> Non
     assert BP_PROP_SLUG_TO_MARKET["passing-attempts"] == "pass_attempts"
 
 
-def test_completions_stays_unmapped_for_the_reason_that_still_holds() -> None:
-    """The feed serves it; we still cannot grade it.
+def test_completions_map_now_the_actuals_are_banked() -> None:
+    """This test used to assert the opposite, and was right to.
 
-    The census found ``pass_cmp`` as a plain number on the same 70 of 82
-    passers, so the projection is no longer the blocker. ``player_weeks`` has
-    no completions column, so there is no dispersion to fit and nothing to
-    settle against — and a market that prices but cannot settle would stake
-    and sit pending forever (#208). Bank completions first.
+    The projection was always served; what was missing was a completions
+    column in ``player_weeks`` — no dispersion to fit, nothing to settle
+    against, and a market that prices but cannot settle stakes and sits
+    pending forever (#208). nflverse served the column all along; we simply
+    never kept it. Banking it is what unblocked this.
     """
-    assert "passing-completions" not in BP_PROP_SLUG_TO_MARKET, (
-        "passing-completions was mapped — bank a completions column into "
-        "player_weeks first, or it will price and never settle"
-    )
+    assert BP_PROP_SLUG_TO_MARKET["passing-completions"] == "pass_completions"
 
 
 # --------------------------------------------------------------------------
@@ -812,3 +809,23 @@ def test_an_empty_board_with_a_full_envelope_is_a_failure() -> None:
     })
     assert not served_nothing({})
     assert not served_nothing(None)
+
+
+def test_the_whole_nfl_board_is_mapped_now() -> None:
+    """Completions was the last slug the board served and we abstained on.
+
+    The coverage report that started this had 5 of 10 slugs mapped and 388 of
+    551 NFL rows usable. Every slug that report listed now points at a market
+    the props stack prices.
+    """
+    from velocity.store.schema import PROP_MARKETS
+
+    served_by_the_nfl_board = (
+        "receiving-yards", "receptions", "rushing-yards", "passing-yards",
+        "passing-touchdowns", "rushing-attempts", "rushing-receiving-yards",
+        "passing-attempts", "passing-completions", "interceptions",
+    )
+    unmapped = [s for s in served_by_the_nfl_board if s not in BP_PROP_SLUG_TO_MARKET]
+    assert not unmapped, f"still abstaining on {unmapped}"
+    assert all(BP_PROP_SLUG_TO_MARKET[s] in PROP_MARKETS
+               for s in served_by_the_nfl_board)

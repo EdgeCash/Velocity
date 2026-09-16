@@ -240,7 +240,41 @@ class FantasyProsClient:
 # come out of a run log or a banked snapshot rather than a spec read — which is
 # the habit #207 charged for.
 
-_STAT_REPORT_COLUMNS = ["stat", "rows", "non_zero", "mean", "max", "market", "mapped"]
+_STAT_REPORT_COLUMNS = [
+    "stat", "rows", "non_zero", "mean", "max", "market", "mapped", "consumer",
+]
+
+# Keys read by something OTHER than the props model, and by what.
+#
+# The census first shipped labelling every key not in ``FP_STAT_TO_MARKET`` as
+# UNREAD. That is the props model's view, and it is not the feed's: the DFS
+# layer has been reading the team-defense block since the DST projection landed
+# (velocity/dfs/dst.py — DK classic needs a defense, and the pool used to join
+# it at 0.0 points), and the DK scorer reads the TD and fumble keys. Reporting
+# those as unread invites someone to "discover" them and wire up a second
+# consumer for data already in use — the exact confusion this report exists to
+# prevent, pointed the wrong way.
+_OTHER_CONSUMERS: Mapping[str, str] = {
+    "def_sack": "DFS: DST", "def_int": "DFS: DST", "def_fr": "DFS: DST",
+    "def_safety": "DFS: DST", "def_td": "DFS: DST", "def_retd": "DFS: DST",
+    "rush_tds": "props: anytime_td", "rec_tds": "props: anytime_td",
+    "fumbles": "DFS: DK scoring",
+    # Read as a FALLBACK only: dst.py takes the points-allowed bracket from the
+    # game sim, which is sharper, and uses FantasyPros' own bracket
+    # probabilities when there is no sim.
+    "def_pa": "DFS: DST (fallback)",
+}
+
+# Keys that are unread ON PURPOSE, so the report can say "declined" rather than
+# leaving a reader to work out whether each one is an oversight. Everything
+# else that comes back UNREAD is genuinely unexamined.
+_DECLINED: Mapping[str, str] = {
+    "def_ff": "DK does not score forced fumbles",
+    "def_tyda": "DK does not score yards allowed",
+    "points": "we compute DK points ourselves from the components",
+    "points_half": "we compute DK points ourselves from the components",
+    "points_ppr": "we compute DK points ourselves from the components",
+}
 
 # Substrings that mark a key as a plausible attempt/completion volume stat.
 # Deliberately loose: the point is to surface candidates for a human to read,
@@ -277,6 +311,7 @@ def stat_key_census(projections: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for stat, part in frame.groupby(projections["stat"].astype(str)):
         market = FP_STAT_TO_MARKET.get(str(stat), "")
+        consumer = market and f"props: {market}" or _OTHER_CONSUMERS.get(str(stat), "")
         values = part["_v"]
         rows.append({
             "stat": str(stat),
@@ -286,9 +321,11 @@ def stat_key_census(projections: pd.DataFrame) -> pd.DataFrame:
             "max": round(float(values.max()), 2) if len(values) else 0.0,
             "market": market,
             "mapped": bool(market),
+            "consumer": consumer,
         })
     out = pd.DataFrame(rows, columns=_STAT_REPORT_COLUMNS)
-    return out.sort_values(["mapped", "non_zero"], ascending=[False, False]).reset_index(
+    out["read"] = out["consumer"].astype(bool)
+    return out.sort_values(["read", "non_zero"], ascending=[False, False]).reset_index(
         drop=True
     )
 
@@ -304,14 +341,16 @@ def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]
     if census.empty:
         return [f"  {label}stat keys: no projection rows to report"]
 
-    mapped = census[census["mapped"]]
+    read = census[census["read"]]
     lines = [
         f"  {label}stat-key census: {len(census)} key(s) served, "
-        f"{len(mapped)} read by the props model"
+        f"{len(read)} read ({int(census['mapped'].sum())} as prop markets)"
     ]
     for r in census.to_dict("records"):
-        mark = "read    " if r["mapped"] else "UNREAD  "
-        target = f" -> {r['market']}" if r["market"] else ""
+        declined = _DECLINED.get(str(r["stat"]), "")
+        mark = "read    " if r["read"] else ("declined" if declined else "UNREAD  ")
+        target = (f" -> {r['consumer']}" if r["consumer"]
+                  else (f" ({declined})" if declined else ""))
         lines.append(
             f"    {mark} {str(r['stat']):<22} {int(r['non_zero']):>5} non-zero "
             f"of {int(r['rows']):>5}  mean {r['mean']}  max {r['max']}{target}"
@@ -330,8 +369,8 @@ def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]
             lines.append("    off them are now abstaining: check before assuming a quiet slate.")
     else:
         for r in candidates.to_dict("records"):
-            if r["mapped"]:
-                state = f"already read as {r['market']}"
+            if r["consumer"]:
+                state = f"already read — {r['consumer']}"
             elif r["non_zero"] == 0:
                 state = "SERVED BUT ALL ZERO — a placeholder, not a projection"
             else:
@@ -343,11 +382,10 @@ def describe_stat_keys(projections: pd.DataFrame, league: str = "") -> list[str]
             # was answered yes on 2026-09-16 (run 35108513721) and both markets
             # are priced. What remains is completions, and its blocker is on
             # OUR side, so the report should stop implying the feed decides it.
-            lines.append("    rush_att / pass_att are priced (BP rushing-attempts,")
-            lines.append("    passing-attempts). pass_cmp is served but NOT priced:")
-            lines.append("    player_weeks has no completions column, so there is nothing")
-            lines.append("    to fit dispersion on and nothing to settle against.")
-            lines.append("    Anything else AVAILABLE here needs a model before a mapping.")
+            lines.append("    rush_att, pass_att and pass_cmp are all priced — the")
+            lines.append("    whole NFL BettingPros board is mapped. Anything AVAILABLE")
+            lines.append("    here is a key nothing reads yet, and needs a model and")
+            lines.append("    banked actuals before a mapping, not just a mapping.")
     return lines
 
 

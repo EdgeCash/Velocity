@@ -93,6 +93,7 @@ PROP_MARKET_BY_KEY = {
     "player_pass_interceptions": "interceptions",
     "player_rush_attempts": "rush_attempts",
     "player_pass_attempts": "pass_attempts",
+    "player_pass_completions": "pass_completions",
 }
 # The football six — the historical default; per-league prop pulls pass
 # their own market subsets (docs/PROPS.md).

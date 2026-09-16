@@ -158,20 +158,57 @@ dropbacks with `pass_mult`. Crossing them would make a back's workload rise
 with his quarterback's, when the script that lifts one suppresses the other.
 A test pins that ordering.
 
-**`passing-completions` still stays out, for a reason that survived the
-census.** The projection exists, so the feed is no longer the blocker;
-`player_weeks` has no completions column, so there is no dispersion to fit and
-nothing to settle against. A market that prices but cannot grade would stake
-and sit `pending` forever. Banking completions into `player_weeks` unblocks it.
+**`pass_completions` closed the board.** The projection was always served; the
+blocker was a column. nflverse publishes `completions` in the same weekly file
+we already read for `attempts` and `carries` — we simply never kept it. Banking
+it (113,581 player-weeks, 3,251 QB games with ≥15 attempts, 64.9% completion
+rate) gave the market both a dispersion to fit and something to settle against.
 
-**Other keys the feed serves and nothing reads**, noted so they are a choice
-rather than an oversight: three DraftKings scoring variants (`points`,
-`points_half`, `points_ppr`); a full team-defense block (`def_sack` 2.51 mean,
-`def_int`, `def_pa` 22.9, `def_tyda` 334.8, `def_td`, `def_ff`, `def_fr`,
-`def_safety` — 32 rows each, one per team); kicker projections (`fg`, `fga`,
-`xpt`). Eight milestone keys (`pass_yds_300`, `rush_yds_100`,
-`scrimage_yards_100` …) are **all zero on every row** — placeholders in a
-weekly projection, not projections, and the census flags exactly that case.
+It is **not** modelled as a count of its own. Completions are a fraction of
+attempts: they correlate **0.844** with attempts within player-season on 2,682
+banked QB games, and can never exceed them. A separate Poisson would happily
+print 30 completions on 25 attempts, and would sell an "over attempts + over
+completions" parlay as two bets when it is nearly one. So the sim draws a
+**binomial on the attempts it already simulated**, at the rate the player's own
+projection implies — a checkdown passer and a deep thrower do not share a
+league rate.
+
+Measured: the structure returns var/mean **1.854** against a banked **1.753**
+(~6% wide, the safe direction) and correlation 0.90 against a measured 0.844.
+Real completion% wobbles game to game by more than binomial noise allows; that
+gap is recorded rather than papered over. No attempts projection means no
+completions market — the sim abstains rather than inventing a denominator.
+
+With it, **every slug the NFL board serves is now priced.** The coverage report
+that started this had 5 of 10 mapped and 388 of 551 rows usable.
+
+**The census's own "UNREAD" label was too narrow, and I believed it.** It first
+shipped reporting whether the *props model* read a key, then printed that as
+whether anything did — so the team-defense block came back UNREAD when
+`velocity/dfs/dst.py` has been reading it since the DST projection landed. (DK
+classic needs a defense, and the pool used to join it at 0.0 points.) That is
+the confusion this report exists to prevent, pointed the wrong way: it invites
+someone to "discover" a key and wire up a second consumer for data already in
+use. The census now names the consumer, and separates three states:
+
+- **read** — `def_sack`, `def_int`, `def_fr`, `def_safety`, `def_td`,
+  `def_retd` (DFS: DST), `def_pa` (DST's fallback when there is no game sim),
+  `fumbles` (DK scoring), `rush_tds` / `rec_tds` (folded into `anytime_td`),
+  plus every prop market.
+- **declined** — `def_ff` and `def_tyda` (DK scores neither), and the three
+  DraftKings scoring variants `points` / `points_half` / `points_ppr` (we
+  compute DK points from the components rather than trust a served total).
+  "Declined" and "nobody looked" are different findings and should not read
+  the same.
+- **UNREAD** — `fg`, `fga`, `xpt`. The kicker projections are the only thing
+  in this feed genuinely unexamined, and DK's Showdown board has a kicker
+  slot — `dst.py`'s own note calls a kicker "routinely a live captain". This
+  is the DST gap again, one position over. A test pins the unexamined set so
+  it cannot quietly grow.
+
+Eight milestone keys (`pass_yds_300`, `rush_yds_100`, `scrimage_yards_100` …)
+are **all zero on every row** — placeholders in a weekly projection, not
+projections, and the census flags exactly that case.
 
 **Three slugs stay unmapped, each for its own reason.** `rushing-attempts` (57
 rows, the largest) and `passing-attempts` (28) are the two worth having next:
@@ -215,12 +252,26 @@ decided against the number rather than ahead of it.
 - NBA vertical (nba_api pipeline) → rebounds vs assists lab arbitration.
 - ~~Confirm the FantasyPros rush-attempt / pass-attempt projection keys~~ —
   answered by the census (above); both markets are priced.
-- Bank a completions column into `player_weeks` to unblock
-  `passing-completions` — the projection is served, the actuals are not.
-- MLB projections return 0 rows every run and fall back through all nine
-  positions first: ~10 wasted requests per run on a league whose snapshot
-  nothing reads. Drop it from `LEAGUES` or fix the call.
-- Decide whether `player_rush_reception_yds` and `player_pass_interceptions`
-  join the default Odds API pull — needs a week of the credit ledger first.
+- ~~Bank a completions column into `player_weeks`~~ — banked; the market is
+  priced and the NFL board is fully mapped.
+- ~~MLB projections return 0 rows every run~~ — dropped from `LEAGUES`
+  (2026-09-16). It cost ten requests a run to bank rows nothing read: MLB DFS
+  prices from `collect_mlb_player_stats.py` and MLB props from the banked
+  starters frame. `UNCONSUMED_LEAGUES` carried a correct note about this the
+  whole time, which is the lesson — saying a thing in a log is not the same as
+  not doing it, so a test now asserts nothing marked unconsumed is fetched.
+- Decide whether the four new `player_*` keys join the default Odds API pull.
+  The **per-market price no longer needs a week of data** — The Odds API bills
+  one credit per market per region per call, which `cost_per_market`
+  (`scripts/report_odds_credits.py`) now reads straight off the ledger. Going
+  from the football six to ten is **+67% on every prop call**. What still needs
+  a week is the denominator: what that percentage is of the monthly plan.
+- Price a **kicker projection** off `fg` / `fga` / `xpt` — the last unread
+  block in the feed, and DK Showdown has a kicker slot it currently fills
+  blind. Same shape as the DST gap that `velocity/dfs/dst.py` closed.
+- The live slate was spending credits from four call sites and banking **none**
+  of them (fixed 2026-09-16) — so ledgers banked before that date understate
+  the real total, by however much the live slate costs. Treat the first full
+  week after the fix as the first honest window.
 - ~~Prop CLV: closes for props from the banked line archive~~ — attached
   (above); the sweep needs graded weeks to accumulate.

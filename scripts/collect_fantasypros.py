@@ -37,33 +37,41 @@ from velocity.ingest.fantasypros import (
 
 # The FantasyPros public v2 API serves projections for NFL, MLB and NBA only —
 # there is no NCAAF projections path (confirmed against the published OpenAPI
-# spec), which is why the college endpoint 404s. MLB projections are SEASON
-# totals (week is an NFL concept); the DFS scorer normalizes them to per-game
-# rates, so they're snapshot at week 0 year-round.
-LEAGUES = ("nfl", "mlb")
+# spec), which is why the college endpoint 404s.
+#
+# NFL only. MLB was collected from the day this script was written and read by
+# NOTHING, every run, for months — and because the tier answers position=ALL
+# empty it fell through all nine per-position fallbacks first, so each run spent
+# ten requests to bank zero rows. The 2026-09-16 census run made that legible
+# for the first time (0 projection rows, 0 players, a warning nobody had been
+# in a position to act on).
+#
+# Nothing reads it and nothing should: MLB DFS prices from collect_mlb_player_
+# stats.py (the dfs-slate workflow swaps PROJ_FILE explicitly), and MLB props
+# come from the banked starters frame via _mlb_k_slate — which run_live_slate
+# documents as having "no FantasyPros dependency". Season-total consensus is
+# strictly worse than both.
+#
+# Re-adding a league here is a decision to spend requests on it, so say what
+# will read the rows before you do.
+LEAGUES = ("nfl",)
 
-# The free public tier serves per-position requests reliably; a position=ALL
-# request can come back tier-limited (`public_api_limited`) with zero players.
-# The collector tries ALL first and falls back to fetching these one by one.
-# Proven live for NFL; the first MLB dispatch (2026-08-23) hit the same
-# `public_api_limited` empty response on ALL, so MLB gets the same fallback.
-# Leagues whose snapshot currently has no consumer, and why. This is not a
-# TODO — it is a standing fact the log should state every run, because the
-# alternative is what happened here: MLB was collected from the day the
-# collector was written, every run, and read by nothing, while a workflow
-# comment three files away asserted the tier served no MLB players at all.
-# Nobody was wrong on purpose; the contradiction just had nowhere to show up.
-UNCONSUMED_LEAGUES = {
-    "mlb": "MLB DFS prices from the contextual model (banked box scores, park, "
-           "lineup slot, today's probables) and MLB props from the banked "
-           "starters frame — both strictly better than season-total consensus, "
-           "so there is nothing here for these rows to improve",
-}
+# Leagues whose snapshot has no consumer, and why. Kept as a mechanism rather
+# than deleted with its last entry: the note it used to carry for MLB was
+# correct for months and still did not stop the requests being spent, because
+# saying a thing in a log is not the same as not doing it. Anything that lands
+# here again should be asked the same question — what reads these rows? — and
+# dropped from LEAGUES if the answer is nothing.
+UNCONSUMED_LEAGUES: dict[str, str] = {}
 
 NFL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
+# The free public tier serves per-position requests reliably; a position=ALL
+# request can come back tier-limited (`public_api_limited`) with zero players,
+# and the collector then fetches these one by one. That fallback is also what
+# made an unconsumed league expensive: an empty ALL response costs one request,
+# then one more per position.
 FALLBACK_POSITIONS = {
     "nfl": NFL_POSITIONS,
-    "mlb": ("C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"),
 }
 
 

@@ -2,7 +2,9 @@ name: Collect FantasyPros projections
 
 # FantasyPros consensus projections feed the props model as an external prior.
 # This snapshots them into an Actions artifact — nothing is committed (paid
-# data never lands in git). Because we don't have a pinned FantasyPros schema,
+# data never lands in git). NFL only: MLB was fetched here for months, cost ten
+# requests a run (an empty position=ALL then all nine position fallbacks), and
+# was read by nothing — see the note on LEAGUES in the collector. Because we don't have a pinned FantasyPros schema,
 # every run passes --inspect, doubling as the in-CI verification of the
 # FP_API_KEY secret and the way we tighten the tolerant normalizer.
 #

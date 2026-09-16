@@ -141,6 +141,13 @@ def fit(pw: pd.DataFrame) -> tuple[dict[str, object], pd.DataFrame]:
     out["pass_attempts_phi"] = max(
         count_phi(pw, "attempts", "QB", min_mean=15.0) - mult_phi, 0.0
     )
+    # Completions are NOT fitted as a free count — the sim draws them as a
+    # binomial on the simulated attempts, so their dispersion follows from
+    # attempts and the completion rate rather than being a constant of their
+    # own. Reported anyway, because it is the number that check is against.
+    out["completions_phi_observed"] = max(
+        count_phi(pw, "completions", "QB", min_mean=10.0) - mult_phi, 0.0
+    )
     pools = []
     cv: dict[str, float] = {}
     for position, min_mean in (("RB", 15.0), ("QB", 8.0)):

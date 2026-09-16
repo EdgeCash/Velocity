@@ -278,17 +278,11 @@ BP_PROP_SLUG_TO_MARKET: Mapping[str, str] = {
     # RB 0.0914 / QB 0.0247, attempts QB 0.0260).
     "rushing-attempts": "rush_attempts",
     "passing-attempts": "pass_attempts",
-    # STILL UNMAPPED, and not an oversight:
-    #
-    #   passing-completions (28 rows). The census found the projection — the
-    #   feed serves pass_cmp as a plain number on the same 70 of 82 passers,
-    #   not as the "21/33" compound string that would have hidden it. So the
-    #   blocker is no longer the feed. It is that player_weeks has no
-    #   completions column, which means no dispersion to fit and nothing to
-    #   walk the market forward against. A market we cannot backtest is a
-    #   market we cannot size, and a market we cannot GRADE would stake and
-    #   sit pending forever (#208). Banking completions into player_weeks
-    #   unblocks it; until then this abstains on purpose.
+    # The last slug the NFL board was serving and we were abstaining on.
+    # Unblocked by banking a completions column into player_weeks (nflverse
+    # served it all along; we simply never kept it), which is what the note
+    # here used to ask for. 3,251 QB games to fit against.
+    "passing-completions": "pass_completions",
 }
 
 

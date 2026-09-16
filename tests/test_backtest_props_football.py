@@ -252,3 +252,31 @@ def test_alternate_attempt_spellings_are_read() -> None:
         weekly = normalize_weekly_stats(WEEKLY_RAW.assign(**{column: [9.0, 0.0, 0.0]}))
         allen = weekly[weekly["player_name"] == "Josh Allen"].iloc[0]
         assert allen[market] == 9.0, column
+
+
+def test_completions_settle_against_the_newly_banked_column() -> None:
+    """The column this market waited on — nflverse served it, we never kept it."""
+    weekly = normalize_weekly_stats(
+        WEEKLY_RAW.assign(attempts=[38.0, 0.0, 0.0], completions=[23.0, 0.0, 0.0])
+    )
+    assert "pass_completions" in weekly.columns
+    graded = grade_prop_ledger(
+        pd.DataFrame([
+            {"player": "Josh Allen", "market": "pass_completions", "side": "over",
+             "point": 21.5, "price": -120},
+        ]),
+        weekly,
+    )
+    assert graded["result"].iloc[0] == "win"
+    assert graded["actual"].iloc[0] == 23.0
+
+
+def test_a_missing_completions_column_stays_pending() -> None:
+    graded = grade_prop_ledger(
+        pd.DataFrame([
+            {"player": "Josh Allen", "market": "pass_completions", "side": "under",
+             "point": 21.5, "price": -110},
+        ]),
+        normalize_weekly_stats(WEEKLY_RAW),
+    )
+    assert graded["result"].iloc[0] == "pending"

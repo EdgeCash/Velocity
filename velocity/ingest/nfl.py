@@ -287,6 +287,7 @@ _WEEKLY_INTERCEPTION_COLUMNS = ("passing_interceptions", "interceptions")
 _WEEKLY_ATTEMPT_COLUMNS = {
     "rush_attempts": ("carries", "rushing_attempts", "rush_attempts"),
     "pass_attempts": ("attempts", "passing_attempts", "pass_attempts"),
+    "pass_completions": ("completions", "passing_completions"),
 }
 
 
@@ -377,6 +378,12 @@ _DFS_STAT_COLUMNS = {
     "pass_yards": ("passing_yards",),
     "pass_tds": ("passing_tds",),
     "interceptions": ("passing_interceptions", "interceptions"),
+    # Banked 2026-09-16 so ``pass_completions`` has actuals to fit dispersion
+    # on and to settle against. The FantasyPros stat-key census found the
+    # PROJECTION (pass_cmp, 70 of 82 passers) back on 2026-09-16, which left
+    # this the only thing standing between the market and a price: a market
+    # that cannot be graded stakes and sits pending forever (#208).
+    "completions": ("completions", "passing_completions"),
     "rush_yards": ("rushing_yards",),
     "rush_tds": ("rushing_tds",),
     "receptions": ("receptions",),
