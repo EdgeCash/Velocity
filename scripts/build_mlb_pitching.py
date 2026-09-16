@@ -26,8 +26,11 @@ from pathlib import Path
 import pandas as pd
 
 _BOX_URL = "https://statsapi.mlb.com/api/v1/game/{pk}/boxscore"
+# `weather` rides along with the probables: the same call, one more word, and
+# it is what the home-run model's weather term reads at prediction time. A
+# game only carries it from Pre-Game onward (docs: velocity/ingest/mlb_weather).
 _SCHED_URL = ("https://statsapi.mlb.com/api/v1/schedule?sportId=1"
-              "&startDate={start}&endDate={end}&hydrate=probablePitcher")
+              "&startDate={start}&endDate={end}&hydrate=probablePitcher,weather")
 _LINEUP_URL = ("https://statsapi.mlb.com/api/v1/schedule?sportId=1"
                "&startDate={start}&endDate={end}&hydrate=lineups")
 _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) velocity-datasets"
@@ -189,6 +192,52 @@ def extract_probables(
     return lookup
 
 
+def extract_weather(payload: dict) -> dict[tuple[str, str], dict[str, object]]:
+    """Schedule payload → ``(home, away)`` → that game's weather reading.
+
+    Keyed the way :func:`extract_probables` keys, so the board can look a game
+    up with what it already has. Only games at Pre-Game or later carry a
+    reading; the rest are simply absent, and an absent game must stay absent
+    rather than becoming a calm 70F one.
+    """
+    from velocity.ingest.mlb_weather import parse_wind, wind_vector
+
+    out: dict[tuple[str, str], dict[str, object]] = {}
+    for date in payload.get("dates") or []:
+        for game in date.get("games") or []:
+            teams = game.get("teams") or {}
+            home = ((teams.get("home") or {}).get("team") or {}).get("name")
+            away = ((teams.get("away") or {}).get("team") or {}).get("name")
+            weather = game.get("weather") or {}
+            if not home or not away or not weather:
+                continue
+            key = (str(home), str(away))
+            if key in out:
+                continue
+            mph, direction = parse_wind(weather.get("wind"))
+            condition = weather.get("condition")
+            closed = (str(condition).strip().casefold() in {"roof closed", "dome"}
+                      if condition is not None else False)
+            try:
+                temp_f = None if weather.get("temp") in (None, "") else float(
+                    weather["temp"])
+            except (TypeError, ValueError):
+                temp_f = None
+            # Written out rather than chained: `vector` is legitimately 0.0 for
+            # a crosswind and None for a direction the feed has not used
+            # before, and those two must not collapse into each other.
+            vector = wind_vector(direction)
+            if closed:
+                wind_out: float | None = 0.0
+            elif mph is None or vector is None:
+                wind_out = None
+            else:
+                wind_out = mph * vector
+            out[key] = {"wind_out": wind_out, "temp_f": temp_f,
+                        "roof_closed": closed}
+    return out
+
+
 def extract_lineups(payload: dict) -> dict[str, list[str]]:
     """Schedule payload → team name → the nine announced bats, IN ORDER.
 
@@ -228,6 +277,20 @@ def fetch_probables(
 ) -> dict[tuple[str, str, None], tuple[str | None, str | None]]:  # pragma: no cover - network
     """Probables for the [start, end] date window (YYYY-MM-DD, free statsapi)."""
     return extract_probables(_get(_SCHED_URL.format(start=start, end=end)))
+
+
+def fetch_probables_and_weather(  # pragma: no cover - network
+    start: str, end: str
+) -> tuple[dict[tuple[str, str, None], tuple[str | None, str | None]],
+           dict[tuple[str, str], dict[str, object]]]:
+    """Both, off ONE call — the weather hydrate rides the probables request.
+
+    The home-run board needs the probables anyway, and ``&hydrate=...,weather``
+    returns the forecast beside them, so pricing weather costs no extra
+    request at all.
+    """
+    payload = _get(_SCHED_URL.format(start=start, end=end))
+    return extract_probables(payload), extract_weather(payload)
 
 
 def _merge_bank(existing: pd.DataFrame, fresh: pd.DataFrame,

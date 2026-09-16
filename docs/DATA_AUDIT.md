@@ -90,23 +90,86 @@ they are simply not in the lineup — so a benched hitter's prop has no veto
 today. `lineup_type` (confirmed vs projected) is exactly the availability
 signal that gap needs.
 
-## 2. BettingPros `/events` — weather (OPEN, blocked on a false premise)
+## 2 & 5. MLB weather (DONE)
 
-`velocity/models/props_hr.py` states:
+`velocity/models/props_hr.py` stated:
 
 > Weather is deliberately absent: temperature and wind genuinely move home-run
 > distance, but we have no banked historical weather to FIT a coefficient on.
 
-True, and circular. BP serves `weather` on every event, every run, every three
-hours: `forecast_temp`, `forecast_wind_speed`, `forecast_wind_direction`,
-`forecast_wind_degree`, `forecast_rain_chance`, `forecast_humidity`,
-`forecast_pressure`. Wind in a ballpark is one of the largest home-run effects
-there is. **The bank needed to fit that coefficient is the thing the collector
-has been dropping.**
+True and circular — the bank did not exist because nobody had built it. This
+finding said to build it from BettingPros' `forecast_*` block, which arrives on
+every event every three hours, and that *"banking it starts the clock; the
+coefficient comes later."*
 
-Same shape as `pass_completions` (#211): the blocker was a column, not a feed.
-Banking it starts the clock; the coefficient comes later, once there are
-enough games to fit rather than assume.
+### The route was wrong twice, and both only showed up by probing
+
+**Wrong feed.** BP serves a *forecast*, for games that have not happened, so
+banking it means waiting a season before anything can be fitted. statsapi
+serves the **observed** reading for every game already played — free, keyless,
+on the endpoint beside the boxscore the starters bank already walks. It
+answered for **7,219 of 7,219** committed games. And it answers in better
+units: `condition` carries `Roof Closed`/`Dome` outright (so the dome
+exclusion the NFL path needs a per-stadium table for is simply served), and
+`wind` is **ballpark-relative** — `Out To CF`, `In From LF` — which is the
+vector a home run cares about. BP's compass degree means nothing until you
+know each park's orientation.
+
+**Wrong about needing BP at all.** The live side was supposed to be BP's, on
+the reasoning that tonight's weather can only be forecast. But statsapi
+carries the forecast too, from **Pre-Game** onward, in the same vocabulary —
+and the *schedule* endpoint hydrates it, so `&hydrate=probablePitcher,weather`
+returns it beside the probables the board already fetches. The whole live path
+is one more word in a URL and **zero extra requests**. Findings 2 and 5 close
+on statsapi alone, with no paid dependency and no orientation table.
+
+### What the measurement says
+
+Against each game's own **park × season × month** baseline (park because Coors
+is not Oracle, season because the ball changes, month because home-run rates
+and weather both swing across a summer):
+
+| | per unit | se | t |
+|---|---|---|---|
+| wind | **+0.00743** per mph blowing out | 0.00145 | 5.1 |
+| temperature | **+0.00351** per °F above 70 | 0.00070 | 5.0 |
+
+The control that matters reads right: closed-roof games — weather switched off
+— land at **0.993 ± 0.019** of their own baseline, so the baseline is
+absorbing park, ball and calendar rather than leaving them in the weather
+terms.
+
+### Both stayed straight lines, and that is the finding
+
+In sample the data argues loudly for more. Wind is visibly **asymmetric**:
+blowing in suppresses without limit (×0.854 at 10.5 mph, still falling) while
+blowing out **saturates** at ×1.057 by 5.7 mph and comes back down to ×1.039
+by 10.8. Temperature is visibly **convex**: a line under-states both tails and
+over-states the 70–80 °F bin, the largest at 2,080 games. An interpolated
+empirical curve fitted to those bins cuts in-sample error **twenty-fold**.
+
+It does not survive a holdout. Trained on two seasons and scored on the third,
+the curve loses to the plain line in **five of six** comparisons — its
+in-sample win was circular, because the knots *were* the bins it was scored
+against. An asymmetric-with-cap form fares no better: 0.0255 mean
+out-of-sample error against the line's 0.0263, inside the test bins' own noise
+(0.02–0.05) and not even consistent in sign. **Nothing more elaborate than a
+line generalises, so nothing more elaborate ships.**
+
+What did ship is a clamp at the edge of the fitted data — a safety rail, not
+an accuracy claim. It barely binds in range and does not measurably change the
+error; what it stops is the line's one pathology, predicting ×1.19 for a
+25 mph tailwind where the games above 12 mph come in at ×1.03.
+
+### And the coverage is counted, not assumed
+
+statsapi carries a forecast only from Pre-Game onward — on the 2026-09-16
+slate, 8 of 15 games. A game with no reading gets a multiplier of exactly 1.0,
+which is the number a calm 70 °F night also gets, so nothing downstream can
+tell them apart. `build_hr_board` prints how many games had a forecast and
+warns when none did. That is the Statcast prior (finding 4) wearing a
+different coat, and it is the reason this finding's list keeps repeating
+itself: **abstention looks exactly like health.**
 
 ## 3. BettingPros `/props` — form splits and opposition rank (DECLINED)
 
@@ -208,18 +271,19 @@ beat. Nothing complains: the collector succeeds, the board builds, the fallback
 is deliberate and silent, and `|| true` plus `continue-on-error` swallow the
 rest. Abstention looking like health, again.
 
-## 5. MLB has no weather path, while NFL has a good one (OPEN)
+## 5. MLB has no weather path, while NFL has a good one (DONE — see finding 2)
 
-Worth stating beside finding 2, because it shows the gap is not difficulty.
-NFL has `velocity/features/weather.py`: a live per-stadium forecast fetch,
-dome and closed-roof exclusion (`OUTDOOR_ROOFS`), per-era relocation rows, and
-`WeatherAdjustedModel` applying wind to totals symmetrically. It is careful
-work.
+Worth having stated beside finding 2, because it showed the gap was not
+difficulty. NFL has `velocity/features/weather.py`: a live per-stadium
+forecast fetch, dome and closed-roof exclusion (`OUTDOOR_ROOFS`), per-era
+relocation rows, and `WeatherAdjustedModel` applying wind to totals
+symmetrically. Careful work. MLB had none of it, while wind in a ballpark is
+one of the largest home-run effects there is.
 
-MLB has none of it — and wind in a ballpark is one of the largest home-run
-effects there is. The MLB path simply never got the NFL path's treatment, and
-the forecast it would need is already arriving on every BettingPros event
-(finding 2).
+It has one now, and it needed **less** machinery than the NFL path rather than
+more: statsapi serves the roof state as a condition string, so there is no
+`OUTDOOR_ROOFS` table to maintain, and it serves wind ballpark-relative, so
+there are no stadium bearings either. Closed in finding 2 above.
 
 ## 6. NCAAF prop lines are bought every run and never priced (DONE)
 
@@ -615,7 +679,7 @@ leagues' prop lines are still bought with nothing to price them.
 
 | # | What | Note |
 |---|---|---|
-| **2 / 5** | Bank the BettingPros weather forecast | The HR model says it cannot model weather for lack of banked data. Banking starts the clock; the coefficient comes when there are enough games to fit rather than assume. NFL already has the careful version to copy. |
+| ~~**2 / 5**~~ | ~~Bank the BettingPros weather forecast~~ — **done**, from statsapi rather than BP, and fitted rather than clocked |
 | ~~**6**~~ | ~~Point the NCAAF prop slate at `player_games`~~ | **Done.** 10 of 11 markets priced, dispersion re-fitted on college. `dfs_ncaaf.py` was the template and its verdict held — *"The missing half was data, not modelling"* — with one correction: the *dispersion* was modelling, and the NFL's would have been wrong. |
 
 ## Small or cosmetic

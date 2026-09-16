@@ -10,7 +10,7 @@ the batted-ball rate knows first.
 
 The decomposition, every term fit from banked data (no imported constants):
 
-    P(HR per PA) = batter_rate × pitcher_factor × park_factor
+    P(HR per PA) = batter_rate × pitcher_factor × park_factor × weather
 
 * **batter_rate** — empirical Bayes. The batter's observed HR/PA shrinks
   toward a *Statcast-informed* prior (his barrel rate mapped through a
@@ -19,15 +19,29 @@ The decomposition, every term fit from banked data (no imported constants):
 * **pitcher_factor** — the opposing starter's HR-allowed rate per batter
   faced, shrunk to league, as a multiplier.
 * **park_factor** — each venue's HR/PA relative to league, shrunk by sample.
+* **weather** — wind along the batter's line of fire and first-pitch
+  temperature, fitted on 7,219 banked games (:mod:`velocity.models.hr_weather`).
 
 Then P(≥1 HR) = 1 − (1 − p)^PA over the plate appearances his lineup slot
 projects (also fit from the bank). Expected HRs = PA × p ranks the salary-
 free DK "Home Runs" contest, where the model competes against a field's
 opinions rather than a priced line.
 
-Weather is deliberately absent: temperature and wind genuinely move home-run
-distance, but we have no banked historical weather to FIT a coefficient on,
-and this model states only what it can measure (docs/PROPS_HR.md).
+Weather used to be deliberately absent, on the grounds that temperature and
+wind genuinely move home-run distance but nothing was banked to FIT a
+coefficient on. That was true and circular: the bank did not exist because
+nobody had built it. ``velocity.ingest.mlb_weather`` builds it from statsapi
+— free, keyless, **100% of 7,219 games** — and the measurement came back
+clear against each game's own park-season-month baseline:
+
+    wind  +0.00743 per mph blowing out   (se 0.00145, t 5.1)
+    temp  +0.00351 per F above 70        (se 0.00070, t 5.0)
+
+Both stayed straight lines only because nothing more elaborate survived a
+held-out season; see :mod:`velocity.models.hr_weather` for what was tried and
+what it cost. The term is absent, not neutral, when a game has no reading —
+and the count of how many got one is reported, because a board that silently
+fell back to 1.0 looks exactly like a board of calm 70F nights.
 
 Pure functions of frames — offline-testable, no network.
 """
@@ -39,6 +53,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+
+from velocity.models.hr_weather import HRWeather
 
 MARKET = "batter_home_runs"
 
@@ -71,6 +87,10 @@ class HomeRunModel:
     # board without --statcast — and nothing could tell, because the fallback
     # is deliberate, silent and indistinguishable from a healthy fit.
     statcast_batters: int = 0
+    # The fitted weather effect. Separate from the mappings above because it
+    # is a function of the GAME rather than of anyone in the bank, and it
+    # applies only when that game actually has a reading.
+    weather: HRWeather = field(default_factory=HRWeather)
 
     def rate(
         self,
@@ -78,8 +98,18 @@ class HomeRunModel:
         *,
         opposing_starter: str | None = None,
         venue: str | None = None,
+        wind_out: float | None = None,
+        temp_f: float | None = None,
+        roof_closed: bool = False,
     ) -> float | None:
-        """P(HR) for one plate appearance, or None for an unknown batter."""
+        """P(HR) for one plate appearance, or None for an unknown batter.
+
+        ``wind_out`` is mph along the batter's line of fire (positive blowing
+        out) and ``temp_f`` is first pitch temperature. Omit both for a game
+        with no forecast: the weather term is then exactly 1.0, which is the
+        same number a calm 70F night produces — so callers count coverage
+        rather than inferring it from the output.
+        """
         base = self.batter_rate.get(str(batter_id))
         if base is None:
             return None
@@ -88,6 +118,8 @@ class HomeRunModel:
             rate *= self.pitcher_factor.get(str(opposing_starter), 1.0)
         if venue is not None:
             rate *= self.park_factor.get(str(venue), 1.0)
+        rate *= self.weather.factor(wind_out=wind_out, temp_f=temp_f,
+                                    roof_closed=roof_closed)
         return float(min(max(rate, 0.0), 1.0))
 
     def expected_pa(self, lineup_slot: int | None) -> float:
@@ -104,10 +136,14 @@ class HomeRunModel:
         venue: str | None = None,
         lineup_slot: int | None = None,
         pa: float | None = None,
+        wind_out: float | None = None,
+        temp_f: float | None = None,
+        roof_closed: bool = False,
     ) -> float | None:
         """P(at least one HR) over the projected plate appearances."""
         per_pa = self.rate(batter_id, opposing_starter=opposing_starter,
-                           venue=venue)
+                           venue=venue, wind_out=wind_out, temp_f=temp_f,
+                           roof_closed=roof_closed)
         if per_pa is None:
             return None
         n = self.expected_pa(lineup_slot) if pa is None else float(pa)
@@ -120,10 +156,14 @@ class HomeRunModel:
         opposing_starter: str | None = None,
         venue: str | None = None,
         lineup_slot: int | None = None,
+        wind_out: float | None = None,
+        temp_f: float | None = None,
+        roof_closed: bool = False,
     ) -> float | None:
         """Mean HRs — the ranking statistic for the DK single-stat contest."""
         per_pa = self.rate(batter_id, opposing_starter=opposing_starter,
-                           venue=venue)
+                           venue=venue, wind_out=wind_out, temp_f=temp_f,
+                           roof_closed=roof_closed)
         if per_pa is None:
             return None
         return float(per_pa * self.expected_pa(lineup_slot))

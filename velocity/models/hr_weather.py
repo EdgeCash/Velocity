@@ -160,3 +160,109 @@ def fit_linear(frame: pd.DataFrame, column: str, *, centre: float = 0.0) -> Weat
     sigma2 = float(np.sum(w * residual * residual) / dof)
     se = float(np.sqrt(sigma2 / denominator)) if denominator > 0 else float("nan")
     return WeatherFit(column, slope, se, len(work), int(work["hr"].sum()))
+
+# ---------------------------------------------------------------------------
+# The fitted effect — and the shape that survived being tested out of sample.
+# ---------------------------------------------------------------------------
+
+# Fitted over datasets/mlb/weather.parquet (7,219 games, 2024-2026; 5,941
+# outdoor) against each game's own park-season-month baseline:
+#
+#     wind  +0.00743 per mph blowing out   (se 0.00145, t 5.1)
+#     temp  +0.00351 per F above 70        (se 0.00070, t 5.0)
+#
+# **Both are straight lines, and that is a finding rather than a default.**
+# In sample the data argues loudly for more: the wind effect is visibly
+# asymmetric (blowing in suppresses without limit, x0.854 at 10.5 mph and
+# still falling, while blowing out saturates at x1.057 by 5.7 mph and comes
+# *back down* to x1.039 by 10.8), and temperature is visibly convex (a line
+# under-states both tails and over-states the 70-80F bin, the largest at
+# 2,080 games). An interpolated empirical curve fitted to those bins cuts the
+# in-sample error twenty-fold.
+#
+# It does not survive a holdout. Trained on two seasons and scored on the
+# third, the curve loses to the plain line in FIVE of six comparisons — its
+# in-sample win was circular, because the knots *were* the bins it was being
+# scored against. An asymmetric-with-cap form fares no better: 0.0255 mean
+# out-of-sample error against the line's 0.0263, which is inside the test
+# bins' own noise (0.02-0.05) and is not even consistent in sign — better on
+# 2026, worse on 2025. Nothing more elaborate than a line generalises, so
+# nothing more elaborate ships.
+WIND_PER_MPH = 0.00743
+TEMP_PER_F = 0.00351
+
+# Clamps, at the edge of the data the slopes were fitted on. These are a
+# safety rail, NOT an accuracy claim: they almost never bind in the fitted
+# range and do not measurably change the out-of-sample error. What they stop
+# is the one pathology a line has — extrapolating a trend past its evidence.
+# Unclamped, +0.00743/mph predicts x1.19 for a 25 mph tailwind, where the
+# games above 12 mph actually come in at x1.03.
+WIND_CLAMP_MPH = 12.0
+TEMP_CLAMP_F = (45.0, 95.0)
+
+
+@dataclass(frozen=True)
+class HRWeather:
+    """The multiplicative weather effect on a home-run rate, as fitted.
+
+    ``factor`` is what :class:`velocity.models.props_hr.HomeRunModel`
+    multiplies into ``batter_rate x pitcher_factor x park_factor``. The two
+    terms are safe to multiply: corr(wind_out, temp_f) is 0.002 across the
+    bank, and mean temperature is 72.8/74.4/74.4F for wind in/calm/out, so
+    neither is carrying the other's signal.
+
+    It is **exactly 1.0 when there is no reading**, which is the dangerous
+    case: a missing forecast and a calm 70F night produce the identical
+    number, so a caller must count how many boards got a real reading rather
+    than trusting that the multiplier looks sane. That is the Statcast-prior
+    failure (``HomeRunModel.statcast_batters``) wearing a different coat.
+
+    A closed roof is a *reading*, not a gap — there is no weather in there, so
+    the factor is a measured 1.0. Checked against the bank, closed-roof games
+    land at 0.993 +/- 0.019 of their own park-season-month baseline.
+    """
+
+    wind_per_mph: float = WIND_PER_MPH
+    temp_per_f: float = TEMP_PER_F
+    wind_clamp_mph: float = WIND_CLAMP_MPH
+    temp_clamp_f: tuple[float, float] = TEMP_CLAMP_F
+
+    def wind_factor(self, wind_out: float | None) -> float:
+        """Multiplier for the wind along the batter's line of fire, in mph."""
+        if wind_out is None or pd.isna(wind_out):
+            return 1.0
+        clamped = float(np.clip(float(wind_out), -self.wind_clamp_mph,
+                                self.wind_clamp_mph))
+        return max(1.0 + self.wind_per_mph * clamped, 0.0)
+
+    def temp_factor(self, temp_f: float | None) -> float:
+        """Multiplier for first-pitch temperature, in F."""
+        if temp_f is None or pd.isna(temp_f):
+            return 1.0
+        low, high = self.temp_clamp_f
+        clamped = float(np.clip(float(temp_f), low, high))
+        return max(1.0 + self.temp_per_f * (clamped - REFERENCE_TEMP_F), 0.0)
+
+    def factor(
+        self,
+        *,
+        wind_out: float | None = None,
+        temp_f: float | None = None,
+        roof_closed: bool = False,
+    ) -> float:
+        """The combined multiplier; 1.0 under a closed roof or with no reading."""
+        if roof_closed:
+            return 1.0
+        return self.wind_factor(wind_out) * self.temp_factor(temp_f)
+
+    @staticmethod
+    def has_reading(wind_out: float | None, temp_f: float | None) -> bool:
+        """Whether this game had anything to price — the thing to COUNT.
+
+        A board that fell back to 1.0 everywhere looks exactly like a board of
+        calm 70F nights. Only this can tell them apart.
+        """
+        return not (
+            (wind_out is None or pd.isna(wind_out))
+            and (temp_f is None or pd.isna(temp_f))
+        )

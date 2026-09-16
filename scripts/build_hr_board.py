@@ -39,7 +39,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from build_dfs_lineup import apply_confirmed_cards, apply_projected_cards
-    from build_mlb_pitching import fetch_probables
+    from build_mlb_pitching import fetch_probables_and_weather
     from velocity.models.props_hr import HomeRunModel
 
     batters = pd.read_parquet(args.batters)
@@ -77,7 +77,7 @@ def main() -> None:
     # rate and park carry it, the pitcher term simply stays neutral.
     today = date.today()
     tomorrow = today + timedelta(days=1)
-    probables = fetch_probables(str(today), str(tomorrow))
+    probables, weather_by_game = fetch_probables_and_weather(str(today), str(tomorrow))
     if not probables:
         print("no probables posted; nothing to board")
         return
@@ -125,6 +125,25 @@ def main() -> None:
         # BettingPros already has for that team.
         eligible = confirmed if eligible is None else (eligible & confirmed)
 
+    # Weather coverage, said out loud for the same reason the Statcast line
+    # above exists. statsapi only carries a forecast from Pre-Game onward, so
+    # an early board legitimately prices some games without one — and a game
+    # with no reading gets a weather multiplier of exactly 1.0, which is the
+    # number a calm 70F night also gets. Nothing downstream can tell those
+    # apart, so the count goes in the run log rather than being inferred.
+    priced_with_weather = sum(
+        1 for (home, away, _k) in probables
+        if (home, away) in weather_by_game
+    )
+    print(f"weather: {priced_with_weather} of {len(probables)} games have a "
+          f"forecast (statsapi carries one from Pre-Game onward)")
+    if not priced_with_weather and probables:
+        print("::warning title=Home-run board has no weather::"
+              "no game on this board carried a forecast, so every weather "
+              "multiplier is 1.0 — indistinguishable from a slate of calm 70F "
+              "nights. Boarding this early is normal; a board near first pitch "
+              "with this line is a broken hydrate.")
+
     rows: list[dict[str, object]] = []
     for (home, away, _k), (home_sp, away_sp) in probables.items():
         for team, opposing_sp in ((home, away_sp), (away, home_sp)):
@@ -134,11 +153,18 @@ def main() -> None:
                 if eligible is not None and pid not in eligible:
                     continue
                 slot = slot_of.get(pid)
+                wx = weather_by_game.get((home, away), {})
+                wind_out = wx.get("wind_out")
+                temp_f = wx.get("temp_f")
+                roof_closed = bool(wx.get("roof_closed", False))
                 p = model.probability(pid, opposing_starter=opposing_sp,
-                                      venue=home, lineup_slot=slot)
+                                      venue=home, lineup_slot=slot,
+                                      wind_out=wind_out, temp_f=temp_f,
+                                      roof_closed=roof_closed)
                 expected = model.expected_home_runs(
                     pid, opposing_starter=opposing_sp, venue=home,
-                    lineup_slot=slot)
+                    lineup_slot=slot, wind_out=wind_out, temp_f=temp_f,
+                    roof_closed=roof_closed)
                 if p is None or expected is None:
                     continue
                 rows.append({
@@ -146,6 +172,11 @@ def main() -> None:
                     "team": team, "opponent": away if team == home else home,
                     "venue": home, "lineup_slot": slot,
                     "opposing_starter": opposing_sp,
+                    "wind_out": None if wind_out is None else round(float(wind_out), 1),
+                    "temp_f": None if temp_f is None else round(float(temp_f), 1),
+                    "weather_factor": round(
+                        model.weather.factor(wind_out=wind_out, temp_f=temp_f,
+                                             roof_closed=roof_closed), 4),
                     "p_home_run": round(p, 4),
                     "expected_home_runs": round(expected, 4),
                 })

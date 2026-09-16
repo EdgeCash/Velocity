@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from velocity.models.hr_weather import (
     REFERENCE_TEMP_F,
+    HRWeather,
     fit_linear,
     game_rates,
     rate_ratio,
@@ -166,3 +167,72 @@ def test_fitting_nothing_returns_nothing_rather_than_raising() -> None:
     empty = pd.DataFrame({"wind_out": [], "hr": [], "expected": []})
     fit = fit_linear(empty, "wind_out")
     assert np.isnan(fit.per_unit) and not fit.significant and fit.games == 0
+
+
+# --- the fitted effect, and what it refuses to do -----------------------------
+
+
+def test_the_reference_conditions_are_exactly_neutral() -> None:
+    """A calm 70F night must not nudge the rate at all."""
+    w = HRWeather()
+    assert w.factor(wind_out=0.0, temp_f=REFERENCE_TEMP_F) == 1.0
+
+
+def test_the_fitted_directions_are_the_ones_football_and_physics_agree_on() -> None:
+    w = HRWeather()
+    assert w.wind_factor(10.0) > 1.0 > w.wind_factor(-10.0)
+    assert w.temp_factor(90.0) > 1.0 > w.temp_factor(50.0)
+
+
+def test_the_clamp_refuses_to_extrapolate_past_the_evidence() -> None:
+    """The one pathology a straight line has.
+
+    Unclamped, +0.00743/mph predicts x1.19 for a 25 mph tailwind. The games
+    above 12 mph actually come in at x1.03, so the line is extrapolating a
+    trend past the data that produced it. The clamp is a safety rail, not an
+    accuracy claim — it barely binds inside the fitted range.
+    """
+    w = HRWeather()
+    assert w.wind_factor(25.0) == w.wind_factor(12.0)
+    assert w.wind_factor(-25.0) == w.wind_factor(-12.0)
+    assert w.wind_factor(25.0) < 1.0 + 0.00743 * 25.0
+    assert w.temp_factor(115.0) == w.temp_factor(95.0)
+    assert w.temp_factor(20.0) == w.temp_factor(45.0)
+
+
+def test_a_game_with_no_reading_gets_exactly_one_and_says_so() -> None:
+    """The dangerous case, and the only thing that can tell it apart.
+
+    A missing forecast produces the same multiplier as a calm 70F night, so
+    the output cannot distinguish them — only the coverage count can. This is
+    the Statcast prior that shipped at zero for months, in a different coat.
+    """
+    w = HRWeather()
+    assert w.factor() == 1.0
+    assert w.factor(wind_out=None, temp_f=None) == 1.0
+    assert w.has_reading(None, None) is False
+    assert w.has_reading(0.0, None) is True   # a measured calm IS a reading
+    assert w.has_reading(None, 70.0) is True
+
+
+def test_a_closed_roof_is_a_reading_not_a_gap() -> None:
+    """There is no weather in there, so 1.0 is measured rather than missing.
+
+    Checked against the bank: closed-roof games land at 0.993 +/- 0.019 of
+    their own park-season-month baseline.
+    """
+    w = HRWeather()
+    assert w.factor(wind_out=9.0, temp_f=95.0, roof_closed=True) == 1.0
+
+
+def test_one_driver_alone_still_prices() -> None:
+    """A feed that gives temperature but no usable wind is not nothing."""
+    w = HRWeather()
+    assert w.factor(temp_f=90.0) > 1.0
+    assert w.factor(wind_out=-8.0) < 1.0
+
+
+def test_the_factor_can_never_go_negative() -> None:
+    absurd = HRWeather(wind_per_mph=-10.0, wind_clamp_mph=1e6)
+    assert absurd.wind_factor(1000.0) == 0.0
+
