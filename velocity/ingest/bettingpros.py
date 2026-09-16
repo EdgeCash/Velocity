@@ -279,17 +279,64 @@ def pagination(payload: Any) -> dict[str, int]:
     Missing or unparseable metadata yields an empty dict, and the caller then
     treats the response as a single page — the old behaviour, but chosen rather
     than assumed.
+
+    ``pages_collected`` / ``items_collected`` are :func:`merge_prop_pages`'s own
+    counters rather than the server's, and they are carried through here
+    because the collector reports against them. Dropping them (this filtered to
+    the server's four keys) made ``meta.get("pages_collected", 1)`` fall back to
+    1 on every run, so a complete 3-page NFL pull printed "1 of 3 page(s)" and
+    fired a truncation warning that was never true. A warning that is always on
+    is a warning nobody reads.
     """
     block = payload.get("_pagination") if isinstance(payload, Mapping) else None
     if not isinstance(block, Mapping):
         return {}
     out: dict[str, int] = {}
-    for key in ("page", "limit", "total_pages", "total_items"):
+    for key in ("page", "limit", "total_pages", "total_items",
+                "pages_collected", "items_collected"):
         try:
             out[key] = int(block[key])
         except (KeyError, TypeError, ValueError):
             continue
     return out
+
+
+def prop_rows(payload: Any) -> list[Any]:
+    """The raw ``props`` array, whatever shape it came back in."""
+    rows = payload.get("props") if isinstance(payload, Mapping) else None
+    return list(rows) if isinstance(rows, list) else []
+
+
+def payload_errors(payload: Any) -> int:
+    """How many entries in ``props`` are BettingPros' error sentinel.
+
+    The endpoint answers **HTTP 200 with a healthy envelope** and a ``props``
+    array of the literal string ``"error"`` — one per page — when it cannot
+    serve a sport. Observed 2026-09-16 on MLB, NCAAF, WNBA and NHL while NFL
+    returned 551 real objects, with ``label`` reading "MLB props for September
+    16th, 2026" and ``total_items`` 2493 the whole time.
+
+    Nothing caught it, because :func:`normalize_props` skips any row that is
+    not a Mapping, so thirteen error strings normalize to zero rows and the run
+    reports an empty board. An outage and an off-day are then the same line of
+    output, which is the shape this repo has already been bitten by twice.
+    """
+    return sum(1 for row in prop_rows(payload) if not isinstance(row, Mapping))
+
+
+def served_nothing(payload: Any) -> bool:
+    """True when the board says it has rows and then serves none of them.
+
+    The sibling of :func:`payload_errors`, for the quieter failure: no error
+    sentinel, just an empty ``props`` array while ``total_items`` reads 2669.
+    That is what ``include_correlated_picks=true`` did to every sport but NFL,
+    and it is indistinguishable from an off-day unless something compares the
+    two numbers.
+    """
+    if not isinstance(payload, Mapping):
+        return False
+    total = pagination(payload).get("total_items", 0)
+    return bool(total) and not prop_rows(payload)
 
 
 def merge_prop_pages(pages: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -502,11 +549,23 @@ class BettingProsClient:
             "ev_threshold": "false",  # the full board, not just the flagged edges
             "include_selections": "false",
             "include_markets": "false",
-            # BettingPros' own view of which props move together. Free on this
-            # call, and velocity/wagering/parlay.py currently derives
-            # correlation from our sim alone — an outside read on the same
-            # question is worth banking even before anything consumes it.
-            "include_correlated_picks": "true",
+            # include_correlated_picks is NOT here, and must not go back
+            # without a per-sport probe first. Asking for it returns an EMPTY
+            # props array on every sport except NFL — HTTP 200, healthy
+            # envelope, total_items intact. Measured 2026-09-16
+            # (run 35099581241), one varied request per sport:
+            #
+            #   NFL    with the flag     200 rows   served
+            #   MLB    with the flag       0 rows   total_items 2669
+            #          without it        200 rows   served
+            #   NCAAF  without it        200 rows   served (0 with)
+            #   WNBA   without it        200 rows   served (0 with)
+            #   NHL    without it        111 rows   served (0 with) — whole board
+            #
+            # It was added in #201 for BettingPros' own view of which props
+            # move together, which nothing consumes yet: parlay.py still
+            # derives correlation from our sim alone. So it bought an unread
+            # field and cost the entire MLB, NCAAF, WNBA and NHL prop boards.
         }
         defaults.update(params)
         return self._get("props", sport=sport, **defaults)

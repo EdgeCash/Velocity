@@ -35,7 +35,10 @@ from velocity.ingest.bettingpros import (
     describe_slug_coverage,
     normalize_props,
     pagination,
+    payload_errors,
+    prop_rows,
     scrub_secrets,
+    served_nothing,
 )
 
 # The sports snapshotted by default. MLB joined on 2026-09-14: it is an
@@ -168,32 +171,91 @@ def collect(
     return lines_out, events_out, raw_events, failed
 
 
+# COMPLETE parameter sets, not overrides. The first probe passed overrides to
+# props(), which re-applies its own defaults for anything the caller omits — so
+# "drop include_correlated_picks" dropped nothing and the server echoed it back.
+# The guard caught that and reported "variant not applied" rather than scoring a
+# test that never ran, but three of five variants were wasted. These go straight
+# to _get, so what is listed is exactly what is sent.
+PROBE_VARIANTS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("as production sends it", {
+        "limit": 200, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
+    }),
+    # The 11:30 board answered limit=200 with the "error" sentinel and the
+    # 13:02 probe answered limit=25 with an empty array. Same sport, same key,
+    # 90 minutes apart — so page size is worth isolating rather than assuming.
+    ("production, limit 25", {
+        "limit": 25, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
+    }),
+    ("without include_correlated_picks", {
+        "limit": 200, "ev_threshold": "false", "include_selections": "false",
+        "include_markets": "false",
+    }),
+    ("without ev_threshold", {
+        "limit": 200, "include_selections": "false",
+        "include_markets": "false", "include_correlated_picks": "true",
+    }),
+    ("bare (sport + limit only)", {"limit": 200}),
+)
+
+
+def _probe_once(client: BettingProsClient, sport: str, params: dict[str, object]) -> str:
+    """One /props call with EXACTLY these parameters, reported by what came back.
+
+    Objects and sentinels are counted separately: the probe this replaced
+    printed ``len(payload["props"])``, which counts the error sentinel as a
+    prop and renders an outage as "HTTP 200 - 1 prop(s) returned".
+    """
+    try:
+        payload = client._get("props", sport=sport, **params)  # noqa: SLF001 - a probe
+    except urllib.error.HTTPError as exc:
+        return f"HTTP {exc.code}"
+    except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
+        return f"{type(exc).__name__}: {exc}"
+
+    rows = prop_rows(payload)
+    bad = payload_errors(payload)
+    good = len(rows) - bad
+    meta = pagination(payload)
+    total = meta.get("total_items", "?")
+    tail = f"total_items {total}"
+    if good:
+        return f"{good} real row(s), {bad} sentinel(s), {tail}  <-- SERVED"
+    if bad:
+        return f"0 real rows, {bad} SENTINEL(s), {tail}"
+    return f"0 rows at all (empty array), {tail}"
+
+
 def probe_props() -> None:
-    """Status-code probe of ``/props`` across sports — settles provisioning.
+    """Why does /props serve NFL and nothing else?
 
-    MLB runs midsummer, so a live board definitely exists for it: an MLB 200
-    (even with few props) alongside football 429s would mean the route works
-    and football is seasonal; 429 on every sport — in-season and off — means
-    the partner key has no ``/props`` provisioning at all. limit=1, one
-    request per sport, spaced under the 5 RPS budget; nothing is banked.
+    First pass (run 35099226165) established two things. NFL served 25 real
+    rows; MLB, NCAAF, WNBA and NHL returned ZERO rows with a large non-zero
+    ``total_items`` (MLB 2667), under both the production parameters and
+    ``include_markets=true``. And the 11:30 collector saw the ``"error"``
+    sentinel at limit=200 where the 13:02 probe saw an empty array at limit=25,
+    which is why page size is now a variant of its own.
 
-    NCAAF and WNBA are probed too, not because the spec lists them (it does
-    not, for props) but because the only honest way to learn what this key can
-    reach is to ask. A 200 on either is a finding worth acting on; a 4xx
-    confirms the spec and costs one request.
+    What that pass could NOT test, because props() re-adds its defaults, was
+    actually dropping a parameter. These variants bypass props() entirely.
+
+    NFL leads as the control: a variant that also stops NFL being served is
+    answering the wrong question. A sport stops at its first served variant.
     """
     client = BettingProsClient.from_env()
-    for sport in ("NFL", "NCAAF", "MLB", "WNBA", "NBA", "NHL"):
-        time.sleep(3)
-        try:
-            payload = client.props(sport, limit=1)
-            n = len(payload.get("props") or [])
-            print(f"  {sport}: HTTP 200 — {n} prop(s) returned")
-        except urllib.error.HTTPError as exc:
-            print(f"  {sport}: HTTP {exc.code}")
-        except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
-            print(f"  {sport}: {exc}")
-
+    print("props probe — complete parameter sets, sent verbatim")
+    print(f"  control first; {len(PROBE_VARIANTS)} variants, stopping at the first served\n")
+    for sport in ("NFL", "MLB", "NCAAF", "WNBA", "NHL"):
+        print(f"  {sport}")
+        for label, params in PROBE_VARIANTS:
+            time.sleep(3)  # under the 5 RPS budget
+            result = _probe_once(client, sport, dict(params))
+            print(f"    {label:34s} {result}")
+            if "SERVED" in result:
+                break
+        print()
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Snapshot BettingPros game lines")
@@ -303,6 +365,28 @@ def main() -> None:
                       f"collected {collected} of {available} pages "
                       f"(--max-prop-pages {args.max_prop_pages}); the banked board "
                       "is a sample, not the board")
+            # HTTP 200 with a healthy envelope and props: ["error"] is how this
+            # endpoint says it cannot serve a sport. Left alone it normalizes to
+            # zero rows and prints as an empty board — so an outage and an
+            # off-day read identically, which is the one shape this repo has
+            # already been bitten by twice. Observed 2026-09-16 on MLB, NCAAF,
+            # WNBA and NHL while NFL served 551 real rows.
+            broken = payload_errors(payload)
+            if broken:
+                print(f"::error title={sport} prop board unavailable::"
+                      f"BettingPros returned its error sentinel on {broken} of "
+                      f"{collected} page(s). The envelope is healthy "
+                      f"(total_items {meta.get('total_items', 0)}) and no prop "
+                      "rows were served — an outage, not an empty board.")
+            elif served_nothing(payload):
+                # The quieter one: no sentinel, just nothing, while the
+                # envelope insists there are thousands. This is what
+                # include_correlated_picks did to four of five sports.
+                print(f"::error title={sport} prop board served nothing::"
+                      f"total_items {meta.get('total_items', 0)} and zero rows "
+                      "returned. The board exists and we were served none of "
+                      "it — check the request parameters before assuming an "
+                      "off-day.")
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             # scrub_secrets already ran per page inside props_all; this is the
