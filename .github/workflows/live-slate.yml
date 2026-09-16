@@ -454,12 +454,19 @@ jobs:
           fi
 
       # ---- the home-run board (props + DK's salary-free single-stat contest)
+      #
+      # The snapshot has to be PASSED, not just collected. This step fetched it
+      # and then called the board without --statcast, so the batted-ball prior
+      # never ran and the board priced on plain shrinkage — the thing the model
+      # exists to beat. dfs-slate.yml had it right the whole time; the flag
+      # appears in this directory, which is why a repo-wide grep said "passed".
       - name: Build the MLB home-run board
         continue-on-error: true
         run: |
           python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
+          STATCAST=$(ls -t artifacts/statcast/*.parquet 2>/dev/null | head -1 || true)
           PYTHONPATH=scripts python scripts/build_hr_board.py \
-            --out artifacts/slate || true
+            ${STATCAST:+--statcast "$STATCAST"} --out artifacts/slate || true
 
       - name: Build DFS lineups
         continue-on-error: true

@@ -237,3 +237,78 @@ def test_empty_bank_fits_without_raising() -> None:
     model = HomeRunModel.fit(empty, games)
     assert model.league_rate == 0.0 and model.batter_rate == {}
     assert model.rate("anyone") is None
+
+
+# --------------------------------------------------------------------------
+# The batted-ball prior has to be VISIBLE (2026-09-16)
+# --------------------------------------------------------------------------
+#
+# The live board collected the Savant snapshot and called build_hr_board.py
+# without --statcast for months. Nothing could tell: the fallback is deliberate
+# ("the prior collapses to the league rate and the model degrades to plain
+# shrinkage"), silent, and indistinguishable from a healthy fit. The model now
+# reports how many batters actually got the prior, so a run log can say.
+
+
+# _statcast_prior refuses to fit on fewer than 30 batters with >=150 PA — a
+# prior fitted on a handful would be noise wearing a coefficient. The fixture
+# has to clear that bar or it tests the refusal, not the prior.
+_N_BATTERS = 40
+
+
+def _hr_frames():
+    """Two seasons of a small league — over the prior's minimum overlap."""
+    rows = []
+    for season in (2025, 2026):
+        for i in range(_N_BATTERS):
+            for game in range(50):
+                rows.append({
+                    "batter_id": f"b{i}", "batter_name": f"B {i}", "team": "AAA",
+                    "game_id": f"{season}-{game}", "side": "home",
+                    "pa": 4, "hr": 1 if (game % (i % 7 + 2) == 0) else 0,
+                    "lineup_slot": (i % 9) + 1, "started": True,
+                })
+    batters = pd.DataFrame(rows)
+    games = pd.DataFrame([
+        {"game_id": f"{s}-{g}", "season": s, "home_team": "AAA",
+         "away_team": "BBB", "kickoff": pd.Timestamp(f"{s}-06-01")}
+        for s in (2025, 2026) for g in range(50)
+    ])
+    starters = pd.DataFrame([
+        {"game_id": f"{s}-{g}", "side": "away", "starter_id": "p1",
+         "starter_name": "P One", "team": "BBB", "hr": 1, "batters_faced": 25}
+        for s in (2025, 2026) for g in range(50)
+    ])
+    return batters, games, starters
+
+
+def test_a_model_without_statcast_reports_zero_on_the_prior() -> None:
+    batters, games, starters = _hr_frames()
+    model = HomeRunModel.fit(batters, games, starters, None, season=2026)
+    assert model.batter_rate, "the fixture should fit"
+    assert model.statcast_batters == 0
+
+
+def test_a_model_with_statcast_reports_who_got_the_prior() -> None:
+    batters, games, starters = _hr_frames()
+    statcast = pd.DataFrame({
+        "player_id": [f"b{i}" for i in range(_N_BATTERS)], "side": "batter",
+        "barrel_rate": [2.0 + (i % 7) * 2.5 for i in range(_N_BATTERS)],
+    })
+    model = HomeRunModel.fit(batters, games, starters, statcast, season=2026)
+    assert model.statcast_batters == _N_BATTERS
+    # And it is not decorative — the prior moves the rates it informs.
+    plain = HomeRunModel.fit(batters, games, starters, None, season=2026)
+    assert any(abs(model.batter_rate[k] - plain.batter_rate[k]) > 1e-9
+               for k in ("b0", "b1", "b2"))
+
+
+def test_an_unusable_statcast_frame_still_reports_zero() -> None:
+    """A snapshot with no barrel_rate is the same outcome as no snapshot.
+
+    It must not read as healthy just because a file was passed.
+    """
+    batters, games, starters = _hr_frames()
+    useless = pd.DataFrame({"player_id": ["b0"], "side": ["batter"]})
+    model = HomeRunModel.fit(batters, games, starters, useless, season=2026)
+    assert model.statcast_batters == 0

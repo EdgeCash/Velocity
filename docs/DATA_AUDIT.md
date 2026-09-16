@@ -84,10 +84,20 @@ inputs, arriving pre-computed on the row we already bank.
 Lower priority than 1 and 2: the signals abstain safely without it, so this is
 additive rather than a correction.
 
-## 4. Statcast is collected every live run and never handed to the model (OPEN, one line)
+## 4. Statcast is collected every live run and never handed to the model (DONE)
 
-**The highest-value finding so far, and the smallest fix.** The live workflow
-fetches the Savant snapshot and then calls the board without it:
+**Fixed 2026-09-16.** `live-slate.yml` now resolves the snapshot and passes
+`--statcast`, mirroring `dfs-slate.yml`. Two things landed with it so this
+cannot recur quietly: `HomeRunModel` carries `statcast_batters` (how many
+batters actually got the batted-ball prior), the board prints it on the fit
+line and emits a `::warning::` when it is zero, and
+`tests/test_live_slate_workflow.py` asserts the flag **inside the step** —
+scoped that way because the flag existing elsewhere in the directory is what
+made the omission invisible. Verified by reverting the workflow: three tests
+fail on the old version.
+
+The original finding, kept for the record — the live workflow fetched the
+Savant snapshot and then called the board without it:
 
 ```yaml
 # .github/workflows/live-slate.yml:460
@@ -288,13 +298,12 @@ them in.
 
 | # | What | Fix size |
 |---|---|---|
-| **4** | Statcast collected every live run, never passed to the HR model — the board runs on the thing the model was built to beat | **one line** |
 | **1** | Today's lineup discarded; a benched hitter is priced as a starter | small — bank `lineups`, join on it, extend the availability veto |
 | **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut |
 
-Finding 4 is the one to do first on any reading: it is a single missing flag,
-it is affecting live output, and the sibling workflow already shows the correct
-invocation.
+~~Finding 4 is the one to do first~~ — **done**. The remaining two are the
+live-output ones: a benched hitter still prices as a starter, and three
+leagues' prop lines are still bought with nothing to price them.
 
 ## Unblocking something
 
