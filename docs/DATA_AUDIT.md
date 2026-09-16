@@ -204,6 +204,13 @@ league-agnostic; it takes a long `(player, stat, value)` frame.
 NHL needs a skater bank first. `docs/BUILD_NHL.md` notes shots on goal are "in
 every boxscore" — they are simply not collected.
 
+## 8. `load_rosters()` is dead code (OPEN, trivial)
+
+`velocity/ingest/nfl.py:248` defines a network fetch for nflverse rosters.
+Nothing in the repo calls it. Not a data gap — nothing needs it — but it is a
+maintained network path with no consumer, and it reads like a capability the
+system has. Delete it, or wire it to the thing it was written for.
+
 ## 7. `bank_starters` cannot recreate a deleted batter bank (OPEN, minor)
 
 `refresh_datasets.py` tops the batter bank up with
@@ -248,9 +255,12 @@ not a live defect — but the failure mode is silent, which is this list's theme
 | MLB statsapi (`HITTING_KEYS`/`PITCHING_KEYS`) | 2026-09-16 | Clean — `HITTING_KEYS` maps DK's hitter scoring exactly. One micro-gap: pitcher `hitByPitch` (DK −0.6) is not collected, worth ~0.2 DK points a start. Not worth acting on. |
 | `cfb_players` / NCAAF player bank | 2026-09-16 | Clean as a bank — and it is the substitute finding 6 needs |
 | Prop lines bought vs. priceable | 2026-09-16 | **Finding 6b — NHL and NBA join NCAAF** |
-| Kalshi / Polymarket / exchanges | — | not yet audited |
-| nflverse rosters / schedules | — | not yet audited |
-| NCAAB / WNBA | — | not yet audited |
+| Kalshi / Polymarket / exchanges | 2026-09-16 | Clean — collected hourly, `--exchanges` passed by the live slate (default true), graded via `--exchanges-dir` |
+| nflverse rosters / schedules | 2026-09-16 | Schedules clean. `load_rosters()` is **dead code** — defined, called by nothing (finding 8) |
+| NCAAB / WNBA / NHL game markets | 2026-09-16 | Clean — priced by `ScoresGameModel` + `fit_scores_ratings`; NCAAB adds Torvik, NHL adds starting goalies. No prop lines bought for NCAAB/WNBA, which is consistent. |
+
+**The audit is complete.** Every ingest module, every banked dataset, every
+optional data flag and every prop-line purchase has been checked.
 
 ### The structural finding
 
@@ -265,3 +275,54 @@ A corollary worth keeping: a repo-wide grep is NOT enough to check a flag is
 passed. `--statcast` appears in the workflows directory, so a naive search says
 "passed" — it is passed by `dfs-slate.yml` and omitted by `live-slate.yml`.
 Finding 4 hid behind exactly that.
+
+
+---
+
+# Working order
+
+The findings split into three kinds, and the numbering is not the order to do
+them in.
+
+## Costing something right now
+
+| # | What | Fix size |
+|---|---|---|
+| **4** | Statcast collected every live run, never passed to the HR model — the board runs on the thing the model was built to beat | **one line** |
+| **1** | Today's lineup discarded; a benched hitter is priced as a starter | small — bank `lineups`, join on it, extend the availability veto |
+| **6 / 6b** | NCAAF, NHL and NBA prop lines bought every run, no slate can price them | decision first, then either wiring or a `LEAGUE_PROP_MARKETS` cut |
+
+Finding 4 is the one to do first on any reading: it is a single missing flag,
+it is affecting live output, and the sibling workflow already shows the correct
+invocation.
+
+## Unblocking something
+
+| # | What | Note |
+|---|---|---|
+| **2 / 5** | Bank the BettingPros weather forecast | The HR model says it cannot model weather for lack of banked data. Banking starts the clock; the coefficient comes when there are enough games to fit rather than assume. NFL already has the careful version to copy. |
+| **6** | Point the NCAAF prop slate at `player_games` | 10 of 11 markets available; `dfs_ncaaf.py` is the template and its verdict applies — *"The missing half was data, not modelling."* |
+
+## Small or cosmetic
+
+| # | What |
+|---|---|
+| **3** | BP per-prop form splits and `opposition_rank` — `FormSignal` and `PropMatchupSignal` want exactly these |
+| **7** | Batter bank cannot be recreated if deleted (`exists()` guard) |
+| **8** | `load_rosters()` dead code |
+| — | Pitcher `hitByPitch` uncollected (~0.2 DK points a start) — recorded, not worth acting on |
+
+## What the audit says about the system
+
+Two results are worth more than any single finding.
+
+**The banks are tight.** Every column of every banked parquet is read by
+something — 26 datasets, no exceptions. Nothing is rotting in storage.
+
+**Every loss is at the ingest boundary or the call site.** A normalizer names
+the fields it keeps and the rest of the payload goes unrecorded; or a script
+takes an optional data argument and a workflow forgets to pass it. Both
+failures are silent by construction — no error, no warning, no failing test.
+That is the same reason the FantasyPros census was needed at all, and it is why
+a *standing* report beats a one-off sweep: **abstention looks exactly like
+health.**
