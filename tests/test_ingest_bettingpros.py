@@ -27,6 +27,7 @@ from velocity.ingest.bettingpros import (
     payload_errors,
     resolve_sides_within_game,
     scrub_secrets,
+    served_nothing,
     slug_coverage,
     snapshot_age_minutes,
     to_lines,
@@ -660,17 +661,20 @@ def test_shape_report_is_inert_for_junk() -> None:
     assert "0 row(s)" in describe_payload_shape([None, 3, "x"], [], "x")[0]  # type: ignore[list-item]
 
 
-def test_props_now_asks_for_correlated_picks_and_the_full_board() -> None:
+def test_props_asks_for_the_full_board() -> None:
     """Defaults that would silently truncate, pinned.
 
     ``ev_threshold`` defaults to TRUE server-side, which returns only props
     outside EV > 40% or < -25% — a filtered board that looks like a whole one.
+
+    This used to pin ``include_correlated_picks`` as present too. That
+    assertion was wrong and it held the bug in place: see
+    ``test_props_no_longer_asks_for_correlated_picks``.
     """
     import inspect
 
     src = inspect.getsource(BettingProsClient.props)
     assert '"ev_threshold": "false"' in src
-    assert '"include_correlated_picks": "true"' in src
     assert '"limit": PROPS_PAGE_LIMIT' in src
 
 
@@ -736,3 +740,36 @@ def test_the_error_sentinel_is_not_an_empty_board() -> None:
     assert payload_errors({"props": []}) == 0
     assert payload_errors({}) == 0
     assert payload_errors(None) == 0
+
+
+def test_props_no_longer_asks_for_correlated_picks() -> None:
+    """Asking for it returns an EMPTY board on every sport except NFL.
+
+    Measured 2026-09-16 (run 35099581241): MLB served 0 rows with the flag and
+    200 without, against total_items 2669; NCAAF, WNBA and NHL the same. It
+    was added in #201 for a field nothing reads yet, and it cost four of the
+    five prop boards. The default is pinned here because putting it back looks
+    harmless.
+    """
+    import inspect
+
+    from velocity.ingest.bettingpros import BettingProsClient
+
+    source = inspect.getsource(BettingProsClient.props)
+    body = source.split('defaults: dict[str, object] = {')[1].split('}')[0]
+    assert '"include_correlated_picks"' not in body
+
+
+def test_an_empty_board_with_a_full_envelope_is_a_failure() -> None:
+    """No sentinel, just nothing — while total_items insists there are 2669."""
+    assert served_nothing({
+        "_pagination": {"total_items": 2669, "total_pages": 14}, "props": [],
+    })
+    # A genuinely empty board says so in both numbers, and is not a failure.
+    assert not served_nothing({"_pagination": {"total_items": 0}, "props": []})
+    # A served board is not a failure whatever else is true of it.
+    assert not served_nothing({
+        "_pagination": {"total_items": 550}, "props": [{"market_id": 1}],
+    })
+    assert not served_nothing({})
+    assert not served_nothing(None)

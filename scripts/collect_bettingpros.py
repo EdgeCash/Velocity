@@ -38,6 +38,7 @@ from velocity.ingest.bettingpros import (
     payload_errors,
     prop_rows,
     scrub_secrets,
+    served_nothing,
 )
 
 # The sports snapshotted by default. MLB joined on 2026-09-14: it is an
@@ -377,6 +378,15 @@ def main() -> None:
                       f"{collected} page(s). The envelope is healthy "
                       f"(total_items {meta.get('total_items', 0)}) and no prop "
                       "rows were served — an outage, not an empty board.")
+            elif served_nothing(payload):
+                # The quieter one: no sentinel, just nothing, while the
+                # envelope insists there are thousands. This is what
+                # include_correlated_picks did to four of five sports.
+                print(f"::error title={sport} prop board served nothing::"
+                      f"total_items {meta.get('total_items', 0)} and zero rows "
+                      "returned. The board exists and we were served none of "
+                      "it — check the request parameters before assuming an "
+                      "off-day.")
             raw_dir = out / "raw"
             raw_dir.mkdir(parents=True, exist_ok=True)
             # scrub_secrets already ran per page inside props_all; this is the

@@ -181,6 +181,43 @@ leagues, ~25k for six: inside the 100k budget, but a standing cost, so the
 switch is a dispatch input rather than the default. Flip it when the CLV
 record is worth grading against the sharpest number.
 
+### The probe's answer: include_correlated_picks (2026-09-16)
+
+Measured, one varied request per sport, complete parameter sets sent verbatim
+(run 35099581241):
+
+| sport | with the flag | without it | `total_items` |
+| --- | --- | --- | --- |
+| NFL | **200 rows** | — (stopped, served) | 550 |
+| MLB | 0 rows | **200 rows** | 2669 |
+| NCAAF | 0 rows | **200 rows** | 423 |
+| WNBA | 0 rows | **200 rows** | 236 |
+| NHL | 0 rows | **111 rows** (whole board) | 111 |
+
+`include_correlated_picks=true` returns an **empty props array on every sport
+except NFL** — HTTP 200, healthy envelope, `total_items` intact. It was added
+in #201 for BettingPros' own view of which props move together, which nothing
+consumes: `parlay.py` still derives correlation from our own sim. So it bought
+an unread field and cost the entire MLB, NCAAF, WNBA and NHL prop boards.
+
+Removed from the `props()` defaults, with the measurement written beside it so
+putting it back requires re-probing per sport rather than re-reading the spec.
+
+Two things it is worth being precise about:
+
+**`limit` is not the factor.** `limit=25` returned empty too. The sentinel seen
+at 11:30 and the empty array seen at 13:02 are two faces of the same refusal,
+not a page-size effect — so the earlier note that page size was worth isolating
+was answered, and answered no.
+
+**NFL was never affected**, which is why this survived: the one league anyone
+looks at first is the one league the flag works on.
+
+`served_nothing()` now flags the quieter shape — zero rows against a non-zero
+`total_items` — the way `payload_errors()` flags the sentinel. The collector
+emits a distinct `::error::` for each. An empty board and a refused one must
+never render the same.
+
 ### What the 2026-09-16 board actually returned
 
 Two bugs found by reading a banked run (`bp-lines-35090630550`) rather than the
