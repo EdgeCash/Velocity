@@ -43,8 +43,15 @@ forecast, in the same ballpark-relative vocabulary as a finished one —
 parser and one set of units for both the historical fit and the live board,
 with no paid dependency and no orientation table.
 
-The catch is the timing, and it has to be *reported* rather than absorbed: a
-game the slate prices before it reaches Pre-Game has no reading, and a missing
+Better still, the live board needs **no extra request** to get it. The
+schedule endpoint hydrates it — ``&hydrate=probablePitcher,weather`` returns a
+``weather`` block per game beside the probables, keyed by the same team pair
+``extract_probables`` already builds — and ``build_hr_board`` calls that
+endpoint anyway. So the whole live path is one more word in a URL.
+
+The catch is the timing, and it has to be *reported* rather than absorbed. On
+the 2026-09-16 slate the hydrate answered for **8 of 15** games: the ones at
+Pre-Game or later. A game priced before then has no reading, and a missing
 reading falls back to a multiplier of 1.0 — which is indistinguishable from a
 calm night. That is the exact shape of the Statcast prior that shipped at zero
 for months (see ``HomeRunModel.statcast_batters``), so the consumer counts how
