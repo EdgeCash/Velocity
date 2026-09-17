@@ -1338,3 +1338,98 @@ The promoted chain's disagreement cut on this window: the ≥4 totals cut
 reads 53.8% on 784 bets (the previous chain's 53.7% on 869); ≥6, 56.9% on
 232. Still a watch item (docs/BACKTEST_NFL.md), not a strategy.
 
+
+## The college QB and recency round (2026-09-17) — NCAAF
+
+**Data first.** Every college play now carries `passer_player_id`, joined
+from cfbfastR's per-play player stats (public, keyed on the same ESPN play
+id as CFBD's play-by-play; `scripts/attach_ncaaf_passers.py`, topped up by
+the refresh for the current season). Coverage of pass-type plays: 88–97% a
+season 2015–2025, 98% of 2026 so far; 931 of 934 2025 games match. The
+frame's own clock and score state (`period`, `clock`, `team_score`) are
+there for a college garbage-time variant later; it carries no win
+probability.
+
+**Three questions**, every candidate over the promoted chain
+(`blend-level2-sp12-scale-phase`: the 50/50 EPA×scores blend, the K=12
+SP+ prior in the scores half, the phase-specific scale), on the FBS-vs-FBS
+population (8,360 games, 2015–2026, the trailing-four-season window):
+
+1. *The QB term* — `fit_qb_ratings` on passer cells (`compress_plays(...,
+   by_passer=True)` with the cell counts as `count_col`, which reproduces
+   the play-level QB fit exactly), the detected starter priced back in, at
+   QB ridges 75 / 100 / 150 / 300 / 600.
+2. *The SP+ prior in the EPA half* — last season's final SP+ offense and
+   defense as week-0 pseudo-cells worth K games (`sp_pseudo_cells`; the
+   scores half has carried the same prior since the sp12 round, the EPA
+   half opened every season blind), K = 6 / 12.
+3. *Recency on the EPA half* — the promoted fit weighed a four-season
+   window flat; half-lives 51 / 34 / 17 / 12 / 8 / 6 / 4 on-field weeks.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total |
+|---|---|---|---|---|---|
+| promoted chain (flat EPA half, team fit) | 0.2002 | 0.0170 | 17.733 | 17.253 | +0.053 |
+| QB term, q=75 | 0.1965 | 0.0141 | 17.453 | 17.307 | +0.041 |
+| q=100 | 0.1966 | 0.0138 | 17.460 | 17.289 | +0.043 |
+| q=150 | 0.1968 | 0.0142 | 17.475 | 17.268 | +0.046 |
+| q=300 | 0.1974 | 0.0151 | 17.514 | 17.243 | +0.049 |
+| q=600 | 0.1981 | 0.0158 | 17.566 | 17.235 | +0.051 |
+| SP+ prior in the EPA half, K=6 | 0.2001 | 0.0176 | 17.749 | 17.293 | +0.044 |
+| K=12 | 0.2005 | 0.0214 | 17.790 | 17.327 | +0.041 |
+| K=12 with recency 34 | 0.1979 | 0.0184 | 17.610 | 17.246 | +0.048 |
+| recency, half-life 51 | 0.1975 | 0.0143 | 17.523 | 17.159 | +0.062 |
+| 34 | 0.1962 | 0.0145 | 17.426 | 17.115 | +0.067 |
+| 17 | 0.1930 | 0.0172 | 17.187 | 17.006 | +0.081 |
+| 12 | 0.1912 | 0.0198 | 17.050 | 16.942 | +0.092 |
+| 8 | 0.1894 | 0.0259 | 16.922 | 16.874 | +0.108 |
+| 6 | 0.1887 | 0.0293 | 16.878 | 16.841 | +0.119 |
+| 4 | 0.1888 | 0.0312 | 16.904 | 16.824 | +0.130 |
+| QB q=75 with recency 17 | 0.1911 | 0.0173 | 17.050 | 17.087 | +0.076 |
+| q=150 with 17 | 0.1914 | 0.0183 | 17.071 | 17.042 | +0.080 |
+| q=300 with 17 | 0.1919 | 0.0181 | 17.102 | 17.017 | +0.082 |
+| q=150 with 12 | 0.1901 | 0.0225 | 16.970 | 16.982 | +0.093 |
+| q=75 with 8 | 0.1886 | 0.0251 | 16.868 | 16.963 | +0.108 |
+| q=100 with 8 | 0.1887 | 0.0248 | 16.871 | 16.940 | +0.110 |
+| q=150 with 8 | 0.1888 | 0.0257 | 16.877 | 16.915 | +0.112 |
+| **recency 6, the bank rebuilt on its core** | **0.1881** | 0.0192 | **16.880** | **16.845** | +0.094 |
+
+The close on this population: margin RMSE 15.64, total RMSE 16.30.
+
+**Readings, honestly:**
+
+1. **Recency is the finding, and it is the largest single gain this lab
+   has recorded.** The college EPA half had weighed a 2021 snap like last
+   week's, in the transfer-portal era. Every shortening helps through 8
+   weeks; 4–8 are flat on the margin (16.88–16.92) and still improving on
+   the total; beyond 12 the losses are steady. **Promoted at a six-week
+   half-life** (`DEFAULT_NCAAF_EPA_HALF_LIFE`; `--ncaaf-epa-half-life`):
+   the interior point of the flat stretch, not its edge. The calibration
+   climb through the sweep (0.017 → 0.031) was the bank's — the scale sat
+   on residuals of the flat core — and with the college bank rebuilt on
+   the recency core (`blend-level2-sp12-epahl6`) and the phase scale
+   re-fitted, the confirmed chain reads Brier 0.2002 → **0.1881**,
+   calibration 0.0170 → 0.0192, margin RMSE 17.73 → **16.88**, total RMSE
+   17.25 → **16.85**, the total's information weight +0.053 → +0.094. The
+   margin closed 40% of its gap to the close in one round.
+2. **The QB term is real, and small next to it.** On the flat fit the
+   passer decomposition takes 0.26–0.28 off the margin RMSE and 0.0034
+   off Brier (the announced-starter analogue: the detected starter is
+   the passer with the most dropbacks in the team's latest game, so a
+   mid-season change is priced from its first game). Beside recency the
+   gain shrinks — 0.05 on the margin at an eight-week half-life — and the
+   total pays 0.04–0.09 for it at every ridge: a starter change moves the
+   offense estimate, and the total with it, more than the games bear out.
+   **Measured, not promoted**; the passer ids stay on the file, the flag
+   (`--ncaaf-qb-lambda`) and the variants stay in the lab, and the day an
+   announced-starter feed exists for college it is a different question.
+3. **The SP+ prior does not belong in the EPA half.** K=6 is a wash, K=12
+   worse, and with recency it is worse than recency alone: the scores
+   half already carries the prior, and pseudo-cells at a points-per-play
+   conversion pull the EPA half toward a scale it does not share.
+   **Rejected**; `sp_pseudo_cells` stays for the record.
+4. **The ≥6 totals cut on the promoted chain** reads 52.5% on 1,891 bets
+   (the round's base: 52.8% on 2,863). A sharper model disagrees with
+   the close by six points less often, and the cut's edge is unchanged
+   within noise — still a watch item (docs/BACKTEST_NCAAF.md), not a
+   strategy.
+

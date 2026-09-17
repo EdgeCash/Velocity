@@ -318,6 +318,17 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_turnover_shrink(0.5) == 0.5
     assert runner.resolve_turnover_shrink(3.0) == 1.0
     assert runner.resolve_turnover_shrink(-1.0) == 0.0
+    # The college QB term: a QB ridge the lab sets, 0 keeps the team fit.
+    assert args.ncaaf_qb_lambda is None
+    assert runner.resolve_ncaaf_qb_lambda(None) == runner.DEFAULT_NCAAF_QB_LAMBDA
+    assert runner.resolve_ncaaf_qb_lambda(300.0) == 300.0
+    assert runner.resolve_ncaaf_qb_lambda(-1.0) == 0.0
+    # Recency on the college EPA half: a half-life the lab sets, 0 = flat.
+    assert args.ncaaf_epa_half_life is None
+    assert runner.resolve_ncaaf_epa_half_life(None) == runner.DEFAULT_NCAAF_EPA_HALF_LIFE == 6.0
+    assert runner.DEFAULT_NCAAF_QB_LAMBDA == 0.0
+    assert runner.resolve_ncaaf_epa_half_life(8.0) == 8.0
+    assert runner.resolve_ncaaf_epa_half_life(-3.0) == 0.0
 
 
 def test_a_papered_game_prices_but_never_stakes() -> None:

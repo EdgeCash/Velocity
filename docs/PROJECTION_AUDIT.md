@@ -311,6 +311,20 @@ merged in four PRs (#227–#230), every table in `docs/MODEL_LAB.md`:
   (#10, needs the CFBD key); the college preseason prior into the EPA half
   (#13); special teams (#14); the joint phase ridge (#16).
 
+**Status (2026-09-17, the college round).** The college QB term (#8) is
+built — passer ids on every play from cfbfastR, the passer-cell QB fit —
+and measured: 0.26 off the margin RMSE on the flat fit, 0.05 beside the
+recency that was tested next to it, with the total paying for it; **not
+promoted**, flag and variants kept. The preseason prior into the EPA half
+(#13) is **rejected** (a wash at K=6, worse at 12). What the round found
+instead was never on the list: **recency on the college EPA half** (the
+promoted fit weighed a four-season window flat) — a six-week half-life,
+with the college bank rebuilt on the recency core, took the FBS
+walk-forward from Brier 0.2002 to 0.1881 and the margin RMSE from 17.73 to
+16.88 (the close 15.64), the largest single gain the lab has recorded.
+Still open: college weather and venues (#10), special teams (#14), the
+joint phase ridge (#16).
+
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
 as the repo's rule requires.
@@ -593,6 +607,8 @@ out of sample, the lab's 4,000-sim gate):
 | NCAAF, before | 18.46 / 15.53 | 17.38 / 16.24 | −0.01 / +0.03 |
 | **NCAAF, now** | **18.43** / 15.54 | **17.21** / 16.23 | −0.00 / **+0.05** |
 | NCAAF, FBS vs FBS | 17.89 / 15.64 | 17.42 / 16.30 | −0.01 / +0.06 |
+| NCAAF, FBS vs FBS, the college round's base (phase scale) | 17.73 / 15.64 | 17.25 / 16.30 | −0.05 / +0.05 |
+| **NCAAF, FBS vs FBS, now** (recency on the EPA half) | **16.88** / 15.64 | **16.85** / 16.30 | −0.09 / **+0.09** |
 
 (The NFL close's margin RMSE reads 12.97 here and 12.72 in §6 because the
 two tables score different windows — the lab's 2011–2025 trailing-4 run
@@ -600,7 +616,10 @@ against the bank's 2015+ rows; compare each row with its own close.)
 
 The NFL total closed a third of its gap to the close and now carries
 information the close does not; the college total moved a sixth of the
-way. The margins barely moved in either league, which is what the audit
-predicted: margin accuracy is roster knowledge, and the items that add it
-— the plays rebuild, the college QB term, the college preseason prior in
-the EPA half — are the open ones.
+way. The margins barely moved in either league in the first pass, which
+is what the audit predicted: margin accuracy is roster knowledge. The
+college round then moved the college margin 0.85 points and the total
+0.40 — not through the roster items the audit named (the QB term is
+measured and small, the EPA-half prior lost) but through recency on the
+EPA half, which is roster knowledge by another route: in the portal era,
+last season's snaps describe a different team.

@@ -403,6 +403,7 @@ def fit_qb_ratings(
     epa_col: str = "epa",
     weights: pd.Series | None = None,
     home_col: str | None = None,
+    count_col: str | None = None,
 ) -> QBTeamRatings:
     """Fit ridge ratings with QB effects decomposed out of the offense.
 
@@ -411,6 +412,13 @@ def fit_qb_ratings(
     simply have no QB dummy. Deterministic like :func:`fit_ratings`.
     ``home_col`` works as in :func:`fit_ratings`: one more unpenalized
     coefficient, the home-field edge in EPA/play, returned as ``home_epa``.
+
+    ``count_col`` names the plays-per-row column of a compressed frame
+    (``velocity.backtest.lab.compress_plays`` with ``by_passer``: one row per
+    team-game-passer cell carrying ``n``). The dropback floor, the starter
+    detection and the pass rate then count plays, not rows, so the cell fit
+    reproduces the play-level fit exactly; pass the same column as
+    ``weights``.
     """
     if ridge_lambda <= 0 or qb_lambda <= 0:
         raise ValueError("ridge_lambda and qb_lambda must be positive")
@@ -427,7 +435,9 @@ def fit_qb_ratings(
     n_plays = len(df)
 
     dropbacks = df["passer_player_id"].notna()
-    counts = df.loc[dropbacks, "passer_player_id"].value_counts()
+    plays_per_row = (pd.to_numeric(df[count_col], errors="coerce").fillna(0.0)
+                     if count_col is not None else pd.Series(1.0, index=df.index))
+    counts = plays_per_row[dropbacks].groupby(df.loc[dropbacks, "passer_player_id"]).sum()
     passers = sorted(counts[counts >= min_dropbacks].index.astype(str))
     qb_index = {qb: i for i, qb in enumerate(passers)}
 
@@ -466,15 +476,22 @@ def fit_qb_ratings(
     # Starter detection: each team's primary passer in its latest game.
     starters: dict[str, str] = {}
     game_key = df["season"].astype(int) * 100 + df["week"].astype(int)
-    db = df.loc[dropbacks].assign(_key=game_key[dropbacks])
+    db = df.loc[dropbacks].assign(_key=game_key[dropbacks], _n=plays_per_row[dropbacks])
     for team, group in db.groupby("posteam"):
         latest = group[group["_key"] == group["_key"].max()]
-        primary = latest["passer_player_id"].value_counts()
+        primary = latest.groupby("passer_player_id")["_n"].sum().sort_values(
+            ascending=False, kind="stable")
         if len(primary):
             starters[str(team)] = str(primary.index[0])
 
-    scrimmage = df[df["play_type"].isin(["pass", "run"])]
-    rate = (scrimmage["play_type"] == "pass").groupby(scrimmage["posteam"]).mean()
+    if "play_type" in df.columns and df["play_type"].isin(["pass", "run"]).any():
+        scrimmage = df[df["play_type"].isin(["pass", "run"])]
+        rate = (scrimmage["play_type"] == "pass").groupby(scrimmage["posteam"]).mean()
+    else:
+        # No NFL-style labels (college cells): the dropback share stands in
+        # for the pass rate — plays with a passer over every play.
+        rate = (plays_per_row.where(dropbacks, 0.0).groupby(df["posteam"]).sum()
+                / plays_per_row.groupby(df["posteam"]).sum())
 
     return QBTeamRatings(
         offense={t: float(beta[1 + index[t]]) for t in teams},

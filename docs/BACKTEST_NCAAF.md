@@ -87,6 +87,12 @@ full 10 seasons (`--rating scores --n-sims 10000`) reproduces the aggregate edge
 The shape holds exactly — flat totals at break-even-minus, rising monotonically
 with disagreement, clearing 52.4% from 4 points on.
 
+On the promoted chain after the college recency round (`docs/MODEL_LAB.md`:
+a six-week half-life on the EPA half, the bank rebuilt on the recency core;
+FBS-vs-FBS population, the lab's trailing-four window), the ≥6 totals cut
+reads 52.5% on 1,891 — a sharper model disagrees with the close by six
+points less often, and the cut's rate is unchanged within noise.
+
 **Where it differs, honestly:** bet counts run ~3% higher than the original
 table throughout (a small definitional difference in the earlier ad-hoc
 analysis), and the per-season robustness comes out **6 of 10 seasons above
