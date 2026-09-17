@@ -214,12 +214,21 @@ _ESPN_LEAGUE_LOGO = "https://a.espncdn.com/i/teamlogos/leagues/500"
 
 @dataclass(frozen=True)
 class SchoolMeta:
-    """A school's display abbreviation, official colors, and ESPN team id."""
+    """A school's display abbreviation, mascot, official colors, and ESPN id.
+
+    The mascot is carried because it cannot be recovered from the school's
+    display name: college nicknames are routinely two words (Crimson Tide,
+    Fighting Irish, Blue Devils, Tar Heels, Yellow Jackets), so splitting
+    "Alabama Crimson Tide" on its last word yields "Alabama Crimson" and
+    "Tide". CFBD states school and mascot separately; taking it from the
+    source is the only way to get this right.
+    """
 
     abbreviation: str
     color: str | None = None
     alt_color: str | None = None
     espn_id: int | None = None
+    mascot: str | None = None
 
 
 def ncaaf_logo_path(espn_id: int | None, cache_dir: Path | str | None) -> Path | None:
@@ -248,7 +257,8 @@ def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
 
     Rows without a school name are dropped; a missing abbreviation falls back
     to the school name uppercased (the renderer auto-shrinks long labels).
-    Colors pass through only when they look like hex.
+    Colors pass through only when they look like hex. A missing mascot stays
+    None, and the card falls back to splitting the display name.
     """
 
     def _hex(value: object) -> str | None:
@@ -267,11 +277,13 @@ def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
             espn_id = int(row["id"]) if row.get("id") is not None else None
         except (TypeError, ValueError):
             espn_id = None
+        mascot = str(row.get("mascot") or "").strip() or None
         out[str(school)] = SchoolMeta(
             abbreviation=abbrev,
             color=_hex(row.get("color")),
             alt_color=_hex(row.get("altColor") or row.get("alt_color")),
             espn_id=espn_id,
+            mascot=mascot,
         )
     return out
 

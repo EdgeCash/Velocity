@@ -107,7 +107,7 @@ def main() -> None:
     team_colors = None
     code_to_team: dict[str, str] = {}
     if args.league == "ncaaf":
-        aliases, team_colors, code_to_team = runner._ncaaf_identity(events, asset_dir)
+        aliases, team_colors, code_to_team, _ = runner._ncaaf_identity(events, asset_dir)
 
     cards = build_social_cards(
         projections, events, lines=demo_lines(week),

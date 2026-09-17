@@ -432,3 +432,24 @@ def test_supplied_watch_entries_override_the_sim_path(tmp_path: Path) -> None:
     # The strip renders the PLAY pill path without error.
     paths = render_cards(cards, tmp_path, "20260910T120000Z", league="mlb")
     assert paths and paths[0].stat().st_size > 10_000
+
+
+def test_parse_ncaaf_teams_carries_the_mascot() -> None:
+    """The mascot is the only reliable source for a college nickname.
+
+    Splitting "Alabama Crimson Tide" on its last word gives "Alabama Crimson"
+    and "Tide"; CFBD states the two fields separately, so the card takes them
+    from the source rather than guessing.
+    """
+    from velocity.report.assets import parse_ncaaf_teams
+
+    index = parse_ncaaf_teams([
+        {"school": "Alabama", "abbreviation": "ALA", "mascot": "Crimson Tide"},
+        {"school": "Notre Dame", "abbreviation": "ND", "mascot": "Fighting Irish"},
+        {"school": "Rice", "abbreviation": "RICE", "mascot": "  "},  # blank → None
+        {"school": "Navy", "abbreviation": "NAVY"},                  # absent → None
+    ])
+    assert index["Alabama"].mascot == "Crimson Tide"
+    assert index["Notre Dame"].mascot == "Fighting Irish"
+    assert index["Rice"].mascot is None
+    assert index["Navy"].mascot is None
