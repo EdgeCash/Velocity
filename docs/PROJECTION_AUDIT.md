@@ -282,16 +282,26 @@ is banked and unread.
 
 ## 3. The improvement list, in order
 
-**Status (2026-09-17).** Landed through the lab and merged: the points
-gate (§3 #5's measurement half), the 2025 re-key (#2), the SP+ prior in the
-lab (#3), the FBS evaluation population and the FCS paper rule (#4), the
-scale (#5 — promoted in both leagues; NFL totals RMSE 13.90 → 13.59, college
-calibration error halved), the nflverse schedule columns and the
-announced-starter backtest (#6's ingest and starter halves), and the NFL
-pace machinery (#11, not promoted). The scrimmage-only fit (#1) was built,
-measured and **rejected**: the NFL kicks and punts carry field position the
-ratings want (Brier 0.2224 vs 0.2195 without them); the kneel finding stands
-and the narrower cut is in the lab. Tables in `docs/MODEL_LAB.md`.
+**Status (2026-09-17, end of the first pass).** Landed through the lab and
+merged in four PRs (#227–#230), every table in `docs/MODEL_LAB.md`:
+
+- **Promoted.** The points gate (#5's measurement half); the 2025 re-key
+  (#2); the SP+ prior in the lab (#3); the FBS evaluation population and
+  the FCS paper rule (#4); the scale in both leagues, phase-specific in
+  college (#5); the nflverse schedule columns and the announced-starter
+  backtest (#6); rain on NFL totals (#10's precipitation half); the NFL
+  injury burden (#9); the college residual bank and the NFL bank rebuilt
+  on the new bases.
+- **Rejected on the table.** The scrimmage-only fit and the narrower
+  live-plays cut (#1 — the kicks carry field position the ratings want, and
+  a kneel is the winning team's fingerprint); NFL pace (#11); a divisional
+  home-field discount (#18); cold on totals (#10); the NFL phase scale
+  (#19); the college K=24 prior, pace, bye bonus and early-season blend
+  weight (#12, #17). Each stays in the lab as a variant.
+- **Still open.** The plays rebuild with clock, score state and turnover
+  columns (#7); the college QB term (#8); college weather and venues (#10,
+  needs the CFBD key); the college preseason prior into the EPA half (#13);
+  special teams (#14); the joint phase ridge (#16).
 
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
@@ -560,3 +570,28 @@ What this says about the plan:
   Add margin and total RMSE against actual and against the close, and the
   weight above, so a variant is promoted for score accuracy and independent
   information rather than for win-probability alone.
+
+
+### 6.1 The scoreboard after the first pass (2026-09-17)
+
+The same yardstick, on the promoted chains as they now run (walk-forward,
+out of sample, the lab's 4,000-sim gate):
+
+| | margin: model / close | total: model / close | information beyond the close (margin / total) |
+|---|---|---|---|
+| NFL, before | 13.33 / 12.72 | 13.90 / 13.23 | +0.08 / −0.00 |
+| **NFL, now** | **13.26** / 12.97 | **13.55** / 13.23 | **+0.11 / +0.08** |
+| NCAAF, before | 18.46 / 15.53 | 17.38 / 16.24 | −0.01 / +0.03 |
+| **NCAAF, now** | **18.43** / 15.54 | **17.21** / 16.23 | −0.00 / **+0.05** |
+| NCAAF, FBS vs FBS | 17.89 / 15.64 | 17.42 / 16.30 | −0.01 / +0.06 |
+
+(The NFL close's margin RMSE reads 12.97 here and 12.72 in §6 because the
+two tables score different windows — the lab's 2011–2025 trailing-4 run
+against the bank's 2015+ rows; compare each row with its own close.)
+
+The NFL total closed a third of its gap to the close and now carries
+information the close does not; the college total moved a sixth of the
+way. The margins barely moved in either league, which is what the audit
+predicted: margin accuracy is roster knowledge, and the items that add it
+— the plays rebuild, the college QB term, the college preseason prior in
+the EPA half — are the open ones.

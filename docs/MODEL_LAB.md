@@ -1234,3 +1234,23 @@ the live runner reads the current week's designations off the committed
 bank (refreshed daily from nflverse) and says which teams are heaviest. A
 week the bank has not reached yet costs nothing, which is honest and is
 also the reason to refresh before the slate runs.
+
+
+**Cold (NFL)**, over the promoted chain (rain at a point a side, the burden
+at 4): a step on the day's mean temperature. 286 outdoor games under 32 °F.
+
+| variant | Brier | calib. | RMSE total | info_w total | cold games: total RMSE / mean error (n=286) |
+|---|---|---|---|---|---|
+| promoted chain | 0.2184 | 0.0164 | 13.553 | +0.076 | 14.30 / −0.76 |
+| + cold < 32 °F, 0.5 a side | 0.2184 | 0.0164 | 13.552 | +0.074 | 14.28 / +0.24 |
+| + cold < 32 °F, 1.0 a side | 0.2184 | 0.0164 | 13.555 | +0.071 | 14.33 / +1.24 |
+| + cold < 40 °F, 0.5 a side | 0.2184 | 0.0159 | 13.551 | +0.077 | 14.28 / +0.24 |
+
+**Reading, honestly: not promoted.** The freezing games run three quarters
+of a point under the projection, which is under one standard error on 286
+games (the literature's "weaker and less reliable than wind" holds), and
+the step moves the aggregate by a thousandth either way. The promoted
+chain's own record on this window, for the audit's scoreboard: Brier
+0.2184 against the de-vigged close's 0.2102, margin RMSE 13.26 (the close
+12.97), total RMSE 13.55 (the close 13.23), information weight +0.108 on
+the margin and +0.076 on the total.
