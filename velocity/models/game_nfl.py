@@ -24,6 +24,7 @@ they are tuned so the model is calibrated against closing lines.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -106,11 +107,32 @@ class GameProjection:
 
 
 class NFLGameModel:
-    """Projects NFL games from fitted team ratings."""
+    """Projects NFL games from fitted team ratings.
 
-    def __init__(self, ratings: MatchupRatings, config: NFLModelConfig | None = None) -> None:
+    ``pace`` (team → offensive plays per game, from
+    :func:`velocity.features.team.team_pace`) makes the EPA-to-points scale
+    matchup-specific: each team's expected snaps are the average of its own
+    pace and its opponent's, falling back to ``config.plays_per_game`` for a
+    team the map does not carry. ``None`` is the one league constant the
+    model always used.
+    """
+
+    def __init__(
+        self,
+        ratings: MatchupRatings,
+        config: NFLModelConfig | None = None,
+        *,
+        pace: Mapping[str, float] | None = None,
+    ) -> None:
         self.ratings = ratings
         self.config = config or NFLModelConfig()
+        self.pace = dict(pace) if pace else None
+
+    def _plays(self, home_team: str, away_team: str) -> float:
+        if self.pace is None:
+            return self.config.plays_per_game
+        league = self.config.plays_per_game
+        return 0.5 * (self.pace.get(home_team, league) + self.pace.get(away_team, league))
 
     def _delta(self, off_team: str, def_team: str, qb_id: str | None) -> float:
         """The matchup delta, with a named passer when the ratings can price one."""
@@ -140,9 +162,10 @@ class NFLGameModel:
         cfg = self.config
         home_delta = self._delta(home_team, away_team, home_qb)
         away_delta = self._delta(away_team, home_team, away_qb)
+        plays = self._plays(home_team, away_team)
 
-        mu_home = cfg.base_points + cfg.plays_per_game * home_delta + home_bonus
-        mu_away = cfg.base_points + cfg.plays_per_game * away_delta + away_bonus
+        mu_home = cfg.base_points + plays * home_delta + home_bonus
+        mu_away = cfg.base_points + plays * away_delta + away_bonus
 
         if not neutral_site:
             mu_home += cfg.hfa_points / 2.0

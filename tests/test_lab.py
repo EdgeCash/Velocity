@@ -1014,3 +1014,18 @@ def test_score_accuracy_reads_the_market_brier_off_real_moneylines() -> None:
     })
     out = score_accuracy(projections, games)
     assert out["close_brier"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_fbs_games_keeps_only_pairs_the_ratings_rate() -> None:
+    from velocity.backtest.lab import fbs_games
+
+    games = pd.DataFrame({
+        "season": [2024, 2024, 2024, 2026],
+        "home_team": ["Georgia", "Georgia", "Towson", "Georgia"],
+        "away_team": ["Clemson", "Towson", "Delaware", "Clemson"],
+    })
+    sp = pd.DataFrame({"season": [2024, 2024, 2025, 2025],
+                       "team": ["Georgia", "Clemson", "Georgia", "Clemson"]})
+    kept = fbs_games(games, sp)
+    assert kept.index.tolist() == [0, 3]  # 2026 borrows the latest list
+    assert fbs_games(games, sp.iloc[0:0]).equals(games)

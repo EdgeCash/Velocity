@@ -839,6 +839,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stake NCAAF moneylines (default off — walk-forward tested "
                              "2021–2025 and negative in every price bucket, "
                              "docs/BACKTEST_NCAAF.md S3)")
+    # A college game with an FCS side is priced and graded but not staked:
+    # the promoted totals filter pays on FBS-vs-FBS games (55.4% at ≥6 since
+    # 2022) and loses on FBS-vs-FCS ones (47.4% on 152), where one side's
+    # rating rests on a handful of games (docs/PROJECTION_AUDIT.md §2.3).
+    parser.add_argument("--ncaaf-fcs", action=argparse.BooleanOptionalAction, default=False,
+                        help="stake college games with an FCS side (default off: paper)")
     # Paper posture — priced, logged and graded for CLV, never staked. Team
     # totals stay paper until banked posted closes calibrate their gate; the
     # content-posture leagues (NCAAB, NHL, WNBA — no promoted edge) run paper
@@ -1335,6 +1341,40 @@ def resolve_paper(explicit: bool | None, league: str) -> bool:
     return DEFAULT_PAPER_BY_LEAGUE.get(league, False)
 
 
+def fbs_teams(folder: Path) -> set[str]:
+    """The FBS programs, as the latest committed SP+ season rates them."""
+    sp_file = folder / "sp_ratings.parquet"
+    if not sp_file.exists():
+        return set()
+    sp = pd.read_parquet(sp_file, columns=["season", "team"])
+    if sp.empty:
+        return set()
+    latest = sp[sp["season"] == sp["season"].max()]
+    return set(latest["team"].astype(str))
+
+
+def fcs_paper_games(
+    args: argparse.Namespace, projections: Mapping[str, GameProjection]
+) -> dict[str, str]:
+    """``{game_id: reason}`` for the college games with an FCS side, unless staked.
+
+    The FBS list is the latest SP+ season's; with no ratings file on disk
+    nothing is papered, and the run says nothing — a missing prior is a
+    build gap, not a policy.
+    """
+    if args.league != "ncaaf" or getattr(args, "ncaaf_fcs", False) or not args.data:
+        return {}
+    fbs = fbs_teams(Path(args.data))
+    if not fbs:
+        return {}
+    out: dict[str, str] = {}
+    for gid, proj in projections.items():
+        if proj.home_team not in fbs or proj.away_team not in fbs:
+            side = proj.away_team if proj.home_team in fbs else proj.home_team
+            out[str(gid)] = f"FCS side {side}: totals 47% at the filter, no promoted edge"
+    return out
+
+
 def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
     """The markets this run prices but never stakes (docs/STRATEGY_REVIEW.md S2)."""
     if resolve_paper(args.paper, args.league):
@@ -1686,6 +1726,13 @@ def main() -> None:
         projections, unresolved = project_board(
             events, project, known_teams, aliases, neutral_by_game=neutral
         )
+        paper_games = fcs_paper_games(args, projections)
+        if paper_games:
+            from dataclasses import replace as _replace
+
+            print(f"FCS opponents: {len(paper_games)} game(s) priced and graded, staked at "
+                  "zero (--ncaaf-fcs stakes them)")
+            cfg = _replace(cfg, paper_games=paper_games)
         canonical = canonicalize_sides(lines, events)
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
         games_min = events[["game_id", "kickoff"]].copy()

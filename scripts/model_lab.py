@@ -61,6 +61,10 @@ def main() -> None:
                         help="only predict seasons ≤ this (e.g. the closes-covered span)")
     parser.add_argument("--train-window", type=int, default=0,
                         help="cap training to the trailing N seasons (0 = all history)")
+    parser.add_argument("--eval-population", choices=["all", "fbs"], default="all",
+                        help="NCAAF only: score every game with a result, or only games "
+                             "between two FBS programs (the ones the live board prices; "
+                             "training keeps every game either way)")
     parser.add_argument("--sweeps", action="store_true",
                         help="print the per-variant disagreement sweeps")
     parser.add_argument("--out", help="optional folder for the comparison parquets")
@@ -116,6 +120,19 @@ def main() -> None:
         games = games[games["season"] >= args.eval_from].reset_index(drop=True)
     if args.eval_to is not None:
         games = games[games["season"] <= args.eval_to].reset_index(drop=True)
+    eval_games = games
+    if args.league == "ncaaf" and args.eval_population == "fbs":
+        # The evaluation population the live board prices: FBS vs FBS. The
+        # committed frame carries every game with a line since 2022 — 45% of
+        # them FCS games the EPA half cannot see (docs/PROJECTION_AUDIT.md
+        # §2.3). Training still sees all of them; only the scoring changes.
+        from velocity.backtest.lab import fbs_games
+
+        sp_file = folder / "sp_ratings.parquet"
+        if not sp_file.exists():
+            raise SystemExit("--eval-population fbs needs sp_ratings.parquet for the FBS list")
+        eval_games = fbs_games(games, pd.read_parquet(sp_file))
+        print(f"evaluation population: {len(eval_games)} FBS-vs-FBS games of {len(games)}")
 
     if args.league == "nfl":
         chosen = nfl_variants(args.n_sims, schedule=games)
@@ -209,21 +226,21 @@ def main() -> None:
     for name, (train_kind, factory) in chosen.items():
         train_frame = games if train_kind == "games" else plays
         result = walk_forward(
-            games, train_frame, lines, _windowed(factory, args.train_window),
+            eval_games, train_frame, lines, _windowed(factory, args.train_window),
             BacktestConfig(min_train_games=args.min_train_games),
         )
         row: dict[str, object] = {"variant": name}
         for key in ("n_games", "brier", "log_loss", "calibration_error"):
             if key in result.metrics:
                 row[key] = result.metrics[key]
-        row.update(ats_ou_vs_close(result.projections, games))
+        row.update(ats_ou_vs_close(result.projections, eval_games))
         # Points, not probabilities: the goal is the most accurate score
         # projection, and Brier cannot see the total or the scale.
-        row.update(score_accuracy(result.projections, games))
+        row.update(score_accuracy(result.projections, eval_games))
         rows.append(row)
         ledgers[name] = result.projections
         sweeps[name] = {
-            market: disagreement_sweep(result.projections, games, market=market)
+            market: disagreement_sweep(result.projections, eval_games, market=market)
             for market in ("spread", "total")
         }
         print(f"  {name}: done ({int(row.get('n_games', 0))} games)")
@@ -243,7 +260,7 @@ def main() -> None:
         {"sigma": cal["sigma"], "select_through": select_through}
         if cal is not None else {}
     )
-    blends = {name: market_blend_sweep(projections, games, **blend_kwargs)
+    blends = {name: market_blend_sweep(projections, eval_games, **blend_kwargs)
               for name, projections in ledgers.items()}
 
     table = pd.DataFrame(rows)

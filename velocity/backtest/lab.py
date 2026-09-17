@@ -182,10 +182,10 @@ def nfl_variants(
         """``inner`` with its scoring level fitted through the model on the
         training window's own games (velocity.models.level) — the totals
         bias the residual bank found, corrected where it arises."""
-        def factory(train: pd.DataFrame) -> NFLGameModel:
+        def factory(train: pd.DataFrame, **kwargs: object) -> NFLGameModel:
             from velocity.models.level import calibrate_level
 
-            model = inner(train)
+            model = inner(train, **kwargs)
             if schedule is None:
                 return model  # type: ignore[return-value]
             window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
@@ -233,6 +233,23 @@ def nfl_variants(
 
         return factory
 
+    def paced(inner: VariantFactory) -> VariantFactory:
+        """``inner`` with each team's own plays per game from the training
+        slice in place of the 63-play constant (velocity.features.team
+        .team_pace) — the college model's pace treatment, in the NFL."""
+        from velocity.features.team import team_pace
+
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            model = inner(train, **kwargs)
+            if not isinstance(model, NFLGameModel):
+                return model
+            # Pace is the fit's own definition of a play: scrimmage snaps per
+            # game when the fit saw scrimmage snaps, every labelled play
+            # otherwise — the same frame the ratings were fitted on.
+            return NFLGameModel(model.ratings, model.config, pace=team_pace(train))
+
+        return factory
+
     def starters(inner: VariantFactory) -> VariantFactory:
         """``inner`` priced with the schedule's announced starters per game."""
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
@@ -247,8 +264,8 @@ def nfl_variants(
         """``inner`` fitted on the offense's own snaps only (kicks, returns,
         kneels, spikes and no-plays dropped before the ridge —
         docs/PROJECTION_AUDIT.md §2.1)."""
-        def factory(train: pd.DataFrame) -> object:
-            return inner(scrimmage_plays(train, "nfl"))
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            return inner(scrimmage_plays(train, "nfl"), **kwargs)
 
         return factory
 
@@ -268,6 +285,10 @@ def nfl_variants(
                 "plays", starters(levelled(qb_recency(17.0, 300.0), 2))),
             "qb-recency-17-q300-level2-scrim-starters": (
                 "plays", starters(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
+            # Pace over the scrimmage fit: the level is re-fitted after the
+            # pace map is attached, so the two calibrate together.
+            "qb-recency-17-q300-level2-scrim-pace": (
+                "plays", scrimmage(levelled(paced(qb_recency(17.0, 300.0)), 2))),
         })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)
@@ -363,6 +384,29 @@ def compress_plays(plays: pd.DataFrame, games: pd.DataFrame | None = None) -> pd
         cells = cells.merge(flags, on=["posteam", "defteam", "season", "week"], how="left")
         cells["home"] = cells["home"].fillna(0.0)
     return cells
+
+
+def fbs_games(games: pd.DataFrame, sp: pd.DataFrame) -> pd.DataFrame:
+    """The games between two FBS programs, as the SP+ ratings define FBS.
+
+    A season's FBS list is the teams SP+ rated that season; a season the
+    ratings do not reach yet (the current one) borrows the latest list. The
+    frame keeps its columns and index order.
+    """
+    seasons_rated = sp["season"].astype(int)
+    by_season = {
+        season: set(sp.loc[seasons_rated == season, "team"].astype(str))
+        for season in sorted(set(seasons_rated))
+    }
+    if not by_season:
+        return games
+    latest = by_season[max(by_season)]
+    keep = []
+    for season, home, away in zip(games["season"].astype(int), games["home_team"].astype(str),
+                                  games["away_team"].astype(str), strict=True):
+        teams = by_season.get(season, latest)
+        keep.append(home in teams and away in teams)
+    return games[np.asarray(keep, dtype=bool)]
 
 
 def ncaaf_walk_order(games: pd.DataFrame) -> pd.DataFrame:
@@ -683,16 +727,20 @@ def ncaaf_variants(
 
             sp_frame = sp
 
-            def blend_sp(k: int, *, scrimmage: bool = False) -> VariantFactory:
+            def blend_sp(
+                k: int, *, scrimmage: bool = False, pace: bool = False
+            ) -> VariantFactory:
                 """``blend-level2`` with the SP+ previous-season prior in the
                 scores half, at ``k`` pseudo-games per team — what the live
                 runner prices. ``scrimmage`` fits the EPA half on the
-                offense's own snaps only."""
+                offense's own snaps only; ``pace`` prices it at each team's
+                own plays per game instead of the 65-play constant."""
                 def factory(
                     train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
                 ) -> BlendedGameModel:
                     from dataclasses import replace as _replace
 
+                    from velocity.features.team import team_pace
                     from velocity.models.level import calibrate_scores_level, mean_points_per_team
 
                     sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
@@ -703,6 +751,7 @@ def ncaaf_variants(
                         fit_ratings(cells, ridge_lambda=50.0,
                                     weights=cells["n"].astype(float)),
                         _replace(cfg, base_points=mean_points_per_team(train_games)),
+                        pace=team_pace(sub) if pace else None,
                     )
                     # The knowledge point: Feb 1 of the season being projected
                     # admits exactly the seasons before it. Without the engine's
@@ -734,6 +783,7 @@ def ncaaf_variants(
                 "blend-level2-sp12-scale": ("games", college_scaled(blend_sp(12))),
                 "blend-level2-sp12-scrim-scale": (
                     "games", college_scaled(blend_sp(12, scrimmage=True))),
+                "blend-level2-sp12-scrim-pace": ("games", blend_sp(12, scrimmage=True, pace=True)),
             })
 
     return variants

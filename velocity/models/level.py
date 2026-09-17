@@ -84,7 +84,7 @@ def calibrate_level(
     if shift == 0.0:
         return model
     config = replace(model.config, base_points=model.config.base_points - shift)
-    return NFLGameModel(model.ratings, config)
+    return NFLGameModel(model.ratings, config, pace=model.pace)
 
 
 def calibrate_scores_level(
