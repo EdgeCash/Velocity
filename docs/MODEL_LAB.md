@@ -985,3 +985,55 @@ the college residual bank (`datasets/ncaaf/sim_residuals.parquet`) is
 rebuilt from its projections. K=24 is the better forecaster by every
 accuracy column and is left as a candidate for the next round rather than
 moved on the same table that chose 12.
+
+## The plays, scale and starters round (2026-09-17) — NFL
+
+Three candidates from `docs/PROJECTION_AUDIT.md`, each over the promoted
+`qb-recency-17-q300-level2` (2011–2025, trailing-4-season training, 4,000
+sims; `close_brier` is the de-vigged moneyline close's own Brier, 0.2102 on
+this window):
+
+| variant | Brier | log loss | calib. | RMSE margin | RMSE total | info_w margin | O/U ≥4 (n) | spread ≥6 (n) |
+|---|---|---|---|---|---|---|---|---|
+| base (promoted) | 0.2195 | 0.6290 | **0.0118** | 13.33 | 13.90 | +0.080 | 51.4% (1,537) | 54.8% (301) |
+| base-scrim | 0.2224 | 0.6365 | 0.0284 | 13.53 | 14.09 | +0.024 | 50.7% (1,762) | 51.1% (532) |
+| **base-scale** | 0.2195 | 0.6289 | 0.0142 | 13.32 | **13.59** | +0.086 | 52.2% (882) | 56.2% (258) |
+| base-scrim-scale | 0.2216 | 0.6339 | 0.0174 | 13.45 | 13.62 | +0.025 | 51.4% (926) | 51.1% (411) |
+| **base-starters** | **0.2187** | **0.6270** | 0.0143 | **13.28** | 13.88 | **+0.099** | 51.2% (1,507) | 55.7% (246) |
+| base-scrim-starters | 0.2215 | 0.6343 | 0.0293 | 13.47 | 14.07 | +0.029 | 50.9% (1,734) | 49.5% (461) |
+
+The closing line on the same games: margin RMSE 12.97, total RMSE 13.23.
+
+**Readings, honestly:**
+
+1. **The scrimmage-only fit loses, and loses on every column.** The audit's
+   finding was real — kneels are the winning team running out the clock at
+   −0.58 EPA, and the unfiltered fit docks the teams that kneel most — but
+   the remedy threw out the kicks, punts and field goals with them, and
+   those carry field position the ratings want: Brier +0.003, margin RMSE
+   +0.20, calibration error more than doubled, and the model's information
+   beyond the close cut by two-thirds. **Not promoted.** The narrower cut
+   (every live play kept, only kneels, spikes and no-plays dropped —
+   `-live`) runs in the next table.
+2. **The scale is a totals promotion.** Fitted on the residual bank's
+   out-of-sample rows for the seasons before each projected one, the slope
+   comes in near 0.50 on the total and 0.87 on the margin. Totals RMSE
+   13.90 → 13.59 — a third of the way to the close — with Brier and margin
+   RMSE unchanged and the margin's information weight slightly up. The
+   totals sweep changes shape as it should: half as many games clear a
+   four-point disagreement (882 vs 1,537) and those that do win more
+   (52.2% vs 51.4%); at six points the survivors are few (276) and below
+   water, which is a scaled model refusing to claim what the raw one
+   claimed. **Promoted: `--nfl-scale fit`** (`DEFAULT_SCALE_BY_LEAGUE`),
+   the calibration cost (0.0118 → 0.0142) noted.
+3. **The announced starter is the best forecaster in the table.** With the
+   schedule's `home_qb_id`/`away_qb_id` in place of "the primary passer in
+   the latest training game", Brier 0.2195 → 0.2187, margin RMSE −0.06,
+   and the largest information weight recorded for the NFL (+0.099). This
+   is the lab catching up with the live runner, which has priced the
+   depth-chart starter since 2026-09-09: **the lab's NFL base is now
+   `qb-recency-17-q300-level2-starters`**, and the residual bank
+   (`datasets/nfl/sim_residuals.parquet`) is rebuilt from it.
+
+Not run here: starters and scale together, pace, and the live chain (rest
+over the fit) for the incumbent and the candidate — the next table.
