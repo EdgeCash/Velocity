@@ -731,3 +731,110 @@ def test_the_card_carries_no_confidence_score() -> None:
     from dataclasses import fields
 
     assert "confidence" not in {f.name for f in fields(MatchupCard)}
+
+
+# --- week 1, when "season to date" is empty --------------------------------
+
+def _two_season_plays() -> pd.DataFrame:
+    """Last season has plays; the new season has kicked off but played none."""
+    rows = []
+    for season in (2025,):
+        for epa, pos, deft, kind in (
+            (0.4, "DAL", "DET", "pass"), (0.1, "DAL", "DET", "run"),
+            (0.2, "DET", "DAL", "pass"), (-0.1, "DET", "DAL", "run"),
+        ):
+            rows.append({"season": season, "week": 1, "posteam": pos,
+                         "defteam": deft, "play_type": kind, "epa": epa})
+    return pd.DataFrame(rows)
+
+
+def test_rankable_season_falls_back_when_the_new_one_is_empty() -> None:
+    from velocity.report.matchup import rankable_season
+
+    plays = _two_season_plays()
+    # 2026 has kicked off but nothing has been played: rank on 2025 rather than
+    # render four labelled tracks with nothing on them.
+    assert rankable_season(plays, 2026) == 2025
+    # A season with its own plays ranks on itself.
+    assert rankable_season(plays, 2025) == 2025
+    # Two seasons back is not reached for -- that is not "recent form".
+    assert rankable_season(plays, 2027) is None
+    assert rankable_season(None, 2026) is None
+    assert rankable_season(pd.DataFrame(), 2026) is None
+
+
+def test_the_panel_says_which_season_the_ranks_are_from() -> None:
+    from dataclasses import replace as dc_replace
+
+    card = _card()
+    # Same season: the usual caption.
+    assert dc_replace(card, season=2026, ranks_season=2026).ranks_caption(32) == (
+        "1 = best of 32 · season to date")
+    # Borrowed from last year: say so, so the weakness is visible rather than
+    # hidden behind a phrase that would be false.
+    assert dc_replace(card, season=2026, ranks_season=2025).ranks_caption(32) == (
+        "1 = best of 32 · 2025 season")
+    # Nothing known: fall back to the neutral phrasing rather than inventing.
+    assert dc_replace(card, season=None, ranks_season=None).ranks_caption(18) == (
+        "1 = best of 18 · season to date")
+
+
+def _week_one_games() -> pd.DataFrame:
+    """Last season complete, the new one not started -- a week 1 slate's world."""
+    return pd.DataFrame([
+        {"season": 2025, "week": 17, "kickoff": pd.Timestamp("2025-12-28"),
+         "home_team": "DET", "away_team": "DAL", "home_score": 24, "away_score": 20},
+        {"season": 2025, "week": 16, "kickoff": pd.Timestamp("2025-12-21"),
+         "home_team": "DAL", "away_team": "PHI", "home_score": 17, "away_score": 27},
+    ])
+
+
+def test_builder_ranks_a_week_one_card_off_last_season() -> None:
+    from dataclasses import replace as dc_replace
+
+    from velocity.report.matchup import build_matchup_cards
+
+    # A September kickoff with nothing played yet: everything the card can say
+    # comes from last year, and it has to say so.
+    card = dc_replace(_social(), kickoff=pd.Timestamp("2026-09-10 13:00"))
+    built = build_matchup_cards(
+        [card], {"g1": _projection()},  # type: ignore[list-item,arg-type]
+        _week_one_games(), _two_season_plays(),
+    )[0]
+    assert built.season == 2026
+    assert built.ranks_season == 2025
+    assert built.away.ranks, "week 1 must still get ranks, from last season"
+    assert built.ranks_caption(32) == "1 = best of 32 · 2025 season"
+    # ...and the record is stamped rather than passed off as this season's.
+    assert built.away.record.startswith("2025: ")
+
+
+def test_a_mid_season_card_stamps_nothing() -> None:
+    from velocity.report.matchup import build_matchup_cards
+
+    # The slate's season and the season with finals agree from week 2 on, so
+    # neither the record nor the caption carries a year.
+    built = build_matchup_cards(
+        [_social()], {"g1": _projection()},  # type: ignore[list-item,arg-type]
+        _games(), _plays(),
+    )[0]
+    assert built.season == built.ranks_season == 2025
+    assert ":" not in built.away.record
+    assert built.ranks_caption(32) == "1 = best of 32 · season to date"
+
+
+@pytest.mark.parametrize(("kickoff", "season"), [
+    ("2026-09-10", 2026),   # September: the season named for this year
+    ("2026-12-28", 2026),
+    ("2027-01-11", 2026),   # January playoff game belongs to the 2026 season
+    ("2027-02-08", 2026),
+])
+def test_slate_season_puts_the_postseason_in_its_own_year(
+        kickoff: str, season: int) -> None:
+    from dataclasses import replace as dc_replace
+
+    from velocity.report.matchup import slate_season
+
+    card = dc_replace(_social(), kickoff=pd.Timestamp(kickoff))
+    assert slate_season([card]) == season  # type: ignore[list-item]
+    assert slate_season([]) is None

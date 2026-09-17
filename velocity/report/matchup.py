@@ -153,6 +153,11 @@ class MatchupCard:
     kickoff: pd.Timestamp | None = None
     generated_at: pd.Timestamp | None = None
     notes: Sequence[str] = field(default_factory=tuple)
+    # The season the card's own games are in, and the season its EPA ranks came
+    # from. They differ in week 1, when the current season has no plays yet and
+    # the ranks fall back to last year's -- which the panel then states.
+    season: int | None = None
+    ranks_season: int | None = None
     # There is deliberately no confidence score here. Measured on 15,731
     # leak-safe walk-forward projections (3,904 NFL + 11,827 NCAAF), nothing
     # the model knows about itself predicts how far its projection lands from
@@ -219,6 +224,13 @@ class MatchupCard:
         if point > 0:
             return f"{self.home.code} {-point:+g}"
         return f"{self.away.code} {point:+g}"
+
+    def ranks_caption(self, of: int) -> str:
+        """``"1 = best of 32 · season to date"`` / ``"· 2025 season"``."""
+        if self.ranks_season is not None and self.season is not None \
+                and self.ranks_season != self.season:
+            return f"1 = best of {of} · {self.ranks_season} season"
+        return f"1 = best of {of} · season to date"
 
     def stamp(self) -> str:
         """``GENERATED 16 SEP 2026 · 22:44 UTC`` — the honesty line."""
@@ -297,6 +309,49 @@ def split_name(full_name: str, code: str, mascot: str | None = None) -> tuple[st
     if len(parts) < 2:
         return code, name
     return " ".join(parts[:-1]), parts[-1]
+
+
+def slate_season(cards: Sequence[SocialCard]) -> int | None:
+    """The season the games being rendered belong to, from their kickoffs.
+
+    It cannot be read off the games frame: ``scoring_form`` reports the newest
+    season that has FINALS, which in week 1 is last season. A card that takes
+    its season from there believes it is a 2025 card, and then every "is this
+    current?" check silently passes while it shows last year's numbers.
+
+    Both football seasons run August to February, so a kickoff in the first
+    half of a calendar year belongs to the season named for the previous one.
+    """
+    years = [
+        c.kickoff.year - 1 if c.kickoff.month <= 6 else c.kickoff.year  # noqa: PLR2004
+        for c in cards if c.kickoff is not None and not pd.isna(c.kickoff)
+    ]
+    return max(years) if years else None
+
+
+def rankable_season(plays: pd.DataFrame | None, season: int) -> int | None:
+    """The season the EPA ranks can come from: ``season``, else the one before.
+
+    In week 1 the current season has no plays at all, so "season to date" is
+    empty and the panel renders four labelled tracks with nothing on them --
+    a card that looks broken rather than early. Last season's EPA is what any
+    reader would use in week 1 anyway; it is weaker (rosters turn over) but it
+    is real, and the caption says which season it is so the weakness is visible
+    rather than hidden.
+
+    Only a completely empty current season falls back. A thin one -- week 2,
+    a game per team -- still ranks on itself, because the panel already prints
+    the field size it actually has and choosing a blend threshold is modelling
+    work, not a caption fix.
+    """
+    from velocity.report.deepdive import epa_form
+
+    if plays is None or plays.empty:
+        return None
+    for candidate in (season, season - 1):
+        if not epa_form(plays, candidate).empty:
+            return candidate
+    return None
 
 
 def unit_ranks(epa: pd.DataFrame | None) -> dict[str, dict[str, UnitRank]]:
@@ -503,10 +558,17 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
     code back to the datasets' team key where they differ (NFL codes match;
     NCAAF cards carry abbreviations while the datasets key by school).
     """
-    from velocity.report.deepdive import _record, epa_form, scoring_form
+    from velocity.report.deepdive import epa_form, scoring_form
 
-    season, scoring = (0, pd.DataFrame()) if games is None else scoring_form(games)
-    ranks = unit_ranks(epa_form(plays, season) if plays is not None else None)
+    # ``record_season`` is the newest season with finals -- what the records and
+    # form chips are actually made of. ``season`` is the season being PLAYED.
+    # They are the same from week 2 on and differ in week 1, when everything
+    # the card can say about a team comes from last year.
+    record_season, scoring = (0, pd.DataFrame()) if games is None else scoring_form(games)
+    season = slate_season(cards) or record_season
+    ranks_season = rankable_season(plays, season)
+    ranks = unit_ranks(
+        None if ranks_season is None or plays is None else epa_form(plays, ranks_season))
     names = dict(team_names or {})
     # The datasets' key → the card's display code, for the opponent on a chip.
     codes = {key: code for code, key in names.items()}
@@ -528,11 +590,15 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
             city, nickname = split_name(full_name, code, (mascots or {}).get(code))
             sides.append(TeamSide(
                 code=code, city=city, nickname=nickname,
-                record=_record(scoring, key) if not scoring.empty else "",
+                record=_stamped_record(scoring, key, record_season, season),
                 color=(card.away_color if code == card.away_code
                        else card.home_color) or "#8b96a3",
                 espn_id=(espn_ids or {}).get(code),
-                last3=form_games(games, key, season, codes=codes),
+                # Chips come from the same season the record does. In week 1
+                # that is last season -- and the record line beside them says
+                # so, which is what keeps three old results from reading as
+                # this year's form.
+                last3=form_games(games, key, record_season, codes=codes),
                 ranks=ranks.get(key, {}),
                 projections=player_lines(
                     (props_by_game or {}).get(card.game_id), roster, key),
@@ -564,6 +630,10 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
             # copied from the card: the number under "MARGIN" is a claim about
             # this panel, and the two should not be able to drift apart.
             n_sims=int(len(margin)),
+            # Which season the ranks are actually from, so the panel can say so
+            # rather than claiming "season to date" over last year's numbers.
+            ranks_season=ranks_season,
+            season=season or None,
             venue=(venue_by_game or {}).get(card.game_id),
             kickoff=card.kickoff,
             generated_at=stamp,
@@ -572,6 +642,25 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
         )
         out.append(built)
     return out
+
+
+def _stamped_record(scoring: pd.DataFrame, key: str, record_season: int,
+                    season: int) -> str:
+    """The record, carrying its season when that is not the one being played.
+
+    A week 1 card has no games this season to count, so the only record
+    available is last year's final one. Printing "3-14" bare where a reader
+    expects this season's is the kind of wrong that never announces itself, so
+    it prints "2025: 3-14" instead.
+    """
+    from velocity.report.deepdive import _record
+
+    if scoring.empty:
+        return ""
+    rec = _record(scoring, key)
+    if rec and record_season and season and record_season != season:
+        return f"{record_season}: {rec}"
+    return rec
 
 
 def _pmf_of(values: object) -> dict[int, float]:
