@@ -229,19 +229,48 @@ def rotation_form(starters: pd.DataFrame, games: pd.DataFrame) -> pd.DataFrame:
     return out[cols]
 
 
+# The two play-type vocabularies this repo holds. nflverse labels a scrimmage
+# play ``pass``/``run``; CFBD labels it by what HAPPENED ("Pass Reception",
+# "Rushing Touchdown"), so a filter written for one silently matches nothing in
+# the other — empty ranks rather than an error, which is the failure mode that
+# looks exactly like health.
+#
+# A sack counts as a pass, matching nflverse, where it is play_type "pass".
+_PASS_PLAYS = frozenset({
+    "pass", "Pass", "Pass Reception", "Pass Incompletion", "Pass Completion",
+    "Passing Touchdown", "Sack", "Interception", "Pass Interception Return",
+    "Interception Return Touchdown",
+})
+_RUSH_PLAYS = frozenset({"run", "Rush", "Rushing Touchdown"})
+# Deliberately unclassified: CFBD's fumble labels ("Fumble Recovery (Own)" and
+# friends) name the OUTCOME and not the play, so nothing in the frame says
+# whether the ball was thrown or handed off. That is ~1.7% of college
+# scrimmage plays, dropped rather than guessed at — assigning them to one unit
+# would bias exactly the split these columns exist to measure.
+
+
+def scrimmage_plays(plays: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    """``(pass+run plays, is_pass)`` under either vocabulary."""
+    kinds = plays["play_type"].astype(str)
+    keep = kinds.isin(_PASS_PLAYS | _RUSH_PLAYS)
+    span = plays[keep].copy()
+    return span, kinds[keep].isin(_PASS_PLAYS)
+
+
 def epa_form(plays: pd.DataFrame, season: int) -> pd.DataFrame:
     """Per-team EPA/play splits for ``season``: the model's own inputs.
 
     Columns: ``off_epa``/``def_epa`` (all pass+run plays), ``pass_off``/
     ``rush_off``/``pass_def``/``rush_def``. Defensive values are EPA *allowed*
     — lower is better, exactly as the ridge fit sees them.
+
+    Reads nflverse and CFBD play labels alike, so the college frame produces
+    ranks instead of an empty table.
     """
-    span = plays[(plays["season"] == season)
-                 & (plays["play_type"].isin(["pass", "run"]))].copy()
+    span, is_pass = scrimmage_plays(plays[plays["season"] == season])
     if span.empty:
         return pd.DataFrame(columns=["off_epa", "def_epa", "pass_off",
                                      "rush_off", "pass_def", "rush_def"])
-    is_pass = span["play_type"] == "pass"
     out = pd.DataFrame({
         "off_epa": span.groupby("posteam")["epa"].mean(),
         "def_epa": span.groupby("defteam")["epa"].mean(),

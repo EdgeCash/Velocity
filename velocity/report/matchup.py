@@ -261,8 +261,15 @@ _WHOLE = frozenset({"pass_yards", "rush_yards", "receiving_yards", "rush_rec_yar
 # is a quarter of the league between the two units; below that the ranks are
 # inside their own noise and the note would be filler.
 NOTE_GAP_MIN = 8
-_NOTE_PAIRS = (("off_pass", "def_pass", "passing game"),
-               ("off_rush", "def_rush", "running game"))
+
+# How much of an unmapped opponent's name a form chip can carry. Three chips
+# share one half of the card, so this is a layout limit, not a taste: at 7 the
+# longest label still clears the next chip's box at the rendered size. The pro
+# leagues never reach it (codes are 2-3 characters) and every FBS school maps
+# to its abbreviation, so this only ever trims an FCS visitor.
+OPPONENT_CHARS = 7
+_NOTE_PAIRS = (("off_pass", "def_pass", "passing game", "pass defense"),
+               ("off_rush", "def_rush", "running game", "run defense"))
 
 
 def split_name(full_name: str, code: str) -> tuple[str, str]:
@@ -332,7 +339,7 @@ def form_games(games: pd.DataFrame | None, team: str, season: int, n: int = 3,
         out.append(FormGame(
             result="W" if us > them else ("L" if us < them else "T"),
             points_for=us, points_against=them,
-            opponent=short.get(other, other)[:5], at_home=at_home))
+            opponent=short.get(other, other)[:OPPONENT_CHARS], at_home=at_home))
     return tuple(out)
 
 
@@ -411,24 +418,38 @@ def player_lines(sim: object | None, roster: pd.DataFrame | None,
 def unit_notes(away: TeamSide, home: TeamSide) -> tuple[str, ...]:
     """Up to three sentences on the widest unit mismatches, largest first.
 
+    Fires in EITHER direction -- an offense that outranks the defense across
+    from it, or a defense that outranks the offense -- and states the sentence
+    from the winning unit's side. Ranking the gap by magnitude rather than by
+    sign is what lets a smothering defense be the headline, which is often the
+    true shape of a lopsided game.
+
     Derived from the ranks already on the card rather than written: the card
     should not assert anything the reader cannot check against the tracks a few
     inches above the sentence.
     """
     found: list[tuple[int, str]] = []
     for attack, defend in ((away, home), (home, away)):
-        for off_key, def_key, phase in _NOTE_PAIRS:
+        for off_key, def_key, phase, unit in _NOTE_PAIRS:
             off = attack.ranks.get(off_key)
             against = defend.ranks.get(def_key)
             if off is None or against is None:
                 continue
             gap = against.rank - off.rank
-            if gap < NOTE_GAP_MIN:
+            if abs(gap) < NOTE_GAP_MIN:
                 continue
-            found.append((gap, (
-                f"{attack.code}'s {phase} ranks {_ordinal(off.rank)} and meets a "
-                f"{defend.code} defense ranked {_ordinal(against.rank)} against it."
-            )))
+            # A mismatch is a mismatch whichever side of the ball wins it. The
+            # rule used to fire only when the OFFENSE outranked the defense it
+            # faced, which silently skipped the most one-sided games on the
+            # card: a top-five defense against a bottom-third offense is the
+            # story of that matchup, and the panel sat empty through it.
+            if gap > 0:
+                text = (f"{attack.code}'s {phase} ranks {_ordinal(off.rank)} and "
+                        f"meets {defend.code}'s {unit}, ranked {_ordinal(against.rank)}.")
+            else:
+                text = (f"{defend.code}'s {unit} ranks {_ordinal(against.rank)} and "
+                        f"meets {attack.code}'s {phase}, ranked {_ordinal(off.rank)}.")
+            found.append((abs(gap), text))
     found.sort(key=lambda pair: pair[0], reverse=True)
     return tuple(text for _, text in found[:3])
 

@@ -119,8 +119,15 @@ def _logo(fig: plt.Figure, side: TeamSide, asset_dir: Path | None,
             return
         except Exception:  # noqa: BLE001 - a corrupt cache entry is cosmetic
             pass
-    _display(fig, x + height / ASPECT / 2, y_center - 0.010, side.code,
-             color=side.color, fontsize=34, ha="center")
+    # The code stands in for a missing mark, so it has to fit the mark's box.
+    # A pro code is 2-3 characters and sets the size; college codes are usually
+    # abbreviations, but with no CFBD identity table (no key, no cache) they
+    # fall back to the full school name -- and "Georgia" at the pro size runs
+    # straight through the nickname beside it.
+    code = side.code
+    size = 34.0 if len(code) <= 3 else max(12.0, 34.0 * 3.0 / len(code))  # noqa: PLR2004
+    _display(fig, x + height / ASPECT / 2, y_center - 0.010, code,
+             color=side.color, fontsize=size, ha="center")
 
 
 def _form_chips(fig: plt.Figure, side: TeamSide, x: float, y: float,
