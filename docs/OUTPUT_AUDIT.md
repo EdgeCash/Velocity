@@ -157,3 +157,36 @@ Later, once the list has a record: the early-season NFL totals (58% on
 199 bets in weeks 1–6 against 53% after — a phase-aware rule); the
 8-point college under (57%, thin); the away-side NFL spread (55%, thin);
 props and exchanges, which the lab does not score.
+
+## 4. Status
+
+**2026-09-17, the selection round (items 2–4).** Landed together, because
+the weights and the rules only make sense as a pair:
+
+- **Per-market anchoring weights** (`SlateConfig.model_weight_by_market`,
+  the runner's `DEFAULT_MODEL_WEIGHT_BY_MARKET`, `--model-weight-market`),
+  fitted as the weight that maps each promoted rule's claimed edge onto its
+  walk-forward record (`velocity.backtest.wagers.rule_weight`; the lab
+  prints it beside every `--rules` entry): the NFL total's 4-point cut earns
+  0.29 of its raw disagreement over 637 bets, the college under-only cut
+  0.21 over 1,255. The linear weight over every game (0.07 / 0.15) is the
+  wrong number for the bets a rule makes — the model's information sits in
+  the large disagreements, where a picked side at a raw 0.66 wins 54–56%.
+  Spreads and moneylines anchor at 0 in both leagues: the close would put
+  nothing on the model there, so those markets leave the board rather
+  than sit on it as paper — the lab is where they earn their way back.
+- **Directional totals rules** (`SlateConfig.total_sides`, the runner's
+  `DEFAULT_TOTAL_EDGE_BY_LEAGUE` / `DEFAULT_TOTAL_SIDES_BY_LEAGUE`,
+  `--nfl-total-edge`, `--ncaaf-total-sides`): the NFL total at 4 points
+  either side, the college total at 4 points on the under alone (from 6
+  either side). With the fitted weight a 4-point disagreement claims
+  0.029 of edge in the NFL and 0.023 in college, so the 0.02 edge gate
+  stays as the EV sanity check and the points rule does the selecting;
+  quarter-Kelly at a 54% belief stakes about 1% of bankroll.
+- **Exclusions** fall out of the zero weights: college spreads and
+  moneylines and the NFL spread and moneyline produce no rows. The paper
+  flags stay for the day a market has a rule.
+
+Open: the count-capped tiered list (#5) and live closing-line value by rule
+(#6).
+

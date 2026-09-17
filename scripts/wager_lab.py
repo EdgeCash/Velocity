@@ -40,6 +40,7 @@ from velocity.backtest.wagers import (
     calibration_table,
     grade_frame,
     records_frame,
+    rule_weight,
     score_rule,
     standard_rules,
 )
@@ -112,7 +113,8 @@ def main() -> None:
         record = score_rule(frame, parse_rule(text, weights))
         print(f"\n--- {record.rule.name}: {record.n} bets, {record.win_rate:.3f}, "
               f"ROI {record.roi:+.3f}, {record.seasons_above_break_even}/{record.seasons} "
-              f"seasons above break-even ---")
+              f"seasons above break-even; the weight that maps its claim onto its "
+              f"record: {rule_weight(frame, record.rule):.2f} ---")
         print(record.per_season.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
 
     if args.out:

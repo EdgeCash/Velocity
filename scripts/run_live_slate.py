@@ -1051,8 +1051,21 @@ def build_parser() -> argparse.ArgumentParser:
     # 2025 alone), while ≥6 still does (53.0%, 53.1% with the SP+ prior) — so
     # the default moved 4 → 6 on 2026-08-31. Applies to full-game totals only;
     # NCAAF spreads showed no edge at any threshold and sit out by default.
-    parser.add_argument("--ncaaf-total-edge", type=float, default=6.0,
-                        help="NCAAF: min points of total disagreement to bet (0 = off)")
+    parser.add_argument("--ncaaf-total-edge", type=float, default=None,
+                        help="NCAAF: min points of total disagreement to bet (0 = off; "
+                             "default: the wager lab's pick)")
+    parser.add_argument("--nfl-total-edge", type=float, default=None,
+                        help="NFL: min points of total disagreement to bet (0 = off; "
+                             "default: the wager lab's pick)")
+    parser.add_argument("--ncaaf-total-sides", default=None,
+                        help="which sides of the college total the filter admits, "
+                             "comma-separated (default: the wager lab's pick — under)")
+    parser.add_argument("--nfl-total-sides", default=None,
+                        help="the same for the NFL total (default: over,under)")
+    parser.add_argument("--model-weight-market", action="append", default=[],
+                        metavar="MARKET=WEIGHT",
+                        help="anchoring weight for one market (spread, total, moneyline), "
+                             "overriding the league's fitted table; repeatable")
     # Team totals — the censored-score derivative (docs/EDGE_RESEARCH.md §2.2).
     # Books derive them linearly from total+spread, ignoring the zero floor on
     # scores; the sim's floored scores price that mass correctly. Offline, rows
@@ -1327,8 +1340,13 @@ def live_config_rows(
                  else f"belief = market + {weight:g} × (model − market)"))
     if args.league == "ncaaf":
         cuts = []
-        if args.ncaaf_total_edge > 0:
-            cuts.append(f"totals only at ≥ {args.ncaaf_total_edge:g} pts of disagreement")
+        edge_pts = resolve_total_edge(args, args.league)
+        if edge_pts > 0:
+            sides = "/".join(sorted(resolve_total_sides(args, args.league)))
+            cuts.append(f"totals only at ≥ {edge_pts:g} pts of disagreement ({sides})")
+        for market, w in sorted(resolve_model_weights_by_market(
+                args.model_weight_market, args.league).items()):
+            cuts.append(f"{market} anchored at {w:g}" if w > 0 else f"{market} off the board")
         cuts.append("spreads " + ("on" if args.ncaaf_spreads else "sitting out"))
         cuts.append("moneylines " + ("on" if args.ncaaf_moneylines else "sitting out"))
         rows.append(("Selectivity", "; ".join(cuts)))
@@ -1779,6 +1797,63 @@ def resolve_model_weight(explicit: float | None, league: str) -> float:
     return DEFAULT_MODEL_WEIGHT_BY_LEAGUE.get(league, 1.0)
 
 
+# Per-market anchoring weights (docs/OUTPUT_AUDIT.md §3 #2), fitted by the
+# wager lab as the weight that maps a promoted rule's claimed edge onto its
+# walk-forward record (velocity.backtest.wagers.rule_weight): the NFL total's
+# 4-point cut earns 0.29 of its raw disagreement over 637 bets, the college
+# under-only 4-point cut 0.21 over 1,255. The close would put nothing on the
+# model's spreads (+0.03 NFL, −0.09 college) or moneylines (−0.01) — at 0
+# the belief is the market's and those markets leave the board; the lab is
+# where they earn their way back. Leagues not listed keep the league weight.
+DEFAULT_MODEL_WEIGHT_BY_MARKET: dict[str, dict[str, float]] = {
+    "nfl": {"spread": 0.0, "total": 0.29, "moneyline": 0.0},
+    "ncaaf": {"spread": 0.0, "total": 0.21, "moneyline": 0.0},
+}
+# The totals filters (docs/OUTPUT_AUDIT.md §2.2): points of disagreement with
+# the number, and the sides admitted. NFL: 4 either side (54.3% on 641, nine
+# seasons of fifteen; the unders 55.6%). College: 4 on the under alone
+# (53.6% on 1,263, seven of twelve) — the overs are 50.0% at every threshold,
+# which is why the shipped either-side 6-point rule paid in five seasons of
+# twelve.
+DEFAULT_TOTAL_EDGE_BY_LEAGUE = {"nfl": 4.0, "ncaaf": 4.0}
+DEFAULT_TOTAL_SIDES_BY_LEAGUE = {"nfl": frozenset({"over", "under"}),
+                                 "ncaaf": frozenset({"under"})}
+
+
+def resolve_model_weights_by_market(pairs: Sequence[str], league: str) -> dict[str, float]:
+    """The league's fitted per-market weights, with ``MARKET=WEIGHT`` overrides."""
+    out = dict(DEFAULT_MODEL_WEIGHT_BY_MARKET.get(league, {}))
+    for pair in pairs:
+        market, sep, value = pair.partition("=")
+        if not sep or not market.strip():
+            raise SystemExit(f"--model-weight-market wants MARKET=WEIGHT, got {pair!r}")
+        try:
+            out[market.strip()] = max(0.0, float(value))
+        except ValueError:
+            raise SystemExit(
+                f"--model-weight-market wants a numeric weight, got {pair!r}") from None
+    return out
+
+
+def resolve_total_edge(args: argparse.Namespace, league: str) -> float:
+    """Points of total disagreement to bet — the league's flag, else the lab's pick."""
+    explicit = getattr(args, f"{league}_total_edge", None)
+    if explicit is not None:
+        return max(0.0, float(explicit))
+    return DEFAULT_TOTAL_EDGE_BY_LEAGUE.get(league, 0.0)
+
+
+def resolve_total_sides(args: argparse.Namespace, league: str) -> frozenset[str]:
+    """The sides of the total the filter admits — the league's flag, else the lab's pick."""
+    explicit = getattr(args, f"{league}_total_sides", None)
+    if explicit:
+        sides = frozenset(part.strip().lower() for part in explicit.split(",") if part.strip())
+        if not sides <= {"over", "under"}:
+            raise SystemExit(f"--{league}-total-sides wants over and/or under, got {explicit!r}")
+        return sides
+    return DEFAULT_TOTAL_SIDES_BY_LEAGUE.get(league, frozenset({"over", "under"}))
+
+
 def ncaaf_base_points(games: pd.DataFrame, seasons: int = 2) -> float:
     """The NCAAF blend's per-team scoring level: half the trailing-two-season
     mean total (:func:`velocity.models.level.mean_points_per_team`).
@@ -1958,24 +2033,33 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 - a health line never blocks
             print(f"  league health unavailable ({exc})")
     else:
-        # NCAAF bets totals on points of disagreement (the backtested cut); NFL
-        # leaves it off and gates on probability edge alone.
-        total_edge = args.ncaaf_total_edge if args.league == "ncaaf" else 0.0
+        # Both football leagues bet totals on points of disagreement (the
+        # wager lab's cuts, docs/OUTPUT_AUDIT.md): the NFL at 4 either side,
+        # college at 4 on the under alone.
+        total_edge = resolve_total_edge(args, args.league)
+        total_sides = resolve_total_sides(args, args.league)
         model_weight = resolve_model_weight(args.model_weight, args.league)
+        weights_by_market = resolve_model_weights_by_market(
+            args.model_weight_market, args.league)
         # The college sides are PAPER, not excluded (docs/STRATEGY_REVIEW.md
         # S2): staked at zero on the same evidence as before, but priced and
         # graded so the record can eventually re-test the verdicts that put
         # them there. No game market is excluded outright any more — an
         # excluded market produces no row, and a market with no record can
         # never earn its way back.
+        for market, weight in sorted(weights_by_market.items()):
+            if weight <= 0.0:
+                print(f"{args.league.upper()} {market}s: off the board — the close would put "
+                      f"no weight on the model's number (docs/OUTPUT_AUDIT.md §2.2); "
+                      f"--model-weight-market {market}=W puts them back")
         if args.league == "ncaaf" and not args.ncaaf_spreads:
-            print("NCAAF spreads: paper — priced and graded, staked at zero "
-                  "(50.1% ATS flat, no edge at any disagreement threshold — "
-                  "docs/BACKTEST_NCAAF.md); --ncaaf-spreads stakes them")
+            print("NCAAF spreads: paper if they reach the board — priced and graded, "
+                  "staked at zero (50.1% ATS flat, inverted at every disagreement "
+                  "size — docs/OUTPUT_AUDIT.md); --ncaaf-spreads stakes them")
         if args.league == "ncaaf" and not args.ncaaf_moneylines:
-            print("NCAAF moneylines: paper — priced and graded, staked at zero "
-                  "(negative in every price bucket 2021–2025, and 60% of the "
-                  "first live card's exposure — docs/STRATEGY_REVIEW.md §1.2); "
+            print("NCAAF moneylines: paper if they reach the board — priced and graded, "
+                  "staked at zero (negative in every price bucket 2021–2025, and 60% of "
+                  "the first live card's exposure — docs/STRATEGY_REVIEW.md §1.2); "
                   "--ncaaf-moneylines stakes them")
         paper_markets = resolve_paper_markets(args)
         if "__all__" in paper_markets:
@@ -2013,9 +2097,11 @@ def main() -> None:
             ladder_tolerance=args.ladder_tolerance if args.ladder_tolerance > 0 else None,
             league=args.league,
             model_weight=model_weight,
+            model_weight_by_market=weights_by_market,
             min_edge_by_market=parse_market_edges(args.min_edge_market),
             exclude_markets=frozenset(),  # nothing is dropped; see paper_markets
             min_total_disagreement=total_edge,
+            total_sides=total_sides,
             min_team_total_disagreement=args.team_total_edge,
             paper_markets=paper_markets,
             paper_venues=paper_venues,
@@ -2027,9 +2113,14 @@ def main() -> None:
             print(f"market anchoring: belief = market + {model_weight:g} × "
                   f"(model − market); clearing min-edge {args.min_edge:g} takes "
                   f"{args.min_edge / model_weight:g} of raw disagreement")
+        for market, weight in sorted(weights_by_market.items()):
+            if weight > 0.0:
+                print(f"  {market}: anchored at {weight:g} — the weight that maps the "
+                      f"promoted rule's claim onto its walk-forward record")
         if total_edge > 0.0:
-            print(f"NCAAF totals filter: model must differ from the number by "
-                  f"≥ {total_edge:g} points")
+            sides = "/".join(sorted(total_sides))
+            print(f"{args.league.upper()} totals filter: model must differ from the number "
+                  f"by ≥ {total_edge:g} points; sides admitted: {sides}")
         # Project once, then price off those projections (reused for the workbook).
         # College: the provider names carry nicknames ("Georgia Bulldogs",
         # "Duke Blue Devils") while the fitted model keys by school ("Georgia",

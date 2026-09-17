@@ -89,3 +89,21 @@ def test_filter_composes_with_the_probability_gate() -> None:
         min_total_disagreement=1.0,
     )
     assert list(build_slate({"g1": proj}, _lines(50.0), GAMES, cfg).bets) == []
+
+
+def test_total_sides_admits_only_the_listed_side() -> None:
+    """The college edge is on the under alone (docs/OUTPUT_AUDIT.md §2.2)."""
+    over_lean = _projection(60.0)   # model 60 vs 50: the over by 10
+    under_lean = _projection(40.0)  # model 40 vs 50: the under by 10
+    unders_only = SlateConfig(exclude_closing=False, min_edge=0.0,
+                              min_total_disagreement=4.0, total_sides=frozenset({"under"}))
+    assert [b.side for b in build_slate({"g1": over_lean}, _lines(50.0), GAMES, unders_only).bets
+            if b.market == "total"] == []
+    assert [b.side for b in build_slate({"g1": under_lean}, _lines(50.0), GAMES, unders_only).bets
+            if b.market == "total"] == ["under"]
+    # Both sides is the filter as it was.
+    both = SlateConfig(exclude_closing=False, min_edge=0.0, min_total_disagreement=4.0)
+    assert both.total_sides == frozenset({"over", "under"})
+    assert [b.side for b in build_slate({"g1": over_lean}, _lines(50.0), GAMES, both).bets
+            if b.market == "total"] == ["over"]
+

@@ -275,6 +275,31 @@ def score_rule(frame: pd.DataFrame, rule: WagerRule, *, min_season_bets: int = 5
     )
 
 
+def rule_weight(frame: pd.DataFrame, rule: WagerRule) -> float:
+    """The anchoring weight that maps ``rule``'s claimed edge onto its record.
+
+    Over the bets the rule makes: (realized win rate − 0.5) over the mean of
+    the picked side's raw excess probability. The linear weight fitted on
+    every game (:func:`anchoring_weight`) averages over the games the rule
+    never bets; this is the weight the staking belief needs on the games it
+    does — the college S3 sweep's "claim matched realization", as a fit.
+    Moneyline rules measure against the market's probability instead of 0.5.
+    """
+    bets = select(frame, rule)
+    if bets.empty:
+        return float("nan")
+    rows = frame.set_index("game_id").loc[bets["game_id"]].reset_index()
+    p_first = side_probabilities(rows, rule.market).to_numpy(dtype=float)
+    base = (rows["q_home"].to_numpy(dtype=float) if rule.market == "moneyline"
+            else np.full(len(rows), 0.5))
+    first = _first_side(rule.market)[0]
+    on_first = bets["side"].to_numpy() == first
+    excess = np.where(on_first, p_first - base, base - p_first)
+    realized_excess = float(bets["won"].mean()) - float(np.mean(np.where(on_first, base, 1 - base)))
+    mean_excess = float(np.mean(excess))
+    return realized_excess / mean_excess if mean_excess > 0 else float("nan")
+
+
 def calibration_table(
     frame: pd.DataFrame, market: str, weight: float = 1.0,
     bins: Sequence[float] = (0.5, 0.53, 0.56, 0.6, 0.65, 0.75, 1.0),

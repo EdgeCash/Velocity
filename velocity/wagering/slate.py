@@ -93,6 +93,16 @@ class SlateConfig:
     # wagering-policy choice to be set from live paper CLV, not a fit change —
     # leans and cards always keep the pure model.
     model_weight: float = 1.0
+    # Per-market anchoring weights (docs/OUTPUT_AUDIT.md §3 #2): a market
+    # listed here anchors at its own weight instead of ``model_weight``. The
+    # honest weight is the one that maps a promoted rule's claimed edge onto
+    # its walk-forward record (velocity.backtest.wagers.rule_weight): the
+    # NFL total's 4-point cut earns 0.29 of its raw disagreement, the college
+    # under-only cut 0.21, and the close would put nothing on the model's
+    # spreads or moneylines. A weight of 0 makes the belief the market's, so
+    # the market never qualifies — the way a market with no edge leaves the
+    # board. Empty (default) = every market uses ``model_weight``.
+    model_weight_by_market: Mapping[str, float] = field(default_factory=dict)
     # Confidence calibration: shrink the model's probability toward 0.5 (the
     # no-information point) before measuring edge and staking. 1.0 = the raw model
     # (default, bit-identical to before); < 1.0 tempers an over-confident model so a
@@ -131,6 +141,12 @@ class SlateConfig:
     # was calibrated. ``0.0`` (default) disables it — every other league is
     # unaffected.
     min_total_disagreement: float = 0.0
+    # Which sides of the full-game total the filter admits (docs/OUTPUT_AUDIT.md
+    # §2.2): the college edge is entirely on the under side — unders 4+ pay
+    # 53.6% across twelve seasons while the overs sit at 50.0% at every
+    # threshold — so the college slate admits ``{"under"}`` alone. A side not
+    # listed produces no row. Both sides (default) is the filter as it was.
+    total_sides: frozenset[str] = frozenset({"over", "under"})
     # The same selectivity for team totals (``team_total_home``/``_away``):
     # bet one only when the sim's fair team total (median simulated score,
     # zero-floor included) differs from the number by at least this much in
@@ -193,6 +209,10 @@ class SlateConfig:
     def min_edge_for(self, market: str) -> float:
         """The edge threshold for ``market`` — its override, else the global."""
         return float(self.min_edge_by_market.get(market, self.min_edge))
+
+    def model_weight_for(self, market: str) -> float:
+        """The anchoring weight for ``market`` — its override, else the global."""
+        return float(self.model_weight_by_market.get(market, self.model_weight))
 
     def paper_reason(self, market: str, edge: float, p_fair: float | None,
                      book: str | None = None, game_id: str | None = None) -> str | None:
@@ -517,6 +537,8 @@ def _best_opportunity(
         # Points-of-disagreement selectivity on full-game totals (the backtested
         # NCAAF cut). Applied before pricing: a number the model barely disagrees
         # with is not a candidate at any price.
+        if market == "total" and side not in config.total_sides:
+            continue
         if (
             market == "total"
             and config.min_total_disagreement > 0.0
@@ -540,9 +562,10 @@ def _best_opportunity(
             continue
         if config.prob_shrink != 1.0:  # temper an over-confident model toward 0.5
             p_model = 0.5 + config.prob_shrink * (p_model - 0.5)
-        if config.model_weight != 1.0:  # market anchoring (Round 3): regress the
-            # staking belief toward this line's own devigged probability.
-            p_model = p_fair + config.model_weight * (p_model - p_fair)
+        weight = config.model_weight_for(market)
+        if weight != 1.0:  # market anchoring (Round 3): regress the staking
+            # belief toward this line's own devigged probability.
+            p_model = p_fair + weight * (p_model - p_fair)
         signal = evaluate(
             p_model,
             float(row["price"]),
