@@ -816,8 +816,19 @@ def _build_projection(
             scores_model = calibrate_scores_level(scores_model, games, seasons=NFL_LEVEL_SEASONS)
             print(f"NCAAF scores level: base {scores_model.ratings.base_points:.2f} pts/team "
                   f"(the fit ran {drift:+.2f} on the trailing {NFL_LEVEL_SEASONS} seasons)")
-        model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
-        kind = (f"EPA×scores blend ({epa_kind}/λ{ridge:g}, w=0.5, "
+        # The early-season blend weight (docs/MODEL_LAB.md, the early-weight
+        # round): through week 4 the EPA half opens the season on a quarter
+        # of last season's tail while the scores half carries the SP+ prior,
+        # so the EPA half gets less of September.
+        from velocity.models.level import EARLY_WEEK_BY_LEAGUE
+        from velocity.models.level import next_week as _next_week
+
+        blend_weight = 0.5
+        early_weight = resolve_ncaaf_early_weight(args.ncaaf_early_weight)
+        if _next_week(games) <= EARLY_WEEK_BY_LEAGUE["ncaaf"]:
+            blend_weight = early_weight
+        model = BlendedGameModel(epa_model, scores_model, blend_weight, sim)
+        kind = (f"EPA×scores blend ({epa_kind}/λ{ridge:g}, w={blend_weight:g}, "
                 f"base {base:.1f}) on {len(plays)} plays")
         college_scale = resolve_scale(args.ncaaf_scale, "ncaaf")
         if college_scale != "off":
@@ -904,6 +915,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default: the lab's pick)")
     parser.add_argument("--ncaaf-scale-shift", choices=["on", "off"], default=None,
                         help="the same for the college chain (default: the lab's pick)")
+    parser.add_argument("--ncaaf-early-weight", type=float, default=None,
+                        help="the EPA half's weight in the college blend through week 4 "
+                             "(0.5 after; default: the lab's pick)")
     parser.add_argument("--ncaaf-epa-half-life", type=float, default=None,
                         help="recency half-life, in on-field weeks, on the college EPA "
                              "half's plays (0 weighs the window flat; default: the lab's "
@@ -1566,6 +1580,19 @@ def resolve_scale(explicit: str | None, league: str) -> str:
 # The NFL bank's intercept is noise around zero and the shift costs it
 # calibration — off there.
 DEFAULT_SCALE_SHIFT_BY_LEAGUE = {"nfl": False, "ncaaf": True}
+
+
+# The EPA half's weight in the college blend through week 4 (0.5 after). The
+# early-weight round (docs/MODEL_LAB.md): a wash over the flat fit, worth
+# 0.03 on the margin over the recency chain — 0.4 (0.3 ties it on the
+# margin and loses on the total; 0.6 loses).
+DEFAULT_NCAAF_EARLY_WEIGHT = 0.4
+
+
+def resolve_ncaaf_early_weight(explicit: float | None) -> float:
+    if explicit is None:
+        return DEFAULT_NCAAF_EARLY_WEIGHT
+    return min(1.0, max(0.0, float(explicit)))
 
 
 def resolve_scale_shift(explicit: str | None, league: str) -> bool:

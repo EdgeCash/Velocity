@@ -1573,3 +1573,27 @@ margin, 16.15 total).
    17.73 → **16.71** on the day, from the flat four-season fit the day
    began with; the ≥6 totals cut 52.7% on 1,812.
 
+
+## The early-weight round, again (2026-09-17) — NCAAF
+
+The early-season blend weight was a wash over the flat fit (the composites
+round). Over the recency chain it is a different question: with a six-week
+half-life and a six-week offseason gap the EPA half opens a season on about
+a quarter of last season's tail, while the scores half carries the SP+
+prior. The EPA half's weight through week 4 (0.5 after), over the promoted
+chain with the shift and the re-measured sim:
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total |
+|---|---|---|---|---|---|
+| promoted chain (0.5 throughout) | 0.1860 | 0.0138 | 16.714 | 16.805 | +0.102 |
+| EPA half at 0.3 through week 4 | 0.1858 | 0.0124 | 16.676 | 16.810 | +0.091 |
+| **0.4** | **0.1858** | **0.0120** | 16.684 | **16.805** | +0.097 |
+| 0.6 | 0.1864 | 0.0140 | 16.766 | 16.811 | +0.105 |
+
+**Reading:** small and consistent — 0.03 off the margin, Brier and
+calibration better, the total unmoved at 0.4 (0.3 takes the margin a hair
+further and gives it back on the total and the total's information
+weight; 0.6 loses). **Promoted at 0.4** (`DEFAULT_NCAAF_EARLY_WEIGHT`,
+`--ncaaf-early-weight`): the live runner prices the EPA half at 0.4 while
+the week about to be played is week 4 or earlier.
+

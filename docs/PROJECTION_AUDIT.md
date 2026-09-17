@@ -348,9 +348,11 @@ the scale keeps its home-margin intercept for college
 error 0.029 → 0.019), and the college sim's dispersion re-measured on the
 shifted chain (`NCAAF_SD_MARGIN` / `NCAAF_SD_TOTAL` 18.2 / 16.7 → 16.2 /
 16.2; calibration error → 0.014, Brier 0.1866 → 0.1860). The NFL bank's
-intercept is noise around zero — off there. Still open: college weather
-and venues (#10), a college special-teams rating (#14's other half), the
-joint phase ridge (#16).
+intercept is noise around zero — off there. Then the early-season blend
+weight (#17), a wash over the flat fit and worth 0.03 on the margin over
+the recency chain: **promoted at 0.4** through week 4. Still open:
+college weather and venues (#10), a college special-teams rating (#14's
+other half), the joint phase ridge (#16).
 
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
@@ -638,7 +640,8 @@ out of sample, the lab's 4,000-sim gate):
 | NCAAF, FBS vs FBS, the college round's base (phase scale) | 17.73 / 15.64 | 17.25 / 16.30 | −0.05 / +0.05 |
 | NCAAF, FBS vs FBS, after the college round (recency on the EPA half) | 16.88 / 15.64 | 16.85 / 16.30 | −0.09 / +0.09 |
 | NCAAF, FBS vs FBS, after the recency round (the offseason gap, the scores half's recency, special teams) | 16.82 / 15.64 | 16.81 / 16.30 | −0.09 / +0.10 |
-| **NCAAF, FBS vs FBS, now** (the scale's home-margin intercept) | **16.71** / 15.64 | **16.81** / 16.30 | −0.09 / **+0.10** |
+| NCAAF, FBS vs FBS, after the home-margin round (the scale's intercept) | 16.71 / 15.64 | 16.81 / 16.30 | −0.09 / +0.10 |
+| **NCAAF, FBS vs FBS, now** (the EPA half at 0.4 through week 4) | **16.68** / 15.64 | **16.81** / 16.30 | −0.09 / **+0.10** |
 
 (The NFL close's margin RMSE reads 12.97 here and 12.72 in §6 because the
 two tables score different windows — the lab's 2011–2025 trailing-4 run
