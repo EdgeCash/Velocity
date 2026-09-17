@@ -49,7 +49,27 @@ def test_cli_default_leaves_weight_to_league_policy() -> None:
     assert args.min_edge == 0.02
     # The 2025 extension left ≥4 pts of totals disagreement at break-even
     # (52.3% on 5,657) while ≥6 still clears (53.0%) — the default moved.
-    assert args.ncaaf_total_edge == 6.0
+    # The totals filters resolve per league from the wager lab's cuts
+    # (docs/OUTPUT_AUDIT.md §2.2): 4 points either side in the NFL, 4 on the
+    # under alone in college; the flags override.
+    assert args.ncaaf_total_edge is None and args.nfl_total_edge is None
+    runner = _runner()
+    assert runner.resolve_total_edge(args, "ncaaf") == 4.0
+    assert runner.resolve_total_edge(args, "nfl") == 4.0
+    assert runner.resolve_total_sides(args, "ncaaf") == frozenset({"under"})
+    assert runner.resolve_total_sides(args, "nfl") == frozenset({"over", "under"})
+    custom = runner.build_parser().parse_args(
+        ["--league", "ncaaf", "--ncaaf-total-edge", "6", "--ncaaf-total-sides", "over,under"])
+    assert runner.resolve_total_edge(custom, "ncaaf") == 6.0
+    assert runner.resolve_total_sides(custom, "ncaaf") == frozenset({"over", "under"})
+    # Per-market anchoring: the fitted table, with MARKET=WEIGHT overrides.
+    assert runner.DEFAULT_MODEL_WEIGHT_BY_MARKET == {
+        "nfl": {"spread": 0.0, "total": 0.29, "moneyline": 0.0},
+        "ncaaf": {"spread": 0.0, "total": 0.21, "moneyline": 0.0},
+    }
+    assert runner.resolve_model_weights_by_market([], "nfl")["total"] == 0.29
+    assert runner.resolve_model_weights_by_market(["spread=0.1"], "nfl")["spread"] == 0.1
+    assert runner.resolve_model_weights_by_market([], "mlb") == {}
 
 
 def test_prop_min_edge_defaults_to_double_the_game_bar() -> None:
@@ -144,7 +164,12 @@ def test_the_live_config_block_describes_the_run_not_a_hand_table() -> None:
     rows = dict(runner.live_config_rows(args, "EPA×scores blend", None))
     assert rows["Ratings"] == "EPA×scores blend"
     assert "0.13" in rows["Market anchoring"]  # the S3 staking sweep's weight
-    assert "≥ 6" in rows["Selectivity"] and "moneylines sitting out" in rows["Selectivity"]
+    # The wager lab's college cut: 4 points on the under alone, the spread and
+    # moneyline off the board at a zero weight, the total anchored at its fit.
+    assert "≥ 4 pts of disagreement (under)" in rows["Selectivity"]
+    assert "spread off the board" in rows["Selectivity"]
+    assert "total anchored at 0.21" in rows["Selectivity"]
+    assert "moneylines sitting out" in rows["Selectivity"]
     assert "0.12 absolute" in rows["Edge ceilings"] and "50%" in rows["Edge ceilings"]
     assert rows["Paper"] == "team totals"
     nhl = runner.build_parser().parse_args(["--league", "nhl"])

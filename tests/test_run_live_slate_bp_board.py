@@ -83,6 +83,10 @@ def _run(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
          "--bp-lines-file", str(lines_path), "--bp-events-file", str(events_path),
          "--bp-books-file", str(books_path),
          "--n-sims", "2000", "--max-days", "0", "--min-edge", "0.0",
+         # The fixture's lines are spreads and moneylines, which the selection
+         # round keeps off the board at a zero weight (docs/OUTPUT_AUDIT.md);
+         # this test is about the venue's plumbing, so put them back.
+         "--model-weight-market", "spread=0.2", "--model-weight-market", "moneyline=0.2",
          "--out", str(tmp_path / "slate"), *extra],
         capture_output=True, text=True, cwd=REPO,
     )

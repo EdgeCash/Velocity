@@ -21,6 +21,7 @@ from velocity.backtest.wagers import (
     calibration_table,
     grade_frame,
     records_frame,
+    rule_weight,
     score_rule,
     select,
     side_probabilities,
@@ -174,3 +175,18 @@ def test_the_cli_parses_rules_and_runs_on_the_committed_projections() -> None:
         frame = grade_frame(pd.read_parquet(path), games)
         assert len(frame) > 3000
         assert 0.0 < anchoring_weight(frame, "total") < 0.2
+
+
+def test_rule_weight_maps_the_claim_onto_the_record() -> None:
+    frame = grade_frame(*_fixture())
+    rule = WagerRule("total", "either", min_points=4.0)
+    w = rule_weight(frame, rule)
+    # Three bets (g1 over lost, g3 under won, g4 under won): realized 2/3;
+    # the picked sides' raw excess probabilities average over the same bets.
+    bets = select(frame, rule)
+    p_over = side_probabilities(frame.set_index("game_id").loc[bets["game_id"]].reset_index(),
+                                "total").to_numpy()
+    excess = np.where(bets["side"].to_numpy() == "over", p_over - 0.5, 0.5 - p_over).mean()
+    assert w == pytest.approx((2 / 3 - 0.5) / excess)
+    assert np.isnan(rule_weight(frame, WagerRule("total", "either", min_points=99.0)))
+
