@@ -406,3 +406,99 @@ walk-forward gains; the college postseason ordering leak was closed. The
 harness for everything in §3 exists — `model_lab.py`, `compress_plays`, the
 totals sweep, `build_sim_residuals.py` — which is why most of the list is
 small.
+
+---
+
+## 5. Data we do not have coming in at all
+
+§2.4 covered feeds we already fetch and discard. This section is the other
+half of "are we using all the data": sources **not wired**, ordered by what
+they would change on the matchup card and in the projection. Everything
+marked free is Python-reachable today; the paid rows are few and cheap.
+`EDGE_RESEARCH.md` §8 listed some of these as a shopping list in August; as of
+this audit none of them has an ingest.
+
+### 5.1 Cross-sport — the market and the environment
+
+| # | Source | Cost | What it adds | Where it lands |
+|---|---|---|---|---|
+| 1 | **Pinnacle closes** — The Odds API `eu` region (the collector flag exists, `SYSTEM_REVIEW` M6) | ~2× odds credits, inside budget | a sharp close for CLV and a sharp anchor for de-vig; today both are a median of 11 soft books, ~4.5% overstated | grader, `SlateConfig` de-vig |
+| 2 | **Opening lines and movement** — CFBD `/lines` already returns `spreadOpen`/`overUnderOpen` per provider (discarded by `pull_cfbd_lines.py`); SBR / Aussportsbetting archives for NFL open→close back to 2007 | free | open-to-close movement as a feature (steam, where the market moved *away* from us) and CLV on college measured historically, not just live | `games_lines.parquet`, lab |
+| 3 | **Officials** — nflverse `officials` (crew per game), MLB `hydrate=officials` on the schedule (home-plate umpire), official.nba.com referee assignments (covers WNBA), ESPN box officials (NCAAB) | free | penalty rate and pace by crew move NFL totals 1–2 pts; umpire zone size moves K/BB (2026 ABS caveat); foul-heavy NBA/WNBA crews move totals by free throws | totals wrapper, MLB K props |
+| 4 | **A venue table for every league** — CFBD `/venues` (dome, elevation, lat/lon, timezone), statsapi venues, static NFL/NHL/WNBA arena tables | free | travel distance, time-zone shift, altitude, body-clock (west-coast teams at 1pm ET) — `RestAdjustedModel` can only see days between games | rest/travel wrapper |
+| 5 | **Hourly weather at kickoff** — Open-Meteo hourly archive + forecast (the current bank is a daily max) | free | wind *at kickoff* rather than the day's peak; temperature and precipitation on every outdoor game; forecast-vs-actual error as a feature of when to bet | weather wrapper, all outdoor sports |
+| 6 | **Public betting splits** — tickets vs money % (Action Network, VSiN, Covers) | scrape / cheap | a weak but documented signal (money against tickets); mostly a card annotation | intel signal |
+| 7 | **Injury news speed** — RotoWire API (via OpticOdds), curated beat-reporter lists | quote / cheap | the WNBA and NBA edges are news-speed edges; the NFL Sunday inactives too | starter map, prop availability |
+| 8 | **Public rating ensembles** — Massey composite (college), nfelo, ESPN FPI/BPI (CFBD serves FPI and Elo), Inpredictable | free | ensembling public ratings is a documented accuracy gain; doctrine stays — they track the market, so this is calibration and no-line pricing, not edge | priors / lab benchmark |
+
+### 5.2 NFL — the player layer the model is missing entirely
+
+All from the nflverse release assets the pbp already comes from; none is ingested.
+
+| Source | Since | What it adds |
+|---|---|---|
+| **Snap counts** (`snap_counts`) | 2012 | usage in snaps, not box stats: role changes, OL continuity, the injury burden (§3 #9) measured in the unit that matters |
+| **FTN charting** (`ftn_charting`) | 2022 | per-play pressure, blitz, man/zone, play action, motion, RPO, screen, box count, throw depth, catchable, drop, contested — pressure-adjusted QB ratings and scheme matchups; the card's "what moves this game" gets content |
+| **Next Gen Stats weekly** (`nextgen_stats`) | 2016 | CPOE, time to throw, aggressiveness, separation, cushion, rush yards over expected — skill separated from luck inside EPA |
+| **PFR advanced stats** (`pfr_advstats`) | 2018 | pressures, hurries, drops, bad throws, YAC, blitzes — a second charting source |
+| **Participation** (`pbp_participation`) | 2016–2023 | personnel packages, defenders in box, pass rushers — historical only, for fitting |
+| **Depth charts** (`depth_charts`) | 2001 | historical starter changes at every position (the backtest for #9) |
+| **ESPN QBR, contracts, draft picks** | various | a roster-value prior for Week 1 (the 0.72 early-season slope in §2.2) |
+| **PFF grades** (PFF+) | paid, ~$40–60/yr, no API | OL/DL and coverage grades — the one paid input most public elite NFL models carry; college too |
+
+### 5.3 NCAAF — CFBD endpoints with the key already in CI
+
+| Endpoint | What it adds |
+|---|---|
+| `/player/returning`, `/recruiting/teams`, `/talent`, `/player/portal` | the preseason prior `features/priors.py` was written for (returning production alone is >60% of SP+'s preseason accuracy); portal production at half credit |
+| `/ppa/players/season`, `/player/usage`, `/plays/stats` | per-player PPA — a college QB term (§3 #8) from CFBD's own numbers rather than reconstructed from cfbfastR |
+| `/stats/game/advanced`, `/drives` | success rate, explosiveness, line yards, havoc, field position per game — the SP+ components as features; drive-level scoring for the sim |
+| `/coaches`, `/rankings`, `/games/media` | coaching changes; AP-rank holdover bias in openers; TV network and kickoff window (the documented TV-game over bias) |
+| `/venues`, `/games/weather` | roof, elevation, coordinates, per-game weather — college has no weather and no venue data today |
+| `/lines` per provider + `spreadOpen`/`overUnderOpen` | line movement and multi-book closes, free, 2013+ |
+| `/metrics/wp/pregame`, `/ratings/fpi`, `/ratings/elo` | public benchmarks and prior candidates |
+| **Conference availability reports** (SEC and Big 12 since 2024, Big Ten since 2025), Ourlads depth charts | the only real college injury/starter source — ESPN returned 3 rows for the whole league; these are official and pre-kickoff |
+
+### 5.4 MLB
+
+| Source | Cost | What it adds |
+|---|---|---|
+| Umpire assignments (statsapi `hydrate=officials`), UmpScorecards | free | plate-umpire zone and K/BB tendencies for the K-prop and totals; re-estimate on 2026 data under ABS |
+| Every pitcher appearance from the boxscores already walked (relievers, pitch counts, days since) | free, internal | bullpen fatigue and availability — the market's second-largest MLB factor after the starter; the starters bank holds only starters |
+| Pitcher Statcast (Savant pitch-level, pybaseball) | free | velocity, spin, movement by start — decline and injury show up here before the ERA does; the batter side is already banked |
+| FanGraphs projections (Steamer / ZiPS / ATC daily), Stuff+ / Pitching+ | free page exports | an ensemble prior for hitters and pitchers (the FanGraphs finding: ensembles win) |
+| statsapi transactions / IL, platoon splits, Savant OAA | free | availability, lineup-vs-handedness, team defense |
+
+### 5.5 WNBA, NHL, NCAAB (content posture, but the card is generated for them)
+
+| League | Source | Cost | What it adds |
+|---|---|---|---|
+| WNBA | wehoop play-by-play | free | exact possessions, rotation minutes, garbage time — the pace×efficiency model runs on a box-score estimator |
+| WNBA | official injury report (wnba.com), 5pm ET day-before | free | the documented WNBA edge; ESPN's report is thin |
+| WNBA | referee assignments (official.nba.com) | free | foul rate → totals |
+| NHL | DailyFaceoff confirmed starting goalies | scrape | the largest NHL factor; pricing is goalie-neutral today by design |
+| NHL | MoneyPuck shot-level xG, team xGF/xGA, goalie GSAx; Natural Stat Trick 5v5 | free | expected-goals ratings in place of goals (goals are the noisiest outcome in the four sports) |
+| NHL | NHL API rosters, injuries, line combinations | free | availability and top-line changes |
+| NCAAB | Torvik timemachine (as-of daily ratings) | free | a leak-free daily prior for the walk-forward |
+| NCAAB | KenPom API | ~$25/yr | the market's own input, for calibration |
+| NCAAB | hoopR play-by-play, ESPN officials | free | possessions, garbage time, officials |
+
+### 5.6 What to wire first
+
+Ordered by value for the projection and the card, across leagues:
+
+1. Pinnacle closes (a flag) and the CFBD opening lines (already in the
+   payload) — the market's own history, for the yardstick every other item
+   is judged by.
+2. NFL snap counts and FTN charting — the player layer; snaps feed the injury
+   burden and FTN feeds pressure-adjusted QB and scheme matchups.
+3. CFBD priors (returning production, recruiting, portal) into both halves of
+   the college blend — September is where the college model is weakest.
+4. Venue tables and hourly weather for every league — travel, altitude,
+   body-clock and kickoff-time wind, one wrapper shared by all four sports.
+5. Conference availability reports for college and the WNBA official injury
+   report — the only pregame availability sources those leagues have.
+6. MLB umpires and bullpen usage from data already walked.
+7. Officials for NFL and NBA/WNBA.
+8. NHL confirmed goalies and MoneyPuck xG, if the NHL posture ever moves off
+   content.
