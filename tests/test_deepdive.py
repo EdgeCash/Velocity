@@ -393,3 +393,72 @@ def test_build_deep_dives_mlb_carries_the_stat_wall() -> None:
     labels = [r.label for r in dives[0].rows]
     assert labels[0] == "RUNS / GM"
     assert "SP K / 9" in labels and "SP INNINGS / START" in labels
+
+
+def _cfbd_plays() -> pd.DataFrame:
+    """The same shape of game, in CFBD's vocabulary instead of nflverse's.
+
+    CFBD labels a play by what HAPPENED rather than by its type, so a filter
+    written for ``pass``/``run`` matches nothing here — and returns an empty
+    table rather than raising, which is why this went unnoticed: NCAAF cards
+    rendered an empty ranks panel that looked like a league without data.
+    """
+    rows = []
+    for epa, pos, deft, kind in [
+        (0.3, "Georgia", "LSU", "Pass Reception"),
+        (0.3, "Georgia", "LSU", "Passing Touchdown"),
+        (0.0, "Georgia", "LSU", "Rush"),
+        (-0.1, "LSU", "Georgia", "Pass Incompletion"),
+        (0.1, "LSU", "Georgia", "Rushing Touchdown"),
+        (0.0, "Miami", "Georgia", "Sack"),          # a sack is a pass play
+        (-0.2, "Miami", "LSU", "Rush"),
+        (9.9, "Georgia", "LSU", "Field Goal Good"),     # special teams: out
+        (9.9, "Georgia", "LSU", "Fumble Recovery (Own)"),  # unclassifiable: out
+    ]:
+        rows.append({"season": 2025, "week": 1, "posteam": pos, "defteam": deft,
+                     "play_type": kind, "epa": epa})
+    return pd.DataFrame(rows)
+
+
+def test_epa_form_reads_cfbd_play_labels() -> None:
+    form = epa_form(_cfbd_plays(), 2025)
+    assert not form.empty, "college labels must not silently produce no ranks"
+    assert form.loc["Georgia", "pass_off"] == pytest.approx(0.3)
+    assert form.loc["Georgia", "off_epa"] == pytest.approx((0.3 + 0.3 + 0.0) / 3)
+    assert form.loc["LSU", "def_epa"] == pytest.approx((0.3 + 0.3 + 0.0 - 0.2) / 4)
+    # Neither the field goal nor the fumble reaches an average.
+    assert form["off_epa"].max() < 1.0
+
+
+def test_a_sack_counts_as_a_pass_play_in_both_vocabularies() -> None:
+    # nflverse files a sack under play_type "pass"; classing it as a rush would
+    # move the biggest negative plays in football onto the wrong unit.
+    from velocity.report.deepdive import scrimmage_plays
+
+    span, is_pass = scrimmage_plays(_cfbd_plays())
+    sacks = span["play_type"] == "Sack"
+    assert sacks.any()
+    assert bool(is_pass[sacks].all())
+
+
+def test_epa_form_gives_the_same_answer_in_either_vocabulary() -> None:
+    """The two fixtures describe the same plays under different labels."""
+    nfl = epa_form(_plays(), 2025)
+    cfb = epa_form(_cfbd_plays(), 2025)
+    pairs = {"BUF": "Georgia", "KC": "LSU", "NYJ": "Miami"}
+    assert set(nfl.index) == set(pairs)
+    assert set(cfb.index) == set(pairs.values())
+    compared = 0
+    for column in ("off_epa", "def_epa", "pass_off", "rush_off", "pass_def",
+                   "rush_def"):
+        for pro, college in pairs.items():
+            left, right = nfl.loc[pro, column], cfb.loc[college, column]
+            # A unit a team never fielded is NaN on BOTH sides -- that is
+            # agreement too, and asserting it keeps a column that quietly
+            # stopped being computed from passing as a match.
+            if pd.isna(left) or pd.isna(right):
+                assert pd.isna(left) and pd.isna(right), f"{column} {pro}/{college}"
+                continue
+            assert left == pytest.approx(right), f"{column} {pro}/{college}"
+            compared += 1
+    assert compared >= 10, f"only {compared} real values compared"

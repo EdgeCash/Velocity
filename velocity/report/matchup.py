@@ -261,6 +261,13 @@ _WHOLE = frozenset({"pass_yards", "rush_yards", "receiving_yards", "rush_rec_yar
 # is a quarter of the league between the two units; below that the ranks are
 # inside their own noise and the note would be filler.
 NOTE_GAP_MIN = 8
+
+# How much of an unmapped opponent's name a form chip can carry. Three chips
+# share one half of the card, so this is a layout limit, not a taste: at 7 the
+# longest label still clears the next chip's box at the rendered size. The pro
+# leagues never reach it (codes are 2-3 characters) and every FBS school maps
+# to its abbreviation, so this only ever trims an FCS visitor.
+OPPONENT_CHARS = 7
 _NOTE_PAIRS = (("off_pass", "def_pass", "passing game"),
                ("off_rush", "def_rush", "running game"))
 
@@ -332,7 +339,7 @@ def form_games(games: pd.DataFrame | None, team: str, season: int, n: int = 3,
         out.append(FormGame(
             result="W" if us > them else ("L" if us < them else "T"),
             points_for=us, points_against=them,
-            opponent=short.get(other, other)[:5], at_home=at_home))
+            opponent=short.get(other, other)[:OPPONENT_CHARS], at_home=at_home))
     return tuple(out)
 
 

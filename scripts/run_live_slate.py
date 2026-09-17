@@ -2973,7 +2973,13 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             from velocity.ingest.local import load_games, load_plays
 
             games = load_games(_find_games(Path(args.data)), league=args.league)
-            if args.league == "nfl":
+            # Both football leagues, not just the NFL. College play-by-play has
+            # been committed all along; what kept it out was epa_form matching
+            # only nflverse's pass/run labels against CFBD's outcome labels
+            # ("Pass Reception", "Rushing Touchdown"), which returned an empty
+            # table rather than raising. epa_form reads both now. Still gated
+            # to football: EPA per play is not a baseball or hockey measure.
+            if args.league in FOOTBALL_PROP_LEAGUES:
                 plays_path = _find_plays(Path(args.data))
                 plays = load_plays(plays_path) if plays_path is not None else None
         except Exception as exc:  # noqa: BLE001 - both consumers degrade without it
