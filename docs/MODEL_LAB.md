@@ -1168,3 +1168,41 @@ is not the better half in the early weeks — the two carry different
 information and the even split is already close to the optimum. **Not
 promoted**; the early-season college gap (§2.2 of the audit) wants a
 prior in the EPA half, not a different weight on the one that has it.
+
+
+## The situational round (2026-09-17) — NFL
+
+Over the full live chain (`live-nfl-full`: wind over rest over the scaled
+starters fit — exactly what the runner prices), the two situational
+candidates the schedule columns and the weather bank made possible. 2011–
+2025, trailing-4, 4,000 sims; the close's total RMSE on these games 13.23.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total | O/U ≥4 (n) | wet games: total RMSE / mean error (n=394) | div games: margin mean error |
+|---|---|---|---|---|---|---|---|---|
+| live-nfl-full | 0.2186 | 0.0143 | 13.27 | 13.55 | +0.054 | 53.6% (868) | 13.24 / **−2.09** | −0.02 |
+| + rain 0.25 in, 0.5 a side | 0.2186 | 0.0145 | 13.27 | 13.54 | +0.075 | 53.5% (863) | 13.11 / −1.09 | −0.02 |
+| **+ rain 0.25 in, 1.0 a side** | 0.2186 | 0.0143 | 13.27 | **13.54** | **+0.094** | **53.7% (869)** | **13.07 / −0.09** | −0.02 |
+| + rain 0.10 in, 0.5 a side | 0.2186 | 0.0143 | 13.27 | 13.54 | +0.087 | 53.6% (862) | 13.11 / −1.09 | −0.02 |
+| + divisional discount 0.5 | 0.2186 | 0.0143 | 13.27 | 13.55 | +0.054 | 53.4% (869) | 13.24 / −2.09 | +0.48 |
+| + divisional discount 1.0 | 0.2187 | 0.0178 | 13.28 | 13.55 | +0.054 | 53.5% (869) | 13.24 / −2.09 | +0.97 |
+
+**Readings, honestly:**
+
+1. **The wind wrapper was already doing more than Round 5 could see.** With
+   the scale under it, the live chain's totals RMSE is 13.55 against 13.60
+   for rest-over-scale alone, and the ≥4 totals record 53.6% on 868 — the
+   first NFL totals cut above break-even at a real sample size in this lab.
+   Read it as the calibrated total finally selecting on real disagreement,
+   not as a promoted strategy; it goes into `docs/BACKTEST_NFL.md`'s watch
+   list, not the runner's defaults.
+2. **Rain is a bias correction, and a clean one.** On the 394 outdoor games
+   with a quarter-inch or more on the day, the projection ran 2.1 points
+   high; a point a side takes that to −0.1, and the aggregate total RMSE and
+   the total's information weight both improve. **Promoted: 1.0 point a
+   side at 0.25 in** (`DEFAULT_NFL_PRECIP_POINTS`); the live forecast now
+   fetches the day's precipitation beside the wind.
+3. **The divisional discount over-corrects a bias the model does not have.**
+   The raw frame's home margin is 1.9 in divisional games against 2.3
+   elsewhere, but the model's divisional-game margin error is already −0.02:
+   the ratings absorb the familiarity. Half a point of discount leaves +0.48
+   of error, a point +0.97. **Rejected.**

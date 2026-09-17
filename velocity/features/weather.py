@@ -158,7 +158,8 @@ def forecast_frame(days: int = 7) -> pd.DataFrame:  # pragma: no cover - network
             continue  # historical era, or weatherproof
         query = urllib.parse.urlencode({
             "latitude": lat, "longitude": lon,
-            "daily": "wind_speed_10m_max", "wind_speed_unit": "mph",
+            "daily": "wind_speed_10m_max,precipitation_sum",
+            "wind_speed_unit": "mph", "precipitation_unit": "inch",
             "forecast_days": max(1, min(days, 16)), "timezone": "UTC",
         })
         try:
@@ -168,11 +169,14 @@ def forecast_frame(days: int = 7) -> pd.DataFrame:  # pragma: no cover - network
                 daily = json.loads(resp.read()).get("daily") or {}
         except Exception:  # noqa: BLE001 - a stadium without forecast gets no adjustment
             continue
-        for date, wind in zip(daily.get("time", []),
-                              daily.get("wind_speed_10m_max", []), strict=False):
+        rain = daily.get("precipitation_sum") or []
+        for i, (date, wind) in enumerate(zip(daily.get("time", []),
+                                             daily.get("wind_speed_10m_max", []),
+                                             strict=False)):
             rows.append({"home_team": team, "kickoff": pd.Timestamp(date),
                          "roof": "outdoors", "wind_max": wind,
-                         "temp_mean": None, "precip": None})
+                         "temp_mean": None,
+                         "precip": rain[i] if i < len(rain) else None})
     return pd.DataFrame(
         rows, columns=["home_team", "kickoff", "roof", "wind_max",
                        "temp_mean", "precip"]

@@ -506,9 +506,17 @@ def _build_projection(
 
             forecast = forecast_frame(days=max(args.max_days, 1) + 1)
             if not forecast.empty:
+                # Wind (Round 5) and, from the situational round, the day's
+                # precipitation: at 0.25 in the wet games had run 2.1 points
+                # under the projection; a point a side takes that to −0.1
+                # (docs/MODEL_LAB.md). --nfl-precip-points 0 switches it off.
+                precip_points = resolve_precip_points(args.nfl_precip_points)
                 model = WeatherAdjustedModel(rest_model, forecast,  # type: ignore[arg-type]
-                                             points_per_mph=0.30)
-                print(f"wind forecast: {len(forecast)} stadium-days fetched")
+                                             points_per_mph=0.30,
+                                             precip_points=precip_points)
+                wet = int(pd.to_numeric(forecast["precip"], errors="coerce").ge(0.25).sum())
+                print(f"weather forecast: {len(forecast)} stadium-days fetched, {wet} wet "
+                      f"(≥ 0.25 in), rain at {precip_points:g} pts a side")
         except Exception as exc:  # noqa: BLE001 - weather is a nicety live
             print(f"wind forecast skipped ({exc})")
 
@@ -804,6 +812,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "being projected, or not at all (default: the lab's pick)")
     parser.add_argument("--ncaaf-scale", choices=["fit", "phase", "off"], default=None,
                         help="the same for the college blend (default: the lab's pick)")
+    parser.add_argument("--nfl-precip-points", type=float, default=None,
+                        help="points off each NFL team on a forecast of ≥ 0.25 in of rain "
+                             "(0 switches it off; default: the lab's pick)")
     parser.add_argument("--sim-shape", choices=["normal", "empirical"], default=None,
                         help="football sim draw: bivariate normal, or the banked "
                              "walk-forward residual pool (default: the gate's pick per league)")
@@ -1311,6 +1322,16 @@ def resolve_ncaaf_level(explicit: str | None) -> str:
 #   53.6%. The NFL's phase scale is in the lab, not yet promoted.
 DEFAULT_PLAYS_BY_LEAGUE = {"nfl": "all", "ncaaf": "all"}
 DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "phase"}
+# Rain on NFL totals (the situational round, docs/MODEL_LAB.md): a point a
+# side on a forecast of ≥ 0.25 in. The wet games (394 of 4,080) had run 2.1
+# points under the projection; this takes them to −0.1 with the aggregate
+# totals RMSE and information weight both better. The divisional discount
+# tested beside it over-corrected a bias the model does not have.
+DEFAULT_NFL_PRECIP_POINTS = 1.0
+
+
+def resolve_precip_points(explicit: float | None) -> float:
+    return DEFAULT_NFL_PRECIP_POINTS if explicit is None else max(0.0, float(explicit))
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:
