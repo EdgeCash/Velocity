@@ -23,6 +23,47 @@ import pandas as pd
 
 from velocity.store.schema import Games, Plays
 
+# Where the postseason starts on the canonical week ordinal. Bounded on both
+# sides: it has to clear the regular season below (which runs to week 16) and
+# leave room for a seven-week bowl calendar under the Games schema's ceiling of
+# 25, which a mid-January title game reaches.
+POST_WEEK_BASE = 17
+MAX_WEEK = 25
+# Postseason weeks are measured from the 1st of December in the season's own
+# year. An absolute anchor rather than a relative one, so a partial pull -- a
+# single January bowl -- numbers that game exactly as a full-season pull would.
+_POST_ANCHOR = (12, 1)
+
+
+def postseason_week(season: pd.Series, kickoff: pd.Series) -> pd.Series:
+    """Canonical week ordinals for postseason games, ordered by kickoff.
+
+    CFBD's own postseason ``week`` cannot be used as an ordinal: it numbers
+    weeks WITHIN the postseason, and inconsistently. In the committed frames
+    411 of 478 postseason games carry week 1 -- the 2025 FCS title game, played
+    on 6 January, sits at week 1 while that season's CFP semi-finals sit at
+    week 20.
+
+    Taken verbatim that makes a January bowl the season's OPENER on any
+    ``(season, week)`` ordering, which is how 55,007 plays of future football
+    ended up inside the walk-forward's own training window: "plays before week
+    N" included every bowl game of the season being projected. Live slates were
+    never affected -- that postseason has not been played yet -- but every
+    NCAAF backtest was.
+
+    Dates are what actually order a postseason, so dates are what this uses.
+    """
+    kicks = pd.to_datetime(kickoff, errors="coerce")
+    anchors = pd.to_datetime({
+        "year": pd.to_numeric(season, errors="coerce"),
+        "month": _POST_ANCHOR[0], "day": _POST_ANCHOR[1],
+    }, errors="coerce")
+    offset = ((kicks - anchors).dt.days // 7).clip(lower=0)
+    # No kickoff to place it by: park it at the base, still clear of the
+    # regular season, rather than leaving it at a week that reads as an opener.
+    return (POST_WEEK_BASE + offset.fillna(0)).clip(upper=MAX_WEEK).astype(int)
+
+
 # CFBD season_type → canonical season_type.
 SEASON_TYPE_MAP = {
     "regular": "REG",
@@ -94,6 +135,13 @@ def normalize_games(raw: pd.DataFrame) -> pd.DataFrame:
             "away_score": pd.to_numeric(raw["away_points"], errors="coerce"),
         }
     )
+    # Postseason weeks are renumbered onto one ordinal with the regular season,
+    # so that ordering or filtering by (season, week) puts a bowl after the
+    # games it followed rather than before them. See ``postseason_week``.
+    post = out["season_type"] == "POST"
+    if post.any():
+        out.loc[post, "week"] = postseason_week(
+            out.loc[post, "season"], out.loc[post, "kickoff"])
     return Games.validate(out)
 
 
