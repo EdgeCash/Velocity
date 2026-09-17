@@ -1086,3 +1086,35 @@ def test_scrimmage_plays_live_mode_keeps_the_kicks_and_drops_the_dead_plays() ->
     })
     kept = scrimmage_plays(college, "ncaaf", keep_kicks=True)
     assert list(kept["play_type"]) == ["Rush", "Kickoff Return Touchdown", "Field Goal Good"]
+
+
+def test_college_rest_wrapper_pays_a_bye_and_ignores_the_offseason() -> None:
+    from velocity.backtest.lab import ncaaf_variants
+
+    plays = pd.DataFrame({
+        "game_id": ["g1"], "season": [2025], "week": [1], "posteam": ["A"], "defteam": ["B"],
+        "play_type": ["Rush"], "epa": [0.1],
+    })
+    sp = pd.DataFrame({"season": [2024], "team": ["A"], "conference": ["X"], "rating": [10.0],
+                       "ranking": [1], "offense": [35.0], "defense": [20.0],
+                       "special_teams": [0.0]})
+    variants = ncaaf_variants(200, plays=plays, sp=sp)
+    _kind, factory = variants["blend-level2-sp12-scale-rest"]
+    kick = pd.Timestamp("2025-10-04 16:00")
+    train = pd.DataFrame({
+        "game_id": ["g0", "g1"], "season": [2025, 2025], "week": [1, 2],
+        "home_team": ["A", "B"], "away_team": ["B", "A"],
+        "kickoff": [kick - pd.Timedelta(days=14), kick - pd.Timedelta(days=7)],
+        "home_score": [30.0, 20.0], "away_score": [20.0, 24.0],
+        "neutral_site": [False, False],
+    })
+    model = factory(train, predicting=(2025, 4))
+    rng = np.random.default_rng(0)
+    # B last played 7 days before: no bye. A too. Push A's last game back a
+    # fortnight and A gets the point; forty days back is an offseason, not a bye.
+    same = model.project("A", "B", kickoff=kick, rng=rng)
+    train_bye = train.assign(kickoff=[kick - pd.Timedelta(days=21), kick - pd.Timedelta(days=14)])
+    train_bye.loc[1, ["home_team", "away_team"]] = ["B", "C"]  # A's last game is g0, 21 days ago
+    rested_model = factory(train_bye, predicting=(2025, 4))
+    rested = rested_model.project("A", "B", kickoff=kick, rng=rng)
+    assert rested.mu_home - same.mu_home == pytest.approx(1.0, abs=0.35)

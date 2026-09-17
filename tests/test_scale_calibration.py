@@ -99,3 +99,19 @@ def test_scale_model_anchors_on_the_models_own_mean_total() -> None:
     # No games to anchor on: the total is left unscaled, the margin still is.
     scaled, cal = scale_model(_Flat(), _bank(n=3000), games.iloc[0:0], SimConfig(n_sims=100))
     assert cal.total_slope == 1.0 and cal.margin_slope != 1.0
+
+
+def test_from_residuals_can_fit_one_phase_and_scale_model_falls_back_when_thin() -> None:
+    bank = _bank(n=6000)
+    bank["week"] = (bank.index % 17) + 1
+    early = ScaleCalibration.from_residuals(bank, weeks=(1, 6))
+    assert early.n == int(bank["week"].between(1, 6).sum())
+    late = ScaleCalibration.from_residuals(bank, weeks=(7, 30))
+    assert early.n + late.n == len(bank)
+    games = pd.DataFrame({
+        "season": [2024], "home_team": ["H"], "away_team": ["A"],
+        "home_score": [1.0], "away_score": [0.0], "neutral_site": [False],
+    })
+    # A phase with no rows falls back to the whole bank, never the identity.
+    scaled, cal = scale_model(_Flat(), bank, games, SimConfig(n_sims=50), weeks=(40, 50))
+    assert cal.n == len(bank)

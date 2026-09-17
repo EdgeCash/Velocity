@@ -156,17 +156,24 @@ class ScaleCalibration:
         *,
         before_season: int | None = None,
         seasons: int | None = None,
+        weeks: tuple[int, int] | None = None,
         min_games: int = SCALE_MIN_GAMES,
     ) -> ScaleCalibration:
         """Fit on a residual bank (``RESIDUAL_COLUMNS``).
 
         ``before_season`` keeps only seasons strictly before it — the leak
         gate for a walk-forward. ``seasons`` then keeps the trailing that
-        many. Under ``min_games`` rows the identity is returned.
+        many. ``weeks`` keeps one phase of the season (inclusive bounds):
+        the audit found the NFL margin slope 0.72 in weeks 1–6 and 0.97
+        after, so a scale fitted on the phase being projected can be a
+        different number. Under ``min_games`` rows the identity is returned.
         """
         frame = residuals.dropna(subset=["mu_margin", "mu_total", "resid_margin", "resid_total"])
         if before_season is not None and "season" in frame.columns:
             frame = frame[frame["season"].astype(int) < int(before_season)]
+        if weeks is not None and "week" in frame.columns:
+            lo, hi = int(weeks[0]), int(weeks[1])
+            frame = frame[frame["week"].astype(int).between(lo, hi)]
         if seasons is not None and not frame.empty and "season" in frame.columns:
             cutoff = int(frame["season"].astype(int).max()) - int(seasons) + 1
             frame = frame[frame["season"].astype(int) >= cutoff]
@@ -280,16 +287,21 @@ class ScaledModel:
 def scale_model(
     model: object, residuals: pd.DataFrame, games: pd.DataFrame, sim: SimConfig, *,
     before_season: int | None = None, seasons: int | None = None,
+    weeks: tuple[int, int] | None = None,
     anchor_seasons: int | None = 2,
 ) -> tuple[ScaledModel, ScaleCalibration]:
     """``model`` under a :class:`ScaleCalibration` fitted on ``residuals``.
 
     The anchor is the model's own mean projected total over the trailing
     ``anchor_seasons`` of ``games`` (the level's window); with nothing to
-    anchor on the total is left unscaled.
+    anchor on the total is left unscaled. A ``weeks`` phase too thin to fit
+    falls back to the whole bank rather than to the identity.
     """
     calibration = ScaleCalibration.from_residuals(
-        residuals, before_season=before_season, seasons=seasons)
+        residuals, before_season=before_season, seasons=seasons, weeks=weeks)
+    if weeks is not None and calibration.n == 0:
+        calibration = ScaleCalibration.from_residuals(
+            residuals, before_season=before_season, seasons=seasons)
     anchor = mean_projected_total(model, games, seasons=anchor_seasons)
     if anchor is None:
         calibration = replace(calibration, total_slope=1.0)
