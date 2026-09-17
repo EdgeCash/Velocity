@@ -2360,6 +2360,7 @@ def main() -> None:
                 args, events, projections, canonical, props_by_game, key_to_name,
                 prop_lines_used, stamp,
                 game_log=game_log, convictions=convictions,
+                rule_tiers=rule_tiers,
                 watch_by_game=watch_by_game, prop_roster=prop_roster,
             )
 
@@ -3468,6 +3469,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
     *,
     game_log: object = None,
     convictions: list | None = None,
+    rule_tiers: dict | None = None,
     watch_by_game: dict | None = None,
     prop_roster: pd.DataFrame | None = None,
 ) -> None:
@@ -3512,26 +3514,26 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             aliases, team_colors, code_to_team = league_identity(
                 args.league, provider_names
             )
-        # The slate's staked plays (tier-chipped when the intel layer ran) —
-        # computed BEFORE the card render so the hero card's matrix wears the
-        # PLAY badges, then reused for the deep dive's verdict band + WHY.
+        # The slate's staked plays, each chipped with the rule tier it earned
+        # (velocity.wagering.tiers — the letter and the walk-forward record
+        # the publish gate ranks on, not the intel conviction tier the
+        # backtest measured as a null) — computed BEFORE the card render so
+        # the hero card's matrix wears the PLAY badges, then reused for the
+        # deep dive's verdict band + WHY. The intel layer keeps one line on
+        # the card: its veto, when it fired on a game's play.
         from velocity.report.deepdive import plays_from_bets
 
-        tiers: dict[tuple[str, str, str], str] = {}
         why_signals: dict[str, list[str]] = {}
-        if convictions:
-            best: dict[str, float] = {}
-            for c in convictions:
-                bet = c.bet
-                if bet.player is not None:
-                    continue
-                gid = str(bet.game_id)
-                tiers[(gid, bet.market, bet.side)] = c.tier
-                if not c.vetoed and c.score > best.get(gid, -1.0):
-                    best[gid] = c.score
-                    why_signals[gid] = [s.rationale for s in c.signals[:2]]
+        for c in convictions or ():
+            bet = c.bet
+            if bet.player is not None or not c.vetoed:
+                continue
+            gid = str(bet.game_id)
+            for signal in c.signals:
+                if signal.veto and len(why_signals.get(gid, [])) < 2:
+                    why_signals.setdefault(gid, []).append(f"VETO — {signal.rationale}")
         plays_by_game = (
-            plays_from_bets(game_log.bets, tiers=tiers)  # type: ignore[attr-defined]
+            plays_from_bets(game_log.bets, tiers=rule_tiers or {})  # type: ignore[attr-defined]
             if game_log is not None else {}
         )
         # max_watch=6: the hero card renders its top three; the deep dive
@@ -3542,6 +3544,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
             prop_lines=prop_lines, record_line=record_line, lines=canonical,
             aliases=aliases, team_colors=team_colors, max_watch=6,
             plays_by_game=plays_by_game, watch_by_game=watch_by_game,
+            league=args.league,
         )
         paths = render_cards(cards, Path(args.out), stamp,
                              asset_dir=asset_dir, league=args.league,

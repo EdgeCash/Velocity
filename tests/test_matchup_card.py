@@ -3,8 +3,11 @@
 The sign of a lean is the one thing on this card that can be wrong *publicly*:
 "DET +3.5" and "DET -3.5" are opposite bets, and the card goes to an account,
 not a log file. So every direction of every market gets pinned here rather than
-sampled. The render is an offline smoke — no asset cache, so no network — that
-only asserts a real PNG of the right frame lands.
+sampled. Leans are keyed to the rule table (velocity.wagering.tiers): the
+spread has no rule with a record, so its label arithmetic is pinned through a
+test table that grants one, and the live card is pinned to say so. The render
+is an offline smoke — no asset cache, so no network — that only asserts a real
+PNG of the right frame lands.
 """
 
 from __future__ import annotations
@@ -26,7 +29,19 @@ from velocity.report.matchup import (
     UnitRank,
 )
 from velocity.report.matchup_png import HEIGHT, WIDTH, matchup_filename, render_matchup_card
-from velocity.report.social import SPREAD_EDGE_PTS, TOTAL_EDGE_PTS
+from velocity.wagering import tiers as tiers_mod
+from velocity.wagering.tiers import RULE_TIERS, RuleTier
+
+# A test table that grants the spread a rule (2.5+ either side), so the
+# label arithmetic below can be pinned in every direction. The live table
+# has none: the lab measured no edge on spreads.
+SPREAD_RULE = RuleTier("B", "spread", frozenset({"home", "away"}), 2.5, 0.53, 200, 6, 10)
+WITH_SPREAD_RULE = {"nfl": (*RULE_TIERS["nfl"], SPREAD_RULE)}
+
+
+@pytest.fixture
+def spread_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tiers_mod, "RULE_TIERS", WITH_SPREAD_RULE)
 
 AWAY = TeamSide(code="DAL", city="Dallas", nickname="Cowboys", record="6-5-1",
                 color="#003594")
@@ -38,7 +53,7 @@ def _card(*, fair_spread_home: float = 3.5, fair_total: float = 48.0,
           spread_home: float | None = 3.5, total: float | None = 48.0,
           **kw: object) -> MatchupCard:
     return MatchupCard(
-        game_id="g1", league="nfl", week_label="Week 14",
+        game_id="g1", league=str(kw.pop("league", "nfl")), week_label="Week 14",
         away=kw.pop("away", AWAY), home=kw.pop("home", HOME),  # type: ignore[arg-type]
         mu_away=22.0, mu_home=26.0,
         fair_spread_home=fair_spread_home, fair_total=fair_total,
@@ -63,23 +78,36 @@ def _card(*, fair_spread_home: float = 3.5, fair_total: float = 48.0,
     # model likes the away side more, away is favored → lay the away number
     (-7.0, -3.5, "DAL -3.5"),
 ])
+@pytest.mark.usefixtures("spread_rule")
 def test_spread_lean_states_the_side_at_its_own_number(
         fair: float, market: float, label: str) -> None:
     lean = _card(fair_spread_home=fair, spread_home=market).spread_lean()
     assert lean.fired
     assert lean.label == label
+    assert lean.detail == "rule B · 53.0% on 200"
 
 
+@pytest.mark.usefixtures("spread_rule")
 def test_spread_lean_holds_inside_the_bar() -> None:
-    lean = _card(fair_spread_home=3.5 + SPREAD_EDGE_PTS - 0.1,
+    lean = _card(fair_spread_home=3.5 + SPREAD_RULE.min_points - 0.1,
                  spread_home=3.5).spread_lean()
     assert not lean.fired
-    assert lean.detail == "no edge"
+    assert lean.detail == "home by 2.4 · below the 2.5 bar"
 
 
+@pytest.mark.usefixtures("spread_rule")
 def test_spread_lean_fires_exactly_at_the_bar() -> None:
-    assert _card(fair_spread_home=3.5 + SPREAD_EDGE_PTS,
+    assert _card(fair_spread_home=3.5 + SPREAD_RULE.min_points,
                  spread_home=3.5).spread_lean().fired
+
+
+def test_spread_lean_on_the_live_table_says_no_rule_has_a_record() -> None:
+    # The lab measured no edge on NFL spreads at any bar (and college spreads
+    # inverted), so the live card shows the model's number and no lean — at
+    # a gap that would have fired the old fixed 2.5-point bar three times over.
+    lean = _card(fair_spread_home=11.0, spread_home=3.5).spread_lean()
+    assert not lean.fired
+    assert lean.detail == "no rule with a record"
 
 
 def test_spread_lean_without_a_market_says_so() -> None:
@@ -90,26 +118,43 @@ def test_spread_lean_without_a_market_says_so() -> None:
 
 def test_a_very_wide_gap_is_flagged_rather_than_amplified() -> None:
     # Our own graded record puts the worst closing-line value in the
-    # highest-edge bucket, so the card marks the outlier instead of leaning in.
+    # highest-edge bucket, so the card marks the outlier instead of leaning in
+    # — on a market no rule covers. Where a rule admits the number the lab
+    # measured that gap directly, so the caution stays off (the total below).
     lean = _card(fair_spread_home=3.5 + WIDE_GAP_PTS, spread_home=3.5).spread_lean()
-    assert lean.fired and lean.wide
+    assert not lean.fired and lean.wide
+    assert not _card(fair_total=48.0 - WIDE_GAP_PTS - 1.0, total=48.0).total_lean().wide
 
 
 # --- the total lean --------------------------------------------------------
 
-@pytest.mark.parametrize(("fair", "market", "label"), [
-    (48.0 + TOTAL_EDGE_PTS, 48.0, "OVER 48"),
-    (48.0 - TOTAL_EDGE_PTS, 48.0, "UNDER 48"),
+@pytest.mark.parametrize(("fair", "market", "label", "detail"), [
+    (52.0, 48.0, "OVER 48", "rule B · 52.8% on 301"),
+    (44.0, 48.0, "UNDER 48", "rule A · 55.6% on 340"),
 ])
 def test_total_lean_names_the_side_at_the_posted_number(
-        fair: float, market: float, label: str) -> None:
+        fair: float, market: float, label: str, detail: str) -> None:
     lean = _card(fair_total=fair, total=market).total_lean()
     assert lean.fired
     assert lean.label == label
+    assert lean.detail == detail
 
 
 def test_total_lean_holds_inside_the_bar() -> None:
-    assert not _card(fair_total=48.0 + TOTAL_EDGE_PTS - 0.1, total=48.0).total_lean().fired
+    lean = _card(fair_total=48.0 + 3.9, total=48.0).total_lean()
+    assert not lean.fired
+    assert lean.detail == "over by 3.9 · below the 4 bar"
+
+
+def test_college_total_lean_takes_unders_only() -> None:
+    # The college table has unders at 4+ (B) and 8+ (A) and no over rule:
+    # an 8-point under gap is tier A, and an over gap of any size says why
+    # it is blank.
+    under = _card(fair_total=40.0, total=48.0, league="ncaaf").total_lean()
+    assert under.fired and under.label == "UNDER 48"
+    assert under.detail == "rule A · 57.2% on 297"
+    over = _card(fair_total=57.0, total=48.0, league="ncaaf").total_lean()
+    assert not over.fired and over.detail == "no rule for overs"
 
 
 # --- the printed lines -----------------------------------------------------
@@ -542,6 +587,7 @@ def _build(**kw: object) -> list[MatchupCard]:
     )
 
 
+@pytest.mark.usefixtures("spread_rule")
 def test_builder_flips_both_spreads_into_the_cards_convention() -> None:
     # The board has DET -3.5 and the model has DET -6.0; on this card BOTH are
     # stated positive-means-home-favored so the two subtract directly. Carrying

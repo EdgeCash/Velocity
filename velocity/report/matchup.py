@@ -22,10 +22,13 @@ What earns a place on it, and what does not:
   reads, so the ranks explain the projection instead of sitting next to it.
 * **Player numbers are projections, never lines.** No prop board is quoted:
   a reader shops their own number, and a card that prints one implies a book.
-* **Leans fire only past the published thresholds.** Everything else says "no
-  edge", because a card where every market has a play is a tout sheet, and the
-  blanks are what make the leans credible (the rule
-  :mod:`velocity.report.social` already sets, kept here deliberately).
+* **Leans fire only where a rule with a record admits the number.** The
+  wager lab's table (:mod:`velocity.wagering.tiers`) names the market, the
+  side and the bar; everything else says why it is blank — "no edge", a side
+  the rule does not take, or a market the lab found no edge on — because a
+  card where every market has a play is a tout sheet, and the blanks are what
+  make the leans credible (the rule :mod:`velocity.report.social` already
+  sets, kept here deliberately).
 * **A generation stamp, always.** A model card without one invites the reader
   to wonder whether it was written after the line moved.
 
@@ -44,12 +47,15 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from velocity.report.social import SPREAD_EDGE_PTS, TOTAL_EDGE_PTS, SocialCard
+from velocity.report.social import SocialCard, rule_call
 
 # Above this model-vs-market gap the number is a data-quality flag rather than
-# a bigger edge — the adverse-selection finding, in points. Set at the spread
-# bar's triple: past it, the honest card says "unusually wide" out loud.
-WIDE_GAP_PTS = SPREAD_EDGE_PTS * 3.0
+# a bigger edge — the adverse-selection finding, in points: past it, the
+# honest card says "unusually wide" out loud. It applies only where no rule
+# admits the number; the lab measured the widest total gaps directly (college
+# unders 8+ are the strongest rule in the table) and found them the best
+# bets, not the worst.
+WIDE_GAP_PTS = 7.5
 
 
 @dataclass(frozen=True)
@@ -177,14 +183,17 @@ class MatchupCard:
     # precision the model does not have.
 
     def spread_lean(self) -> Lean:
-        """The side call, stated at the market's own number."""
+        """The side call, stated at the market's own number.
+
+        Keyed to the league's rule table like the social card's
+        (:func:`velocity.report.social.rule_call`); the lab measured no edge
+        on spreads, so today this reads "no rule with a record" and the model's
+        number stands alone above it.
+        """
         market = self.market.spread_home
         if market is None:
             return Lean(False, "", "no market")
         diff = self.fair_spread_home - market
-        wide = abs(diff) >= WIDE_GAP_PTS
-        if abs(diff) < SPREAD_EDGE_PTS:
-            return Lean(False, "", "no edge")
         # diff > 0: the model likes the home side MORE than the market does.
         # ``spread_home`` is positive when the home side is FAVORED, which is
         # a negative betting line for them — so the lean is stated at the side's
@@ -192,20 +201,33 @@ class MatchupCard:
         # "DET +3.5" for a team laying 3.5, which is the wrong bet entirely.
         side = self.home.code if diff > 0 else self.away.code
         point = -market if diff > 0 else market
-        return Lean(True, f"{side} {point:+g}",
-                    f"{abs(diff):.1f} pts past the {SPREAD_EDGE_PTS:g} bar", wide)
+        call = rule_call(self.league, "spread", "home" if diff > 0 else "away",
+                         abs(diff), f"{side} {point:+g}")
+        return self._lean(call, abs(diff))
 
     def total_lean(self) -> Lean:
         market = self.market.total
         if market is None:
             return Lean(False, "", "no market")
         diff = self.fair_total - market
-        wide = abs(diff) >= WIDE_GAP_PTS
-        if abs(diff) < TOTAL_EDGE_PTS:
-            return Lean(False, "", "no edge")
-        side = "OVER" if diff > 0 else "UNDER"
-        return Lean(True, f"{side} {market:g}",
-                    f"{abs(diff):.1f} pts past the {TOTAL_EDGE_PTS:g} bar", wide)
+        side = "over" if diff > 0 else "under"
+        call = rule_call(self.league, "total", side, abs(diff),
+                         f"{side.upper()} {market:g}")
+        return self._lean(call, abs(diff))
+
+    @staticmethod
+    def _lean(call: object, gap: float) -> Lean:
+        """An :class:`~velocity.report.social.EdgeCall` as this card's lean.
+
+        The panel already prints the gap in its DIFF column, so a fired lean's
+        detail is the rule and its record alone.
+        """
+        fired = bool(call.fired)  # type: ignore[attr-defined]
+        rule = call.rule  # type: ignore[attr-defined]
+        detail = (f"rule {rule.tier} · {rule.short_record}" if rule is not None
+                  else str(call.detail))  # type: ignore[attr-defined]
+        return Lean(fired, str(call.label), detail,  # type: ignore[attr-defined]
+                    wide=gap >= WIDE_GAP_PTS and rule is None)
 
     def spread_label(self) -> str:
         """The model's line, team-anchored ("DET -8.0", or "PK")."""

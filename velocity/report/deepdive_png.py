@@ -247,8 +247,9 @@ def _verdict_band(fig: plt.Figure, dive: DeepDive) -> None:
             ))
             _display(fig, 0.083, y - 0.001, "PLAY", color=BG, fontsize=9.5,
                      ha="center", fontweight="bold")
+            # One line per play: the record it earned is the WHY text's lead.
             _display(fig, 0.108, y,
-                     play.label(card.away_code, card.home_code),
+                     play.label(card.away_code, card.home_code, record=False),
                      color=INK, fontsize=14, fontweight="semibold")
     else:
         _display(fig, 0.065, 0.112, "PASS", color=INK, fontsize=17,

@@ -154,27 +154,52 @@ def test_market_view_condenses_the_board_to_numerics() -> None:
     assert market_view(None, "g1") is None
 
 
-def test_edges_fire_only_past_the_published_thresholds() -> None:
-    # Market has KC -6.5; model says KC -2.0 → 4.5-pt disagreement, lean BUF +6.5.
+def test_edges_fire_only_where_a_rule_with_a_record_admits_the_number() -> None:
+    # Market has KC -6.5 / 47.5; the model says KC -2.0 and 46.0. The spread
+    # gap is 4.5 points — the old fixed 2.5-point bar would have leaned BUF
+    # +6.5 — but the lab measured no edge on spreads or the moneyline at any
+    # bar, so those cells show the model's number and say why they are blank.
     view = MarketView(spread_home=-6.5, total=47.5, ml_away=125, ml_home=-145)
     edges = _card(market_view=view).edges()
-    assert edges["spread"].fired
-    assert edges["spread"].label == "BUF +6.5"
-    assert "4.5" in edges["spread"].detail
-    # Total diff 1.5 < 3.0 and win diff < 7 pts → honest no-edge cells.
-    assert not edges["total"].fired and edges["total"].detail == "no edge"
+    assert not edges["spread"].fired
+    assert edges["spread"].detail == "no rule with a record"
     assert not edges["win"].fired
+    assert edges["win"].detail == "no rule with a record"
+    # Total: under by 1.5, short of the NFL rule's 4-point bar.
+    assert not edges["total"].fired
+    assert edges["total"].detail == "under by 1.5 · below the 4 bar"
 
-    # The other spread direction: model likes home MORE than the market does.
-    strong_home = _card(fair_spread=-10.0, market_view=view).edges()
-    assert strong_home["spread"].label == "KC -6.5"
-    # Total and moneyline leans at magnitude.
+    # Totals lean where the rule admits the gap, and carry its record.
     hot = _card(fair_total=52.0, p_home_win=0.75, market_view=view).edges()
     assert hot["total"].fired and hot["total"].label == "OVER 47.5"
-    assert hot["win"].fired and hot["win"].label == "KC ML"
+    assert hot["total"].detail == "over by 4.5 · rule B · 52.8% on 301"
+    assert hot["total"].rule is not None and hot["total"].rule.tier == "B"
+    assert not hot["win"].fired  # 75% vs a ~58% implied: still no rule
     cold = _card(fair_total=40.0, p_home_win=0.40, market_view=view).edges()
     assert cold["total"].label == "UNDER 47.5"
-    assert cold["win"].label == "BUF ML"
+    assert cold["total"].detail == "under by 7.5 · rule A · 55.6% on 340"
+    # The caption carries the rule's full record beside the lean.
+    text = caption(_card(fair_total=40.0, p_home_win=0.40, market_view=view))
+    assert ("Model lean: UNDER 47.5 (by 7.5 · rule A: "
+            "unders 4+ 55.6% over 340 bets, 9 of 15 seasons).") in text
+
+
+def test_college_edges_take_unders_only_and_tier_the_widest() -> None:
+    # The college table: unders 8+ (A, 57.2%) and 4+ (B, 53.6%), no overs.
+    view = MarketView(total=60.5)
+    wide = _card(fair_total=51.0, market_view=view, league="ncaaf").edges()["total"]
+    assert wide.fired and wide.label == "UNDER 60.5"
+    assert wide.detail == "under by 9.5 · rule A · 57.2% on 297"
+    narrow = _card(fair_total=55.5, market_view=view, league="ncaaf").edges()["total"]
+    assert narrow.fired and narrow.detail == "under by 5.0 · rule B · 53.6% on 1263"
+    over = _card(fair_total=70.0, market_view=view, league="ncaaf").edges()["total"]
+    assert not over.fired and over.detail == "no rule for overs"
+    # A league without a table at all: every cell says so.
+    none = _card(fair_total=70.0, market_view=view, league="mlb").edges()["total"]
+    assert not none.fired and none.detail == "no rule with a record"
+    # build_social_cards threads the league onto the card.
+    card = build_social_cards({"g1": _projection()}, EVENTS, league="ncaaf")[0]
+    assert card.league == "ncaaf"
 
 
 def test_edges_without_a_board_never_claim_anything() -> None:
@@ -355,6 +380,7 @@ def test_render_sim_check_and_record_card(tmp_path: Path) -> None:
 
 def test_cards_carry_play_calls_and_caption_states_them() -> None:
     from velocity.report.social import PlayCall, caption
+    from velocity.wagering.tiers import RULE_TIERS
 
     spread = PlayCall("spread", "home", -2.5, -110, "dk", 2.0, tier="A")
     total = PlayCall("total", "under", 47.5, 105, "fd", 0.5)
@@ -365,6 +391,14 @@ def test_cards_carry_play_calls_and_caption_states_them() -> None:
     assert cards[0].plays == (spread, total)
     text = caption(cards[0])
     assert "The play: KC -2.5 · -110 (dk) · 2.0u · tier A; UNDER 47.5" in text
+    # A play that carries its rule states the rule's record in the caption
+    # (the deep dive's band, one line per play, leaves it to the WHY text).
+    ruled = PlayCall("total", "under", 47.5, 105, "fd", 0.5, tier="A",
+                     rule=RULE_TIERS["nfl"][0])
+    assert ruled.label("BUF", "KC") == (
+        "UNDER 47.5 · +105 (fd) · 0.5u · tier A · unders 4+ 55.6% over 340 bets, "
+        "9 of 15 seasons")
+    assert ruled.label("BUF", "KC", record=False) == "UNDER 47.5 · +105 (fd) · 0.5u · tier A"
     # A card with no staked plays keeps the plain lean grammar.
     bare = build_social_cards({"g1": _projection()}, EVENTS)[0]
     assert bare.plays == ()
