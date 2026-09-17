@@ -382,6 +382,15 @@ def _build_projection(
             plays = scrimmage_plays(plays, "nfl", keep_kicks=plays_mode == "live")
             print(f"NFL plays ({plays_mode}): {before - len(plays)} rows dropped, "
                   f"{len(plays)} kept")
+        shrink = resolve_turnover_shrink(args.nfl_turnover_shrink)
+        if shrink < 1.0:
+            # The play-context round (docs/MODEL_LAB.md): an interception or a
+            # lost fumble is the least repeatable −4 EPA on the field; the fit
+            # sees a fraction of it.
+            from velocity.features.team import shrink_turnover_epa
+
+            plays = shrink_turnover_epa(plays, shrink)
+            print(f"NFL turnover EPA: ×{shrink:g} on interceptions and lost fumbles")
         weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
         if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
             # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
@@ -842,6 +851,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-precip-points", type=float, default=None,
                         help="points off each NFL team on a forecast of ≥ 0.25 in of rain "
                              "(0 switches it off; default: the lab's pick)")
+    parser.add_argument("--nfl-turnover-shrink", type=float, default=None,
+                        help="scale the EPA of interceptions and lost fumbles by this factor "
+                             "before the NFL ratings fit (1 keeps them whole; default: the "
+                             "lab's pick)")
     parser.add_argument("--nfl-injury-points", type=float, default=None,
                         help="points off an NFL team per whole team's worth of touches ruled "
                              "Out or Doubtful this week (0 switches it off; default: the "
@@ -1374,6 +1387,23 @@ DEFAULT_NFL_INJURY_POINTS = 4.0
 
 def resolve_injury_points(explicit: float | None) -> float:
     return DEFAULT_NFL_INJURY_POINTS if explicit is None else max(0.0, float(explicit))
+
+
+# The turnover-EPA shrink before the NFL ratings fit (the play-context round,
+# docs/MODEL_LAB.md): the factor on interceptions' and lost fumbles' EPA,
+# 1.0 = the plays as recorded. At 0.5, with the residual bank rebuilt on the
+# shrunk core, every accuracy column of the promoted chain improved: Brier
+# 0.2184 → 0.2181, calibration error 0.0164 → 0.0157, margin RMSE 13.26 →
+# 13.25, total RMSE 13.55 → 13.52 (the close 13.23) and the total's
+# information weight +0.08 → +0.09. Garbage-time down-weighting, an EPA
+# winsor, the QB-credited EPA and a fitted home edge all lost beside it.
+DEFAULT_NFL_TURNOVER_SHRINK = 0.5
+
+
+def resolve_turnover_shrink(explicit: float | None) -> float:
+    if explicit is None:
+        return DEFAULT_NFL_TURNOVER_SHRINK
+    return min(1.0, max(0.0, float(explicit)))
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:

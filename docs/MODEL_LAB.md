@@ -1254,3 +1254,87 @@ chain's own record on this window, for the audit's scoreboard: Brier
 0.2184 against the de-vigged close's 0.2102, margin RMSE 13.26 (the close
 12.97), total RMSE 13.55 (the close 13.23), information weight +0.108 on
 the margin and +0.076 on the total.
+
+
+## The play-context round (2026-09-17) — NFL
+
+**What changed first.** `datasets/nfl/plays.parquet` was rebuilt 2011–2026
+from the nflverse release parquets with the context the audit listed
+(`PBP_CONTEXT_COLUMNS`): the pre-snap win probability (`wp`, and the
+Vegas-line-anchored `vegas_wp`), quarter, clock and score state, the
+turnover flags (`interception`, `fumble_lost`, `fumble`), the QB-credited
+`qb_epa`, `cpoe`, and the penalty / aborted-snap markers. The twelve columns
+the fit already read are byte-identical to the previous file except 2020,
+where nflverse has since regenerated 1,381 plays' EPA by at most 0.17 — the
+promoted chain re-run on the new file reproduces its recorded numbers to
+three decimals. The four continuous columns are stored to three decimals
+(the file is 14 MB, from 8; at full precision it was 25). The refresh's
+current-season top-up takes the same normalization, so the schema holds.
+
+**The candidates**, each over the whole promoted chain as it stood (level,
+scale, starters, rest, the burden at 4, wind, rain at a point a side):
+
+- *Garbage time*: plays with a pre-snap win probability within 5% of 0 or
+  1 (16% of snaps; 20% on `vegas_wp`) weighted 0.5 or 0.25 in the fit, and
+  a 10% band.
+- *Turnover luck*: the EPA of interceptions and lost fumbles (1.5% of
+  snaps, −4.4 EPA on average) scaled by 0.5 or 0.25 before the fit.
+- *Tails*: EPA clipped at ±4 (1.8% of snaps) or ±3 (3.9%).
+- *`qb_epa`* in place of `epa` (differs on 0.13% of plays — fumbles after
+  a catch credited to the passer as passing yards would be).
+- *The home edge fitted in the ridge* (`home_col` on the QB fit, priced in
+  place of the 2.0-point constant): the recency-weighted fit puts it at
+  0.6 points a game on 2023–24.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | info_w total |
+|---|---|---|---|---|---|---|
+| promoted chain, plays as recorded (`live-nfl-promoted-to1.0`) | 0.2184 | 0.0164 | 13.261 | 13.553 | +0.108 | +0.076 |
+| garbage 0.5 at 5% | 0.2185 | 0.0154 | 13.281 | 13.555 | +0.086 | +0.069 |
+| garbage 0.25 at 5% | 0.2188 | 0.0118 | 13.308 | 13.561 | +0.072 | +0.064 |
+| garbage 0.5 at 10% | 0.2186 | 0.0117 | 13.282 | 13.561 | +0.091 | +0.059 |
+| garbage 0.5 at 5% on `vegas_wp` | 0.2182 | 0.0137 | 13.269 | 13.560 | +0.108 | +0.063 |
+| turnover EPA ×0.5 | 0.2185 | 0.0229 | 13.258 | 13.518 | +0.101 | +0.093 |
+| turnover EPA ×0.25 | 0.2192 | 0.0261 | 13.288 | 13.510 | +0.084 | +0.100 |
+| EPA clipped at ±4 | 0.2190 | 0.0202 | 13.264 | 13.528 | +0.099 | +0.087 |
+| EPA clipped at ±3 | 0.2196 | 0.0248 | 13.284 | 13.520 | +0.095 | +0.097 |
+| `qb_epa` | 0.2185 | 0.0183 | 13.269 | 13.539 | +0.086 | +0.090 |
+| fitted home edge | 0.2203 | 0.0464 | 13.388 | 13.553 | +0.111 | +0.077 |
+| **turnover EPA ×0.5, the bank rebuilt on its core** | **0.2181** | **0.0157** | **13.251** | **13.519** | +0.088 | **+0.087** |
+
+**Readings, honestly:**
+
+1. **Garbage time is not noise the fit wants removed.** Every
+   down-weighting loses on the margin (13.26 → 13.27–13.31) and on both
+   information weights; calibration improves because the ratings compress.
+   A team running out a 24-point lead is still the team that built it.
+   **Rejected**, both probability columns, both bands.
+2. **The turnover shrink is the one that pays, and its cost was the
+   bank's.** At ×0.5 the total improves by 0.035 RMSE and its information
+   weight by 0.017 with the margin held, but calibration error jumps 0.016
+   → 0.023: the scale was fitted on a residual bank built from the
+   unshrunk core, and the shrunk ratings have a narrower spread. With the
+   bank rebuilt on the shrunk core (`qb-recency-17-q300-level2-starters-to0.5`)
+   and the scale re-fitted, every accuracy column beats the incumbent —
+   Brier 0.2184 → 0.2181, calibration 0.0164 → 0.0157, margin 13.261 →
+   13.251, total 13.553 → 13.519 (the close 13.23), information weight on
+   the total +0.076 → +0.087. The margin's information weight comes down
+   (+0.108 → +0.088): the close leans a little less on the model's margin
+   even as the margin lands closer. ×0.25 over-shrinks (margin 13.29).
+   **Promoted at 0.5** (`DEFAULT_NFL_TURNOVER_SHRINK`); the live runner
+   scales the flagged plays' EPA before the fit, and the committed NFL bank
+   is now the shrunk core's.
+3. **Clipping the tails is a blunter version of the same idea** — it takes
+   the total most of the way (13.53 at ±4) but pays on Brier and margin,
+   because a 70-yard touchdown is not luck the way a bounce is. `qb_epa`
+   changes too few plays to matter. **Rejected.**
+4. **The fitted home edge is the biggest loser of the round.** The
+   recency-weighted EPA edge (0.6 points a game on recent seasons) is
+   under half the constant, and pricing it costs 0.13 on the margin and
+   triples the calibration error: the scoring edge of home field is not
+   an offensive-efficiency edge. The 2.0-point constant stays.
+   **Rejected.**
+
+The promoted chain's disagreement cut on this window: the ≥4 totals cut
+reads 53.8% on 784 bets (the previous chain's 53.7% on 869); ≥6, 56.9% on
+232. Still a watch item (docs/BACKTEST_NFL.md), not a strategy.
+

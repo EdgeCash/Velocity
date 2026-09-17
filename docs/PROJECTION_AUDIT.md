@@ -232,13 +232,16 @@ columns only). Coverage 2011–2025 of what it drops:
 | `temp`, `wind` | 65–75% (38% in 2022) | stadium-reported at kickoff; a second weather source to reconcile against Open-Meteo's daily max |
 | `referee`, `home_coach`/`away_coach`, `gametime`, `weekday` | 100% | coaching-change flags, primetime / body-clock (west-coast 1pm ET) features |
 
-**nflverse play-by-play** (`_PBP_COLUMNS` keeps 12 of ~370): `wp`,
+**nflverse play-by-play** (`_PBP_COLUMNS` kept 12 of ~370 until the plays
+rebuild; it now carries `PBP_CONTEXT_COLUMNS` as well): `wp`,
 `vegas_wp`, `qtr`, `game_seconds_remaining`, `score_differential` (garbage
-time — `SYSTEM_REVIEW.md` 1.3, still open); `home_team` (a home flag for the
-EPA ridge, which the college fit already has); `interception`, `fumble_lost`
-(turnover-luck regression, the SP+ / Football Outsiders standard); `qb_epa`,
-`cpoe`, `air_yards`, `xpass` (passer skill separated from receiver and
-scheme); `penalty`, `aborted_play`; `rusher_player_id` / `receiver_player_id`.
+time — `SYSTEM_REVIEW.md` 1.3; tested and rejected in the play-context
+round); `home_team` (a home flag for the EPA ridge — joined from the games
+frame instead; the fitted edge lost); `interception`, `fumble_lost`
+(turnover-luck regression, the SP+ / Football Outsiders standard — the
+×0.5 shrink is promoted); `qb_epa`, `cpoe`, `air_yards`, `xpass` (passer
+skill separated from receiver and scheme; the first two are on the file);
+`penalty`, `aborted_play`; `rusher_player_id` / `receiver_player_id`.
 The raw 2025 season sits in the repo root as `pbp-2025.zip` (20 MB committed,
 115 MB CSV, referenced by nothing).
 
@@ -291,17 +294,22 @@ merged in four PRs (#227–#230), every table in `docs/MODEL_LAB.md`:
   college (#5); the nflverse schedule columns and the announced-starter
   backtest (#6); rain on NFL totals (#10's precipitation half); the NFL
   injury burden (#9); the college residual bank and the NFL bank rebuilt
-  on the new bases.
+  on the new bases. Then, in the second pass: the plays rebuild with the
+  win probability, clock, score state, turnover and QB context on every
+  play (#7), and out of it the turnover-EPA shrink at ×0.5 (the NFL bank
+  rebuilt on the shrunk core).
 - **Rejected on the table.** The scrimmage-only fit and the narrower
   live-plays cut (#1 — the kicks carry field position the ratings want, and
   a kneel is the winning team's fingerprint); NFL pace (#11); a divisional
   home-field discount (#18); cold on totals (#10); the NFL phase scale
   (#19); the college K=24 prior, pace, bye bonus and early-season blend
-  weight (#12, #17). Each stays in the lab as a variant.
-- **Still open.** The plays rebuild with clock, score state and turnover
-  columns (#7); the college QB term (#8); college weather and venues (#10,
-  needs the CFBD key); the college preseason prior into the EPA half (#13);
-  special teams (#14); the joint phase ridge (#16).
+  weight (#12, #17); from the play-context round, garbage-time
+  down-weighting on either probability column, EPA winsorization, `qb_epa`
+  and the home edge fitted in the ridge (#7). Each stays in the lab as a
+  variant.
+- **Still open.** The college QB term (#8); college weather and venues
+  (#10, needs the CFBD key); the college preseason prior into the EPA half
+  (#13); special teams (#14); the joint phase ridge (#16).
 
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
@@ -580,7 +588,8 @@ out of sample, the lab's 4,000-sim gate):
 | | margin: model / close | total: model / close | information beyond the close (margin / total) |
 |---|---|---|---|
 | NFL, before | 13.33 / 12.72 | 13.90 / 13.23 | +0.08 / −0.00 |
-| **NFL, now** | **13.26** / 12.97 | **13.55** / 13.23 | **+0.11 / +0.08** |
+| NFL, after the first pass | 13.26 / 12.97 | 13.55 / 13.23 | +0.11 / +0.08 |
+| **NFL, now** (the turnover shrink) | **13.25** / 12.97 | **13.52** / 13.23 | +0.09 / **+0.09** |
 | NCAAF, before | 18.46 / 15.53 | 17.38 / 16.24 | −0.01 / +0.03 |
 | **NCAAF, now** | **18.43** / 15.54 | **17.21** / 16.23 | −0.00 / **+0.05** |
 | NCAAF, FBS vs FBS | 17.89 / 15.64 | 17.42 / 16.30 | −0.01 / +0.06 |
