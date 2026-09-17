@@ -140,3 +140,116 @@ def test_camel_case_cfbd_payloads_normalize() -> None:
     # A frame carrying both spellings does not end up with duplicate columns.
     assert not snake_columns(pd.concat([camel, snake], axis=1)).columns.duplicated().any()
 
+
+
+def test_postseason_weeks_are_renumbered_past_the_regular_season() -> None:
+    """CFBD's postseason week is not an ordinal, so kickoffs supply one.
+
+    The committed frames carry 411 of 478 postseason games at week 1 -- the
+    2025 FCS title game (6 January) at week 1 while that season's CFP
+    semi-finals sit at week 20. Taken verbatim a January bowl becomes the
+    season's OPENER on any (season, week) ordering, which put 55,007 plays of
+    future football inside the walk-forward's own training window.
+    """
+    from velocity.ingest.ncaaf import POST_WEEK_BASE, normalize_games
+
+    raw = pd.DataFrame([
+        # A real week 1 opener, and the last week of the regular season.
+        {"id": 1, "season": 2025, "week": 1, "season_type": "regular",
+         "start_date": "2025-08-30T18:00:00Z", "home_team": "Georgia",
+         "away_team": "Clemson", "home_points": 34, "away_points": 3},
+        {"id": 2, "season": 2025, "week": 16, "season_type": "regular",
+         "start_date": "2025-12-06T20:00:00Z", "home_team": "Georgia",
+         "away_team": "Alabama", "home_points": 27, "away_points": 24},
+        # The two postseason spellings that actually appear in the data.
+        {"id": 3, "season": 2025, "week": 1, "season_type": "postseason",
+         "start_date": "2026-01-06T00:30:00Z", "home_team": "Montana State",
+         "away_team": "Illinois State", "home_points": 31, "away_points": 17},
+        {"id": 4, "season": 2025, "week": 20, "season_type": "postseason",
+         "start_date": "2026-01-19T19:30:00Z", "home_team": "Indiana",
+         "away_team": "Miami", "home_points": 28, "away_points": 21},
+    ])
+    out = normalize_games(raw).set_index("game_id")
+
+    # Regular season is untouched.
+    assert int(out.loc["1", "week"]) == 1
+    assert int(out.loc["2", "week"]) == 16
+    # Every postseason game lands clear of every regular-season week...
+    post = out[out["season_type"] == "POST"]["week"].astype(int)
+    assert post.min() >= POST_WEEK_BASE
+    assert post.min() > int(out.loc["2", "week"])
+    # ...and the later game gets the later week, whatever CFBD called them:
+    # the one CFBD numbered 1 is played FIRST, so it sorts first now.
+    assert int(out.loc["3", "week"]) < int(out.loc["4", "week"])
+
+
+def test_postseason_renumbering_does_not_depend_on_the_batch() -> None:
+    """A single-game pull must number that game as a full-season pull would.
+
+    The anchor is the 1st of December in the season's own year, not the
+    earliest kickoff in whatever rows happen to be in hand -- otherwise two
+    pulls of the same season disagree about what week a bowl was.
+    """
+    from velocity.ingest.ncaaf import normalize_games
+
+    late = {"id": 4, "season": 2025, "week": 20, "season_type": "postseason",
+            "start_date": "2026-01-19T19:30:00Z", "home_team": "Indiana",
+            "away_team": "Miami", "home_points": 28, "away_points": 21}
+    early = {"id": 3, "season": 2025, "week": 1, "season_type": "postseason",
+             "start_date": "2026-01-06T00:30:00Z", "home_team": "Montana State",
+             "away_team": "Illinois State", "home_points": 31, "away_points": 17}
+    alone = normalize_games(pd.DataFrame([late])).set_index("game_id")
+    together = normalize_games(pd.DataFrame([early, late])).set_index("game_id")
+    assert int(alone.loc["4", "week"]) == int(together.loc["4", "week"])
+
+
+def test_postseason_weeks_stay_inside_the_schema_ceiling() -> None:
+    """The renumbering is bounded above as well as below.
+
+    A mid-January title game is seven weeks past the anchor, and the Games
+    schema caps week at 25 -- so the base has to leave room for the whole bowl
+    calendar underneath it.
+    """
+    from velocity.ingest.ncaaf import MAX_WEEK, POST_WEEK_BASE, normalize_games
+
+    out = normalize_games(pd.DataFrame([
+        {"id": 5, "season": 2025, "week": 1, "season_type": "postseason",
+         "start_date": "2026-01-19T19:30:00Z", "home_team": "A",
+         "away_team": "B", "home_points": 1, "away_points": 0},
+    ])).set_index("game_id")
+    week = int(out.loc["5", "week"])
+    assert POST_WEEK_BASE < week <= MAX_WEEK
+
+
+def test_no_training_window_reaches_a_game_that_had_not_kicked_off() -> None:
+    """The criterion the renumbering actually exists to satisfy.
+
+    Checking that postseason games carry a postseason-looking week is checking
+    the symptom. What matters is chronology: for every (season, week), nothing
+    in "the plays before week N" may come from a game that kicked off after
+    week N started. This audit run against the committed frames returns zero;
+    before the renumbering it flagged 55,007 plays.
+    """
+    from velocity.ingest.ncaaf import normalize_games
+
+    raw = pd.DataFrame([
+        {"id": 1, "season": 2025, "week": 1, "season_type": "regular",
+         "start_date": "2025-08-30T18:00:00Z", "home_team": "A",
+         "away_team": "B", "home_points": 7, "away_points": 3},
+        {"id": 2, "season": 2025, "week": 8, "season_type": "regular",
+         "start_date": "2025-10-18T18:00:00Z", "home_team": "A",
+         "away_team": "C", "home_points": 21, "away_points": 14},
+        # The bowl CFBD calls week 1, played four months after the opener.
+        {"id": 3, "season": 2025, "week": 1, "season_type": "postseason",
+         "start_date": "2026-01-06T00:30:00Z", "home_team": "A",
+         "away_team": "D", "home_points": 28, "away_points": 24},
+    ])
+    games = normalize_games(raw)
+    starts = games.groupby(["season", "week"])["kickoff"].min()
+
+    inversions = 0
+    for (season, week), start in starts.items():
+        train = games[(games["season"] < season)
+                      | ((games["season"] == season) & (games["week"] < week))]
+        inversions += int((train["kickoff"] > start).sum())
+    assert inversions == 0, "a training window reached a game not yet played"
