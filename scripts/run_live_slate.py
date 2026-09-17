@@ -370,17 +370,18 @@ def _build_projection(
         plays = load_plays(plays_path)
         cutoff = int(plays["season"].max()) - 3
         plays = plays[plays["season"] >= cutoff]
-        if resolve_plays(args.nfl_plays, "nfl") == "scrimmage":
-            # The offense's own snaps only (velocity.features.team
-            # .scrimmage_plays): a quarter of the committed frame is kicks,
-            # returns, no-plays, kneels and spikes, and the unfiltered fit
-            # docked the teams that kneel most (docs/PROJECTION_AUDIT.md §2.1).
+        plays_mode = resolve_plays(args.nfl_plays, "nfl")
+        if plays_mode != "all":
+            # velocity.features.team.scrimmage_plays: "scrimmage" keeps the
+            # offense's own snaps; "live" keeps the kicks and returns too and
+            # drops only kneels, spikes, no-plays and unlabelled rows. The lab
+            # decides which (docs/MODEL_LAB.md, the plays round).
             from velocity.features.team import scrimmage_plays
 
             before = len(plays)
-            plays = scrimmage_plays(plays, "nfl")
-            print(f"NFL plays: {before - len(plays)} non-scrimmage rows dropped, "
-                  f"{len(plays)} snaps kept")
+            plays = scrimmage_plays(plays, "nfl", keep_kicks=plays_mode == "live")
+            print(f"NFL plays ({plays_mode}): {before - len(plays)} rows dropped, "
+                  f"{len(plays)} kept")
         weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
         if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
             # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
@@ -699,13 +700,14 @@ def _build_projection(
         from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 
         plays = load_plays(ncaaf_plays)
-        if resolve_plays(args.ncaaf_plays, "ncaaf") == "scrimmage":
+        college_mode = resolve_plays(args.ncaaf_plays, "ncaaf")
+        if college_mode != "all":
             from velocity.features.team import scrimmage_plays
 
             before = len(plays)
-            plays = scrimmage_plays(plays, "ncaaf")
-            print(f"NCAAF plays: {before - len(plays)} non-scrimmage rows dropped, "
-                  f"{len(plays)} snaps kept")
+            plays = scrimmage_plays(plays, "ncaaf", keep_kicks=college_mode == "live")
+            print(f"NCAAF plays ({college_mode}): {before - len(plays)} rows dropped, "
+                  f"{len(plays)} kept")
         cells = compress_plays(plays)
         base = ncaaf_base_points(games)
         epa_model = NFLGameModel(
@@ -777,11 +779,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-level", choices=["fit", "constant"], default=None,
                         help="NFL scoring level: fitted through the model on the training "
                              "window, or the 22.5 constant (default: fit)")
-    parser.add_argument("--nfl-plays", choices=["scrimmage", "all"], default=None,
+    parser.add_argument("--nfl-plays", choices=["scrimmage", "live", "all"], default=None,
                         help="which plays the NFL ratings fit sees: the offense's own "
-                             "snaps, or every labelled play including kicks, kneels and "
-                             "no-plays (default: the lab's pick)")
-    parser.add_argument("--ncaaf-plays", choices=["scrimmage", "all"], default=None,
+                             "snaps; every live play (kicks kept, kneels/spikes/no-plays "
+                             "dropped); or every row (default: the lab's pick)")
+    parser.add_argument("--ncaaf-plays", choices=["scrimmage", "live", "all"], default=None,
                         help="the same choice for the college blend's EPA half "
                              "(default: the lab's pick)")
     parser.add_argument("--nfl-scale", choices=["fit", "off"], default=None,
@@ -1275,10 +1277,18 @@ def resolve_ncaaf_level(explicit: str | None) -> str:
 
 # Which plays the ratings fits see (velocity.features.team.scrimmage_plays)
 # and whether the projection's deviations are rescaled by the residual bank's
-# slopes (velocity.models.level.ScaleCalibration). Both wait on their lab
-# tables (docs/MODEL_LAB.md); "all" / "off" is the model as it was.
+# slopes (velocity.models.level.ScaleCalibration). Set by the lab
+# (docs/MODEL_LAB.md, the plays-and-scale round):
+#
+# * NFL plays stay "all": the scrimmage-only fit LOST — Brier 0.2224 against
+#   0.2195, margin RMSE 13.53 against 13.33. The kicks and punts carry field
+#   position the ratings want; the audit's kneel finding was real and the
+#   remedy was wrong.
+# * NFL scale "fit": totals RMSE 13.90 → 13.59 (the close: 13.23), margin
+#   and Brier unchanged — the projection's total had been claiming twice the
+#   deviation it earned, and the fitted slope (~0.50) returns it.
 DEFAULT_PLAYS_BY_LEAGUE = {"nfl": "all", "ncaaf": "all"}
-DEFAULT_SCALE_BY_LEAGUE = {"nfl": "off", "ncaaf": "off"}
+DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "off"}
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:
