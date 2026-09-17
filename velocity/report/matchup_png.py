@@ -362,7 +362,7 @@ def render_matchup_card(card: MatchupCard, path: Path | str,
     _text(fig, 0.055, 0.487, "TEAM RANKS · EPA PER PLAY", color=INK_DIM, fontsize=10)
     any_rank = next((r for s in (card.away, card.home) for r in s.ranks.values()), None)
     if any_rank is not None:
-        _text(fig, 0.945, 0.487, f"1 = best of {any_rank.of} · season to date",
+        _text(fig, 0.945, 0.487, card.ranks_caption(any_rank.of),
               color=INK_DIM, fontsize=9.5, ha="right")
     for i, (label, key, note) in enumerate(_RANK_ROWS):
         y = 0.458 - i * 0.032
