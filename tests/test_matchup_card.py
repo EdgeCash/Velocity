@@ -313,20 +313,57 @@ def test_ordinal(n: int, expected: str) -> None:
     assert _ordinal(n) == expected
 
 
+def _ranked(code: str, off_pass: int, def_pass: int) -> TeamSide:
+    return TeamSide(code=code, city=code, nickname=code, record="", color="#fff",
+                    ranks={"off_pass": UnitRank(off_pass, 32, 0.1),
+                           "def_pass": UnitRank(def_pass, 32, 0.1)})
+
+
 def test_unit_notes_only_speak_to_a_real_gap() -> None:
     from velocity.report.matchup import NOTE_GAP_MIN, unit_notes
 
-    def side(code: str, off_pass: int, def_pass: int) -> TeamSide:
-        return TeamSide(code=code, city=code, nickname=code, record="", color="#fff",
-                        ranks={"off_pass": UnitRank(off_pass, 32, 0.1),
-                               "def_pass": UnitRank(def_pass, 32, 0.1)})
-
-    wide = unit_notes(side("DAL", 2, 30), side("DET", 20, 30))
+    wide = unit_notes(_ranked("DAL", 2, 30), _ranked("DET", 20, 30))
     assert wide and "DAL" in wide[0] and "2nd" in wide[0] and "30th" in wide[0]
 
-    narrow = unit_notes(side("DAL", 10, 10 + NOTE_GAP_MIN - 1),
-                        side("DET", 10, 10 + NOTE_GAP_MIN - 1))
+    narrow = unit_notes(_ranked("DAL", 10, 10 + NOTE_GAP_MIN - 1),
+                        _ranked("DET", 10, 10 + NOTE_GAP_MIN - 1))
     assert narrow == ()
+
+
+def test_unit_notes_let_a_dominant_defense_be_the_headline() -> None:
+    """The one-directional version sat silent through the most lopsided games.
+
+    LSU's 83rd pass offense against Georgia's 5th pass defense is the story of
+    that matchup; firing only when an OFFENSE outranks its opponent skipped it
+    and left the panel empty.
+    """
+    from velocity.report.matchup import unit_notes
+
+    notes = unit_notes(_ranked("LSU", 83, 60), _ranked("UGA", 60, 5))
+    assert notes, "a defense that outranks the offense it faces is a mismatch"
+    # Stated from the winning unit's side: the defense leads the sentence.
+    assert notes[0].startswith("UGA's pass defense ranks 5th")
+    assert "LSU's passing game, ranked 83rd" in notes[0]
+
+
+def test_unit_notes_rank_by_size_not_by_which_side_won_it() -> None:
+    from velocity.report.matchup import unit_notes
+
+    # Away offense beats the home defense by 10; home defense beats the away
+    # offense by 25 on the other unit. The bigger gap leads, whichever it is.
+    away = TeamSide(code="AAA", city="A", nickname="A", record="", color="#fff",
+                    ranks={"off_pass": UnitRank(30, 32, 0.1),
+                           "def_pass": UnitRank(20, 32, 0.1),
+                           "off_rush": UnitRank(5, 32, 0.1),
+                           "def_rush": UnitRank(16, 32, 0.1)})
+    home = TeamSide(code="BBB", city="B", nickname="B", record="", color="#fff",
+                    ranks={"off_pass": UnitRank(20, 32, 0.1),
+                           "def_pass": UnitRank(5, 32, 0.1),
+                           "off_rush": UnitRank(16, 32, 0.1),
+                           "def_rush": UnitRank(15, 32, 0.1)})
+    notes = unit_notes(away, home)
+    assert notes[0].startswith("BBB's pass defense ranks 5th")  # gap 25
+    assert any(n.startswith("AAA's running game ranks 5th") for n in notes)  # gap 10
 
 
 def test_unit_notes_without_ranks_says_nothing() -> None:
