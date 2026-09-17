@@ -354,6 +354,11 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
         assert runner.resolve_scale_shift("on", league) is True
         assert runner.resolve_scale_shift("off", league) is False
     assert runner.DEFAULT_SCALE_SHIFT_BY_LEAGUE == {"nfl": False, "ncaaf": True}
+    # The college blend's early-season weight: the lab's pick, clipped to [0, 1].
+    assert args.ncaaf_early_weight is None
+    assert runner.resolve_ncaaf_early_weight(None) == runner.DEFAULT_NCAAF_EARLY_WEIGHT == 0.4
+    assert runner.resolve_ncaaf_early_weight(0.3) == 0.3
+    assert runner.resolve_ncaaf_early_weight(2.0) == 1.0
 
 
 def test_a_papered_game_prices_but_never_stakes() -> None:

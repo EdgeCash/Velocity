@@ -1300,12 +1300,20 @@ def ncaaf_variants(
                 # The promoted college chain after the home-margin round:
                 # the same, with the scale's home-margin intercept kept and
                 # the sim at the dispersion measured on the shifted chain
-                # (NCAAF_SD_MARGIN / NCAAF_SD_TOTAL) — what the live runner
-                # prices.
-                "live-ncaaf-promoted": (
+                # (NCAAF_SD_MARGIN / NCAAF_SD_TOTAL). The early-weight
+                # round's candidates were scored against it.
+                "live-ncaaf-promoted-early50": (
                     "games", college_scaled(
                         blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
                                  scores_half_life=34.0),
+                        by_phase=True, shift=True)),
+                # The promoted college chain after the early-weight round:
+                # the EPA half at 0.4 of the blend through week 4 — what the
+                # live runner prices.
+                "live-ncaaf-promoted": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.4),
                         by_phase=True, shift=True)),
                 # Over the promoted chain: the offseason gap in the EPA
                 # half's recency key, and SP+ special teams in the prior.
@@ -1336,6 +1344,26 @@ def ncaaf_variants(
                 "blend-level2-sp12-hl6-gap6-st-shl34": (
                     "games", blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0,
                                       st_prior=True, scores_half_life=34.0)),
+                # The early-season blend weight, again, over the promoted
+                # chain: with a six-week half-life and a six-week offseason
+                # gap the EPA half opens a season on a quarter of last
+                # season's tail, so the scores half (with the SP+ prior) may
+                # deserve more of September than it did over the flat fit.
+                "live-ncaaf-promoted-early30": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.3),
+                        by_phase=True, shift=True)),
+                "live-ncaaf-promoted-early40": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.4),
+                        by_phase=True, shift=True)),
+                "live-ncaaf-promoted-early60": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.6),
+                        by_phase=True, shift=True)),
                 # The home-margin shift: the scale keeps its intercept on
                 # home-and-away games (the college slope of 1.35 fitted
                 # without it inflates the home edge by two points).
