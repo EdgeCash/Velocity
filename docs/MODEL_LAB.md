@@ -1433,3 +1433,84 @@ The close on this population: margin RMSE 15.64, total RMSE 16.30.
    within noise — still a watch item (docs/BACKTEST_NCAAF.md), not a
    strategy.
 
+
+## The recency round (2026-09-17) — both leagues
+
+The college finding (the round above) asked the same question of every
+recency key the fits use. Three knobs, all in the lab
+(`velocity.features.team.recency_weights(..., offseason_weeks=)`,
+`velocity.features.scores.scores_recency_weights`,
+`sp_pseudo_games(..., special_teams=True)`):
+
+- **The offseason gap.** The recency key steps `(season, week)` on a
+  contiguous key, so the offseason is the few empty week slots after a
+  season's last game. `offseason_weeks` ages last season's plays by that
+  many extra weeks at the turn of the season — a roster turns over in the
+  offseason more than a week's play says.
+- **Recency on the college scores half**, which had been flat since
+  Round 1; the SP+ pseudo-games sit at week 0 of the projected season, so
+  the prior counts as current under the key.
+- **SP+ special teams in the prior.** The pseudo-games carried offense
+  minus defense; the third component (±3 points a game at the extremes)
+  folds in as half onto the team's score and half off the anchor's, so the
+  pseudo-game margin is the whole SP+ rating.
+
+### NCAAF — over the promoted six-week-recency chain (FBS vs FBS, 8,360 games)
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total |
+|---|---|---|---|---|---|
+| promoted chain (`live-ncaaf-promoted-hl6`) | 0.1881 | 0.0192 | 16.880 | 16.845 | +0.094 |
+| offseason gap 6 in the EPA key | 0.1876 | 0.0207 | 16.848 | 16.824 | +0.100 |
+| gap 12 | 0.1877 | 0.0210 | 16.859 | 16.817 | +0.104 |
+| SP+ special teams in the prior | 0.1879 | 0.0191 | 16.869 | 16.845 | +0.094 |
+| gap 6 with special teams | 0.1875 | 0.0208 | 16.837 | 16.824 | +0.100 |
+| scores half, half-life 8 | 0.1882 | 0.0435 | 16.905 | 16.824 | +0.085 |
+| 17 | 0.1873 | 0.0351 | 16.836 | 16.819 | +0.095 |
+| 34 | 0.1873 | 0.0297 | 16.832 | 16.821 | +0.098 |
+| gap 6, special teams, scores half-life 17 | 0.1868 | 0.0359 | 16.806 | 16.801 | +0.100 |
+| gap 6, special teams, scores half-life 34 | 0.1867 | 0.0306 | 16.794 | 16.801 | +0.104 |
+| **the same, the bank rebuilt on its core** | **0.1866** | 0.0288 | **16.819** | **16.805** | **+0.102** |
+
+**Readings:** each knob helps a little and they add: the offseason gap
+0.03 on the margin, the special-teams component 0.01 (free — it is the
+rating SP+ publishes), recency on the scores half 0.05 (34 weeks; 8 is
+too short for a twelve-game season, 17 and 34 tie). **Promoted together**
+(`DEFAULT_NCAAF_EPA_OFFSEASON_WEEKS` 6, `DEFAULT_NCAAF_SCORES_HALF_LIFE`
+34, `DEFAULT_NCAAF_ST_PRIOR` on), the college bank rebuilt on the
+combined core (`blend-level2-sp12-hl6-gap6-st-shl34`): Brier 0.1881 →
+0.1866, margin RMSE 16.88 → 16.82, total RMSE 16.85 → 16.81, the ≥6
+totals cut 52.7% on 1,808. **The caveat is the calibration error**, 0.019
+→ 0.029 with the bank rebuilt: the scale corrects the mean deviation, not
+the spread, and the sim's margin sd (NCAAF Round 3, measured on the flat
+model's residuals) is now wider than a sharper model's. Brier still
+improves — resolution gains more than reliability loses — and the
+dispersion re-measure is the next item.
+
+### NFL — over the promoted chain (the turnover shrink; 4,080 games)
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | info_w total |
+|---|---|---|---|---|---|---|
+| promoted chain (half-life 17, no gap) | 0.2181 | 0.0157 | 13.251 | 13.519 | +0.088 | +0.087 |
+| half-life 8 | 0.2183 | 0.0148 | 13.249 | 13.505 | +0.028 | +0.086 |
+| 12 | 0.2177 | 0.0153 | 13.232 | 13.508 | +0.067 | +0.086 |
+| 25 | 0.2191 | 0.0122 | 13.294 | 13.537 | +0.098 | +0.088 |
+| 17 with offseason gap 8 | 0.2177 | 0.0135 | 13.229 | 13.510 | +0.068 | +0.083 |
+| 17 with gap 16 | 0.2177 | 0.0156 | 13.229 | 13.509 | +0.043 | +0.077 |
+| 12 with gap 8 | 0.2180 | 0.0175 | 13.235 | 13.507 | +0.033 | +0.079 |
+| 25 with gap 16 | 0.2178 | 0.0148 | 13.236 | 13.515 | +0.078 | +0.083 |
+| **17 with gap 8, the bank rebuilt on its core** | **0.2176** | **0.0141** | **13.229** | **13.510** | +0.067 | +0.082 |
+
+**Readings:** the half-life is where Round 1 left it — 12 ties 17 on the
+margin and gives up a third of the margin's information weight, 8 and 25
+lose outright — and the offseason gap is the finding: eight extra weeks
+of age at the turn of the season takes 0.02 off the margin and 0.01 off
+the total and improves Brier and calibration, and 16 adds nothing over 8.
+**Promoted at 8** (`DEFAULT_NFL_OFFSEASON_WEEKS`; `--nfl-offseason-weeks`),
+the NFL bank rebuilt on the gapped core
+(`qb-recency-17-q300-level2-starters-to0.5-gap8`): Brier 0.2181 →
+0.2176, calibration 0.0157 → 0.0141, margin RMSE 13.25 → 13.23, total RMSE
+13.52 → 13.51; the ≥4 totals cut 54.2% on 743. The margin's information
+weight keeps falling as the margin lands closer (+0.088 → +0.067), the
+pattern of every recency change this month: the close moves toward the
+model, and the least-squares weight measures what is left.
+

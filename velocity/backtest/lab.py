@@ -172,7 +172,7 @@ def nfl_variants(
         half_life: float, qb_lam: float | None = None, *,
         garbage: tuple[str, float, float] | None = None,
         turnover: float | None = None, winsor: float | None = None,
-        epa_col: str = "epa", home: bool = False,
+        epa_col: str = "epa", home: bool = False, offseason_weeks: float = 0.0,
     ) -> VariantFactory:
         """The QB-decomposed recency fit, optionally conditioned on the play
         context the rebuilt plays carry (velocity.features.team):
@@ -196,7 +196,7 @@ def nfl_variants(
                 frame = shrink_turnover_epa(frame, turnover, epa_col=epa_col)
             if winsor is not None:
                 frame = winsorize_epa(frame, winsor, epa_col=epa_col)
-            weights = recency_weights(frame, half_life)
+            weights = recency_weights(frame, half_life, offseason_weeks=offseason_weeks)
             if garbage is not None:
                 col, factor, band = garbage
                 weights = weights * garbage_time_weights(
@@ -394,6 +394,9 @@ def nfl_variants(
             # from this variant's projections when the shrink is promoted.
             "qb-recency-17-q300-level2-starters-to0.5": (
                 "plays", starters(levelled(qb_recency(17.0, 300.0, turnover=0.5), 2))),
+            "qb-recency-17-q300-level2-starters-to0.5-gap8": (
+                "plays", starters(levelled(
+                    qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0), 2))),
             "qb-recency-17-q300-level2-scrim-starters": (
                 "plays", starters(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
             # Pace over the scrimmage fit: the level is re-fitted after the
@@ -587,9 +590,34 @@ def nfl_variants(
                 # The promoted chain after the play-context round: the
                 # turnover shrink at 0.5 in the fit, the residual bank rebuilt
                 # on its core (qb-recency-17-q300-level2-starters-to0.5), the
-                # scale fitted on that bank.
-                "live-nfl-promoted": (
+                # scale fitted on that bank. The recency round's candidates
+                # below were scored against it.
+                "live-nfl-promoted-gap0": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5))),
+                # The promoted chain after the recency round: the eight-week
+                # offseason gap in the recency key, the bank rebuilt on that
+                # core (qb-recency-17-q300-level2-starters-to0.5-gap8) — what
+                # the live runner prices.
+                "live-nfl-promoted": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                # The recency round (after the college finding): the
+                # half-life re-swept over the promoted chain, and an
+                # offseason gap — the key otherwise steps a few empty week
+                # slots between seasons.
+                "live-nfl-promoted-hl8": (
+                    "plays", promoted(qb_recency(8.0, 300.0, turnover=0.5))),
+                "live-nfl-promoted-hl12": (
+                    "plays", promoted(qb_recency(12.0, 300.0, turnover=0.5))),
+                "live-nfl-promoted-hl25": (
+                    "plays", promoted(qb_recency(25.0, 300.0, turnover=0.5))),
+                "live-nfl-promoted-hl17-gap8": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                "live-nfl-promoted-hl17-gap16": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=16.0))),
+                "live-nfl-promoted-hl12-gap8": (
+                    "plays", promoted(qb_recency(12.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                "live-nfl-promoted-hl25-gap16": (
+                    "plays", promoted(qb_recency(25.0, 300.0, turnover=0.5, offseason_weeks=16.0))),
             })
     return variants
 
@@ -1048,6 +1076,8 @@ def ncaaf_variants(
                 k: int, *, scrimmage: bool = False, pace: bool = False,
                 early_weight: float | None = None, qb_lambda: float | None = None,
                 epa_prior_k: int | None = None, epa_half_life: float | None = None,
+                epa_offseason_weeks: float = 0.0, st_prior: bool = False,
+                scores_half_life: float | None = None,
             ) -> VariantFactory:
                 """``blend-level2`` with the SP+ previous-season prior in the
                 scores half, at ``k`` pseudo-games per team — what the live
@@ -1062,7 +1092,12 @@ def ncaaf_variants(
                 puts the same SP+ prior into the EPA half as week-0
                 pseudo-cells worth that many games (sp_pseudo_cells);
                 ``epa_half_life`` recency-weights the EPA half's cells
-                (on-field weeks), which the promoted fit does not."""
+                (on-field weeks); ``epa_offseason_weeks`` widens the gap
+                between seasons in that key; ``st_prior`` folds SP+'s
+                special-teams rating into the scores half's pseudo-games;
+                ``scores_half_life`` recency-weights the scores half's games
+                (scores_recency_weights; the pseudo-games sit at week 0 of
+                the projected season, so the prior counts as current)."""
                 def factory(
                     train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
                 ) -> BlendedGameModel:
@@ -1097,7 +1132,8 @@ def ncaaf_variants(
                             cells = pd.concat([cells, prior_cells], ignore_index=True)
                     weights = cells["n"].astype(float)
                     if epa_half_life is not None:
-                        weights = weights * recency_weights(cells, epa_half_life)
+                        weights = weights * recency_weights(
+                            cells, epa_half_life, offseason_weeks=epa_offseason_weeks)
                     if qb_lambda is not None:
                         ratings: object = fit_qb_ratings(
                             cells, ridge_lambda=50.0, qb_lambda=qb_lambda,
@@ -1109,13 +1145,18 @@ def ncaaf_variants(
                         _replace(cfg, base_points=mean_points_per_team(train_games)),
                         pace=team_pace(sub) if pace else None,
                     )
-                    pseudo = sp_pseudo_games(sp_frame, teams, cutoff=cutoff, k=k)
+                    pseudo = sp_pseudo_games(
+                        sp_frame, teams, cutoff=cutoff, k=k, special_teams=st_prior)
                     fit_games = (pd.concat([train_games, pseudo], ignore_index=True)
                                  if not pseudo.empty else train_games)
                     # The level is fitted on real games only: pseudo-games sit
                     # at SP+'s own scale, not the season's scoring level.
+                    scores_weights = (scores_recency_weights(fit_games, scores_half_life)
+                                      if scores_half_life is not None else None)
                     scores_model = calibrate_scores_level(
-                        _model(fit_scores_ratings(fit_games, ridge_lambda=10.0)), train_games)
+                        _model(fit_scores_ratings(
+                            fit_games, ridge_lambda=10.0, weights=scores_weights)),
+                        train_games)
                     weight = 0.5
                     if (early_weight is not None and predicting is not None
                             and predicting[1] <= NCAAF_EARLY_WEEK):
@@ -1222,12 +1263,64 @@ def ncaaf_variants(
                     "games", blend_sp(12, qb_lambda=100.0, epa_half_life=8.0)),
                 "blend-level2-sp12-qb150-epahl8": (
                     "games", blend_sp(12, qb_lambda=150.0, epa_half_life=8.0)),
-                # The promoted college chain after the recency round: the
+                # The promoted college chain after the college round: the
                 # six-week half-life on the EPA half, the bank rebuilt on its
                 # core (blend-level2-sp12-epahl6), the phase scale on that
-                # bank — what the live runner prices.
-                "live-ncaaf-promoted": (
+                # bank. The recency round's candidates below were scored
+                # against it.
+                "live-ncaaf-promoted-hl6": (
                     "games", college_scaled(blend_sp(12, epa_half_life=6.0), by_phase=True)),
+                # The promoted college chain after the recency round: the
+                # six-week offseason gap in the EPA half's key, a 34-week
+                # half-life on the scores half and SP+ special teams in the
+                # prior, the bank rebuilt on the combined core
+                # (blend-level2-sp12-hl6-gap6-st-shl34) — what the live
+                # runner prices.
+                "live-ncaaf-promoted": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True)),
+                # Over the promoted chain: the offseason gap in the EPA
+                # half's recency key, and SP+ special teams in the prior.
+                "live-ncaaf-promoted-gap6": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0), by_phase=True)),
+                "live-ncaaf-promoted-gap12": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=12.0), by_phase=True)),
+                "live-ncaaf-promoted-st": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=6.0, st_prior=True),
+                                            by_phase=True)),
+                "live-ncaaf-promoted-gap6-st": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True),
+                        by_phase=True)),
+                "live-ncaaf-promoted-gap6-st-shl17": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=17.0),
+                        by_phase=True)),
+                "live-ncaaf-promoted-gap6-st-shl34": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True)),
+                # The unscaled core of the combination, for the bank rebuild.
+                "blend-level2-sp12-hl6-gap6-st-shl34": (
+                    "games", blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0,
+                                      st_prior=True, scores_half_life=34.0)),
+                # Recency on the scores half too (it has been flat since
+                # Round 1; the prior's pseudo-games count as current).
+                "live-ncaaf-promoted-shl8": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, scores_half_life=8.0), by_phase=True)),
+                "live-ncaaf-promoted-shl17": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, scores_half_life=17.0), by_phase=True)),
+                "live-ncaaf-promoted-shl34": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, scores_half_life=34.0), by_phase=True)),
                 "blend-level2-sp12-scale-phase-early60": (
                     "games", college_scaled(blend_sp(12, early_weight=0.6), by_phase=True)),
             })

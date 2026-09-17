@@ -391,7 +391,8 @@ def _build_projection(
 
             plays = shrink_turnover_epa(plays, shrink)
             print(f"NFL turnover EPA: ×{shrink:g} on interceptions and lost fumbles")
-        weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
+        offseason = resolve_offseason_weeks(args.nfl_offseason_weeks)
+        weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE, offseason_weeks=offseason)
         if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
             # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
             # of the offense, detected starter priced back in at projection.
@@ -612,6 +613,11 @@ def _build_projection(
     ridge = {"ncaaf": 10.0, "mlb": 100.0, "wnba": 10.0, "ncaab": 0.5,
              "nhl": 25.0}.get(args.league, 25.0)
     recency_hl = {"wnba": 8.0, "ncaab": 6.0}.get(args.league)
+    if args.league == "ncaaf":
+        # The college recency round (docs/MODEL_LAB.md): the scores half
+        # weighed flat through the college round; a half-life the lab sets.
+        college_scores_hl = resolve_ncaaf_scores_half_life(args.ncaaf_scores_half_life)
+        recency_hl = college_scores_hl if college_scores_hl > 0 else None
     weights = None
     if recency_hl is not None:
         from velocity.features.scores import scores_recency_weights
@@ -634,9 +640,16 @@ def _build_projection(
             pd.read_parquet(sp_file),
             set(games["home_team"]) | set(games["away_team"]),
             cutoff=pd.to_datetime(games["kickoff"]).max(),
+            special_teams=resolve_ncaaf_st_prior(args.ncaaf_st_prior),
         )
         if not pseudo.empty:
             fit_games = pd.concat([games, pseudo], ignore_index=True)
+            if weights is not None:
+                from velocity.features.scores import scores_recency_weights
+
+                # The pseudo-games sit at week 0 of the season ahead, so the
+                # prior counts as current under the same key.
+                weights = scores_recency_weights(fit_games, recency_hl)  # type: ignore[arg-type]
             print(f"SP+ prior: {len(pseudo)} pseudo-games from season "
                   f"{int(pseudo['season'].max()) - 1}'s final ratings")
     scores_model = ScoresGameModel(
@@ -769,8 +782,9 @@ def _build_projection(
             # round): the promoted fit had weighed a four-season window flat.
             from velocity.features.team import recency_weights as _recency
 
-            weights = weights * _recency(cells, half_life)
-            epa_kind += f"/hl{half_life:g}"
+            gap = resolve_ncaaf_epa_offseason_weeks(args.ncaaf_epa_offseason_weeks)
+            weights = weights * _recency(cells, half_life, offseason_weeks=gap)
+            epa_kind += f"/hl{half_life:g}" + (f"+gap{gap:g}" if gap > 0 else "")
         if use_qb:
             # The college QB term (docs/MODEL_LAB.md, the college QB round):
             # the passer decomposed out of the offense on passer cells, the
@@ -878,6 +892,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="recency half-life, in on-field weeks, on the college EPA "
                              "half's plays (0 weighs the window flat; default: the lab's "
                              "pick)")
+    parser.add_argument("--ncaaf-epa-offseason-weeks", type=float, default=None,
+                        help="extra weeks of age the college EPA half's recency key puts "
+                             "between seasons (default: the lab's pick)")
+    parser.add_argument("--ncaaf-scores-half-life", type=float, default=None,
+                        help="recency half-life, in on-field weeks, on the college scores "
+                             "half's games (0 weighs them flat; default: the lab's pick)")
+    parser.add_argument("--ncaaf-st-prior", choices=["on", "off"], default=None,
+                        help="fold SP+'s special-teams rating into the prior's pseudo-games "
+                             "(default: the lab's pick)")
     parser.add_argument("--ncaaf-qb-lambda", type=float, default=None,
                         help="decompose the passer out of the college EPA half at this QB "
                              "ridge, the detected starter priced back in (0 keeps the team "
@@ -885,6 +908,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-precip-points", type=float, default=None,
                         help="points off each NFL team on a forecast of ≥ 0.25 in of rain "
                              "(0 switches it off; default: the lab's pick)")
+    parser.add_argument("--nfl-offseason-weeks", type=float, default=None,
+                        help="extra weeks of age the NFL recency key puts between seasons "
+                             "(0 steps the empty week slots only; default: the lab's pick)")
     parser.add_argument("--nfl-turnover-shrink", type=float, default=None,
                         help="scale the EPA of interceptions and lost fumbles by this factor "
                              "before the NFL ratings fit (1 keeps them whole; default: the "
@@ -1467,6 +1493,44 @@ DEFAULT_NCAAF_EPA_HALF_LIFE = 6.0
 
 def resolve_ncaaf_epa_half_life(explicit: float | None) -> float:
     return DEFAULT_NCAAF_EPA_HALF_LIFE if explicit is None else max(0.0, float(explicit))
+
+
+# The recency round's other knobs (docs/MODEL_LAB.md), defaults set by the lab:
+# the offseason gap in each recency key (extra weeks of age between one
+# season's last week and the next season's first), recency on the college
+# scores half (0 = flat), and SP+ special teams in the prior's pseudo-games.
+# College (docs/MODEL_LAB.md, the recency round): a six-week offseason gap
+# in the EPA half's key, a 34-week half-life on the scores half and SP+
+# special teams in the prior, together, with the college bank rebuilt on
+# the combined core: Brier 0.1881 → 0.1866, margin RMSE 16.88 → 16.82,
+# total RMSE 16.85 → 16.81 over the six-week-recency chain. The
+# calibration error climbs 0.019 → 0.029 with the bank rebuilt: the sim's
+# margin sd no longer matches a sharper model's residuals — the next item.
+# NFL: an eight-week offseason gap in the recency key, with the NFL bank
+# rebuilt on the gapped core: Brier 0.2181 → 0.2176, calibration error
+# 0.0157 → 0.0141, margin RMSE 13.25 → 13.23, total RMSE 13.52 → 13.51.
+# The half-life itself stays at 17 (12 ties it on the margin and loses the
+# margin's information weight; 8 and 25 lose outright).
+DEFAULT_NFL_OFFSEASON_WEEKS = 8.0
+DEFAULT_NCAAF_EPA_OFFSEASON_WEEKS = 6.0
+DEFAULT_NCAAF_SCORES_HALF_LIFE = 34.0
+DEFAULT_NCAAF_ST_PRIOR = True
+
+
+def resolve_offseason_weeks(explicit: float | None) -> float:
+    return DEFAULT_NFL_OFFSEASON_WEEKS if explicit is None else max(0.0, float(explicit))
+
+
+def resolve_ncaaf_epa_offseason_weeks(explicit: float | None) -> float:
+    return DEFAULT_NCAAF_EPA_OFFSEASON_WEEKS if explicit is None else max(0.0, float(explicit))
+
+
+def resolve_ncaaf_scores_half_life(explicit: float | None) -> float:
+    return DEFAULT_NCAAF_SCORES_HALF_LIFE if explicit is None else max(0.0, float(explicit))
+
+
+def resolve_ncaaf_st_prior(explicit: str | None) -> bool:
+    return DEFAULT_NCAAF_ST_PRIOR if explicit is None else explicit == "on"
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:

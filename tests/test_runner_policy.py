@@ -329,6 +329,23 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.DEFAULT_NCAAF_QB_LAMBDA == 0.0
     assert runner.resolve_ncaaf_epa_half_life(8.0) == 8.0
     assert runner.resolve_ncaaf_epa_half_life(-3.0) == 0.0
+    # The recency round's knobs: the offseason gaps, the college scores
+    # half's recency and the special-teams prior, each the lab's pick.
+    for flag in ("nfl_offseason_weeks", "ncaaf_epa_offseason_weeks",
+                 "ncaaf_scores_half_life", "ncaaf_st_prior"):
+        assert getattr(args, flag) is None
+    assert runner.resolve_offseason_weeks(None) == runner.DEFAULT_NFL_OFFSEASON_WEEKS == 8.0
+    assert runner.resolve_offseason_weeks(8.0) == 8.0
+    assert runner.resolve_offseason_weeks(-1.0) == 0.0
+    assert (runner.resolve_ncaaf_epa_offseason_weeks(None)
+            == runner.DEFAULT_NCAAF_EPA_OFFSEASON_WEEKS == 6.0)
+    assert runner.resolve_ncaaf_epa_offseason_weeks(0.0) == 0.0
+    assert (runner.resolve_ncaaf_scores_half_life(None)
+            == runner.DEFAULT_NCAAF_SCORES_HALF_LIFE == 34.0)
+    assert runner.resolve_ncaaf_scores_half_life(0.0) == 0.0
+    assert runner.resolve_ncaaf_st_prior(None) is runner.DEFAULT_NCAAF_ST_PRIOR is True
+    assert runner.resolve_ncaaf_st_prior("on") is True
+    assert runner.resolve_ncaaf_st_prior("off") is False
 
 
 def test_a_papered_game_prices_but_never_stakes() -> None:
