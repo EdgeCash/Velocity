@@ -1514,3 +1514,62 @@ weight keeps falling as the margin lands closer (+0.088 → +0.067), the
 pattern of every recency change this month: the close moves toward the
 model, and the least-squares weight measures what is left.
 
+
+## The home-margin round (2026-09-17) — the scale's intercept, and the college dispersion
+
+The recency round left the college calibration error at 0.029, up from
+0.019, with the bank rebuilt. The dispersion re-measure that was meant to
+explain it did not: the promoted chain's walk-forward residual sd is 16.2
+on the margin (2022–25) against the sim's 18.2, yet pricing the chain
+through a 16.2 sim made calibration *worse* (0.031) and 17.2 slightly
+better (0.027). The bias was the answer. Split by site, the chain's mean
+projected home margin on home-and-away games was +6.5 against a closing
+line of +4.5 and an actual of +4.4 — **two points too much home edge**,
+in every season since 2015 — while the unscaled core's bias was −0.5.
+The scale itself was the source: `ScaleCalibration` fitted its margin
+slope with an intercept and dropped it ("a home-margin bias belongs to
+the HFA parameter"), and the college slope is 1.35 — a slope that steep,
+applied without the −2.2 intercept it was fitted with, inflates the home
+edge along with everything else.
+
+**The fix**: `margin_shift` — the intercept kept, fitted on the bank's
+home-and-away rows only (`neutral_ids` from the games frame), applied to
+home-and-away games and never to a neutral field; the walk-forward leak
+gate unchanged (`scale_model(..., shift=True)`). Then the dispersion
+again, measured on the shifted chain (2022–25, 3,174 games: sd 16.19
+margin, 16.15 total).
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total |
+|---|---|---|---|---|---|
+| NCAAF promoted chain (`live-ncaaf-promoted-noshift`) | 0.1866 | 0.0289 | 16.819 | 16.805 | +0.102 |
+| sim sd 16.2 / 16.2 (no shift) | 0.1867 | 0.0312 | 16.819 | 16.805 | +0.102 |
+| sim sd 16.7 / 16.5 (no shift) | 0.1866 | 0.0292 | 16.819 | 16.805 | +0.102 |
+| sim sd 17.2 / 16.7 (no shift) | 0.1866 | 0.0274 | 16.819 | 16.805 | +0.102 |
+| **the shift** | 0.1863 | 0.0190 | **16.714** | 16.805 | +0.102 |
+| the shift, sim sd 16.7 / 16.5 | 0.1860 | 0.0125 | 16.714 | 16.805 | +0.102 |
+| **the shift, sim sd 16.2 / 16.2 (the measured dispersion)** | **0.1860** | **0.0138** | **16.714** | 16.805 | +0.102 |
+| NFL promoted chain | 0.2176 | 0.0141 | 13.229 | 13.510 | +0.082 |
+| NFL with the shift | 0.2177 | 0.0221 | 13.236 | 13.510 | +0.082 |
+
+**Readings:**
+
+1. **The shift is a bias fix worth a tenth of a point on the college
+   margin** (16.82 → 16.71 — the close is 15.64) and it returns the
+   calibration error to where the flat model had it (0.029 → 0.019),
+   at no cost anywhere. **Promoted for college**
+   (`DEFAULT_SCALE_SHIFT_BY_LEAGUE`, `--ncaaf-scale-shift`); the NFL
+   bank's intercept is noise around zero and keeping it costs the NFL
+   chain calibration (0.014 → 0.022) — **off for the NFL**.
+2. **With the bias gone, the dispersion re-measure lands.** The sim's
+   18.2 / 16.7 was Round 3's measurement on the flat `ridge-10` fit; the
+   shifted chain's own residual sd is 16.2 / 16.2, and pricing through it
+   takes the calibration error to 0.014 and Brier 0.1863 → 0.1860 (16.7 /
+   16.5 scores 0.0125 — inside seed noise of it, and Round 3's rule holds:
+   the directly measured value wins). **Promoted: `NCAAF_SD_MARGIN =
+   16.2`, `NCAAF_SD_TOTAL = 16.2`.** Round 3's trap in reverse: a sim's
+   dispersion has to be measured against its own projections, and
+   re-measured when the projections sharpen.
+3. The confirmed college chain: Brier 0.2002 → **0.1860** and margin RMSE
+   17.73 → **16.71** on the day, from the flat four-season fit the day
+   began with; the ≥6 totals cut 52.7% on 1,812.
+

@@ -53,8 +53,8 @@ DEFAULT_SD_TOTAL = 13.6
 # **model's** own projection, not the market's closing line. The market is far
 # sharper — its NCAAF residual sd is only 15.5 — so calibrating to it would
 # shrink these constants by 15% and make the sim badly overconfident.
-NCAAF_SD_MARGIN = 18.2
-NCAAF_SD_TOTAL = 16.7
+NCAAF_SD_MARGIN = 16.2
+NCAAF_SD_TOTAL = 16.2
 
 # Heteroscedastic dispersion per league: (sd_margin_slope, sd_total_slope,
 # sd_anchor_total) — how the sds above move per point of expected total away

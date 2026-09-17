@@ -488,14 +488,17 @@ def _build_projection(
                 print("no residual bank for nfl; projecting unscaled")
             else:
                 weeks = phase_weeks(next_week(window), "nfl") if nfl_scale == "phase" else None
+                shift = resolve_scale_shift(args.nfl_scale_shift, "nfl")
                 core, calibration = scale_model(
                     nfl_model, bank, window, nfl_model.config.sim, weeks=weeks,
-                    anchor_seasons=NFL_LEVEL_SEASONS)
+                    anchor_seasons=NFL_LEVEL_SEASONS, shift=shift)
                 phase = f" (weeks {weeks[0]}–{weeks[1]})" if weeks else ""
                 kind += (f", scale ×{calibration.margin_slope:.2f} margin "
-                         f"/ ×{calibration.total_slope:.2f} total{phase}")
-                print(f"NFL scale{phase}: margin ×{calibration.margin_slope:.3f}, total "
-                      f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
+                         f"{calibration.margin_shift:+.2f} / ×{calibration.total_slope:.2f} "
+                         f"total{phase}")
+                print(f"NFL scale{phase}: margin ×{calibration.margin_slope:.3f} "
+                      f"{calibration.margin_shift:+.2f}, total ×{calibration.total_slope:.3f} "
+                      f"on {calibration.n} banked games")
 
         # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
         # top of the fit — small, consistent across every tested grid.
@@ -831,13 +834,20 @@ def _build_projection(
                 # the ≥6 totals record 53.4% → 53.6% over the whole-bank fit).
                 weeks = (phase_weeks(next_week(games), "ncaaf")
                          if college_scale == "phase" else None)
+                # The home-margin shift (docs/MODEL_LAB.md, the home-margin
+                # round): the slope fitted without its intercept had been
+                # inflating the college home edge by two points a game.
+                shift = resolve_scale_shift(args.ncaaf_scale_shift, "ncaaf")
                 model, calibration = scale_model(
-                    model, bank, games, sim, weeks=weeks, anchor_seasons=NFL_LEVEL_SEASONS)
+                    model, bank, games, sim, weeks=weeks, anchor_seasons=NFL_LEVEL_SEASONS,
+                    shift=shift)
                 phase = f" (weeks {weeks[0]}–{weeks[1]})" if weeks else ""
                 kind += (f", scale ×{calibration.margin_slope:.2f} margin "
-                         f"/ ×{calibration.total_slope:.2f} total{phase}")
-                print(f"NCAAF scale{phase}: margin ×{calibration.margin_slope:.3f}, total "
-                      f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
+                         f"{calibration.margin_shift:+.2f} / ×{calibration.total_slope:.2f} "
+                         f"total{phase}")
+                print(f"NCAAF scale{phase}: margin ×{calibration.margin_slope:.3f} "
+                      f"{calibration.margin_shift:+.2f}, total ×{calibration.total_slope:.3f} "
+                      f"on {calibration.n} banked games")
 
     print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
 
@@ -888,6 +898,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "being projected, or not at all (default: the lab's pick)")
     parser.add_argument("--ncaaf-scale", choices=["fit", "phase", "off"], default=None,
                         help="the same for the college blend (default: the lab's pick)")
+    parser.add_argument("--nfl-scale-shift", choices=["on", "off"], default=None,
+                        help="keep the scale's home-margin intercept (fitted on home-and-away "
+                             "bank rows, applied to home-and-away games) in the NFL chain "
+                             "(default: the lab's pick)")
+    parser.add_argument("--ncaaf-scale-shift", choices=["on", "off"], default=None,
+                        help="the same for the college chain (default: the lab's pick)")
     parser.add_argument("--ncaaf-epa-half-life", type=float, default=None,
                         help="recency half-life, in on-field weeks, on the college EPA "
                              "half's plays (0 weighs the window flat; default: the lab's "
@@ -1539,6 +1555,23 @@ def resolve_plays(explicit: str | None, league: str) -> str:
 
 def resolve_scale(explicit: str | None, league: str) -> str:
     return explicit or DEFAULT_SCALE_BY_LEAGUE.get(league, "off")
+
+
+# The scale's home-margin intercept, kept and applied to home-and-away games
+# (velocity.models.level.ScaleCalibration.margin_shift). The home-margin
+# round (docs/MODEL_LAB.md): the college slope of 1.35 fitted without its
+# intercept had inflated the home edge by two points a game; keeping it
+# takes the margin RMSE 16.82 → 16.71 and the calibration error 0.029 →
+# 0.019 (0.014 with the sim's dispersion re-measured on the shifted chain).
+# The NFL bank's intercept is noise around zero and the shift costs it
+# calibration — off there.
+DEFAULT_SCALE_SHIFT_BY_LEAGUE = {"nfl": False, "ncaaf": True}
+
+
+def resolve_scale_shift(explicit: str | None, league: str) -> bool:
+    if explicit is None:
+        return DEFAULT_SCALE_SHIFT_BY_LEAGUE.get(league, False)
+    return explicit == "on"
 
 
 def resolve_sim_shape(explicit: str | None, league: str) -> str:
