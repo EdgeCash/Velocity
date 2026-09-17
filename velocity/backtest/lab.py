@@ -268,7 +268,8 @@ def nfl_variants(
     }
 
     def scaled(
-        inner: VariantFactory, league: str = "nfl", *, by_phase: bool = False
+        inner: VariantFactory, league: str = "nfl", *, by_phase: bool = False,
+        shift: bool = False,
     ) -> VariantFactory:
         """``inner`` under a ScaleCalibration fitted on the league's residual
         bank, seasons strictly before the one being projected
@@ -293,7 +294,7 @@ def nfl_variants(
             # outside it keeps its kickoff keying, so wrap in that order.
             core = model.inner if isinstance(model, ScheduleStarterModel) else model
             scaled_model, _cal = scale_model(
-                core, bank, window, sim, before_season=predicting[0], weeks=weeks)
+                core, bank, window, sim, before_season=predicting[0], weeks=weeks, shift=shift)
             if isinstance(model, ScheduleStarterModel):
                 return ScheduleStarterModel(scaled_model, schedule)  # type: ignore[arg-type]
             return scaled_model
@@ -551,12 +552,13 @@ def nfl_variants(
                                    cold_points=0.5, cold_threshold_f=40.0)),
             })
 
-            def promoted(core: VariantFactory) -> VariantFactory:
+            def promoted(core: VariantFactory, *, shift: bool = False) -> VariantFactory:
                 """``core`` under the whole promoted chain — level, scale,
                 starters, rest, the injury burden, wind and rain — so a
-                change to the fit itself is scored exactly as it would run."""
-                return windy(injured(rested(scaled(starters(levelled(core, 2)))), 4.0),
-                             precip_points=1.0)
+                change to the fit itself is scored exactly as it would run.
+                ``shift`` keeps the scale's home-margin intercept."""
+                return windy(injured(rested(scaled(starters(levelled(core, 2)), shift=shift)),
+                                     4.0), precip_points=1.0)
 
             variants.update({
                 # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
@@ -600,6 +602,10 @@ def nfl_variants(
                 # the live runner prices.
                 "live-nfl-promoted": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                # The scale's home-margin intercept, over the promoted chain.
+                "live-nfl-promoted-shift": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      shift=True)),
                 # The recency round (after the college finding): the
                 # half-life re-swept over the promoted chain, and an
                 # offseason gap — the key otherwise steps a few empty week
@@ -982,16 +988,25 @@ def ncaaf_variants(
             "blend-hfa-own-pace": ("games", blend_hfa("own", pace=True)),
         })
 
-        def college_scaled(inner: VariantFactory, *, by_phase: bool = False) -> VariantFactory:
+        def college_scaled(
+            inner: VariantFactory, *, by_phase: bool = False,
+            sds: tuple[float, float] | None = None, shift: bool = False,
+        ) -> VariantFactory:
             """``inner`` under the college residual bank's ScaleCalibration
             (seasons before the projected one); the anchor is the model's
             mean total over the trailing two training seasons. ``by_phase``
             fits on the bank rows of the projected week's phase (early:
-            through week 4)."""
+            through week 4). ``sds`` = (sd_margin, sd_total) prices the
+            scaled model through a sim of that dispersion instead of the
+            league constants (the dispersion round)."""
+            from dataclasses import replace as _replace_sim
+
             from velocity.models.level import scale_model
             from velocity.models.residuals import load_residual_frame
 
             bank = load_residual_frame("ncaaf")
+            chain_sim = (_replace_sim(sim, sd_margin=sds[0], sd_total=sds[1])
+                         if sds is not None else sim)
 
             def factory(
                 train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
@@ -1011,7 +1026,8 @@ def ncaaf_variants(
                     if by_phase else None
                 )
                 scaled_model, _cal = scale_model(
-                    model, bank, train_games, sim, before_season=predicting[0], weeks=weeks)
+                    model, bank, train_games, chain_sim, before_season=predicting[0],
+                    weeks=weeks, shift=shift)
                 return scaled_model
 
             return factory
@@ -1274,13 +1290,23 @@ def ncaaf_variants(
                 # six-week offseason gap in the EPA half's key, a 34-week
                 # half-life on the scores half and SP+ special teams in the
                 # prior, the bank rebuilt on the combined core
-                # (blend-level2-sp12-hl6-gap6-st-shl34) — what the live
-                # runner prices.
-                "live-ncaaf-promoted": (
+                # (blend-level2-sp12-hl6-gap6-st-shl34). The home-margin
+                # round's candidates were scored against it.
+                "live-ncaaf-promoted-noshift": (
                     "games", college_scaled(
                         blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
                                  scores_half_life=34.0),
                         by_phase=True)),
+                # The promoted college chain after the home-margin round:
+                # the same, with the scale's home-margin intercept kept and
+                # the sim at the dispersion measured on the shifted chain
+                # (NCAAF_SD_MARGIN / NCAAF_SD_TOTAL) — what the live runner
+                # prices.
+                "live-ncaaf-promoted": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, shift=True)),
                 # Over the promoted chain: the offseason gap in the EPA
                 # half's recency key, and SP+ special teams in the prior.
                 "live-ncaaf-promoted-gap6": (
@@ -1310,6 +1336,43 @@ def ncaaf_variants(
                 "blend-level2-sp12-hl6-gap6-st-shl34": (
                     "games", blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0,
                                       st_prior=True, scores_half_life=34.0)),
+                # The home-margin shift: the scale keeps its intercept on
+                # home-and-away games (the college slope of 1.35 fitted
+                # without it inflates the home edge by two points).
+                "live-ncaaf-promoted-shift": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, shift=True)),
+                "live-ncaaf-promoted-shift-sd16.2-16.2": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, shift=True, sds=(16.2, 16.2))),
+                "live-ncaaf-promoted-shift-sd16.7-16.5": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, shift=True, sds=(16.7, 16.5))),
+                # The dispersion round: the promoted chain priced through a
+                # sim whose sds are the chain's own walk-forward residual
+                # sds (2022–25: 16.2 / 16.2) instead of Round 3's, measured
+                # on the flat ridge-10 fit (18.2 / 16.7).
+                "live-ncaaf-promoted-sd16.2-16.2": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, sds=(16.2, 16.2))),
+                "live-ncaaf-promoted-sd16.7-16.5": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, sds=(16.7, 16.5))),
+                "live-ncaaf-promoted-sd17.2-16.7": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0),
+                        by_phase=True, sds=(17.2, 16.7))),
                 # Recency on the scores half too (it has been flat since
                 # Round 1; the prior's pseudo-games count as current).
                 "live-ncaaf-promoted-shl8": (

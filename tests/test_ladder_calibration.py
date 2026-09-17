@@ -175,20 +175,20 @@ def test_calibration_reports_relative_error_too() -> None:
 def test_ncaaf_sim_dispersion_matches_its_measured_residual() -> None:
     """The college sim's noise constants are walk-forward measured, not guessed.
 
-    They must stay wider than the market-anchored residual (15.5) that first
-    drew attention to them: a sim's dispersion answers to its *own* residuals,
-    and the market is far sharper than the model. Calibrating to the market
-    would shrink these ~15% and make the sim overconfident
-    (docs/MODEL_LAB.md "NCAAF Round 3").
+    A sim's dispersion answers to its *own* residuals, and is re-measured
+    when the projections sharpen: Round 3 measured 18.2 / 16.7 on the flat
+    ``ridge-10`` fit (docs/MODEL_LAB.md "NCAAF Round 3"); the home-margin
+    round measured 16.2 / 16.2 on the promoted chain (recency on both halves,
+    the scale's home-margin intercept kept). The market-anchored residual
+    that first drew attention to them (15.5) is still the wrong yardstick —
+    the close is sharper than the model — and the constants stay above it.
     """
     from velocity.models.simulate import NCAAF_SD_MARGIN, NCAAF_SD_TOTAL
 
-    assert pytest.approx(18.2) == NCAAF_SD_MARGIN
-    assert pytest.approx(16.7) == NCAAF_SD_TOTAL
-    # Comfortably above the market-residual figure, and above the 17.0/16.0
-    # the sim shipped with, which every measured season exceeded.
-    assert NCAAF_SD_MARGIN > 17.0
-    assert NCAAF_SD_TOTAL > 16.0
+    assert pytest.approx(16.2) == NCAAF_SD_MARGIN
+    assert pytest.approx(16.2) == NCAAF_SD_TOTAL
+    assert NCAAF_SD_MARGIN > 15.5
+    assert NCAAF_SD_TOTAL > 15.5
 
 
 def test_the_two_tails_are_not_the_same_error() -> None:

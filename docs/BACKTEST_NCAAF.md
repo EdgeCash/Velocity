@@ -93,7 +93,9 @@ FBS-vs-FBS population, the lab's trailing-four window), the ≥6 totals cut
 reads 52.5% on 1,891 — a sharper model disagrees with the close by six
 points less often, and the cut's rate is unchanged within noise. After the
 recency round (the offseason gap, recency on the scores half, special
-teams in the prior; the bank rebuilt again): 52.7% on 1,808.
+teams in the prior; the bank rebuilt again): 52.7% on 1,808. After the
+home-margin round (the scale's intercept kept, the sim at the re-measured
+16.2 / 16.2): 52.7% on 1,812.
 
 **Where it differs, honestly:** bet counts run ~3% higher than the original
 table throughout (a small definitional difference in the earlier ad-hoc

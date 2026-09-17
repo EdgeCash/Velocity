@@ -25,6 +25,7 @@ track the data every week; the level did not. Two ways it drifted:
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -162,9 +163,12 @@ def next_week(games: pd.DataFrame) -> int:
 class ScaleCalibration:
     """Multipliers on the projection's deviations, fitted out of sample.
 
-    ``margin_slope`` scales the expected margin (home-field included: the
-    fit's intercept is dropped, because a home-margin bias belongs to the
-    HFA parameter, not to a scale that would also shift neutral games).
+    ``margin_slope`` scales the expected margin (home-field included).
+    ``margin_shift`` is the fit's intercept on home-and-away games — a
+    home-margin bias the scale's slope alone leaves in place (a slope of
+    1.35 fitted without its intercept, as the college scale was, inflates
+    the home edge with everything else) — applied to home-and-away games
+    only, never to a neutral field; it is 0 unless the fit asked for it.
     ``total_slope`` scales the total's deviation from an anchor — the level —
     so the mean total the level fixed is untouched. ``n`` is the games it was
     fitted on; zero means the identity.
@@ -173,6 +177,7 @@ class ScaleCalibration:
     margin_slope: float = 1.0
     total_slope: float = 1.0
     n: int = 0
+    margin_shift: float = 0.0
 
     @classmethod
     def from_residuals(
@@ -183,6 +188,8 @@ class ScaleCalibration:
         seasons: int | None = None,
         weeks: tuple[int, int] | None = None,
         min_games: int = SCALE_MIN_GAMES,
+        shift: bool = False,
+        neutral_ids: Collection[str] | None = None,
     ) -> ScaleCalibration:
         """Fit on a residual bank (``RESIDUAL_COLUMNS``).
 
@@ -192,6 +199,11 @@ class ScaleCalibration:
         the audit found the NFL margin slope 0.72 in weeks 1–6 and 0.97
         after, so a scale fitted on the phase being projected can be a
         different number. Under ``min_games`` rows the identity is returned.
+
+        ``shift`` keeps the margin fit's intercept as ``margin_shift`` and
+        fits both margin terms on home-and-away games only — the bank rows
+        whose ``game_id`` is not in ``neutral_ids`` (none excluded when
+        ``None``). Without ``shift`` the intercept is dropped as before.
         """
         frame = residuals.dropna(subset=["mu_margin", "mu_total", "resid_margin", "resid_total"])
         if before_season is not None and "season" in frame.columns:
@@ -204,22 +216,32 @@ class ScaleCalibration:
             frame = frame[frame["season"].astype(int) >= cutoff]
         if len(frame) < max(int(min_games), 3):
             return cls()
-        mu_m = frame["mu_margin"].to_numpy(dtype=float)
-        act_m = mu_m + frame["resid_margin"].to_numpy(dtype=float)
         mu_t = frame["mu_total"].to_numpy(dtype=float)
         act_t = mu_t + frame["resid_total"].to_numpy(dtype=float)
+        margin_frame = frame
+        if shift and neutral_ids:
+            sited = ~frame["game_id"].astype(str).isin({str(g) for g in neutral_ids})
+            margin_frame = frame[sited.to_numpy(dtype=bool)]
+            if len(margin_frame) < max(int(min_games), 3):
+                margin_frame = frame
+        mu_m = margin_frame["mu_margin"].to_numpy(dtype=float)
+        act_m = mu_m + margin_frame["resid_margin"].to_numpy(dtype=float)
         if mu_m.std() <= 0 or mu_t.std() <= 0:
             return cls()
-        margin_slope = float(np.polyfit(mu_m, act_m, 1)[0])
+        margin_slope, intercept = (float(v) for v in np.polyfit(mu_m, act_m, 1))
         # Centred, so the slope is the deviation's and the mean is the level's.
         total_slope = float(np.polyfit(mu_t - mu_t.mean(), act_t - act_t.mean(), 1)[0])
-        return cls(margin_slope=margin_slope, total_slope=total_slope, n=int(len(frame)))
+        return cls(margin_slope=margin_slope, total_slope=total_slope, n=int(len(frame)),
+                   margin_shift=intercept if shift else 0.0)
 
     def apply(
-        self, mu_home: float, mu_away: float, *, anchor_total: float
+        self, mu_home: float, mu_away: float, *, anchor_total: float,
+        neutral_site: bool = False,
     ) -> tuple[float, float]:
         """The expected points with the margin and the total's deviation rescaled."""
         margin = (mu_home - mu_away) * self.margin_slope
+        if not neutral_site:
+            margin += self.margin_shift
         total = anchor_total + (mu_home + mu_away - anchor_total) * self.total_slope
         return (total + margin) / 2.0, (total - margin) / 2.0
 
@@ -280,7 +302,8 @@ class ScaledModel:
         else:
             mu_home, mu_away = self.inner.expected_points(  # type: ignore[attr-defined]
                 home_team, away_team, neutral_site=neutral_site)
-        home, away = self.calibration.apply(mu_home, mu_away, anchor_total=self.anchor_total)
+        home, away = self.calibration.apply(
+            mu_home, mu_away, anchor_total=self.anchor_total, neutral_site=neutral_site)
         return home + home_bonus, away + away_bonus
 
     def project(
@@ -314,19 +337,28 @@ def scale_model(
     before_season: int | None = None, seasons: int | None = None,
     weeks: tuple[int, int] | None = None,
     anchor_seasons: int | None = 2,
+    shift: bool = False,
 ) -> tuple[ScaledModel, ScaleCalibration]:
     """``model`` under a :class:`ScaleCalibration` fitted on ``residuals``.
 
     The anchor is the model's own mean projected total over the trailing
     ``anchor_seasons`` of ``games`` (the level's window); with nothing to
     anchor on the total is left unscaled. A ``weeks`` phase too thin to fit
-    falls back to the whole bank rather than to the identity.
+    falls back to the whole bank rather than to the identity. ``shift``
+    keeps the home-margin intercept (see :class:`ScaleCalibration`), with
+    ``games``' ``neutral_site`` flags naming the rows it must not fit on.
     """
+    neutral_ids: set[str] = set()
+    if shift and "neutral_site" in games.columns:
+        flags = games["neutral_site"].fillna(False).astype(bool).to_numpy()
+        neutral_ids = {str(g) for g in games.loc[flags, "game_id"]}
     calibration = ScaleCalibration.from_residuals(
-        residuals, before_season=before_season, seasons=seasons, weeks=weeks)
+        residuals, before_season=before_season, seasons=seasons, weeks=weeks,
+        shift=shift, neutral_ids=neutral_ids)
     if weeks is not None and calibration.n == 0:
         calibration = ScaleCalibration.from_residuals(
-            residuals, before_season=before_season, seasons=seasons)
+            residuals, before_season=before_season, seasons=seasons,
+            shift=shift, neutral_ids=neutral_ids)
     anchor = mean_projected_total(model, games, seasons=anchor_seasons)
     if anchor is None:
         calibration = replace(calibration, total_slope=1.0)

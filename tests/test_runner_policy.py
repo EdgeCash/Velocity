@@ -209,7 +209,7 @@ def test_an_empirical_sim_without_a_bank_falls_back_to_the_normal(tmp_path, monk
     runner = _runner()
     args = runner.build_parser().parse_args(["--league", "ncaaf", "--sim-shape", "empirical"])
     cfg = runner.football_sim_config("ncaaf", args)
-    assert cfg.residuals is None and cfg.sd_margin == 18.2
+    assert cfg.residuals is None and cfg.sd_margin == 16.2
     assert runner.describe_sim(cfg, "ncaaf").startswith("normal")
 
 
@@ -346,6 +346,14 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_ncaaf_st_prior(None) is runner.DEFAULT_NCAAF_ST_PRIOR is True
     assert runner.resolve_ncaaf_st_prior("on") is True
     assert runner.resolve_ncaaf_st_prior("off") is False
+    # The scale's home-margin shift, per league, the lab's pick.
+    assert args.nfl_scale_shift is None and args.ncaaf_scale_shift is None
+    for league in ("nfl", "ncaaf"):
+        assert (runner.resolve_scale_shift(None, league)
+                is runner.DEFAULT_SCALE_SHIFT_BY_LEAGUE[league])
+        assert runner.resolve_scale_shift("on", league) is True
+        assert runner.resolve_scale_shift("off", league) is False
+    assert runner.DEFAULT_SCALE_SHIFT_BY_LEAGUE == {"nfl": False, "ncaaf": True}
 
 
 def test_a_papered_game_prices_but_never_stakes() -> None:
