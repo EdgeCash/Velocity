@@ -296,6 +296,11 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
         assert runner.resolve_scale(None, league) == runner.DEFAULT_SCALE_BY_LEAGUE[league]
         assert runner.resolve_plays("scrimmage", league) == "scrimmage"
         assert runner.resolve_scale("fit", league) == "fit"
+        assert runner.resolve_scale("phase", league) == "phase"
+    # The promotions as they stand (docs/MODEL_LAB.md): the scale on in both
+    # leagues, college's fitted on the phase of the season being projected.
+    assert runner.DEFAULT_SCALE_BY_LEAGUE == {"nfl": "fit", "ncaaf": "phase"}
+    assert runner.DEFAULT_PLAYS_BY_LEAGUE == {"nfl": "all", "ncaaf": "all"}
     assert runner.resolve_plays(None, "mlb") == "all"
     assert runner.resolve_scale(None, "mlb") == "off"
 

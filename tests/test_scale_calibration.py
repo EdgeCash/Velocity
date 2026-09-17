@@ -115,3 +115,19 @@ def test_from_residuals_can_fit_one_phase_and_scale_model_falls_back_when_thin()
     # A phase with no rows falls back to the whole bank, never the identity.
     scaled, cal = scale_model(_Flat(), bank, games, SimConfig(n_sims=50), weeks=(40, 50))
     assert cal.n == len(bank)
+
+
+def test_phase_weeks_and_next_week() -> None:
+    from velocity.models.level import next_week, phase_weeks
+
+    assert phase_weeks(1, "nfl") == (1, 6) and phase_weeks(6, "nfl") == (1, 6)
+    assert phase_weeks(7, "nfl") == (7, 30)
+    assert phase_weeks(4, "ncaaf") == (1, 4) and phase_weeks(5, "ncaaf") == (5, 30)
+    games = pd.DataFrame({
+        "season": [2025, 2026, 2026, 2026], "week": [17, 1, 2, 3],
+        "home_score": [1.0, 1.0, 1.0, None], "away_score": [0.0, 0.0, 0.0, None],
+    })
+    assert next_week(games) == 3  # weeks 1–2 of 2026 played; week 3 is on the board
+    assert next_week(games[games["season"] == 2025]) == 18
+    assert next_week(games.iloc[0:0]) == 1
+    assert next_week(games[games["week"] == 3]) == 1  # the season has not started

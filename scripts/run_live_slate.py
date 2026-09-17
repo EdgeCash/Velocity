@@ -468,20 +468,23 @@ def _build_projection(
         # half. Fitted on the banked out-of-sample rows, applied under the
         # situational wrappers so a bye is still worth its point.
         core: object = nfl_model
-        if resolve_scale(args.nfl_scale, "nfl") == "fit":
-            from velocity.models.level import scale_model
+        nfl_scale = resolve_scale(args.nfl_scale, "nfl")
+        if nfl_scale != "off":
+            from velocity.models.level import next_week, phase_weeks, scale_model
             from velocity.models.residuals import load_residual_frame
 
             bank = load_residual_frame("nfl")
             if bank is None:
                 print("no residual bank for nfl; projecting unscaled")
             else:
+                weeks = phase_weeks(next_week(window), "nfl") if nfl_scale == "phase" else None
                 core, calibration = scale_model(
-                    nfl_model, bank, window, nfl_model.config.sim,
+                    nfl_model, bank, window, nfl_model.config.sim, weeks=weeks,
                     anchor_seasons=NFL_LEVEL_SEASONS)
+                phase = f" (weeks {weeks[0]}–{weeks[1]})" if weeks else ""
                 kind += (f", scale ×{calibration.margin_slope:.2f} margin "
-                         f"/ ×{calibration.total_slope:.2f} total")
-                print(f"NFL scale: margin ×{calibration.margin_slope:.3f}, total "
+                         f"/ ×{calibration.total_slope:.2f} total{phase}")
+                print(f"NFL scale{phase}: margin ×{calibration.margin_slope:.3f}, total "
                       f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
 
         # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
@@ -729,19 +732,27 @@ def _build_projection(
         model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
         kind = (f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5, "
                 f"base {base:.1f}) on {len(plays)} plays")
-        if resolve_scale(args.ncaaf_scale, "ncaaf") == "fit":
-            from velocity.models.level import scale_model
+        college_scale = resolve_scale(args.ncaaf_scale, "ncaaf")
+        if college_scale != "off":
+            from velocity.models.level import next_week, phase_weeks, scale_model
             from velocity.models.residuals import load_residual_frame
 
             bank = load_residual_frame("ncaaf")
             if bank is None:
                 print("no residual bank for ncaaf; projecting unscaled")
             else:
+                # The phase of the week about to be played: the bank rows of
+                # the same phase fit the scale (docs/MODEL_LAB.md, the college
+                # composites round — calibration error 0.0095 → 0.0081 and
+                # the ≥6 totals record 53.4% → 53.6% over the whole-bank fit).
+                weeks = (phase_weeks(next_week(games), "ncaaf")
+                         if college_scale == "phase" else None)
                 model, calibration = scale_model(
-                    model, bank, games, sim, anchor_seasons=NFL_LEVEL_SEASONS)
+                    model, bank, games, sim, weeks=weeks, anchor_seasons=NFL_LEVEL_SEASONS)
+                phase = f" (weeks {weeks[0]}–{weeks[1]})" if weeks else ""
                 kind += (f", scale ×{calibration.margin_slope:.2f} margin "
-                         f"/ ×{calibration.total_slope:.2f} total")
-                print(f"NCAAF scale: margin ×{calibration.margin_slope:.3f}, total "
+                         f"/ ×{calibration.total_slope:.2f} total{phase}")
+                print(f"NCAAF scale{phase}: margin ×{calibration.margin_slope:.3f}, total "
                       f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
 
     print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
@@ -786,11 +797,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ncaaf-plays", choices=["scrimmage", "live", "all"], default=None,
                         help="the same choice for the college blend's EPA half "
                              "(default: the lab's pick)")
-    parser.add_argument("--nfl-scale", choices=["fit", "off"], default=None,
+    parser.add_argument("--nfl-scale", choices=["fit", "phase", "off"], default=None,
                         help="rescale the NFL projection's margin and total deviations by "
-                             "the slopes fitted on the residual bank "
-                             "(velocity.models.level), or leave them (default: the lab's pick)")
-    parser.add_argument("--ncaaf-scale", choices=["fit", "off"], default=None,
+                             "the slopes fitted on the residual bank (velocity.models.level): "
+                             "on the whole bank, on the bank rows of the phase of the season "
+                             "being projected, or not at all (default: the lab's pick)")
+    parser.add_argument("--ncaaf-scale", choices=["fit", "phase", "off"], default=None,
                         help="the same for the college blend (default: the lab's pick)")
     parser.add_argument("--sim-shape", choices=["normal", "empirical"], default=None,
                         help="football sim draw: bivariate normal, or the banked "
@@ -1292,8 +1304,13 @@ def resolve_ncaaf_level(explicit: str | None) -> str:
 #   52.9% → 53.4% on ~4,100 bets. College plays stay "all" too: the
 #   scrimmage cut was a wash on every column (the college frame is 0.9%
 #   non-scrimmage rows).
+# * NCAAF scale "phase" (the college composites round): the scale fitted on
+#   the bank rows of the phase being projected — through week 4, or after —
+#   beats the whole-bank fit on every column: calibration error 0.0095 →
+#   0.0081, margin RMSE 18.46 → 18.43, and the ≥6 totals record 53.4% →
+#   53.6%. The NFL's phase scale is in the lab, not yet promoted.
 DEFAULT_PLAYS_BY_LEAGUE = {"nfl": "all", "ncaaf": "all"}
-DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "fit"}
+DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "phase"}
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:

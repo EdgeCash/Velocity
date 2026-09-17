@@ -132,6 +132,31 @@ def calibrate_scores_level(
 # season and a half of noise is worse than none.
 SCALE_MIN_GAMES = 200
 
+# Where the early season ends for a phase-specific scale: the audit's slope
+# by week put the NFL margin at 0.72 through week 6 and 0.97 after, and the
+# college margin at 1.19 through week 4 (docs/PROJECTION_AUDIT.md §2.2). A
+# scale fitted on the bank rows of the phase being projected is a different
+# number from the whole-season one, and in college a better one.
+EARLY_WEEK_BY_LEAGUE = {"nfl": 6, "ncaaf": 4}
+
+
+def phase_weeks(week: int, league: str) -> tuple[int, int]:
+    """The inclusive week window of ``week``'s phase of the season."""
+    early = EARLY_WEEK_BY_LEAGUE.get(league, 6)
+    return (1, early) if int(week) <= early else (early + 1, 30)
+
+
+def next_week(games: pd.DataFrame) -> int:
+    """The week the latest season on ``games`` is about to play (1 with none played)."""
+    if games.empty or "season" not in games.columns or "week" not in games.columns:
+        return 1
+    latest = games[games["season"] == games["season"].max()]
+    played = latest.dropna(subset=["home_score", "away_score"]) if {
+        "home_score", "away_score"} <= set(latest.columns) else latest
+    if played.empty:
+        return 1
+    return int(played["week"].max()) + 1
+
 
 @dataclass(frozen=True)
 class ScaleCalibration:

@@ -65,9 +65,8 @@ __all__ = [
 # on the evaluation data.
 NFL_MARGIN_SIGMA = 13.45
 
-# Where the early season ends for a phase-specific scale: the audit's slope
-# by week put the NFL margin at 0.72 through week 6 and 0.97 after; college
-# at 1.19 through week 4 (docs/PROJECTION_AUDIT.md §2.2).
+# The phase boundary for a phase-specific scale lives with the scale
+# (velocity.models.level.EARLY_WEEK_BY_LEAGUE); these are its two names here.
 NFL_EARLY_WEEK = 6
 NCAAF_EARLY_WEEK = 4
 
