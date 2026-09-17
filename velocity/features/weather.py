@@ -116,6 +116,37 @@ def wind_total_bonus(
     return -min(excess * points_per_mph, cap_points)
 
 
+def precip_total_bonus(
+    precip: float | None, *, threshold_in: float = 0.25, points: float = 0.5
+) -> float:
+    """The per-team point suppression for a wet outdoor game (≤ 0).
+
+    A step, not a slope: the banked archive carries the day's precipitation
+    total (Open-Meteo daily sum, inches), which says it rained but not when,
+    so anything past ``threshold_in`` takes ``points`` off each team and
+    anything under it nothing. Missing weather (indoor, or no data) is never
+    treated as rain. The archive reads ≥ 0.25 in on 13% of outdoor game-days.
+    """
+    if precip is None or pd.isna(precip) or points <= 0:
+        return 0.0
+    return -float(points) if float(precip) >= threshold_in else 0.0
+
+
+def cold_total_bonus(
+    temp_mean: float | None, *, threshold_f: float = 32.0, points: float = 0.5
+) -> float:
+    """The per-team point suppression for a freezing outdoor game (≤ 0).
+
+    A step at ``threshold_f`` on the day's mean temperature (Open-Meteo daily
+    mean, °F): 9.7% of outdoor game-days in the archive sit under 32. The
+    literature calls cold a weaker and less reliable effect than wind; this
+    is the variant that tests it, off at zero points.
+    """
+    if temp_mean is None or pd.isna(temp_mean) or points <= 0:
+        return 0.0
+    return -float(points) if float(temp_mean) < threshold_f else 0.0
+
+
 # Teams whose current home is weatherproof (dome or reliably-closed roof) —
 # the live forecast path skips them; historical joins use the per-game roof.
 INDOOR_TEAMS = frozenset(
@@ -142,7 +173,8 @@ def forecast_frame(days: int = 7) -> pd.DataFrame:  # pragma: no cover - network
             continue  # historical era, or weatherproof
         query = urllib.parse.urlencode({
             "latitude": lat, "longitude": lon,
-            "daily": "wind_speed_10m_max", "wind_speed_unit": "mph",
+            "daily": "wind_speed_10m_max,precipitation_sum",
+            "wind_speed_unit": "mph", "precipitation_unit": "inch",
             "forecast_days": max(1, min(days, 16)), "timezone": "UTC",
         })
         try:
@@ -152,11 +184,14 @@ def forecast_frame(days: int = 7) -> pd.DataFrame:  # pragma: no cover - network
                 daily = json.loads(resp.read()).get("daily") or {}
         except Exception:  # noqa: BLE001 - a stadium without forecast gets no adjustment
             continue
-        for date, wind in zip(daily.get("time", []),
-                              daily.get("wind_speed_10m_max", []), strict=False):
+        rain = daily.get("precipitation_sum") or []
+        for i, (date, wind) in enumerate(zip(daily.get("time", []),
+                                             daily.get("wind_speed_10m_max", []),
+                                             strict=False)):
             rows.append({"home_team": team, "kickoff": pd.Timestamp(date),
                          "roof": "outdoors", "wind_max": wind,
-                         "temp_mean": None, "precip": None})
+                         "temp_mean": None,
+                         "precip": rain[i] if i < len(rain) else None})
     return pd.DataFrame(
         rows, columns=["home_team", "kickoff", "roof", "wind_max",
                        "temp_mean", "precip"]

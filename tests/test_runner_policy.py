@@ -301,6 +301,15 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     # leagues, college's fitted on the phase of the season being projected.
     assert runner.DEFAULT_SCALE_BY_LEAGUE == {"nfl": "fit", "ncaaf": "phase"}
     assert runner.DEFAULT_PLAYS_BY_LEAGUE == {"nfl": "all", "ncaaf": "all"}
+    # Rain on NFL totals: a point a side at 0.25 in, off on request.
+    assert args.nfl_precip_points is None
+    assert runner.resolve_precip_points(None) == runner.DEFAULT_NFL_PRECIP_POINTS == 1.0
+    assert runner.resolve_precip_points(0.0) == 0.0
+    assert runner.resolve_precip_points(-2.0) == 0.0
+    # The injury burden: 4 points a unit, off on request.
+    assert args.nfl_injury_points is None
+    assert runner.resolve_injury_points(None) == runner.DEFAULT_NFL_INJURY_POINTS == 4.0
+    assert runner.resolve_injury_points(0.0) == 0.0
     assert runner.resolve_plays(None, "mlb") == "all"
     assert runner.resolve_scale(None, "mlb") == "off"
 

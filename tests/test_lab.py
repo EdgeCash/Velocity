@@ -1139,3 +1139,66 @@ def test_wrapped_nfl_factories_still_declare_the_predicting_hint() -> None:
     # A chain with no scale in it declares nothing, and is called as before.
     _kind, plain = variants["live-nfl-incumbent"]
     assert "predicting" not in inspect.signature(plain).parameters
+
+
+def test_precip_bonus_is_a_step_and_missing_weather_is_dry() -> None:
+    from velocity.features.weather import precip_total_bonus
+
+    assert precip_total_bonus(0.30, points=0.5) == -0.5
+    assert precip_total_bonus(0.10, points=0.5) == 0.0
+    assert precip_total_bonus(0.10, threshold_in=0.1, points=1.0) == -1.0
+    assert precip_total_bonus(None, points=0.5) == 0.0
+    assert precip_total_bonus(float("nan"), points=0.5) == 0.0
+    assert precip_total_bonus(2.0, points=0.0) == 0.0
+
+
+def test_weather_wrapper_adds_rain_to_wind_and_divisional_discount_moves_the_margin() -> None:
+    from velocity.backtest.lab import DivisionalModel, WeatherAdjustedModel
+    from velocity.features.team import TeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.simulate import SimConfig
+
+    ratings = TeamRatings(offense={"A": 0.0, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+                          league_epa=0.0, ridge_lambda=200.0, n_plays=10, teams=("A", "B"))
+    model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=300)))
+    kick = pd.Timestamp("2025-11-02 18:00")
+    weather = pd.DataFrame({
+        "home_team": ["A"], "kickoff": [kick], "roof": ["outdoors"],
+        "wind_max": [25.0], "temp_mean": [40.0], "precip": [0.6],
+    })
+    rng = np.random.default_rng(0)
+    dry = WeatherAdjustedModel(model, weather, threshold_mph=15.0, points_per_mph=0.30)
+    wet = WeatherAdjustedModel(model, weather, threshold_mph=15.0, points_per_mph=0.30,
+                               precip_points=0.5)
+    bare = model.project("A", "B", rng=rng)
+    d = dry.project("A", "B", kickoff=kick, rng=rng)
+    w = wet.project("A", "B", kickoff=kick, rng=rng)
+    # Wind: 10 mph over the threshold × 0.30 = 3.0 off each side; rain: 0.5 more.
+    assert d.mu_total - bare.mu_total == pytest.approx(-6.0)
+    assert w.mu_total - d.mu_total == pytest.approx(-1.0)
+    assert w.mu_margin == pytest.approx(bare.mu_margin)
+
+    schedule = pd.DataFrame({
+        "home_team": ["A", "A"], "away_team": ["B", "B"],
+        "kickoff": [kick, kick + pd.Timedelta(days=70)], "div_game": [1.0, 0.0],
+    })
+    div = DivisionalModel(model, schedule, discount=1.0)
+    same = div.project("A", "B", kickoff=kick, rng=rng)
+    other = div.project("A", "B", kickoff=kick + pd.Timedelta(days=70), rng=rng)
+    assert same.mu_margin - bare.mu_margin == pytest.approx(-1.0)
+    assert same.mu_total == pytest.approx(bare.mu_total)
+    assert other.mu_margin == pytest.approx(bare.mu_margin)
+    # A neutral site has no home field to discount.
+    neutral = div.project("A", "B", kickoff=kick, neutral_site=True, rng=rng)
+    assert neutral.mu_margin == pytest.approx(model.project("A", "B", neutral_site=True,
+                                                             rng=rng).mu_margin)
+
+
+def test_cold_bonus_is_a_step_below_the_threshold() -> None:
+    from velocity.features.weather import cold_total_bonus
+
+    assert cold_total_bonus(25.0, points=0.5) == -0.5
+    assert cold_total_bonus(35.0, points=0.5) == 0.0
+    assert cold_total_bonus(35.0, threshold_f=40.0, points=1.0) == -1.0
+    assert cold_total_bonus(None, points=0.5) == 0.0
+    assert cold_total_bonus(20.0, points=0.0) == 0.0

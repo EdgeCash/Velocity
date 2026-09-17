@@ -1129,3 +1129,108 @@ the three promoted.
    forwarded ``**kwargs`` hid the inner factory's ``predicting`` parameter
    from the engine, so the leak gate never fired and the scale was never
    fitted. ``functools.wraps`` on every wrapper fixes it and a test pins it.
+
+**The live composite, scored correctly** (rest over the scaled starters
+fit, the chain the runner prices minus the wind wrapper; and the phase-
+specific scale for the NFL):
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | early / late margin RMSE |
+|---|---|---|---|---|---|---|
+| live-nfl-starters-scale | 0.2186 | **0.0143** | 13.27 | **13.60** | +0.095 | 13.19 / 13.31 |
+| live-nfl-starters-scale-phase | **0.2185** | 0.0153 | **13.26** | 13.61 | +0.114 | 13.16 / 13.31 |
+| starters-scale-phase (no rest) | 0.2186 | 0.0158 | 13.26 | 13.59 | +0.118 | 13.17 / 13.31 |
+
+The rest wrapper costs nothing over the scaled starters fit (total RMSE
++0.02 for the bye point, as before). **The phase-specific scale is a wash
+in the NFL** — a hundredth on the early margin, a hundredth back on the
+total, calibration a shade worse — where in college it was a clean win.
+The difference is what the two phases have to correct: the college early
+slope was 1.19 on a prior-less half, the NFL's 0.72 was mostly the
+unscaled total, and the whole-bank scale already took that. **Not
+promoted** for the NFL; the flag (`--nfl-scale phase`) stays for a season
+with more early-season rows in the bank. The NFL runs `fit`.
+
+**The early-season blend weight (NCAAF)**, over the promoted
+`blend-level2-sp12-scale-phase`: the EPA half's weight through week 4 (it
+has no prior; the scores half carries SP+), 0.5 after.
+
+| early weight | Brier | calib. | RMSE margin | RMSE total | O/U ≥6 (n) | weeks 1–4 margin / total RMSE |
+|---|---|---|---|---|---|---|
+| 0.5 (promoted) | 0.1931 | 0.0081 | 18.43 | 17.21 | 53.6% (4,108) | 19.19 / 16.81 |
+| 0.3 | 0.1933 | 0.0088 | 18.47 | **17.19** | 53.3% (4,041) | 19.31 / **16.73** |
+| 0.4 | 0.1931 | 0.0087 | 18.44 | 17.20 | 53.5% (4,070) | 19.23 / 16.77 |
+| 0.6 | 0.1931 | **0.0075** | **18.43** | 17.23 | 53.7% (4,155) | **19.18** / 16.87 |
+
+A wash that teaches something: leaning on the scores half in September
+buys a tenth of a point on the early total and pays it back on the early
+margin; leaning on the EPA half does the reverse. The prior-carrying half
+is not the better half in the early weeks — the two carry different
+information and the even split is already close to the optimum. **Not
+promoted**; the early-season college gap (§2.2 of the audit) wants a
+prior in the EPA half, not a different weight on the one that has it.
+
+
+## The situational round (2026-09-17) — NFL
+
+Over the full live chain (`live-nfl-full`: wind over rest over the scaled
+starters fit — exactly what the runner prices), the two situational
+candidates the schedule columns and the weather bank made possible. 2011–
+2025, trailing-4, 4,000 sims; the close's total RMSE on these games 13.23.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total | O/U ≥4 (n) | wet games: total RMSE / mean error (n=394) | div games: margin mean error |
+|---|---|---|---|---|---|---|---|---|
+| live-nfl-full | 0.2186 | 0.0143 | 13.27 | 13.55 | +0.054 | 53.6% (868) | 13.24 / **−2.09** | −0.02 |
+| + rain 0.25 in, 0.5 a side | 0.2186 | 0.0145 | 13.27 | 13.54 | +0.075 | 53.5% (863) | 13.11 / −1.09 | −0.02 |
+| **+ rain 0.25 in, 1.0 a side** | 0.2186 | 0.0143 | 13.27 | **13.54** | **+0.094** | **53.7% (869)** | **13.07 / −0.09** | −0.02 |
+| + rain 0.10 in, 0.5 a side | 0.2186 | 0.0143 | 13.27 | 13.54 | +0.087 | 53.6% (862) | 13.11 / −1.09 | −0.02 |
+| + divisional discount 0.5 | 0.2186 | 0.0143 | 13.27 | 13.55 | +0.054 | 53.4% (869) | 13.24 / −2.09 | +0.48 |
+| + divisional discount 1.0 | 0.2187 | 0.0178 | 13.28 | 13.55 | +0.054 | 53.5% (869) | 13.24 / −2.09 | +0.97 |
+
+**Readings, honestly:**
+
+1. **The wind wrapper was already doing more than Round 5 could see.** With
+   the scale under it, the live chain's totals RMSE is 13.55 against 13.60
+   for rest-over-scale alone, and the ≥4 totals record 53.6% on 868 — the
+   first NFL totals cut above break-even at a real sample size in this lab.
+   Read it as the calibrated total finally selecting on real disagreement,
+   not as a promoted strategy; it goes into `docs/BACKTEST_NFL.md`'s watch
+   list, not the runner's defaults.
+2. **Rain is a bias correction, and a clean one.** On the 394 outdoor games
+   with a quarter-inch or more on the day, the projection ran 2.1 points
+   high; a point a side takes that to −0.1, and the aggregate total RMSE and
+   the total's information weight both improve. **Promoted: 1.0 point a
+   side at 0.25 in** (`DEFAULT_NFL_PRECIP_POINTS`); the live forecast now
+   fetches the day's precipitation beside the wind.
+3. **The divisional discount over-corrects a bias the model does not have.**
+   The raw frame's home margin is 1.9 in divisional games against 2.3
+   elsewhere, but the model's divisional-game margin error is already −0.02:
+   the ratings absorb the familiarity. Half a point of discount leaves +0.48
+   of error, a point +0.97. **Rejected.**
+
+
+**The injury burden**, over the same live chain: the share of a team's
+targets and carries ruled Out or Doubtful that week (quarterbacks excluded —
+the starters carry them), at a few points per whole team's worth
+(`velocity/features/injuries.py`). The usage bank starts in 2020, so the
+feature fires on 2020–2025 (1,709 games) and the conditional is the 223 of
+those where one side is 15%+ shorter than the other.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | 2020+ margin RMSE | short-side games: margin RMSE / mean error toward the shorter side |
+|---|---|---|---|---|---|---|---|
+| live-nfl-full (no burden) | 0.2186 | 0.0143 | 13.27 | **13.55** | +0.095 | 13.08 | 13.70 / **−1.57** |
+| **+ burden, 4 a unit** | **0.2184** | 0.0164 | 13.26 | 13.57 | +0.108 | 13.05 | **13.57 / −0.55** |
+| + burden, 8 a unit | **0.2184** | 0.0173 | **13.26** | 13.59 | +0.119 | **13.04** | 13.53 / +0.47 |
+| + burden, 16 a unit | 0.2186 | 0.0128 | 13.27 | 13.66 | +0.132 | 13.06 | 13.71 / +2.52 |
+
+**Reading, honestly:** the bias is real — the side missing its production
+ran a point and a half under the projection, and 4 a unit removes two
+thirds of it, 8 slightly over-corrects, 16 is worse everywhere. The
+aggregate gains are as small as a feature touching a tenth of games can
+show (Brier −0.0002, margin RMSE −0.01), the total gets a hundredth worse
+(the burden comes off one team's points and the total with it), and
+calibration drifts up by 0.002. **Promoted at 4 a unit**
+(`DEFAULT_NFL_INJURY_POINTS`) as a bias correction on the games it targets:
+the live runner reads the current week's designations off the committed
+bank (refreshed daily from nflverse) and says which teams are heaviest. A
+week the bank has not reached yet costs nothing, which is honest and is
+also the reason to refresh before the slate runs.

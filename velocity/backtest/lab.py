@@ -275,6 +275,17 @@ def nfl_variants(
 
         return factory
 
+    def divisional(inner: VariantFactory, discount: float) -> VariantFactory:
+        """``inner`` under the divisional home-field discount."""
+        @functools.wraps(inner)
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            model = inner(train, **kwargs)
+            if schedule is None:
+                return model
+            return DivisionalModel(model, schedule, discount)
+
+        return factory
+
     def paced(inner: VariantFactory) -> VariantFactory:
         """``inner`` with each team's own plays per game from the training
         slice in place of the 63-play constant (velocity.features.team
@@ -417,10 +428,78 @@ def nfl_variants(
 
                 return factory
 
+            def windy(
+                inner: VariantFactory, *, precip_points: float = 0.0,
+                precip_threshold_in: float = 0.25, cold_points: float = 0.0,
+                cold_threshold_f: float = 32.0,
+            ) -> VariantFactory:
+                """``inner`` under the promoted wind wrapper (15 mph, 0.30
+                a mph) — the live chain's outermost layer — with optional
+                precipitation and cold steps."""
+                @functools.wraps(inner)
+                def factory(train: pd.DataFrame, **kwargs: object) -> object:
+                    return WeatherAdjustedModel(
+                        inner(train, **kwargs), joined,  # type: ignore[arg-type]
+                        threshold_mph=15.0, points_per_mph=0.30,
+                        precip_points=precip_points, precip_threshold_in=precip_threshold_in,
+                        cold_points=cold_points, cold_threshold_f=cold_threshold_f,
+                    )
+
+                return factory
+
+            # The live chain as it runs today — wind over rest over the
+            # scaled starters fit — and the situational candidates over it.
+            live_core = rested(scaled(starters(levelled(qb_recency(17.0, 300.0), 2))))
+
+            def injured(inner: VariantFactory, points_per_unit: float) -> VariantFactory:
+                """``inner`` under the injury burden, from the committed
+                designations and usage banks (both absent → ``inner``)."""
+                injuries_path = Path("datasets/nfl/injuries.parquet")
+                weeks_path = Path("datasets/nfl/player_weeks.parquet")
+                if not injuries_path.exists() or not weeks_path.exists():
+                    return inner
+                from velocity.features.injuries import burden_by_team_week
+
+                burden = burden_by_team_week(
+                    pd.read_parquet(injuries_path), pd.read_parquet(weeks_path))
+
+                @functools.wraps(inner)
+                def factory(train: pd.DataFrame, **kwargs: object) -> object:
+                    return InjuryBurdenModel(
+                        inner(train, **kwargs), schedule, burden, points_per_unit)
+
+                return factory
+
             variants.update({
                 "wind-15-0.15": ("plays", wind(15.0, 0.15)),
                 "wind-15-0.30": ("plays", wind(15.0, 0.30)),
                 "wind-12-0.15": ("plays", wind(12.0, 0.15)),
+                "live-nfl-full": ("plays", windy(live_core)),
+                "live-nfl-full-precip0.25-0.5": (
+                    "plays", windy(live_core, precip_points=0.5)),
+                "live-nfl-full-precip0.25-1.0": (
+                    "plays", windy(live_core, precip_points=1.0)),
+                "live-nfl-full-precip0.1-0.5": (
+                    "plays", windy(live_core, precip_points=0.5, precip_threshold_in=0.1)),
+                "live-nfl-full-div0.5": ("plays", windy(divisional(live_core, 0.5))),
+                "live-nfl-full-div1.0": ("plays", windy(divisional(live_core, 1.0))),
+                # Points per whole team's worth of touches ruled out: a 15%
+                # burden (the 90th percentile) costs 0.6 / 1.2 / 2.4 points.
+                "live-nfl-full-injury4": ("plays", windy(injured(live_core, 4.0))),
+                "live-nfl-full-injury8": ("plays", windy(injured(live_core, 8.0))),
+                "live-nfl-full-injury16": ("plays", windy(injured(live_core, 16.0))),
+                # Cold over the promoted chain (rain at 1.0, burden at 4).
+                "live-nfl-promoted": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0)),
+                "live-nfl-promoted-cold32-0.5": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=0.5)),
+                "live-nfl-promoted-cold32-1.0": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=1.0)),
+                "live-nfl-promoted-cold40-0.5": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=0.5, cold_threshold_f=40.0)),
             })
     return variants
 
@@ -866,13 +945,16 @@ def ncaaf_variants(
             sp_frame = sp
 
             def blend_sp(
-                k: int, *, scrimmage: bool = False, pace: bool = False
+                k: int, *, scrimmage: bool = False, pace: bool = False,
+                early_weight: float | None = None,
             ) -> VariantFactory:
                 """``blend-level2`` with the SP+ previous-season prior in the
                 scores half, at ``k`` pseudo-games per team — what the live
                 runner prices. ``scrimmage`` fits the EPA half on the
                 offense's own snaps only; ``pace`` prices it at each team's
-                own plays per game instead of the 65-play constant."""
+                own plays per game instead of the 65-play constant;
+                ``early_weight`` is the EPA half's weight through week
+                ``NCAAF_EARLY_WEEK`` (the half with no prior), 0.5 after."""
                 def factory(
                     train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
                 ) -> BlendedGameModel:
@@ -909,7 +991,11 @@ def ncaaf_variants(
                     # at SP+'s own scale, not the season's scoring level.
                     scores_model = calibrate_scores_level(
                         _model(fit_scores_ratings(fit_games, ridge_lambda=10.0)), train_games)
-                    return BlendedGameModel(epa_model, scores_model, 0.5, sim)
+                    weight = 0.5
+                    if (early_weight is not None and predicting is not None
+                            and predicting[1] <= NCAAF_EARLY_WEEK):
+                        weight = early_weight
+                    return BlendedGameModel(epa_model, scores_model, weight, sim)
 
                 return factory
 
@@ -930,6 +1016,15 @@ def ncaaf_variants(
                     "games", college_scaled(blend_sp(12), by_phase=True)),
                 "blend-level2-sp12-scale-rest": (
                     "games", college_rested(college_scaled(blend_sp(12)), 1.0)),
+                # The early-season blend weight over the promoted phase scale:
+                # through week 4 the EPA half has no prior and the scores half
+                # has SP+; lean on the one that knows the roster.
+                "blend-level2-sp12-scale-phase-early30": (
+                    "games", college_scaled(blend_sp(12, early_weight=0.3), by_phase=True)),
+                "blend-level2-sp12-scale-phase-early40": (
+                    "games", college_scaled(blend_sp(12, early_weight=0.4), by_phase=True)),
+                "blend-level2-sp12-scale-phase-early60": (
+                    "games", college_scaled(blend_sp(12, early_weight=0.6), by_phase=True)),
             })
 
     return variants
@@ -1616,6 +1711,131 @@ class ScheduleStarterModel:
         )
 
 
+class DivisionalModel:
+    """A situational wrapper: less home field in a divisional game.
+
+    The schedule's ``div_game`` flag (docs/PROJECTION_AUDIT.md §2.4) marks 36%
+    of games, and the committed frame's home margin is 1.9 in them against
+    2.3 elsewhere — familiarity and short travel take a fraction of a point
+    off the edge, as the literature has long said. ``discount`` points come
+    off the home side and go onto the away side in halves, so the total is
+    untouched. Keyed by the two teams and the kickoff date, like the rest
+    wrapper; the kickoff is forwarded to an inner that takes one.
+    """
+
+    def __init__(self, inner: object, schedule: pd.DataFrame, discount: float) -> None:
+        import inspect
+
+        self.inner = inner
+        self.discount = float(discount)
+        self._div: set[tuple[str, str, pd.Timestamp]] = set()
+        if "div_game" in schedule.columns:
+            keyed = schedule.dropna(subset=["kickoff"])
+            flags = pd.to_numeric(keyed["div_game"], errors="coerce").fillna(0.0)
+            dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+            for home, away, date, flag in zip(
+                keyed["home_team"].astype(str), keyed["away_team"].astype(str), dates, flags,
+                strict=True,
+            ):
+                if flag > 0:
+                    self._div.add((home, away, date))
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters  # type: ignore[attr-defined]
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
+    ) -> object:
+        shift = 0.0
+        if kickoff is not None and not pd.isna(kickoff) and not neutral_site:  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            if (home_team, away_team, date) in self._div:
+                shift = self.discount / 2.0
+        kwargs: dict[str, object] = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
+        return self.inner.project(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site, rng=rng,
+            home_bonus=home_bonus - shift, away_bonus=away_bonus + shift, **kwargs,
+        )
+
+
+class InjuryBurdenModel:
+    """A situational wrapper: points off a team for the production it has out.
+
+    ``burden`` is :func:`velocity.features.injuries.burden_by_team_week`'s
+    frame; the game's (season, week) comes from the schedule by the two
+    teams and the kickoff date, like the other wrappers. A team-week with
+    no row costs nothing. The week's official designations are public
+    before kickoff, so this is not leakage; the usage shares behind them
+    are the season to date or the previous season (never the week itself).
+    """
+
+    def __init__(
+        self, inner: object, schedule: pd.DataFrame, burden: pd.DataFrame,
+        points_per_unit: float, *, fixed_season_week: tuple[int, int] | None = None,
+    ) -> None:
+        import inspect
+
+        self.inner = inner
+        self.points_per_unit = float(points_per_unit)
+        # A live slate is one week: the runner names it outright rather than
+        # keying every board game through a schedule it may not be on.
+        self.fixed_season_week = fixed_season_week
+        keyed = schedule.dropna(subset=["kickoff"])
+        dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        self._game_week: dict[tuple[str, str, pd.Timestamp], tuple[int, int]] = {
+            (str(h), str(a), d): (int(s), int(w))
+            for h, a, d, s, w in zip(keyed["home_team"], keyed["away_team"], dates,
+                                     keyed["season"], keyed["week"], strict=True)
+        }
+        self._burden: dict[tuple[int, int, str], float] = {
+            (int(s), int(w), str(t)): float(b)
+            for s, w, t, b in zip(burden["season"], burden["week"], burden["team"],
+                                  burden["burden"], strict=True)
+        } if not burden.empty else {}
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters  # type: ignore[attr-defined]
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
+
+    def _cost(self, team: str, season_week: tuple[int, int] | None) -> float:
+        if season_week is None:
+            return 0.0
+        return -self.points_per_unit * self._burden.get((*season_week, team), 0.0)
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
+    ) -> object:
+        season_week = self.fixed_season_week
+        if season_week is None and kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            season_week = self._game_week.get((home_team, away_team, date))
+        kwargs: dict[str, object] = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
+        return self.inner.project(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site, rng=rng,
+            home_bonus=home_bonus + self._cost(home_team, season_week),
+            away_bonus=away_bonus + self._cost(away_team, season_week), **kwargs,
+        )
+
+
 class RestAdjustedModel:
     """A situational wrapper: rest-spot point bonuses on top of any NFL model.
 
@@ -1747,12 +1967,23 @@ class WeatherAdjustedModel:
         *,
         threshold_mph: float = 15.0,
         points_per_mph: float = 0.15,
+        precip_points: float = 0.0,
+        precip_threshold_in: float = 0.25,
+        cold_points: float = 0.0,
+        cold_threshold_f: float = 32.0,
     ) -> None:
         import inspect
 
         self.inner = inner
         self.threshold_mph = threshold_mph
         self.points_per_mph = points_per_mph
+        # Precipitation (velocity.features.weather.precip_total_bonus): a
+        # point a side at a quarter-inch, promoted by the situational round.
+        self.precip_points = precip_points
+        self.precip_threshold_in = precip_threshold_in
+        # Cold (velocity.features.weather.cold_total_bonus): off at zero.
+        self.cold_points = cold_points
+        self.cold_threshold_f = cold_threshold_f
         # Decided once, at construction: a bare game model has no ``kickoff``
         # parameter and raises if handed one.
         try:
@@ -1766,6 +1997,14 @@ class WeatherAdjustedModel:
             (str(r["home_team"]), r["_date"]): r["wind_max"]
             for r in keyed.to_dict("records")
         }
+        self._precip = {
+            (str(r["home_team"]), r["_date"]): r.get("precip")
+            for r in keyed.to_dict("records")
+        } if "precip" in keyed.columns else {}
+        self._temp = {
+            (str(r["home_team"]), r["_date"]): r.get("temp_mean")
+            for r in keyed.to_dict("records")
+        } if "temp_mean" in keyed.columns else {}
 
     def project(
         self,
@@ -1787,7 +2026,11 @@ class WeatherAdjustedModel:
         model would raise, and *not* passing it to a rest wrapper would
         silently zero every rest bonus.
         """
-        from velocity.features.weather import wind_total_bonus
+        from velocity.features.weather import (
+            cold_total_bonus,
+            precip_total_bonus,
+            wind_total_bonus,
+        )
 
         bonus = 0.0
         if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
@@ -1797,6 +2040,14 @@ class WeatherAdjustedModel:
                 threshold_mph=self.threshold_mph,
                 points_per_mph=self.points_per_mph,
             )
+            if self.precip_points > 0:
+                bonus += precip_total_bonus(
+                    self._precip.get((home_team, date)),
+                    threshold_in=self.precip_threshold_in, points=self.precip_points)
+            if self.cold_points > 0:
+                bonus += cold_total_bonus(
+                    self._temp.get((home_team, date)),
+                    threshold_f=self.cold_threshold_f, points=self.cold_points)
         if self._inner_takes_kickoff:
             return self.inner.project(
                 home_team, away_team, neutral_site=neutral_site,
