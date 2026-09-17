@@ -126,3 +126,17 @@ in cadence, timing, and the outcome mood they land in. So:
 Entry point: `scripts/record_post.py` (log a post, fill metrics in later,
 `--report` for the tables). Engagement numbers arrive by hand or by export;
 nothing calls a social API.
+
+## 6. The gate by rule (2026-09-17)
+
+The output audit (`docs/OUTPUT_AUDIT.md`) replaced the gate's ordering.
+The conviction and context floors were reasoned, and the intel backtest
+measured the signal behind them as a null; the gate now runs **by rule
+tier** (`publish_slate(rule_tiers=)`, `--publish-by-rule`, on by default):
+a play posts only when a rule with a walk-forward record admits it
+(`velocity/wagering/tiers.py`), the running order is tier then edge, and
+the audit frame carries `rule_tier` and `rule_record` beside every
+candidate. The veto, the edge band, the adverse-drift check and the
+five-play ceiling are unchanged. `--publish-by-rule off` is the conviction
+gate as this document describes it above.
+

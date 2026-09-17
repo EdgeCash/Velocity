@@ -58,7 +58,12 @@ from velocity.report.slate_xlsx import (
     props_display,
 )
 from velocity.util.seed import make_rng
-from velocity.wagering.live import canonicalize_sides, project_board, slate_to_frame
+from velocity.wagering.live import (
+    canonicalize_sides,
+    project_board,
+    rule_tiers_for,
+    slate_to_frame,
+)
 from velocity.wagering.slate import SlateConfig, build_slate
 
 
@@ -1208,6 +1213,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="context score that must corroborate a posted play")
     parser.add_argument("--publish-max-plays", type=int, default=DEFAULT_MAX_PLAYS,
                         help="nightly cap on posted plays (the guardrail, not a quota)")
+    parser.add_argument("--publish-by-rule", choices=["on", "off"], default=None,
+                        help="post only plays a rule with a walk-forward record admits, "
+                             "ranked by rule tier then edge, the conviction and context "
+                             "floors standing down (default: on)")
     # Pick'em board: the slip-EV engine over the same prop sim + prop lines
     # (velocity/wagering/pickem_slate) — book-fair marginals, model
     # correlation. Slips below the EV floor are simply not persisted.
@@ -1790,6 +1799,18 @@ def _prop_paper_markets(args: argparse.Namespace) -> frozenset[str]:
     return frozenset({"__all__"}) if resolve_paper(args.paper, args.league) else frozenset()
 
 
+# The publish gate runs by rule tier (docs/OUTPUT_AUDIT.md §3 #5): a play
+# posts only when a rule with a walk-forward record admits it, and the
+# running order is tier then edge. The conviction and context floors stand
+# down — the intel backtest measured them as a null (docs/BACKTEST_INTEL.md);
+# the injury veto, the edge band and the drift check keep their say.
+DEFAULT_PUBLISH_BY_RULE = True
+
+
+def resolve_publish_by_rule(explicit: str | None) -> bool:
+    return DEFAULT_PUBLISH_BY_RULE if explicit is None else explicit == "on"
+
+
 def resolve_model_weight(explicit: float | None, league: str) -> float:
     """The market-anchoring weight for this run — the flag, else the league default."""
     if explicit is not None:
@@ -2159,7 +2180,11 @@ def main() -> None:
         games_min = events[["game_id", "kickoff"]].copy()
         games_min["game_id"] = games_min["game_id"].astype(str)
         game_log = build_slate(projections, canonical, games_min, cfg)
-        frame = slate_to_frame(game_log)
+        # The rule tier each play earns (velocity.wagering.tiers): the
+        # curated list's ranking, carried on the slate row into the graded
+        # record so closing-line value accrues by tier.
+        rule_tiers = rule_tiers_for(game_log, projections, args.league)
+        frame = slate_to_frame(game_log, rule_tiers)
 
         if frame.empty:
             print("no bets cleared the edge threshold.")
@@ -2254,18 +2279,27 @@ def main() -> None:
             if reference is not None:
                 print(f"publish gate: drift measured against the previous archived "
                       f"snapshot ({len(reference)} rows)")
+            by_rule = resolve_publish_by_rule(args.publish_by_rule)
             published, audit = publish_slate(
                 convictions, canonical, reference,
                 min_conviction=args.publish_min_conviction,
                 min_context=args.publish_min_context,
                 max_plays=args.publish_max_plays,
+                rule_tiers=rule_tiers if by_rule else None,
             )
-            print(f"\npublish gate: {gate_summary(audit)}")
+            mode = ("by rule tier — a play posts only with a rule that has a "
+                    "walk-forward record (docs/OUTPUT_AUDIT.md §3 #5)"
+                    if by_rule else "by conviction")
+            print(f"\npublish gate ({mode}): {gate_summary(audit)}")
             for c in published:
                 bet = c.bet
                 point = "" if bet.point is None else f" {bet.point:+g}"
+                key = (str(bet.game_id), str(bet.market), str(bet.side))
+                tier = rule_tiers.get(key)
+                label = (f"rule tier {tier.tier} ({tier.record})" if tier is not None
+                         else f"tier {c.tier}")
                 print(f"  POST  {bet.market} {bet.side}{point} "
-                      f"({bet.price:+.0f} {bet.book}) tier {c.tier}")
+                      f"({bet.price:+.0f} {bet.book}) {label}")
             stamp_gate = now.strftime("%Y%m%dT%H%M%SZ")
             audit.assign(league=args.league, generated_at=generated_at).to_parquet(
                 Path(args.out) / f"publish_{args.league}_{stamp_gate}.parquet",

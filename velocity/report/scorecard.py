@@ -114,6 +114,8 @@ def bets_from_slate(slate: pd.DataFrame, closing: pd.DataFrame | None = None) ->
                 closing_point=c_point,
                 player=row.get("player"),
                 p_fair=None if pd.isna(row.get("p_fair")) else row.get("p_fair"),
+                rule_tier=(None if row.get("rule_tier") is None or pd.isna(row.get("rule_tier"))
+                           else str(row.get("rule_tier"))),
             )
         )
     return bets

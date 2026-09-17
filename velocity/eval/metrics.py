@@ -121,6 +121,54 @@ def clv_stats(clv: object) -> dict[str, float]:
 CLV_TRUSTED_MARKETS = frozenset({"spread", "total", "moneyline"})
 
 
+def clv_by_tier(ledger: pd.DataFrame) -> pd.DataFrame:
+    """Per-rule-tier record and CLV — the curated list's live gate.
+
+    ``ledger`` is a settled frame carrying ``rule_tier`` (the tier the play
+    earned when it was staked, velocity.wagering.tiers) beside ``result``,
+    ``profit`` and the CLV columns. For each tier: bets, decided bets, the
+    win rate, the ROI per unit, mean price and line CLV and the share of
+    bets that beat the close. Rows without a tier are reported as
+    ``"none"`` — the plays no rule admitted, the control the tiers are read
+    against. Empty without the column.
+    """
+    columns = ["rule_tier", "n_bets", "n_decided", "win_rate", "roi",
+               "mean_price_clv", "mean_line_clv", "pct_beat_close"]
+    if ledger is None or ledger.empty or "rule_tier" not in ledger.columns:
+        return pd.DataFrame(columns=columns)
+    frame = ledger.copy()
+    frame["rule_tier"] = frame["rule_tier"].fillna("none").astype(str).replace({"": "none"})
+    rows = []
+    for tier, part in frame.groupby("rule_tier", sort=True):
+        empty = pd.Series(dtype=float, index=part.index)
+        result = (part["result"].astype(str) if "result" in part.columns
+                  else pd.Series("", index=part.index))
+        decided = part[result.isin(["win", "loss"])]
+        won = ((decided["result"].astype(str) == "win") if len(decided)
+               else pd.Series(dtype=bool))
+        profit = pd.to_numeric(part["profit"] if "profit" in part.columns else empty,
+                               errors="coerce")
+        stake = pd.to_numeric(part["stake"] if "stake" in part.columns else empty,
+                              errors="coerce")
+        staked = float(stake.fillna(0.0).sum())
+        price = pd.to_numeric(part["price_clv"] if "price_clv" in part.columns else empty,
+                              errors="coerce")
+        line = pd.to_numeric(part["line_clv"] if "line_clv" in part.columns else empty,
+                             errors="coerce")
+        beat = price.where(price.notna(), line).dropna()
+        rows.append({
+            "rule_tier": str(tier),
+            "n_bets": int(len(part)),
+            "n_decided": int(len(decided)),
+            "win_rate": float(won.mean()) if len(decided) else float("nan"),
+            "roi": float(profit.fillna(0.0).sum() / staked) if staked > 0 else float("nan"),
+            "mean_price_clv": float(price.mean()) if price.notna().any() else float("nan"),
+            "mean_line_clv": float(line.mean()) if line.notna().any() else float("nan"),
+            "pct_beat_close": float((beat > 0).mean()) if len(beat) else float("nan"),
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
 def clv_by_market(ledger: pd.DataFrame) -> pd.DataFrame:
     """Per-market CLV table with a trust flag — the monitor's one-glance read.
 

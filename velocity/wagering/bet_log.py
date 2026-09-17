@@ -60,6 +60,10 @@ class Bet:
     # graded for CLV, never staked) or an edge past a ceiling. ``None`` for an
     # ordinary staked bet.
     note: str | None = None
+    # The rule tier the play earned when staked (velocity.wagering.tiers):
+    # the curated list's ranking, and the key the graded record's CLV is
+    # grouped by. ``None`` for a play no rule with a record admits.
+    rule_tier: str | None = None
 
     @property
     def net_payout(self) -> float:
@@ -240,6 +244,7 @@ class BetLog:
                 {
                     "game_id": bet.game_id,
                     "market": bet.market,
+                    "rule_tier": bet.rule_tier,
                     "side": bet.side,
                     "book": bet.book,
                     "price": bet.price,
