@@ -168,15 +168,56 @@ def nfl_variants(
 
         return factory
 
-    def qb_recency(half_life: float, qb_lam: float | None = None) -> VariantFactory:
-        from velocity.features.team import DEFAULT_QB_LAMBDA, fit_qb_ratings
+    def qb_recency(
+        half_life: float, qb_lam: float | None = None, *,
+        garbage: tuple[str, float, float] | None = None,
+        turnover: float | None = None, winsor: float | None = None,
+        epa_col: str = "epa", home: bool = False,
+    ) -> VariantFactory:
+        """The QB-decomposed recency fit, optionally conditioned on the play
+        context the rebuilt plays carry (velocity.features.team):
+        ``garbage`` = (wp column, factor, band) down-weights decided-game
+        plays; ``turnover`` scales turnover-play EPA; ``winsor`` clips EPA;
+        ``epa_col`` picks the EPA column (``qb_epa`` credits the passer as
+        passing yards would); ``home`` fits the home-field edge in the ridge
+        and prices it in place of the constant."""
+        from velocity.features.team import (
+            DEFAULT_QB_LAMBDA,
+            attach_home_flag,
+            fit_qb_ratings,
+            garbage_time_weights,
+            shrink_turnover_epa,
+            winsorize_epa,
+        )
 
         def factory(train: pd.DataFrame) -> NFLGameModel:
-            return _model(fit_qb_ratings(
-                train,
+            frame = train
+            if turnover is not None:
+                frame = shrink_turnover_epa(frame, turnover, epa_col=epa_col)
+            if winsor is not None:
+                frame = winsorize_epa(frame, winsor, epa_col=epa_col)
+            weights = recency_weights(frame, half_life)
+            if garbage is not None:
+                col, factor, band = garbage
+                weights = weights * garbage_time_weights(
+                    frame, factor=factor, band=band, wp_col=col)
+            home_col: str | None = None
+            if home and schedule is not None:
+                frame = attach_home_flag(frame, schedule)
+                home_col = "home"
+            ratings = fit_qb_ratings(
+                frame,
                 qb_lambda=qb_lam if qb_lam is not None else DEFAULT_QB_LAMBDA,
-                weights=recency_weights(train, half_life),
-            ))
+                weights=weights, epa_col=epa_col, home_col=home_col,
+            )
+            config = NFLModelConfig(sim=sim)
+            if home_col is not None:
+                # ±0.5 in the column, so the coefficient is the offense's
+                # home-minus-away EPA/play; over a game's plays that is the
+                # margin edge the model splits half to each side.
+                config = NFLModelConfig(
+                    sim=sim, hfa_points=config.plays_per_game * ratings.home_epa)
+            return NFLGameModel(ratings, config)
 
         return factory
 
@@ -348,6 +389,11 @@ def nfl_variants(
                 "plays", scaled(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
             "qb-recency-17-q300-level2-starters": (
                 "plays", starters(levelled(qb_recency(17.0, 300.0), 2))),
+            # The residual-bank core with the turnover shrink (the play-
+            # context round): the bank the scale is fitted on is rebuilt
+            # from this variant's projections when the shrink is promoted.
+            "qb-recency-17-q300-level2-starters-to0.5": (
+                "plays", starters(levelled(qb_recency(17.0, 300.0, turnover=0.5), 2))),
             "qb-recency-17-q300-level2-scrim-starters": (
                 "plays", starters(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
             # Pace over the scrimmage fit: the level is re-fitted after the
@@ -500,6 +546,40 @@ def nfl_variants(
                 "live-nfl-promoted-cold40-0.5": (
                     "plays", windy(injured(live_core, 4.0), precip_points=1.0,
                                    cold_points=0.5, cold_threshold_f=40.0)),
+            })
+
+            def promoted(core: VariantFactory) -> VariantFactory:
+                """``core`` under the whole promoted chain — level, scale,
+                starters, rest, the injury burden, wind and rain — so a
+                change to the fit itself is scored exactly as it would run."""
+                return windy(injured(rested(scaled(starters(levelled(core, 2)))), 4.0),
+                             precip_points=1.0)
+
+            variants.update({
+                # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
+                # plays rebuild): the promoted fit conditioned on the win
+                # probability, the turnover flags and the home flag.
+                "live-nfl-promoted-gt0.5": (
+                    "plays", promoted(qb_recency(17.0, 300.0, garbage=("wp", 0.5, 0.05)))),
+                "live-nfl-promoted-gt0.25": (
+                    "plays", promoted(qb_recency(17.0, 300.0, garbage=("wp", 0.25, 0.05)))),
+                "live-nfl-promoted-gt0.5-b0.10": (
+                    "plays", promoted(qb_recency(17.0, 300.0, garbage=("wp", 0.5, 0.10)))),
+                "live-nfl-promoted-gtv0.5": (
+                    "plays", promoted(qb_recency(17.0, 300.0,
+                                                 garbage=("vegas_wp", 0.5, 0.05)))),
+                "live-nfl-promoted-to0.5": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5))),
+                "live-nfl-promoted-to0.25": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.25))),
+                "live-nfl-promoted-win4": (
+                    "plays", promoted(qb_recency(17.0, 300.0, winsor=4.0))),
+                "live-nfl-promoted-win3": (
+                    "plays", promoted(qb_recency(17.0, 300.0, winsor=3.0))),
+                "live-nfl-promoted-qbepa": (
+                    "plays", promoted(qb_recency(17.0, 300.0, epa_col="qb_epa"))),
+                "live-nfl-promoted-home": (
+                    "plays", promoted(qb_recency(17.0, 300.0, home=True))),
             })
     return variants
 

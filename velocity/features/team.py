@@ -113,6 +113,104 @@ def recency_weights(plays: pd.DataFrame, half_life_weeks: float) -> pd.Series:
     return pd.Series(np.power(0.5, age / half_life_weeks), index=plays.index)
 
 
+# Play-context conditioning for the ratings fit (docs/PROJECTION_AUDIT.md
+# §2.1, the plays rebuild). Each helper is a no-op on a frame that lacks the
+# column it reads — an older plays file, a fixture — so a chain built on the
+# rebuilt dataset still runs on the previous one, just without the effect.
+
+
+def garbage_time_weights(
+    plays: pd.DataFrame, *, factor: float = 0.5, band: float = 0.05,
+    wp_col: str = "wp",
+) -> pd.Series:
+    """Per-play multipliers that down-weight plays run when the game was decided.
+
+    A play whose pre-snap win probability (``wp_col``: nflverse's ``wp`` or
+    the Vegas-anchored ``vegas_wp``) sits within ``band`` of 0 or 1 gets
+    ``factor``; every other play, and any play without a probability, gets
+    1.0. Multiply into the recency weights before :func:`fit_ratings` /
+    :func:`fit_qb_ratings`: the offense running out a 24-point lead and the
+    defense in prevent are not the units the next game will see.
+    """
+    if not 0.0 <= factor <= 1.0:
+        raise ValueError("factor must lie in [0, 1]")
+    if wp_col not in plays.columns:
+        return pd.Series(1.0, index=plays.index)
+    wp = pd.to_numeric(plays[wp_col], errors="coerce")
+    decided = ((wp <= band) | (wp >= 1.0 - band)).fillna(False).to_numpy(dtype=bool)
+    return pd.Series(np.where(decided, factor, 1.0), index=plays.index)
+
+
+def shrink_turnover_epa(
+    plays: pd.DataFrame, factor: float, *, epa_col: str = "epa",
+) -> pd.DataFrame:
+    """``plays`` with the EPA of every turnover play scaled by ``factor``.
+
+    An interception or a lost fumble is worth about −4.4 EPA on average and
+    is the least repeatable event on the field (a tipped ball, a bounce). At
+    ``factor`` 0.5 the ridge sees half of it — the offense that lost three
+    fumbles and the defense that recovered them are pulled toward what they
+    did on the other 98.5% of snaps. A frame without the flags is returned
+    unchanged.
+    """
+    if factor < 0.0:
+        raise ValueError("factor must be non-negative")
+    flags = [c for c in ("interception", "fumble_lost") if c in plays.columns]
+    if not flags:
+        return plays
+    turnover = pd.Series(False, index=plays.index)
+    for col in flags:
+        turnover |= pd.to_numeric(plays[col], errors="coerce").fillna(0.0).eq(1.0)
+    out = plays.copy()
+    out.loc[turnover, epa_col] = out.loc[turnover, epa_col] * factor
+    return out
+
+
+def winsorize_epa(
+    plays: pd.DataFrame, cap: float, *, epa_col: str = "epa",
+) -> pd.DataFrame:
+    """``plays`` with ``epa_col`` clipped to ``[-cap, cap]``.
+
+    The EPA tails (about 2% of plays sit beyond ±4) are long touchdowns and
+    turnovers returned for scores: real, but heavy enough that a handful of
+    them move a team's season rating. Clipping keeps the sign and most of the
+    magnitude, and takes the leverage away.
+    """
+    if cap <= 0.0:
+        raise ValueError("cap must be positive")
+    out = plays.copy()
+    out[epa_col] = pd.to_numeric(out[epa_col], errors="coerce").clip(-cap, cap)
+    return out
+
+
+def attach_home_flag(
+    plays: pd.DataFrame, games: pd.DataFrame, *, col: str = "home",
+) -> pd.DataFrame:
+    """``plays`` with a ``col`` of +0.5 for an offense at home, −0.5 away, 0 neutral.
+
+    Joined from ``games`` on ``game_id`` (``home_team``, ``away_team`` and the
+    optional ``neutral_site``); a play whose game is not in ``games`` gets 0.
+    The column is what :func:`fit_ratings` / :func:`fit_qb_ratings` fit a
+    home-field edge on through ``home_col``.
+    """
+    keep = ["game_id", "home_team", "away_team"]
+    site = games[keep].copy()
+    site["game_id"] = site["game_id"].astype(str)
+    site["_neutral"] = (games["neutral_site"].astype(bool).to_numpy()
+                        if "neutral_site" in games.columns else False)
+    site = site.drop_duplicates("game_id")
+    joined = plays[["game_id", "posteam"]].copy()
+    joined["game_id"] = joined["game_id"].astype(str)
+    joined = joined.merge(site, on="game_id", how="left")
+    home = joined["posteam"].astype("string") == joined["home_team"].astype("string")
+    away = joined["posteam"].astype("string") == joined["away_team"].astype("string")
+    flag = np.where(home.fillna(False), 0.5, np.where(away.fillna(False), -0.5, 0.0))
+    flag = np.where(joined["_neutral"].fillna(False).to_numpy(dtype=bool), 0.0, flag)
+    out = plays.copy()
+    out[col] = flag
+    return out
+
+
 @dataclass(frozen=True)
 class TeamRatings:
     """Fitted opponent-adjusted EPA/play ratings for one slice of plays.
@@ -270,6 +368,9 @@ class QBTeamRatings:
     qb_lambda: float
     n_plays: int
     teams: tuple[str, ...] = field(default_factory=tuple)
+    # As on :class:`TeamRatings`: the fitted home-field edge in EPA/play when
+    # the fit carried a home column, 0.0 otherwise.
+    home_epa: float = 0.0
 
     def matchup_delta(
         self, off_team: str, def_team: str, qb_id: str | None = None
@@ -301,12 +402,15 @@ def fit_qb_ratings(
     min_dropbacks: int = DEFAULT_MIN_DROPBACKS,
     epa_col: str = "epa",
     weights: pd.Series | None = None,
+    home_col: str | None = None,
 ) -> QBTeamRatings:
     """Fit ridge ratings with QB effects decomposed out of the offense.
 
     Requires a ``passer_player_id`` column (the rebuilt canonical plays carry
     it); plays without one — every rush, plus scrambles/sacks some seasons —
     simply have no QB dummy. Deterministic like :func:`fit_ratings`.
+    ``home_col`` works as in :func:`fit_ratings`: one more unpenalized
+    coefficient, the home-field edge in EPA/play, returned as ``home_epa``.
     """
     if ridge_lambda <= 0 or qb_lambda <= 0:
         raise ValueError("ridge_lambda and qb_lambda must be positive")
@@ -327,7 +431,8 @@ def fit_qb_ratings(
     passers = sorted(counts[counts >= min_dropbacks].index.astype(str))
     qb_index = {qb: i for i, qb in enumerate(passers)}
 
-    n_cols = 1 + 2 * n_teams + len(passers)
+    with_home = home_col is not None and home_col in df.columns
+    n_cols = 1 + 2 * n_teams + len(passers) + (1 if with_home else 0)
     x = np.zeros((n_plays, n_cols))
     rows = np.arange(n_plays)
     x[:, 0] = 1.0
@@ -337,12 +442,15 @@ def fit_qb_ratings(
     has_qb = qb_col.notna().to_numpy()
     x[rows[has_qb], qb_col.to_numpy(dtype=float)[has_qb].astype(int)
       + 1 + 2 * n_teams] = 1.0
+    if with_home:
+        x[:, n_cols - 1] = pd.to_numeric(df[home_col], errors="coerce").fillna(0.0).to_numpy()
     y = df[epa_col].to_numpy(dtype=float)
 
     penalty = np.concatenate([
         [0.0],
         np.full(2 * n_teams, ridge_lambda),
         np.full(len(passers), qb_lambda),
+        [0.0] if with_home else [],
     ])
     if weights is not None:
         w = weights.reindex(df.index).to_numpy(dtype=float)
@@ -379,6 +487,7 @@ def fit_qb_ratings(
         qb_lambda=qb_lambda,
         n_plays=n_plays,
         teams=tuple(teams),
+        home_epa=float(beta[n_cols - 1]) if with_home else 0.0,
     )
 
 

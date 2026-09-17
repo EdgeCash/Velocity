@@ -66,6 +66,35 @@ GAME_TYPE_TO_SEASON_TYPE = {
 # decomposition then saw no 2026 dropbacks at all, and starter detection —
 # "the primary passer in the team's latest game" — could never advance past
 # the 2025 finale, which is the Week-18-rest mispricing in a different guise.
+# The play's context beyond its EPA (docs/PROJECTION_AUDIT.md §2.1, the plays
+# rebuild): the pre-snap win probability (nflverse's own and the Vegas-line-
+# anchored one), the quarter, clock and score state — what a garbage-time
+# down-weight conditions on; the turnover flags (an interception, a lost
+# fumble, any fumble) — what a turnover-luck regression conditions on; the
+# QB-credited EPA and completion percentage over expectation; and the
+# penalty / aborted-snap markers. Every one is optional: a feed without it
+# writes nulls, and a fit that does not ask for it never sees it.
+PBP_CONTEXT_COLUMNS: Sequence[str] = (
+    "wp",
+    "vegas_wp",
+    "qtr",
+    "game_seconds_remaining",
+    "score_differential",
+    "interception",
+    "fumble_lost",
+    "fumble",
+    "qb_epa",
+    "cpoe",
+    "penalty",
+    "aborted_play",
+)
+
+# The continuous context columns are stored to three decimals. The fit's
+# precision is nowhere near a thousandth of a win probability or of a point
+# of EPA, and the committed file is a blob the daily refresh rewrites: at full
+# precision these four columns alone outweigh the twelve canonical ones.
+_PBP_CONTEXT_DECIMALS: Mapping[str, int] = {"wp": 3, "vegas_wp": 3, "qb_epa": 3, "cpoe": 3}
+
 _PBP_COLUMNS: Sequence[str] = (
     "play_id",
     "game_id",
@@ -79,6 +108,7 @@ _PBP_COLUMNS: Sequence[str] = (
     "epa",
     "success",
     "passer_player_id",
+    *PBP_CONTEXT_COLUMNS,
 )
 
 
@@ -179,6 +209,13 @@ def normalize_pbp(raw: pd.DataFrame) -> pd.DataFrame:
     # nflverse encodes success as 1.0/0.0/NaN; route through pandas' nullable
     # boolean so a missing value stays missing instead of coercing NaN → True.
     out["success"] = out["success"].astype("boolean")
+    for col in PBP_CONTEXT_COLUMNS:
+        # nflverse writes the flags as 1.0/0.0/NaN floats and the rest as
+        # floats already; a provider's text or object column coerces the same
+        # way (bad values null) so the committed dtype never drifts.
+        out[col] = pd.to_numeric(out[col], errors="coerce").astype(float)
+        if col in _PBP_CONTEXT_DECIMALS:
+            out[col] = out[col].round(_PBP_CONTEXT_DECIMALS[col])
     return Plays.validate(out)
 
 

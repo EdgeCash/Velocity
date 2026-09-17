@@ -6,9 +6,12 @@ distills each season into two small, committable parquet files under
 
 * ``plays.parquet`` — the canonical :class:`~velocity.store.schema.Plays`
   columns **plus ``passer_player_id``** (the QB-adjustment feature: which
-  passer ran each dropback), keeping only real offensive plays (non-null
-  ``posteam`` and ``epa``). This drops kickoffs/timeouts/etc. and shrinks the
-  data by ~an order of magnitude.
+  passer ran each dropback) **plus the play context**
+  (:data:`velocity.ingest.nfl.PBP_CONTEXT_COLUMNS`: win probability, clock
+  and score state, turnover flags, QB EPA, CPOE, penalty and aborted-snap
+  markers), keeping only real offensive plays (non-null ``posteam`` and
+  ``epa``). This drops kickoffs/timeouts/etc. and shrinks the data by ~an
+  order of magnitude.
 * ``games.parquet`` — one row per game with the canonical
   :class:`~velocity.store.schema.Games` columns plus the closing
   ``spread_line`` / ``total_line`` carried through for the
@@ -21,6 +24,15 @@ Two source modes::
 
     # straight from the nflverse release parquets (one download per season)
     python scripts/build_nfl_pbp_datasets.py --seasons 2011 2025 --out datasets/nfl
+
+    # the plays alone, leaving a games.parquet that carries attached lines and
+    # schedule extras untouched; --cache reads already-downloaded releases
+    python scripts/build_nfl_pbp_datasets.py --seasons 2011 2026 --plays-only \
+        --cache /path/to/pbp --out datasets/nfl
+
+``--plays-only`` distills through :func:`velocity.ingest.nfl.normalize_pbp`,
+the same path the daily refresh's current-season top-up takes, so the
+committed file and the refreshed rows share one schema.
 """
 
 from __future__ import annotations
@@ -31,11 +43,13 @@ import urllib.request
 from pathlib import Path
 
 import pandas as pd
+from velocity.ingest.nfl import PBP_CONTEXT_COLUMNS, normalize_pbp
 
 PLAY_COLS = [
     "play_id", "game_id", "season", "week",
     "posteam", "defteam", "play_type", "down", "yards_gained", "epa", "success",
     "passer_player_id",
+    *PBP_CONTEXT_COLUMNS,
 ]
 GAME_COLS = [
     "game_id", "season", "week", "season_type", "game_date",
@@ -69,19 +83,70 @@ _PBP_URL = (
 )
 
 
-def _download_season(year: int) -> tuple[pd.DataFrame, pd.DataFrame]:  # pragma: no cover
-    url = _PBP_URL.format(year=year)
-    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
-        with urllib.request.urlopen(url, timeout=120) as resp:  # noqa: S310 - fixed host
-            tmp.write(resp.read())
-        tmp.flush()
-        import pyarrow.parquet as pq
+def _read_release(path: str | Path, columns: list[str]) -> pd.DataFrame:
+    """The release parquet at ``path``, restricted to the ``columns`` it carries."""
+    import pyarrow.parquet as pq
 
-        available = set(pq.ParquetFile(tmp.name).schema_arrow.names)
-        df = pd.read_parquet(
-            tmp.name, columns=[c for c in _USECOLS if c in available]
-        )
-    return _distill(df)
+    available = set(pq.ParquetFile(str(path)).schema_arrow.names)
+    return pd.read_parquet(str(path), columns=[c for c in columns if c in available])
+
+
+def _fetch_release(year: int, cache: Path | None) -> Path:  # pragma: no cover - network
+    """The season's release parquet on disk: the cached copy, else downloaded there.
+
+    Without ``cache`` a temporary file is used and deleted by the caller.
+    """
+    name = f"play_by_play_{year}.parquet"
+    if cache is not None:
+        cache.mkdir(parents=True, exist_ok=True)
+        target = cache / name
+        if target.exists():
+            return target
+    else:
+        target = Path(tempfile.mkstemp(suffix=".parquet")[1])
+    url = _PBP_URL.format(year=year)
+    with urllib.request.urlopen(url, timeout=120) as resp, target.open("wb") as fh:  # noqa: S310
+        fh.write(resp.read())
+    return target
+
+
+def _download_season(year: int) -> tuple[pd.DataFrame, pd.DataFrame]:  # pragma: no cover
+    path = _fetch_release(year, None)
+    try:
+        return _distill(_read_release(path, _USECOLS))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def distill_plays(raw: pd.DataFrame) -> pd.DataFrame:
+    """One season's raw release frame → the committed plays rows.
+
+    The canonical normalization (ids stringified, ``success`` nullable-boolean,
+    the context columns numeric, anything the release lacks null) followed by
+    the same non-null ``posteam``/``epa`` filter as the CSV path.
+    """
+    plays = normalize_pbp(raw)
+    return plays[plays["posteam"].notna() & plays["epa"].notna()].reset_index(drop=True)
+
+
+def build_plays_from_releases(
+    first: int, last: int, out: Path, cache: Path | None = None,
+) -> int:  # pragma: no cover - network
+    """Rebuild ``out/plays.parquet`` alone from the release parquets."""
+    frames = []
+    for year in range(first, last + 1):
+        path = _fetch_release(year, cache)
+        try:
+            plays = distill_plays(_read_release(path, PLAY_COLS))
+        finally:
+            if cache is None:
+                path.unlink(missing_ok=True)
+        frames.append(plays)
+        print(f"  {year}: {len(plays):>6} plays", flush=True)
+    all_plays = pd.concat(frames, ignore_index=True)
+    out.mkdir(parents=True, exist_ok=True)
+    all_plays.to_parquet(out / "plays.parquet", index=False)
+    return len(all_plays)
 
 
 def _write(play_frames: list, game_frames: list, out: Path) -> tuple[int, int]:
@@ -122,7 +187,18 @@ def main() -> None:
     parser.add_argument("--seasons", nargs=2, type=int, metavar=("FIRST", "LAST"),
                         help="download nflverse release parquets for this range")
     parser.add_argument("--out", default="datasets/nfl", help="output folder")
+    parser.add_argument("--plays-only", action="store_true",
+                        help="with --seasons: rewrite plays.parquet alone, through the "
+                             "canonical normalization; games.parquet is left as it is")
+    parser.add_argument("--cache", help="with --plays-only: folder of downloaded release "
+                                        "parquets (missing seasons are fetched into it)")
     args = parser.parse_args()
+    if args.seasons and args.plays_only:
+        n_plays = build_plays_from_releases(
+            args.seasons[0], args.seasons[1], Path(args.out),
+            Path(args.cache) if args.cache else None)
+        print(f"wrote {n_plays} plays to {args.out} (games untouched)")
+        return
     if args.seasons:
         n_plays, n_games = build_from_releases(args.seasons[0], args.seasons[1],
                                                Path(args.out))
