@@ -1118,3 +1118,24 @@ def test_college_rest_wrapper_pays_a_bye_and_ignores_the_offseason() -> None:
     rested_model = factory(train_bye, predicting=(2025, 4))
     rested = rested_model.project("A", "B", kickoff=kick, rng=rng)
     assert rested.mu_home - same.mu_home == pytest.approx(1.0, abs=0.35)
+
+
+def test_wrapped_nfl_factories_still_declare_the_predicting_hint() -> None:
+    """rest ∘ scale ∘ starters ∘ level: the engine must see `predicting` on the outside."""
+    import inspect
+
+    from velocity.backtest.lab import nfl_variants
+
+    schedule = pd.DataFrame({
+        "game_id": ["g"], "season": [2025], "week": [1], "home_team": ["A"], "away_team": ["B"],
+        "kickoff": [pd.Timestamp("2025-09-07")], "home_score": [1.0], "away_score": [0.0],
+        "neutral_site": [False], "roof": ["outdoors"], "home_qb_id": ["x"], "away_qb_id": ["y"],
+    })
+    variants = nfl_variants(100, schedule=schedule)
+    for name in ("live-nfl-starters-scale", "qb-recency-17-q300-level2-scrim-scale",
+                 "live-nfl-starters-scale-phase", "qb-recency-17-q300-level2-starters-scale"):
+        _kind, factory = variants[name]
+        assert "predicting" in inspect.signature(factory).parameters, name
+    # A chain with no scale in it declares nothing, and is called as before.
+    _kind, plain = variants["live-nfl-incumbent"]
+    assert "predicting" not in inspect.signature(plain).parameters

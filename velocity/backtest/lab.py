@@ -26,6 +26,7 @@ rate as a function of model-vs-close disagreement, per variant.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -184,10 +185,17 @@ def nfl_variants(
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
 
+    # Every wrapper below forwards ``**kwargs`` and carries ``functools.wraps``:
+    # the engine decides whether to pass ``predicting`` by inspecting the
+    # OUTERMOST factory's signature, and ``wraps`` lets that inspection see
+    # through to a scaled factory further in. Without it a chain such as
+    # rest-over-scale silently ran unscaled (docs/MODEL_LAB.md, the NFL
+    # composites round).
     def levelled(inner: VariantFactory, seasons: int | None = None) -> VariantFactory:
         """``inner`` with its scoring level fitted through the model on the
         training window's own games (velocity.models.level) — the totals
         bias the residual bank found, corrected where it arises."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> NFLGameModel:
             from velocity.models.level import calibrate_level
 
@@ -257,6 +265,7 @@ def nfl_variants(
     ) -> VariantFactory:
         """``inner`` under the promoted rest wrapper — the live chain's outer
         layer, so a candidate can be scored exactly as it would run."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if schedule is None:
@@ -273,6 +282,7 @@ def nfl_variants(
         .team_pace) — the college model's pace treatment, in the NFL."""
         from velocity.features.team import team_pace
 
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if not isinstance(model, NFLGameModel):
@@ -286,6 +296,7 @@ def nfl_variants(
 
     def starters(inner: VariantFactory) -> VariantFactory:
         """``inner`` priced with the schedule's announced starters per game."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if schedule is None or "home_qb_id" not in schedule.columns:
@@ -298,6 +309,7 @@ def nfl_variants(
         """``inner`` fitted on the offense's own snaps only (kicks, returns,
         kneels, spikes and no-plays dropped before the ridge —
         docs/PROJECTION_AUDIT.md §2.1)."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             return inner(scrimmage_plays(train, "nfl"), **kwargs)
 
@@ -306,6 +318,7 @@ def nfl_variants(
     def live_plays(inner: VariantFactory) -> VariantFactory:
         """``inner`` fitted on every live play — kicks and returns kept, only
         kneels, spikes, no-plays and unlabelled rows dropped."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             return inner(scrimmage_plays(train, "nfl", keep_kicks=True), **kwargs)
 
