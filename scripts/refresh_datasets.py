@@ -26,6 +26,7 @@ schema keeps scores int). Unplayed rows would be dead weight until graded.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import urllib.request
@@ -273,11 +274,33 @@ def refresh_ncaaf(out: Path, season: int) -> None:  # pragma: no cover - network
             print(f"  ncaaf plays: nothing scored for {season} yet")
             return
         fresh = pd.concat(frames, ignore_index=True)
-        merged = merge_season(pd.read_parquet(plays_path), fresh, season)
+        existing = pd.read_parquet(plays_path)
+        if "passer_player_id" in existing.columns:
+            # The passer ids ride on cfbfastR's public per-play player stats
+            # (scripts/attach_ncaaf_passers.py); a fetch hiccup leaves the
+            # season's passers null, never the plays unrefreshed.
+            fresh = _attach_ncaaf_passers(fresh, season)
+        merged = merge_season(existing, fresh, season)
         merged.to_parquet(plays_path, index=False)
         print(f"  ncaaf plays: {len(fresh)} season rows ({len(merged)} total)")
     except Exception as exc:  # noqa: BLE001 - plays are additive to the refresh
         print(f"  ncaaf plays skipped ({exc}); games refreshed alone")
+
+
+def _attach_ncaaf_passers(plays: pd.DataFrame, season: int) -> pd.DataFrame:  # pragma: no cover
+    from velocity.ingest.ncaaf import CFBFASTR_PLAYER_STATS_URL, attach_passers, passer_by_play
+
+    try:
+        url = CFBFASTR_PLAYER_STATS_URL.format(season=season)
+        with urllib.request.urlopen(url, timeout=120) as resp:  # noqa: S310 - fixed host
+            stats = pd.read_parquet(io.BytesIO(resp.read()))
+        out = attach_passers(plays, passer_by_play(stats))
+        print(f"  ncaaf passers: {int(out['passer_player_id'].notna().sum())} of "
+              f"{len(out)} season plays")
+        return out
+    except Exception as exc:  # noqa: BLE001 - the passers are additive to the plays
+        print(f"  ncaaf passers skipped ({exc})")
+        return plays
 
 
 def refresh_mlb_player_banks(out: Path, games_path: Path) -> None:

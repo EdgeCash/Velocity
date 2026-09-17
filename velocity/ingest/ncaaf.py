@@ -217,6 +217,65 @@ def distill_rest_plays(rows: list[dict] | pd.DataFrame, season: int, week: int) 
     return plays[keep].reset_index(drop=True)
 
 
+# cfbfastR's per-play player-stats frame (sportsdataverse/cfbfastR-data,
+# public, no key): one row per play with the ESPN ids of the players in each
+# role, keyed by the same ESPN play id CFBD's play-by-play carries. The
+# passer is whichever pass role fired — a completion, an incompletion, an
+# interception thrown or a sack taken. It is the college analogue of
+# nflverse's ``passer_player_id``: what a QB decomposition of the offense
+# (velocity.features.team.fit_qb_ratings) keys its dummies on. Coverage
+# runs 88–97% of pass-type plays a season, 2015–2025.
+CFBFASTR_PLAYER_STATS_URL = (
+    "https://raw.githubusercontent.com/sportsdataverse/cfbfastR-data/main/"
+    "player_stats/parquet/player_stats_{season}.parquet"
+)
+PASSER_ROLE_COLUMNS: tuple[str, ...] = (
+    "completion_player_id",
+    "incompletion_player_id",
+    "interception_thrown_player_id",
+    "sack_taken_player_id",
+)
+
+
+def passer_by_play(player_stats: pd.DataFrame) -> pd.Series:
+    """``play_id`` → passer id (string) from a cfbfastR player-stats frame.
+
+    A play with no pass role is absent from the result; a play that somehow
+    carries two passers keeps the first role in :data:`PASSER_ROLE_COLUMNS`
+    order. Ids are stringified integers (``"4685522"``), never floats.
+    """
+    roles = [c for c in PASSER_ROLE_COLUMNS if c in player_stats.columns]
+    if not roles or player_stats.empty:
+        return pd.Series(dtype="string", name="passer_player_id")
+    frame = player_stats[["play_id", *roles]].copy()
+    for col in roles:
+        frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    passer = frame[roles].bfill(axis=1).iloc[:, 0]
+    keep = passer.notna()
+    out = pd.Series(
+        passer[keep].astype("int64").astype(str).to_numpy(),
+        index=pd.Index(frame.loc[keep, "play_id"].astype(str), name="play_id"),
+        name="passer_player_id", dtype="string",
+    )
+    return out[~out.index.duplicated()]
+
+
+def attach_passers(plays: pd.DataFrame, passers: pd.Series) -> pd.DataFrame:
+    """``plays`` with ``passer_player_id`` joined by ``play_id``.
+
+    A passer the plays frame already carries is kept where the join misses
+    (a season attached earlier), so the column never loses coverage; a
+    frame without the column gains it, null where nothing matched.
+    """
+    out = plays.copy()
+    joined = out["play_id"].astype(str).map(passers).astype("string")
+    if "passer_player_id" in out.columns:
+        out["passer_player_id"] = joined.fillna(out["passer_player_id"].astype("string"))
+    else:
+        out["passer_player_id"] = joined
+    return out
+
+
 _CFBD_ID = r"\d+"
 
 
@@ -390,6 +449,49 @@ def sp_pseudo_games(
                 "home_score": float(off), "away_score": float(dfn),
             })
     return pd.DataFrame(rows)
+
+
+def sp_pseudo_cells(
+    sp: pd.DataFrame,
+    teams: Collection[str],
+    *,
+    cutoff: pd.Timestamp,
+    k: int = 12,
+    league_epa: float = 0.0,
+    plays_per_game: float = 65.0,
+) -> pd.DataFrame:
+    """Last season's final SP+ → ``k`` games' worth of week-0 pseudo-cells per team.
+
+    The EPA-half twin of :func:`sp_pseudo_games`: each rated team gets one
+    cell on offense against :data:`SP_PRIOR_ANCHOR` and one on defense, both
+    at week 0 of the season after the rating season, each weighing ``k`` ×
+    ``plays_per_game`` plays. The cell EPA is ``league_epa`` plus the team's
+    SP+ component's gap to the rated league's mean, per play — SP+ offense
+    and defense are adjusted points-per-game scales, so the gap over a game's
+    plays is the EPA/play deviation the ridge would recover from real snaps.
+    The anchor plays every team and settles at average. Same leak gate as
+    the games prior (``cutoff`` must reach Feb 1 after the rating season);
+    an unfinished season yields an empty frame. Columns match
+    ``velocity.backtest.lab.compress_plays`` (``posteam, defteam, season,
+    week, epa, n``).
+    """
+    table, rating_season = sp_rating_table(sp, cutoff)
+    columns = ["posteam", "defteam", "season", "week", "epa", "n"]
+    if rating_season is None or not table:
+        return pd.DataFrame(columns=columns)
+    mean_off = float(np.mean([off for off, _ in table.values()]))
+    mean_def = float(np.mean([dfn for _, dfn in table.values()]))
+    season = rating_season + 1
+    n = float(k) * float(plays_per_game)
+    rows: list[dict[str, object]] = []
+    for team, (off, dfn) in table.items():
+        if team not in teams:
+            continue
+        rows.append({"posteam": team, "defteam": SP_PRIOR_ANCHOR, "season": season, "week": 0,
+                     "epa": league_epa + (off - mean_off) / plays_per_game, "n": n})
+        rows.append({"posteam": SP_PRIOR_ANCHOR, "defteam": team, "season": season, "week": 0,
+                     "epa": league_epa + (dfn - mean_def) / plays_per_game, "n": n})
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _import_cfbd():  # type: ignore[no-untyped-def]

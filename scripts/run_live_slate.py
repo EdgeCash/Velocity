@@ -755,10 +755,36 @@ def _build_projection(
             plays = scrimmage_plays(plays, "ncaaf", keep_kicks=college_mode == "live")
             print(f"NCAAF plays ({college_mode}): {before - len(plays)} rows dropped, "
                   f"{len(plays)} kept")
-        cells = compress_plays(plays)
         base = ncaaf_base_points(games)
+        qb_lambda = resolve_ncaaf_qb_lambda(args.ncaaf_qb_lambda)
+        half_life = resolve_ncaaf_epa_half_life(args.ncaaf_epa_half_life)
+        with_passers = ("passer_player_id" in plays.columns
+                        and plays["passer_player_id"].notna().any())
+        use_qb = qb_lambda > 0 and with_passers
+        cells = compress_plays(plays, by_passer=use_qb)
+        weights = cells["n"].astype(float)
+        epa_kind = "λ50"
+        if half_life > 0:
+            # Recency on the EPA half (docs/MODEL_LAB.md, the college recency
+            # round): the promoted fit had weighed a four-season window flat.
+            from velocity.features.team import recency_weights as _recency
+
+            weights = weights * _recency(cells, half_life)
+            epa_kind += f"/hl{half_life:g}"
+        if use_qb:
+            # The college QB term (docs/MODEL_LAB.md, the college QB round):
+            # the passer decomposed out of the offense on passer cells, the
+            # detected starter — the passer with the most dropbacks in the
+            # team's latest game — priced back in.
+            from velocity.features.team import fit_qb_ratings
+
+            epa_ratings: object = fit_qb_ratings(
+                cells, ridge_lambda=50.0, qb_lambda=qb_lambda, weights=weights, count_col="n")
+            epa_kind += f"/q{qb_lambda:g} QB"
+        else:
+            epa_ratings = fit_ratings(cells, ridge_lambda=50.0, weights=weights)
         epa_model = NFLGameModel(
-            fit_ratings(cells, ridge_lambda=50.0, weights=cells["n"].astype(float)),
+            epa_ratings,  # type: ignore[arg-type]
             NFLModelConfig(base_points=base, plays_per_game=65.0,
                            hfa_points=2.5, sim=sim),
         )
@@ -774,7 +800,7 @@ def _build_projection(
             print(f"NCAAF scores level: base {scores_model.ratings.base_points:.2f} pts/team "
                   f"(the fit ran {drift:+.2f} on the trailing {NFL_LEVEL_SEASONS} seasons)")
         model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
-        kind = (f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5, "
+        kind = (f"EPA×scores blend ({epa_kind}/λ{ridge:g}, w=0.5, "
                 f"base {base:.1f}) on {len(plays)} plays")
         college_scale = resolve_scale(args.ncaaf_scale, "ncaaf")
         if college_scale != "off":
@@ -848,6 +874,14 @@ def build_parser() -> argparse.ArgumentParser:
                              "being projected, or not at all (default: the lab's pick)")
     parser.add_argument("--ncaaf-scale", choices=["fit", "phase", "off"], default=None,
                         help="the same for the college blend (default: the lab's pick)")
+    parser.add_argument("--ncaaf-epa-half-life", type=float, default=None,
+                        help="recency half-life, in on-field weeks, on the college EPA "
+                             "half's plays (0 weighs the window flat; default: the lab's "
+                             "pick)")
+    parser.add_argument("--ncaaf-qb-lambda", type=float, default=None,
+                        help="decompose the passer out of the college EPA half at this QB "
+                             "ridge, the detected starter priced back in (0 keeps the team "
+                             "fit; default: the lab's pick)")
     parser.add_argument("--nfl-precip-points", type=float, default=None,
                         help="points off each NFL team on a forecast of ≥ 0.25 in of rain "
                              "(0 switches it off; default: the lab's pick)")
@@ -1404,6 +1438,35 @@ def resolve_turnover_shrink(explicit: float | None) -> float:
     if explicit is None:
         return DEFAULT_NFL_TURNOVER_SHRINK
     return min(1.0, max(0.0, float(explicit)))
+
+
+# The college QB term: the passer decomposed out of the EPA half's offense
+# at this QB ridge (0 = the team fit); the passer ids come from cfbfastR's
+# player stats (scripts/attach_ncaaf_passers.py, topped up by the refresh).
+# Measured and not promoted (docs/MODEL_LAB.md, the college QB round): over
+# the flat fit it took 0.26 off the margin RMSE, but beside the six-week
+# recency its margin gain shrinks to 0.05 and it costs the total 0.04–0.09.
+# Available as --ncaaf-qb-lambda for the day an announced-starter feed
+# makes a priced QB change worth more than a cleaner team estimate.
+DEFAULT_NCAAF_QB_LAMBDA = 0.0
+
+
+def resolve_ncaaf_qb_lambda(explicit: float | None) -> float:
+    return DEFAULT_NCAAF_QB_LAMBDA if explicit is None else max(0.0, float(explicit))
+
+
+# Recency on the college EPA half, in on-field weeks (0 = the flat window the
+# fit ran on through the composites round). The college recency round
+# (docs/MODEL_LAB.md): a six-week half-life, with the college residual bank
+# rebuilt on the recency core, took the FBS walk-forward from Brier 0.2002
+# to 0.1881, margin RMSE 17.73 → 16.88 (the close 15.64) and total RMSE
+# 17.25 → 16.85 (the close 16.30) — the largest single gain the lab has
+# recorded. The sweep is flat between 4 and 8 and climbs steadily beyond.
+DEFAULT_NCAAF_EPA_HALF_LIFE = 6.0
+
+
+def resolve_ncaaf_epa_half_life(explicit: float | None) -> float:
+    return DEFAULT_NCAAF_EPA_HALF_LIFE if explicit is None else max(0.0, float(explicit))
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:

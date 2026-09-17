@@ -594,7 +594,9 @@ def nfl_variants(
     return variants
 
 
-def compress_plays(plays: pd.DataFrame, games: pd.DataFrame | None = None) -> pd.DataFrame:
+def compress_plays(
+    plays: pd.DataFrame, games: pd.DataFrame | None = None, *, by_passer: bool = False,
+) -> pd.DataFrame:
     """Aggregate plays to ``(posteam, defteam, season, week)`` cells for the ridge fit.
 
     The one-hot design matrix in :func:`fit_ratings` is identical for every
@@ -609,10 +611,18 @@ def compress_plays(plays: pd.DataFrame, games: pd.DataFrame | None = None) -> pd
     matrix in the gigabytes, refit every walk-forward week; the cells are a
     few thousand rows. The returned frame carries ``epa`` (the cell mean) and
     ``n`` (the cell count).
+
+    ``by_passer`` splits each cell by ``passer_player_id`` (the plays with no
+    passer form their own cell), so the QB dummies of
+    :func:`~velocity.features.team.fit_qb_ratings` fire per cell the way
+    they fire per play; pass ``n`` as its ``count_col`` and ``weights``.
     """
+    keys = ["posteam", "defteam", "season", "week"]
+    if by_passer and "passer_player_id" in plays.columns:
+        keys.append("passer_player_id")
     cells = (
         plays.dropna(subset=["posteam", "defteam", "epa"])
-        .groupby(["posteam", "defteam", "season", "week"], observed=True)["epa"]
+        .groupby(keys, observed=True, dropna=False)["epa"]
         .agg(epa="mean", n="count")
         .reset_index()
     )
@@ -1036,7 +1046,8 @@ def ncaaf_variants(
 
             def blend_sp(
                 k: int, *, scrimmage: bool = False, pace: bool = False,
-                early_weight: float | None = None,
+                early_weight: float | None = None, qb_lambda: float | None = None,
+                epa_prior_k: int | None = None, epa_half_life: float | None = None,
             ) -> VariantFactory:
                 """``blend-level2`` with the SP+ previous-season prior in the
                 scores half, at ``k`` pseudo-games per team — what the live
@@ -1044,25 +1055,23 @@ def ncaaf_variants(
                 offense's own snaps only; ``pace`` prices it at each team's
                 own plays per game instead of the 65-play constant;
                 ``early_weight`` is the EPA half's weight through week
-                ``NCAAF_EARLY_WEEK`` (the half with no prior), 0.5 after."""
+                ``NCAAF_EARLY_WEEK`` (the half with no prior), 0.5 after;
+                ``qb_lambda`` decomposes the passer out of the EPA half's
+                offense (fit_qb_ratings on passer cells, the detected
+                starter priced back in) at that QB ridge; ``epa_prior_k``
+                puts the same SP+ prior into the EPA half as week-0
+                pseudo-cells worth that many games (sp_pseudo_cells);
+                ``epa_half_life`` recency-weights the EPA half's cells
+                (on-field weeks), which the promoted fit does not."""
                 def factory(
                     train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
                 ) -> BlendedGameModel:
                     from dataclasses import replace as _replace
 
-                    from velocity.features.team import team_pace
+                    from velocity.features.team import fit_qb_ratings, team_pace
+                    from velocity.ingest.ncaaf import sp_pseudo_cells
                     from velocity.models.level import calibrate_scores_level, mean_points_per_team
 
-                    sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
-                    if scrimmage:
-                        sub = scrimmage_plays(sub, "ncaaf")
-                    cells = compress_plays(sub)
-                    epa_model = NFLGameModel(
-                        fit_ratings(cells, ridge_lambda=50.0,
-                                    weights=cells["n"].astype(float)),
-                        _replace(cfg, base_points=mean_points_per_team(train_games)),
-                        pace=team_pace(sub) if pace else None,
-                    )
                     # The knowledge point: Feb 1 of the season being projected
                     # admits exactly the seasons before it. Without the engine's
                     # hint, fall back to the live runner's rule (the latest
@@ -1074,6 +1083,32 @@ def ncaaf_variants(
                     )
                     teams = (set(train_games["home_team"].astype(str))
                              | set(train_games["away_team"].astype(str)))
+
+                    sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                    if scrimmage:
+                        sub = scrimmage_plays(sub, "ncaaf")
+                    cells = compress_plays(sub, by_passer=qb_lambda is not None)
+                    if epa_prior_k:
+                        prior_cells = sp_pseudo_cells(
+                            sp_frame, teams, cutoff=cutoff, k=epa_prior_k,
+                            league_epa=float(sub["epa"].mean()),
+                            plays_per_game=cfg.plays_per_game)
+                        if not prior_cells.empty:
+                            cells = pd.concat([cells, prior_cells], ignore_index=True)
+                    weights = cells["n"].astype(float)
+                    if epa_half_life is not None:
+                        weights = weights * recency_weights(cells, epa_half_life)
+                    if qb_lambda is not None:
+                        ratings: object = fit_qb_ratings(
+                            cells, ridge_lambda=50.0, qb_lambda=qb_lambda,
+                            weights=weights, count_col="n")
+                    else:
+                        ratings = fit_ratings(cells, ridge_lambda=50.0, weights=weights)
+                    epa_model = NFLGameModel(
+                        ratings,  # type: ignore[arg-type]
+                        _replace(cfg, base_points=mean_points_per_team(train_games)),
+                        pace=team_pace(sub) if pace else None,
+                    )
                     pseudo = sp_pseudo_games(sp_frame, teams, cutoff=cutoff, k=k)
                     fit_games = (pd.concat([train_games, pseudo], ignore_index=True)
                                  if not pseudo.empty else train_games)
@@ -1113,6 +1148,86 @@ def ncaaf_variants(
                     "games", college_scaled(blend_sp(12, early_weight=0.3), by_phase=True)),
                 "blend-level2-sp12-scale-phase-early40": (
                     "games", college_scaled(blend_sp(12, early_weight=0.4), by_phase=True)),
+                # The college QB term over the promoted phase scale: the
+                # passer decomposed out of the EPA half (the cfbfastR passer
+                # ids scripts/attach_ncaaf_passers.py joins on), at three QB
+                # ridges — the NFL's 300 and either side of it.
+                "blend-level2-sp12-scale-phase-qb75": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=75.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb100": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=100.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb150": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=150.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb300": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=300.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb600": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=600.0), by_phase=True)),
+                # The EPA half's own prior and recency over the promoted
+                # phase scale: the SP+ prior as week-0 pseudo-cells (the
+                # scores half has had it since the sp12 round; the EPA half
+                # opens every season blind), and a recency decay on the
+                # cells (the promoted EPA half weighs a four-season window
+                # flat).
+                "blend-level2-sp12-scale-phase-epaprior6": (
+                    "games", college_scaled(blend_sp(12, epa_prior_k=6), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epaprior12": (
+                    "games", college_scaled(blend_sp(12, epa_prior_k=12), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl17": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=17.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl34": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=34.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl51": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=51.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epaprior12-epahl34": (
+                    "games", college_scaled(blend_sp(12, epa_prior_k=12, epa_half_life=34.0),
+                                            by_phase=True)),
+                # The recency sweep's short end, and recency with the QB term.
+                "blend-level2-sp12-scale-phase-epahl8": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=8.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl12": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=12.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb75-epahl17": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=75.0, epa_half_life=17.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb150-epahl17": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=150.0, epa_half_life=17.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb150-epahl12": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=150.0, epa_half_life=12.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb300-epahl17": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=300.0, epa_half_life=17.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl4": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=4.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-epahl6": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=6.0), by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb75-epahl8": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=75.0, epa_half_life=8.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb100-epahl8": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=100.0, epa_half_life=8.0),
+                                            by_phase=True)),
+                "blend-level2-sp12-scale-phase-qb150-epahl8": (
+                    "games", college_scaled(blend_sp(12, qb_lambda=150.0, epa_half_life=8.0),
+                                            by_phase=True)),
+                # The unscaled cores the residual bank is rebuilt from when
+                # one of these is promoted.
+                "blend-level2-sp12-epahl17": ("games", blend_sp(12, epa_half_life=17.0)),
+                "blend-level2-sp12-epahl6": ("games", blend_sp(12, epa_half_life=6.0)),
+                "blend-level2-sp12-epahl8": ("games", blend_sp(12, epa_half_life=8.0)),
+                "blend-level2-sp12-qb150-epahl17": (
+                    "games", blend_sp(12, qb_lambda=150.0, epa_half_life=17.0)),
+                "blend-level2-sp12-qb100-epahl8": (
+                    "games", blend_sp(12, qb_lambda=100.0, epa_half_life=8.0)),
+                "blend-level2-sp12-qb150-epahl8": (
+                    "games", blend_sp(12, qb_lambda=150.0, epa_half_life=8.0)),
+                # The promoted college chain after the recency round: the
+                # six-week half-life on the EPA half, the bank rebuilt on its
+                # core (blend-level2-sp12-epahl6), the phase scale on that
+                # bank — what the live runner prices.
+                "live-ncaaf-promoted": (
+                    "games", college_scaled(blend_sp(12, epa_half_life=6.0), by_phase=True)),
                 "blend-level2-sp12-scale-phase-early60": (
                     "games", college_scaled(blend_sp(12, early_weight=0.6), by_phase=True)),
             })
