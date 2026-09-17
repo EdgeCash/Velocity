@@ -1129,3 +1129,23 @@ the three promoted.
    forwarded ``**kwargs`` hid the inner factory's ``predicting`` parameter
    from the engine, so the leak gate never fired and the scale was never
    fitted. ``functools.wraps`` on every wrapper fixes it and a test pins it.
+
+**The live composite, scored correctly** (rest over the scaled starters
+fit, the chain the runner prices minus the wind wrapper; and the phase-
+specific scale for the NFL):
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | early / late margin RMSE |
+|---|---|---|---|---|---|---|
+| live-nfl-starters-scale | 0.2186 | **0.0143** | 13.27 | **13.60** | +0.095 | 13.19 / 13.31 |
+| live-nfl-starters-scale-phase | **0.2185** | 0.0153 | **13.26** | 13.61 | +0.114 | 13.16 / 13.31 |
+| starters-scale-phase (no rest) | 0.2186 | 0.0158 | 13.26 | 13.59 | +0.118 | 13.17 / 13.31 |
+
+The rest wrapper costs nothing over the scaled starters fit (total RMSE
++0.02 for the bye point, as before). **The phase-specific scale is a wash
+in the NFL** — a hundredth on the early margin, a hundredth back on the
+total, calibration a shade worse — where in college it was a clean win.
+The difference is what the two phases have to correct: the college early
+slope was 1.19 on a prior-less half, the NFL's 0.72 was mostly the
+unscaled total, and the whole-bank scale already took that. **Not
+promoted** for the NFL; the flag (`--nfl-scale phase`) stays for a season
+with more early-season rows in the bank. The NFL runs `fit`.
