@@ -338,6 +338,7 @@ def scale_model(
     weeks: tuple[int, int] | None = None,
     anchor_seasons: int | None = 2,
     shift: bool = False,
+    phase_margin_only: bool = False,
 ) -> tuple[ScaledModel, ScaleCalibration]:
     """``model`` under a :class:`ScaleCalibration` fitted on ``residuals``.
 
@@ -347,6 +348,8 @@ def scale_model(
     falls back to the whole bank rather than to the identity. ``shift``
     keeps the home-margin intercept (see :class:`ScaleCalibration`), with
     ``games``' ``neutral_site`` flags naming the rows it must not fit on.
+    ``phase_margin_only`` fits the ``weeks`` phase for the margin alone and
+    takes the total's slope from the whole bank.
     """
     neutral_ids: set[str] = set()
     if shift and "neutral_site" in games.columns:
@@ -359,6 +362,12 @@ def scale_model(
         calibration = ScaleCalibration.from_residuals(
             residuals, before_season=before_season, seasons=seasons,
             shift=shift, neutral_ids=neutral_ids)
+    elif weeks is not None and phase_margin_only:
+        whole = ScaleCalibration.from_residuals(
+            residuals, before_season=before_season, seasons=seasons,
+            shift=shift, neutral_ids=neutral_ids)
+        if whole.n > 0:
+            calibration = replace(calibration, total_slope=whole.total_slope)
     anchor = mean_projected_total(model, games, seasons=anchor_seasons)
     if anchor is None:
         calibration = replace(calibration, total_slope=1.0)

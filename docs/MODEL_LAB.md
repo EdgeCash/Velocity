@@ -1597,3 +1597,54 @@ weight; 0.6 loses). **Promoted at 0.4** (`DEFAULT_NCAAF_EARLY_WEIGHT`,
 `--ncaaf-early-weight`): the live runner prices the EPA half at 0.4 while
 the week about to be played is week 4 or earlier.
 
+
+## The phase round (2026-09-17) — NFL
+
+Two of the audit's remaining NFL items, over the promoted chain (the
+turnover shrink, the eight-week offseason gap, the bank rebuilt on that
+core; 4,080 games):
+
+- **The joint phase ridge** (#16): one design in place of the rejected
+  two-fit split — the team columns stay the all-plays rating, and each
+  team carries a pass-phase deviation on offense and on defense that fires
+  on pass plays only, shrunk toward 0 at its own ridge
+  (`fit_qb_ratings(phase_col="play_type", phase_lambda=)`), priced at the
+  offense's pass rate like the passer is.
+- **The phase scale, again** (#19's other half): on the gapped core the
+  bank's margin slope reads 0.80 in weeks 1–3, 0.89 in 4–6, 1.04 in 7–10
+  and 1.15 after; the scale fitted on the projected week's phase (through
+  week 6, or after), for both terms and for the margin alone.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | info_w total |
+|---|---|---|---|---|---|---|
+| promoted chain | 0.2176 | 0.0141 | 13.229 | 13.510 | +0.067 | +0.082 |
+| phase ridge, λ 300 | 0.2190 | 0.0160 | 13.313 | 13.545 | +0.017 | +0.054 |
+| λ 1000 | 0.2181 | 0.0116 | 13.257 | 13.522 | +0.041 | +0.069 |
+| λ 3000 | 0.2178 | 0.0134 | 13.238 | 13.514 | +0.056 | +0.077 |
+| phase scale (margin and total) | 0.2175 | 0.0160 | 13.219 | 13.521 | +0.094 | +0.072 |
+| phase scale, margin only | 0.2175 | 0.0168 | 13.219 | 13.510 | +0.094 | +0.082 |
+
+**Readings:**
+
+1. **The joint phase ridge loses at every ridge, monotonically.** The
+   lighter the shrinkage the worse (λ 300: +0.08 on the margin, +0.03 on
+   the total), and at λ 3000 it is the all-plays fit with noise added. A
+   team's pass-phase deviation from its own rating is not stable enough
+   to price a game with, which is what the two-fit split said in Round 1
+   from the other direction. **Rejected**; the columns stay in
+   `fit_qb_ratings` behind `phase_col` and the runner's
+   `--nfl-phase-lambda` (default 0).
+2. **The phase scale is a wash dressed as a margin gain.** Fitting the
+   slopes on the projected week's phase takes 0.01 off the margin and
+   puts it on the total; the margin alone takes the 0.01 and keeps the
+   total, and pays 0.003 of calibration error for it — the early phase's
+   slope is fitted on a third of the bank and the noise shows. The
+   bank's slope pattern (0.80 early, 1.15 late) is real and the
+   phase-fitted scale is still not the way to price it. **Not promoted**,
+   as in the composites round; `phase_margin_only` stays on `scale_model`
+   for the record.
+
+The NFL chain, then, closes the day where the recency round left it:
+Brier 0.2176, margin RMSE 13.23 (the close 12.97), total RMSE 13.51 (the
+close 13.23).
+

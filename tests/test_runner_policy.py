@@ -312,6 +312,11 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_injury_points(0.0) == 0.0
     assert runner.resolve_plays(None, "mlb") == "all"
     assert runner.resolve_scale(None, "mlb") == "off"
+    # The joint phase ridge: a ridge the lab sets, 0 = the all-plays fit.
+    assert args.nfl_phase_lambda is None
+    assert runner.resolve_phase_lambda(None) == runner.DEFAULT_NFL_PHASE_LAMBDA
+    assert runner.resolve_phase_lambda(1000.0) == 1000.0
+    assert runner.resolve_phase_lambda(-5.0) == 0.0
     # The turnover-EPA shrink: a factor in [0, 1] the lab sets, 1 = as recorded.
     assert args.nfl_turnover_shrink is None
     assert runner.resolve_turnover_shrink(None) == runner.DEFAULT_NFL_TURNOVER_SHRINK == 0.5

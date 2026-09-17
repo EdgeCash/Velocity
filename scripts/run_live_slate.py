@@ -396,7 +396,11 @@ def _build_projection(
         if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
             # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
             # of the offense, detected starter priced back in at projection.
-            ratings: object = fit_qb_ratings(plays, weights=weights)
+            phase_lambda = resolve_phase_lambda(args.nfl_phase_lambda)
+            ratings: object = fit_qb_ratings(
+                plays, weights=weights,
+                phase_col="play_type" if phase_lambda > 0 else None,
+                phase_lambda=phase_lambda if phase_lambda > 0 else 1000.0)
             kind = "QB-adjusted recency EPA"
         else:  # plays without passer identity (older datasets, fixtures)
             ratings = fit_ratings(plays, weights=weights)
@@ -941,6 +945,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-offseason-weeks", type=float, default=None,
                         help="extra weeks of age the NFL recency key puts between seasons "
                              "(0 steps the empty week slots only; default: the lab's pick)")
+    parser.add_argument("--nfl-phase-lambda", type=float, default=None,
+                        help="the joint phase ridge: each team's pass-phase deviation on "
+                             "offense and defense in the NFL fit, shrunk at this ridge (0 "
+                             "keeps the all-plays fit; default: the lab's pick)")
     parser.add_argument("--nfl-turnover-shrink", type=float, default=None,
                         help="scale the EPA of interceptions and lost fumbles by this factor "
                              "before the NFL ratings fit (1 keeps them whole; default: the "
@@ -1488,6 +1496,16 @@ def resolve_injury_points(explicit: float | None) -> float:
 # information weight +0.08 → +0.09. Garbage-time down-weighting, an EPA
 # winsor, the QB-credited EPA and a fitted home edge all lost beside it.
 DEFAULT_NFL_TURNOVER_SHRINK = 0.5
+
+
+# The joint phase ridge in the NFL fit (docs/MODEL_LAB.md, the phase round):
+# pass-phase deviations per team on offense and defense, shrunk at this
+# ridge; 0 = the all-plays fit.
+DEFAULT_NFL_PHASE_LAMBDA = 0.0
+
+
+def resolve_phase_lambda(explicit: float | None) -> float:
+    return DEFAULT_NFL_PHASE_LAMBDA if explicit is None else max(0.0, float(explicit))
 
 
 def resolve_turnover_shrink(explicit: float | None) -> float:
