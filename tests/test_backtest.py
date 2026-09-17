@@ -152,3 +152,36 @@ def test_projections_do_not_collide_with_the_games_frame(
     merged = proj.merge(season_games[wanted], on="game_id", how="inner")
     assert not [c for c in merged.columns if c.endswith(("_x", "_y"))]
     assert (merged["home_score"] - merged["away_score"]).notna().all()
+
+
+def test_factory_that_declares_predicting_is_told_the_week(
+    season_games, season_lines, plays, config
+) -> None:
+    """A prior's leak gate needs the projected (season, week); the engine says it."""
+    seen: list[tuple[int, int]] = []
+
+    def factory(train: pd.DataFrame, *, predicting: tuple[int, int] | None = None) -> NFLGameModel:
+        assert predicting is not None
+        seen.append(predicting)
+        # Nothing from the projected week is in the training slice.
+        season, week = predicting
+        assert not ((train["season"] == season) & (train["week"] >= week)).any()
+        return _factory(train)
+
+    result = walk_forward(season_games, plays, season_lines, factory, config)
+    weeks = list(result.projections[["season", "week"]].drop_duplicates()
+                 .itertuples(index=False, name=None))
+    assert seen == [(int(s), int(w)) for s, w in weeks]
+
+
+def test_factory_without_predicting_is_called_as_before(
+    season_games, season_lines, plays, config
+) -> None:
+    calls: list[int] = []
+
+    def factory(train: pd.DataFrame) -> NFLGameModel:
+        calls.append(len(train))
+        return _factory(train)
+
+    result = walk_forward(season_games, plays, season_lines, factory, config)
+    assert len(calls) == result.projections[["season", "week"]].drop_duplicates().shape[0]

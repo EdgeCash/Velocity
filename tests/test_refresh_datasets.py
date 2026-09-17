@@ -209,3 +209,16 @@ def test_no_starters_bank_at_all_still_means_run_the_backfill(
     rd.refresh_mlb_player_banks(out, out / "games.parquet")
     assert "run the backfill first" in capsys.readouterr().out
 
+
+
+def test_nfl_games_from_schedules_carries_the_schedule_extras() -> None:
+    raw = pd.read_csv(REPO / "tests" / "fixtures" / "raw_nfl_schedules.csv")
+    raw["home_qb_id"] = "00-0033873"
+    raw["home_moneyline"] = -150
+    raw["away_moneyline"] = 130
+    games = rd.nfl_games_from_schedules(raw, 2023)
+    assert {"home_qb_id", "home_moneyline", "away_moneyline", "home_rest", "referee"} <= set(
+        games.columns)
+    assert (games["home_qb_id"] == "00-0033873").all()
+    assert (games["home_moneyline"] == -150.0).all()
+    assert games["referee"].isna().all()

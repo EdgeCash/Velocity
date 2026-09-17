@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import io
 import urllib.request
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -116,6 +116,51 @@ def normalize_schedules(raw: pd.DataFrame) -> pd.DataFrame:
         }
     )
     return Games.validate(out)
+
+
+# The schedule columns the canonical ``Games`` frame dropped for years and
+# the projection never saw (docs/PROJECTION_AUDIT.md §2.4), 100% populated
+# 2011–2025 bar the weather: the ANNOUNCED STARTING QUARTERBACK per game
+# (``home_qb_id``/``away_qb_id``, back to 1999 — the walk-forward's starter
+# is otherwise a "latest game's passer" proxy), real moneyline closes and the
+# juice on every close (records assumed −110), rest days, the divisional
+# flag, the stadium-reported kickoff temperature and wind, kickoff time and
+# weekday, coaches and the referee. Kept beside the canonical columns, never
+# in place of them: ``normalize_schedules`` stays the schema contract and
+# :func:`schedule_extras` is the join.
+SCHEDULE_EXTRA_COLUMNS: Mapping[str, str] = {
+    "home_qb_id": "string", "away_qb_id": "string",
+    "home_qb_name": "string", "away_qb_name": "string",
+    "home_moneyline": "float", "away_moneyline": "float",
+    "home_spread_odds": "float", "away_spread_odds": "float",
+    "over_odds": "float", "under_odds": "float",
+    "home_rest": "float", "away_rest": "float", "div_game": "float",
+    "temp": "float", "wind": "float",
+    "gametime": "string", "weekday": "string",
+    "home_coach": "string", "away_coach": "string", "referee": "string",
+    "stadium_id": "string", "stadium": "string",
+    "overtime": "float",
+}
+
+
+def schedule_extras(raw: pd.DataFrame) -> pd.DataFrame:
+    """The nflverse schedules frame's extra columns, keyed by ``game_id``.
+
+    Every column in :data:`SCHEDULE_EXTRA_COLUMNS` is present in the result —
+    numeric ones coerced (bad values null), text ones as nullable strings, a
+    column the feed does not carry as all-null — so a join onto the games
+    frame never changes shape between seasons.
+    """
+    out = pd.DataFrame({"game_id": raw["game_id"].astype(str)})
+    for col, kind in SCHEDULE_EXTRA_COLUMNS.items():
+        if col not in raw.columns:
+            out[col] = (pd.Series(pd.NA, index=raw.index, dtype="string") if kind == "string"
+                        else pd.Series(np.nan, index=raw.index, dtype=float))
+        elif kind == "float":
+            out[col] = pd.to_numeric(raw[col], errors="coerce").astype(float)
+        else:
+            out[col] = raw[col].astype("string")
+    return out.reset_index(drop=True)
 
 
 def normalize_pbp(raw: pd.DataFrame) -> pd.DataFrame:

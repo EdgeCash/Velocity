@@ -16,11 +16,17 @@ without winning here first.
 from __future__ import annotations
 
 import argparse
+import functools
 from pathlib import Path
 
 import pandas as pd
 from velocity.backtest.engine import BacktestConfig, walk_forward
-from velocity.backtest.lab import ats_ou_vs_close, disagreement_sweep, nfl_variants
+from velocity.backtest.lab import (
+    ats_ou_vs_close,
+    disagreement_sweep,
+    nfl_variants,
+    score_accuracy,
+)
 from velocity.ingest.local import load_games, load_plays
 
 
@@ -161,7 +167,12 @@ def main() -> None:
     else:
         from velocity.backtest.lab import ncaaf_variants
 
-        chosen = ncaaf_variants(args.n_sims, plays=plays if has_college_plays else None)
+        # The SP+ season ratings add the prior variants — the live runner's
+        # configuration, in the harness at last.
+        sp_file = folder / "sp_ratings.parquet"
+        sp = pd.read_parquet(sp_file) if sp_file.exists() else None
+        chosen = ncaaf_variants(
+            args.n_sims, plays=plays if has_college_plays else None, sp=sp)
     if args.variants:
         names = [v.strip() for v in args.variants.split(",") if v.strip()]
         unknown = [n for n in names if n not in chosen]
@@ -182,9 +193,13 @@ def main() -> None:
         if window <= 0:
             return factory
 
-        def wrapped(train: pd.DataFrame):  # type: ignore[no-untyped-def]
+        # ``wraps`` keeps the inner factory's signature visible to the engine
+        # (a factory that declares ``predicting`` is still told the week) and
+        # the kwargs pass straight through.
+        @functools.wraps(factory)
+        def wrapped(train: pd.DataFrame, **kwargs):  # type: ignore[no-untyped-def]
             cutoff = int(train["season"].max()) - window + 1
-            return factory(train[train["season"] >= cutoff])
+            return factory(train[train["season"] >= cutoff], **kwargs)
 
         return wrapped
 
@@ -202,6 +217,9 @@ def main() -> None:
             if key in result.metrics:
                 row[key] = result.metrics[key]
         row.update(ats_ou_vs_close(result.projections, games))
+        # Points, not probabilities: the goal is the most accurate score
+        # projection, and Brier cannot see the total or the scale.
+        row.update(score_accuracy(result.projections, games))
         rows.append(row)
         ledgers[name] = result.projections
         sweeps[name] = {

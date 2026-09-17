@@ -39,6 +39,7 @@ from velocity.features.team import (
     TeamRatings,
     fit_ratings,
     recency_weights,
+    scrimmage_plays,
 )
 from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 from velocity.models.game_scores import ScoresGameModel, ScoresModelConfig
@@ -55,6 +56,7 @@ __all__ = [
     "ncaaf_walk_order",
     "nfl_variants",
     "recency_weights",
+    "score_accuracy",
 ]
 
 # The classic NFL margin standard deviation, used to convert a point spread
@@ -211,12 +213,61 @@ def nfl_variants(
         "qb-recency-17-q300": ("plays", qb_recency(17.0, 300.0)),
     }
 
+    def scaled(inner: VariantFactory, league: str = "nfl") -> VariantFactory:
+        """``inner`` under a ScaleCalibration fitted on the league's residual
+        bank, seasons strictly before the one being projected
+        (velocity.models.level). Absent bank → the identity."""
+        from velocity.models.level import scale_model
+        from velocity.models.residuals import load_residual_frame
+
+        bank = load_residual_frame(league)
+
+        def factory(train: pd.DataFrame, *, predicting: tuple[int, int] | None = None) -> object:
+            model = inner(train)
+            if bank is None or schedule is None or predicting is None:
+                return model
+            window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
+            scaled_model, _cal = scale_model(
+                model, bank, window, sim, before_season=predicting[0])
+            return scaled_model
+
+        return factory
+
+    def starters(inner: VariantFactory) -> VariantFactory:
+        """``inner`` priced with the schedule's announced starters per game."""
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            model = inner(train, **kwargs)
+            if schedule is None or "home_qb_id" not in schedule.columns:
+                return model
+            return ScheduleStarterModel(model, schedule)  # type: ignore[arg-type]
+
+        return factory
+
+    def scrimmage(inner: VariantFactory) -> VariantFactory:
+        """``inner`` fitted on the offense's own snaps only (kicks, returns,
+        kneels, spikes and no-plays dropped before the ridge —
+        docs/PROJECTION_AUDIT.md §2.1)."""
+        def factory(train: pd.DataFrame) -> object:
+            return inner(scrimmage_plays(train, "nfl"))
+
+        return factory
+
     if schedule is not None:
         variants.update({
             # The promoted fit with its level calibrated on the training
             # window (all of it, and the trailing two seasons).
             "qb-recency-17-q300-level": ("plays", levelled(qb_recency(17.0, 300.0))),
             "qb-recency-17-q300-level2": ("plays", levelled(qb_recency(17.0, 300.0), 2)),
+            "qb-recency-17-q300-level2-scrim": (
+                "plays", scrimmage(levelled(qb_recency(17.0, 300.0), 2))),
+            "qb-recency-17-q300-level2-scale": (
+                "plays", scaled(levelled(qb_recency(17.0, 300.0), 2))),
+            "qb-recency-17-q300-level2-scrim-scale": (
+                "plays", scaled(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
+            "qb-recency-17-q300-level2-starters": (
+                "plays", starters(levelled(qb_recency(17.0, 300.0), 2))),
+            "qb-recency-17-q300-level2-scrim-starters": (
+                "plays", starters(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
         })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)
@@ -395,7 +446,7 @@ class BlendedGameModel:
 
 
 def ncaaf_variants(
-    n_sims: int, plays: pd.DataFrame | None = None
+    n_sims: int, plays: pd.DataFrame | None = None, sp: pd.DataFrame | None = None
 ) -> dict[str, tuple[str, VariantFactory]]:
     """The NCAAF benchmark slate: scores-fit variants, plus EPA fits and
     EPA×scores blends when the committed college plays frame is passed.
@@ -416,6 +467,14 @@ def ncaaf_variants(
     point-in-time slice — and cut the closed-over ``plays`` to exactly those
     game_ids, so the plays side sees precisely the games the engine would
     have trained on (no leakage, no drift between the two fits).
+
+    ``sp`` (the committed SP+ season ratings) adds the ``blend-level2-sp<K>``
+    variants: the promoted blend with last season's final SP+ as ``K``
+    pseudo-games in the scores half — the configuration the live runner has
+    priced since the 2026-08-31 addendum, which until this round had never
+    been through the harness. The leak gate takes the *predicted* season from
+    the engine (``predicting``), so a season's final ratings never inform its
+    own games, bowl weeks included.
     """
     from velocity.features.scores import scores_recency_weights
 
@@ -554,16 +613,19 @@ def ncaaf_variants(
 
             return factory
 
-        def blend_levelled(epa_weight: float) -> VariantFactory:
+        def blend_levelled(epa_weight: float, *, scrimmage: bool = False) -> VariantFactory:
             """The promoted blend with the scores half levelled on the
             trailing two seasons (velocity.models.level) — its unweighted
-            intercept lagged the post-2021 scoring drop by 1–2 points a game."""
+            intercept lagged the post-2021 scoring drop by 1–2 points a game.
+            ``scrimmage`` fits the EPA half on the offense's own snaps only."""
             def factory(train_games: pd.DataFrame) -> BlendedGameModel:
                 from dataclasses import replace as _replace
 
                 from velocity.models.level import calibrate_scores_level, mean_points_per_team
 
                 sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                if scrimmage:
+                    sub = scrimmage_plays(sub, "ncaaf")
                 cells = compress_plays(sub)
                 epa_model = NFLGameModel(
                     fit_ratings(cells, ridge_lambda=50.0,
@@ -578,11 +640,101 @@ def ncaaf_variants(
 
         variants.update({
             "blend-level2": ("games", blend_levelled(0.50)),
+            "blend-level2-scrim": ("games", blend_levelled(0.50, scrimmage=True)),
             "blend-hfa-own": ("games", blend_hfa("own")),
             "blend-hfa-epa": ("games", blend_hfa("epa")),
             "blend-hfa-scores": ("games", blend_hfa("scores")),
             "blend-hfa-own-pace": ("games", blend_hfa("own", pace=True)),
         })
+
+        def college_scaled(inner: VariantFactory) -> VariantFactory:
+            """``inner`` under the college residual bank's ScaleCalibration
+            (seasons before the projected one); the anchor is the model's
+            mean total over the trailing two training seasons."""
+            from velocity.models.level import scale_model
+            from velocity.models.residuals import load_residual_frame
+
+            bank = load_residual_frame("ncaaf")
+
+            def factory(
+                train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
+            ) -> object:
+                import inspect
+
+                inner_kwargs = (
+                    {"predicting": predicting}
+                    if "predicting" in inspect.signature(inner).parameters else {}
+                )
+                model = inner(train_games, **inner_kwargs)
+                if bank is None or predicting is None:
+                    return model
+                scaled_model, _cal = scale_model(
+                    model, bank, train_games, sim, before_season=predicting[0])
+                return scaled_model
+
+            return factory
+
+        variants.update({
+            "blend-level2-scale": ("games", college_scaled(blend_levelled(0.50))),
+        })
+
+        if sp is not None and not sp.empty:
+            from velocity.ingest.ncaaf import sp_pseudo_games
+
+            sp_frame = sp
+
+            def blend_sp(k: int, *, scrimmage: bool = False) -> VariantFactory:
+                """``blend-level2`` with the SP+ previous-season prior in the
+                scores half, at ``k`` pseudo-games per team — what the live
+                runner prices. ``scrimmage`` fits the EPA half on the
+                offense's own snaps only."""
+                def factory(
+                    train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
+                ) -> BlendedGameModel:
+                    from dataclasses import replace as _replace
+
+                    from velocity.models.level import calibrate_scores_level, mean_points_per_team
+
+                    sub = all_plays[all_plays["game_id"].isin(set(train_games["game_id"]))]
+                    if scrimmage:
+                        sub = scrimmage_plays(sub, "ncaaf")
+                    cells = compress_plays(sub)
+                    epa_model = NFLGameModel(
+                        fit_ratings(cells, ridge_lambda=50.0,
+                                    weights=cells["n"].astype(float)),
+                        _replace(cfg, base_points=mean_points_per_team(train_games)),
+                    )
+                    # The knowledge point: Feb 1 of the season being projected
+                    # admits exactly the seasons before it. Without the engine's
+                    # hint, fall back to the live runner's rule (the latest
+                    # kickoff on file).
+                    cutoff = (
+                        pd.Timestamp(year=int(predicting[0]), month=2, day=1)
+                        if predicting is not None
+                        else pd.to_datetime(train_games["kickoff"]).max()
+                    )
+                    teams = (set(train_games["home_team"].astype(str))
+                             | set(train_games["away_team"].astype(str)))
+                    pseudo = sp_pseudo_games(sp_frame, teams, cutoff=cutoff, k=k)
+                    fit_games = (pd.concat([train_games, pseudo], ignore_index=True)
+                                 if not pseudo.empty else train_games)
+                    # The level is fitted on real games only: pseudo-games sit
+                    # at SP+'s own scale, not the season's scoring level.
+                    scores_model = calibrate_scores_level(
+                        _model(fit_scores_ratings(fit_games, ridge_lambda=10.0)), train_games)
+                    return BlendedGameModel(epa_model, scores_model, 0.5, sim)
+
+                return factory
+
+            variants.update({
+                "blend-level2-sp6": ("games", blend_sp(6)),
+                "blend-level2-sp12": ("games", blend_sp(12)),
+                "blend-level2-sp24": ("games", blend_sp(24)),
+                "blend-level2-sp12-scrim": ("games", blend_sp(12, scrimmage=True)),
+                "blend-level2-sp12-scale": ("games", college_scaled(blend_sp(12))),
+                "blend-level2-sp12-scrim-scale": (
+                    "games", college_scaled(blend_sp(12, scrimmage=True))),
+            })
 
     return variants
 
@@ -1211,6 +1363,63 @@ def mlb_sp_variants(
     return variants
 
 
+class ScheduleStarterModel:
+    """The NFL model priced with each game's announced starters.
+
+    The QB decomposition was promoted with the starter detected as "the
+    primary passer in the team's latest training game" — wrong in Week 1,
+    wrong the week of every injury, and the live runner corrects it from the
+    depth chart. nflverse's schedule carries ``home_qb_id``/``away_qb_id`` for
+    every game back to 1999 (docs/PROJECTION_AUDIT.md §2.4), which is the
+    announced starter the depth chart would have named. Keyed by the two
+    teams and the kickoff date, like the rest wrapper; a game the schedule
+    does not name falls back to the ratings' own detection.
+    """
+
+    def __init__(self, inner: NFLGameModel, schedule: pd.DataFrame) -> None:
+        self.inner = inner
+        self._starters: dict[tuple[str, str, pd.Timestamp], tuple[str | None, str | None]] = {}
+        if {"home_qb_id", "away_qb_id"} <= set(schedule.columns):
+            keyed = schedule.dropna(subset=["kickoff"])
+            dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+            for home, away, date, hq, aq in zip(
+                keyed["home_team"].astype(str), keyed["away_team"].astype(str), dates,
+                keyed["home_qb_id"], keyed["away_qb_id"], strict=True,
+            ):
+                self._starters[(home, away, date)] = (
+                    None if pd.isna(hq) else str(hq), None if pd.isna(aq) else str(aq))
+
+    def expected_points(
+        self, home_team: str, away_team: str, *, neutral_site: bool = False,
+        home_bonus: float = 0.0, away_bonus: float = 0.0,
+    ) -> tuple[float, float]:
+        return self.inner.expected_points(
+            home_team, away_team, neutral_site=neutral_site,
+            home_bonus=home_bonus, away_bonus=away_bonus)
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
+    ) -> object:
+        home_qb = away_qb = None
+        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            home_qb, away_qb = self._starters.get((home_team, away_team, date), (None, None))
+        return self.inner.project(
+            home_team, away_team, neutral_site=neutral_site,
+            rng=rng,  # type: ignore[arg-type]
+            home_bonus=home_bonus, away_bonus=away_bonus,
+            home_qb=home_qb, away_qb=away_qb,
+        )
+
+
 class RestAdjustedModel:
     """A situational wrapper: rest-spot point bonuses on top of any NFL model.
 
@@ -1375,12 +1584,17 @@ class WeatherAdjustedModel:
                 threshold_mph=self.threshold_mph,
                 points_per_mph=self.points_per_mph,
             )
-        extra = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
+        if self._inner_takes_kickoff:
+            return self.inner.project(
+                home_team, away_team, neutral_site=neutral_site,
+                rng=rng,  # type: ignore[arg-type]
+                home_bonus=home_bonus + bonus, away_bonus=away_bonus + bonus,
+                kickoff=kickoff,  # type: ignore[call-arg]
+            )
         return self.inner.project(
             home_team, away_team, neutral_site=neutral_site,
             rng=rng,  # type: ignore[arg-type]
             home_bonus=home_bonus + bonus, away_bonus=away_bonus + bonus,
-            **extra,
         )
 
 
@@ -1504,6 +1718,93 @@ def ats_ou_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str,
         else:
             out[f"{key}_win_rate"] = float(sweep["win_rate"].iloc[0])
             out[f"{key}_bets"] = float(sweep["bets"].iloc[0])
+    return out
+
+
+def _rmse(x: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(np.square(x))))
+
+
+def score_accuracy(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str, float]:
+    """How close the projected scores land, in points — and whether they carry
+    anything the closing line does not.
+
+    Brier scores the win probability, which is blind to the total and to the
+    *scale* of the margin; the goal is the most accurate score projection, so
+    this is the gate's other half. Per ledger:
+
+    * ``rmse_margin`` / ``rmse_total`` — actual against the model's μ
+      (``mu_home``/``mu_away`` when the ledger carries them, else the sim's
+      medians).
+    * ``close_rmse_margin`` / ``close_rmse_total`` — the same against the
+      closing line, where the games frame has one. The close is the sharpest
+      forecast available, so this is the yardstick the model is measured
+      against, not a baseline it is expected to beat.
+    * ``info_w_margin`` / ``info_w_total`` — the least-squares weight the
+      actual result puts on (model − close), fitted beside the close itself:
+      0 means the close already contains everything the model knows, 1 that
+      the model is the better forecast. A variant that lowers RMSE by moving
+      *toward* the close leaves this at 0; one that adds information the
+      market prices moves both.
+    """
+    keys = ("rmse_margin", "rmse_total", "close_rmse_margin", "close_rmse_total",
+            "info_w_margin", "info_w_total", "close_brier")
+    cols = ["game_id", "home_score", "away_score"]
+    cols += [c for c in ("spread_line", "total_line", "home_moneyline", "away_moneyline")
+             if c in games.columns]
+    merged = projections.merge(games[cols], on="game_id", how="inner")
+    merged = merged.dropna(subset=["home_score", "away_score"])
+    out: dict[str, float] = {"n_scored": float(len(merged))}
+    if merged.empty:
+        out.update({k: float("nan") for k in keys})
+        return out
+    # The market's own Brier, from real moneyline closes de-vigged
+    # multiplicatively — the ceiling the model's Brier is read against,
+    # rather than the spread-probit approximation the blend sweep uses.
+    out["close_brier"] = float("nan")
+    if {"home_moneyline", "away_moneyline"} <= set(merged.columns):
+        from velocity.wagering.odds import american_to_prob
+
+        ml = merged[["home_moneyline", "away_moneyline"]].apply(pd.to_numeric, errors="coerce")
+        priced = ml.notna().all(axis=1).to_numpy()
+        if int(priced.sum()) >= 3:
+            q_home = ml.loc[priced, "home_moneyline"].map(american_to_prob).to_numpy(dtype=float)
+            q_away = ml.loc[priced, "away_moneyline"].map(american_to_prob).to_numpy(dtype=float)
+            p_market = q_home / (q_home + q_away)
+            won = (merged.loc[priced, "home_score"] > merged.loc[priced, "away_score"]).to_numpy(
+                dtype=float)
+            tied = (merged.loc[priced, "home_score"] == merged.loc[priced, "away_score"]).to_numpy()
+            won = np.where(tied, 0.5, won)
+            out["close_brier"] = float(np.mean(np.square(p_market - won)))
+    if {"mu_home", "mu_away"} <= set(merged.columns):
+        mu_margin = (merged["mu_home"] - merged["mu_away"]).to_numpy(dtype=float)
+        mu_total = (merged["mu_home"] + merged["mu_away"]).to_numpy(dtype=float)
+    else:  # an older ledger: the sim medians (fair_spread is the HOME spread)
+        mu_margin = -merged["fair_spread"].to_numpy(dtype=float)
+        mu_total = merged["fair_total"].to_numpy(dtype=float)
+    actual_margin = (merged["home_score"] - merged["away_score"]).to_numpy(dtype=float)
+    actual_total = (merged["home_score"] + merged["away_score"]).to_numpy(dtype=float)
+    out["rmse_margin"] = _rmse(actual_margin - mu_margin)
+    out["rmse_total"] = _rmse(actual_total - mu_total)
+    for name, mu, actual, col in (
+        ("margin", mu_margin, actual_margin, "spread_line"),
+        ("total", mu_total, actual_total, "total_line"),
+    ):
+        close = (pd.to_numeric(merged[col], errors="coerce").to_numpy(dtype=float)
+                 if col in merged.columns else np.full(len(merged), np.nan))
+        keep = np.isfinite(close)
+        if int(keep.sum()) < 3:
+            out[f"close_rmse_{name}"] = float("nan")
+            out[f"info_w_{name}"] = float("nan")
+            continue
+        out[f"close_rmse_{name}"] = _rmse(actual[keep] - close[keep])
+        gap = mu[keep] - close[keep]
+        if np.allclose(gap, 0.0):  # the model IS the close: nothing to weigh
+            out[f"info_w_{name}"] = float("nan")
+            continue
+        x = np.column_stack([np.ones(int(keep.sum())), close[keep], gap])
+        beta = np.linalg.lstsq(x, actual[keep], rcond=None)[0]
+        out[f"info_w_{name}"] = float(beta[2])
     return out
 
 

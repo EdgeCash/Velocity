@@ -283,3 +283,18 @@ def test_a_papered_venue_prices_but_never_stakes() -> None:
     both = SlateConfig(paper_markets=frozenset({"total"}),
                        paper_venues=frozenset({"kalshi"}))
     assert both.paper_reason("total", 0.04, 0.51, "kalshi") == "paper market"
+
+
+def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
+    """The scrimmage filter and the scale are flags whose defaults the lab sets."""
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl"])
+    assert args.nfl_plays is None and args.ncaaf_plays is None
+    assert args.nfl_scale is None and args.ncaaf_scale is None
+    for league in ("nfl", "ncaaf"):
+        assert runner.resolve_plays(None, league) == runner.DEFAULT_PLAYS_BY_LEAGUE[league]
+        assert runner.resolve_scale(None, league) == runner.DEFAULT_SCALE_BY_LEAGUE[league]
+        assert runner.resolve_plays("scrimmage", league) == "scrimmage"
+        assert runner.resolve_scale("fit", league) == "fit"
+    assert runner.resolve_plays(None, "mlb") == "all"
+    assert runner.resolve_scale(None, "mlb") == "off"

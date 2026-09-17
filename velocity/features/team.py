@@ -39,6 +39,46 @@ import pandas as pd
 
 DEFAULT_RIDGE_LAMBDA = 200.0
 
+# The plays a ratings fit should see: the offense's own snaps. nflverse labels
+# every play, and only two of its labels are scrimmage snaps by the offense.
+# The committed NFL frame is 24.5% something else — kickoffs (credited to the
+# RECEIVING team's offense, since that is nflverse's ``posteam`` on a kick),
+# punts, field goals, extra points, no-plays, and kneels and spikes. A kneel
+# is the winning team running out the clock at a mean EPA of −0.58, so the
+# unfiltered fit docked the teams that kneel most; refitting 2024–25 on
+# scrimmage snaps alone moved net team strength by 1.4 points on average and
+# 2.9 at the extremes (docs/PROJECTION_AUDIT.md §2.1). Rows with no label at
+# all (timeouts, administrative stoppages) are not snaps either.
+NFL_SCRIMMAGE_PLAY_TYPES = frozenset({"pass", "run"})
+# CFBD's ``play_type`` is a free-text kind. Anything carrying one of these
+# markers is a kick, a return, a period boundary, a penalty or a placeholder
+# rather than a snap by the offense; everything else (rushes, passes, sacks,
+# turnovers and the touchdowns they end in) stays. The college frame is 0.9%
+# these — small, but ``End Period`` rows carry a mean EPA of −0.40 each.
+NCAAF_NON_SCRIMMAGE_MARKERS = (
+    "kickoff", "punt", "field goal", "extra point", "2pt", "two point", "blocked",
+    "end period", "end of", "timeout", "penalty", "placeholder", "uncategorized",
+)
+
+
+def scrimmage_plays(plays: pd.DataFrame, league: str = "nfl") -> pd.DataFrame:
+    """Only the offense's own snaps — what an offense/defense fit should see.
+
+    ``league`` picks the labelling: the NFL keeps ``pass`` and ``run``; college
+    drops any kind carrying a :data:`NCAAF_NON_SCRIMMAGE_MARKERS` word. A frame
+    with no ``play_type`` column is returned unchanged (nothing to filter on),
+    never emptied.
+    """
+    if "play_type" not in plays.columns:
+        return plays
+    kind = plays["play_type"].astype("string").str.lower()
+    if league == "nfl":
+        keep = kind.isin(NFL_SCRIMMAGE_PLAY_TYPES)
+    else:
+        pattern = "|".join(NCAAF_NON_SCRIMMAGE_MARKERS)
+        keep = kind.notna() & ~kind.str.contains(pattern, regex=True)
+    return plays[keep.fillna(False).to_numpy(dtype=bool)]
+
 # Exponential recency half-life (in on-field weeks) for the NFL ratings fit.
 # Promoted by the model lab (docs/MODEL_LAB.md): Brier 0.2234 vs 0.2354 for the
 # flat fit over a 2014–2025 walk-forward — recent form carries real signal.

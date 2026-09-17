@@ -112,9 +112,20 @@ class NFLGameModel:
         self.ratings = ratings
         self.config = config or NFLModelConfig()
 
+    def _delta(self, off_team: str, def_team: str, qb_id: str | None) -> float:
+        """The matchup delta, with a named passer when the ratings can price one."""
+        if qb_id is not None:
+            try:
+                return self.ratings.matchup_delta(  # type: ignore[call-arg]
+                    off_team, def_team, qb_id=qb_id)
+            except TypeError:  # ratings without a passer term
+                pass
+        return self.ratings.matchup_delta(off_team, def_team)
+
     def expected_points(
         self, home_team: str, away_team: str, *, neutral_site: bool = False,
         home_bonus: float = 0.0, away_bonus: float = 0.0,
+        home_qb: str | None = None, away_qb: str | None = None,
     ) -> tuple[float, float]:
         """Expected points for (home, away), before simulation.
 
@@ -123,10 +134,12 @@ class NFLGameModel:
         home-field advantage unless the game is at a neutral site.
         ``home_bonus``/``away_bonus`` are additive point adjustments for
         situational wrappers (rest spots, weather) — zero by default.
+        ``home_qb``/``away_qb`` name the passers to price the game with (the
+        announced starters); ``None`` leaves the ratings' own detection.
         """
         cfg = self.config
-        home_delta = self.ratings.matchup_delta(home_team, away_team)
-        away_delta = self.ratings.matchup_delta(away_team, home_team)
+        home_delta = self._delta(home_team, away_team, home_qb)
+        away_delta = self._delta(away_team, home_team, away_qb)
 
         mu_home = cfg.base_points + cfg.plays_per_game * home_delta + home_bonus
         mu_away = cfg.base_points + cfg.plays_per_game * away_delta + away_bonus
@@ -146,6 +159,8 @@ class NFLGameModel:
         rng: np.random.Generator | None = None,
         home_bonus: float = 0.0,
         away_bonus: float = 0.0,
+        home_qb: str | None = None,
+        away_qb: str | None = None,
     ) -> GameProjection:
         """Simulate the matchup and return a priced :class:`GameProjection`.
 
@@ -157,6 +172,7 @@ class NFLGameModel:
         mu_home, mu_away = self.expected_points(
             home_team, away_team, neutral_site=neutral_site,
             home_bonus=home_bonus, away_bonus=away_bonus,
+            home_qb=home_qb, away_qb=away_qb,
         )
         sim = simulate_game(
             mu_margin=mu_home - mu_away,
