@@ -325,6 +325,20 @@ walk-forward from Brier 0.2002 to 0.1881 and the margin RMSE from 17.73 to
 Still open: college weather and venues (#10), special teams (#14), the
 joint phase ridge (#16).
 
+**Status (2026-09-17, the recency round).** The question the college
+finding raised, asked of every recency key: an **offseason gap** in the
+NFL key (8 weeks; margin RMSE 13.25 → 13.23, Brier 0.2181 → 0.2176, the
+NFL bank rebuilt) and in the college EPA half's (6 weeks), **recency on
+the college scores half** (34 weeks; it had been flat since Round 1) and
+**SP+ special teams in the prior** (#14's SP+ half — the pseudo-game
+margin is now the whole rating) — the college three promoted together,
+the college bank rebuilt: Brier 0.1881 → 0.1866, margin RMSE 16.88 →
+16.82, total RMSE 16.85 → 16.81. The college calibration error climbed
+0.019 → 0.029 with it: the sim's dispersion was measured on the flat
+model and is now the open item ahead of the rest. Still open: college
+weather and venues (#10), a college special-teams *rating* (#14's other
+half), the joint phase ridge (#16), the college sim dispersion.
+
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
 as the repo's rule requires.
@@ -603,12 +617,14 @@ out of sample, the lab's 4,000-sim gate):
 |---|---|---|---|
 | NFL, before | 13.33 / 12.72 | 13.90 / 13.23 | +0.08 / −0.00 |
 | NFL, after the first pass | 13.26 / 12.97 | 13.55 / 13.23 | +0.11 / +0.08 |
-| **NFL, now** (the turnover shrink) | **13.25** / 12.97 | **13.52** / 13.23 | +0.09 / **+0.09** |
+| NFL, after the turnover shrink | 13.25 / 12.97 | 13.52 / 13.23 | +0.09 / +0.09 |
+| **NFL, now** (the offseason gap) | **13.23** / 12.97 | **13.51** / 13.23 | +0.07 / +0.08 |
 | NCAAF, before | 18.46 / 15.53 | 17.38 / 16.24 | −0.01 / +0.03 |
 | **NCAAF, now** | **18.43** / 15.54 | **17.21** / 16.23 | −0.00 / **+0.05** |
 | NCAAF, FBS vs FBS | 17.89 / 15.64 | 17.42 / 16.30 | −0.01 / +0.06 |
 | NCAAF, FBS vs FBS, the college round's base (phase scale) | 17.73 / 15.64 | 17.25 / 16.30 | −0.05 / +0.05 |
-| **NCAAF, FBS vs FBS, now** (recency on the EPA half) | **16.88** / 15.64 | **16.85** / 16.30 | −0.09 / **+0.09** |
+| NCAAF, FBS vs FBS, after the college round (recency on the EPA half) | 16.88 / 15.64 | 16.85 / 16.30 | −0.09 / +0.09 |
+| **NCAAF, FBS vs FBS, now** (the offseason gap, the scores half's recency, special teams) | **16.82** / 15.64 | **16.81** / 16.30 | −0.09 / **+0.10** |
 
 (The NFL close's margin RMSE reads 12.97 here and 12.72 in §6 because the
 two tables score different windows — the lab's 2011–2025 trailing-4 run

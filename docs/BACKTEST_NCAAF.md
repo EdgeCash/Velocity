@@ -91,7 +91,9 @@ On the promoted chain after the college recency round (`docs/MODEL_LAB.md`:
 a six-week half-life on the EPA half, the bank rebuilt on the recency core;
 FBS-vs-FBS population, the lab's trailing-four window), the ≥6 totals cut
 reads 52.5% on 1,891 — a sharper model disagrees with the close by six
-points less often, and the cut's rate is unchanged within noise.
+points less often, and the cut's rate is unchanged within noise. After the
+recency round (the offseason gap, recency on the scores half, special
+teams in the prior; the bank rebuilt again): 52.7% on 1,808.
 
 **Where it differs, honestly:** bet counts run ~3% higher than the original
 table throughout (a small definitional difference in the earlier ad-hoc

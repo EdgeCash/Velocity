@@ -410,6 +410,7 @@ def sp_pseudo_games(
     *,
     cutoff: pd.Timestamp,
     k: int = 12,
+    special_teams: bool = False,
 ) -> pd.DataFrame:
     """Last season's final SP+ ratings → ``k`` synthetic week-0 games per team.
 
@@ -429,15 +430,30 @@ def sp_pseudo_games(
     Feb 1 following the rating season). Only the latest eligible season forms
     the prior; older seasons are already represented by their real games.
     Teams outside ``teams`` contribute nothing, never a guess.
+
+    ``special_teams`` folds the team's SP+ special-teams rating (points a
+    game, the third component of the overall rating) into the pseudo-game:
+    half onto the team's score, half off the anchor's, so the pseudo-game's
+    margin is the whole SP+ rating and not offense minus defense alone. A
+    row without the component contributes nothing extra.
     """
     table, rating_season = sp_rating_table(sp, cutoff)
     if rating_season is None:
         return pd.DataFrame()
+    st_by_team: dict[str, float] = {}
+    if special_teams and "special_teams" in sp.columns:
+        rated = sp[sp["season"].astype(int) == rating_season]
+        st_by_team = {
+            str(team): float(value)
+            for team, value in zip(rated["team"], rated["special_teams"], strict=True)
+            if value is not None and not pd.isna(value)
+        }
     rows: list[dict[str, object]] = []
     season = rating_season + 1
     for team, (off, dfn) in table.items():
         if team not in teams:
             continue
+        st = st_by_team.get(team, 0.0)
         for i in range(int(k)):
             rows.append({
                 "game_id": f"sp-prior-{season}-{team}-{i}",
@@ -446,7 +462,7 @@ def sp_pseudo_games(
                 "kickoff": pd.Timestamp(year=season, month=8, day=1),
                 "home_team": team, "away_team": SP_PRIOR_ANCHOR,
                 "neutral_site": True,
-                "home_score": float(off), "away_score": float(dfn),
+                "home_score": float(off) + st / 2.0, "away_score": float(dfn) - st / 2.0,
             })
     return pd.DataFrame(rows)
 

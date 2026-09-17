@@ -100,15 +100,23 @@ def scrimmage_plays(
 DEFAULT_RECENCY_HALF_LIFE = 17.0
 
 
-def recency_weights(plays: pd.DataFrame, half_life_weeks: float) -> pd.Series:
+def recency_weights(
+    plays: pd.DataFrame, half_life_weeks: float, *, offseason_weeks: float = 0.0,
+) -> pd.Series:
     """Exponential play weights by age in on-field weeks (newest = 1.0).
 
     Age counts (season, week) steps on a contiguous key — the offseason gap is
     deliberately not inflated, so a half-life of ~17 weighs last season's plays
     at roughly half of this week's. Feed the result to
-    :func:`fit_ratings`' ``weights``.
+    :func:`fit_ratings`' ``weights``. ``offseason_weeks`` widens the step
+    between one season's last week and the next season's first by that many
+    weeks — a roster turns over in the offseason more than a week's play
+    says — so last season's plays start the new season that much older.
     """
-    key = plays["season"].astype(int) * 25 + plays["week"].astype(int)
+    if offseason_weeks < 0:
+        raise ValueError("offseason_weeks must be non-negative")
+    span = 25.0 + float(offseason_weeks)
+    key = plays["season"].astype(int) * span + plays["week"].astype(int)
     age = key.max() - key
     return pd.Series(np.power(0.5, age / half_life_weeks), index=plays.index)
 
