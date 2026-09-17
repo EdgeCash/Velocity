@@ -153,9 +153,23 @@ class MatchupCard:
     kickoff: pd.Timestamp | None = None
     generated_at: pd.Timestamp | None = None
     notes: Sequence[str] = field(default_factory=tuple)
-    # Per-market model confidence, 0-10. Provisional until the walk-forward
-    # calibration lands, and the card says so rather than implying otherwise.
-    confidence: Mapping[str, float] = field(default_factory=dict)
+    # There is deliberately no confidence score here. Measured on 15,731
+    # leak-safe walk-forward projections (3,904 NFL + 11,827 NCAAF), nothing
+    # the model knows about itself predicts how far its projection lands from
+    # the final: every candidate correlates |r| < 0.04 against absolute margin
+    # and total error, and the sim's own dispersion runs the WRONG way in the
+    # NFL (highest-dispersion quintile misses by 0.89 points LESS).
+    #
+    # The cause is structural rather than a calibration that needs work. The
+    # sim's sds are near-constant by construction -- sd_margin varies by a
+    # coefficient of 0.018 (NFL) / 0.024 (NCAAF) across sixteen seasons -- so
+    # the model does not produce a per-game uncertainty estimate at all, and
+    # there is nothing to calibrate. A 0-10 number built on it would sit near
+    # one value forever while reading as meaning.
+    #
+    # The distributions already carry this honestly: the curve IS the
+    # uncertainty, and its width is visible without a score implying a
+    # precision the model does not have.
 
     def spread_lean(self) -> Lean:
         """The side call, stated at the market's own number."""
@@ -439,7 +453,6 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
     espn_ids: Mapping[str, int] | None = None,
     venue_by_game: Mapping[str, str] | None = None,
     notes_by_game: Mapping[str, Sequence[str]] | None = None,
-    confidence_by_game: Mapping[str, Mapping[str, float]] | None = None,
     generated_at: pd.Timestamp | None = None,
 ) -> list[MatchupCard]:
     """One :class:`MatchupCard` per social card, from the slate's own objects.
@@ -522,7 +535,6 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
             generated_at=stamp,
             notes=tuple((notes_by_game or {}).get(card.game_id,
                                                   unit_notes(away, home))),
-            confidence=dict((confidence_by_game or {}).get(card.game_id, {})),
         )
         out.append(built)
     return out

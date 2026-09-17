@@ -130,6 +130,29 @@ def walk_forward(
                     "home_win": home_win,
                     "fair_spread": proj.fair_spread(),
                     "fair_total": proj.fair_total(),
+                    # What the model believed, beside what the bet needed, so
+                    # that projection ERROR is answerable off this same
+                    # leak-safe pass: "how good is the projection" is a
+                    # different question from "did the bet win".
+                    #
+                    # The finals themselves are deliberately NOT copied in.
+                    # They already live in ``games`` and every consumer of this
+                    # frame joins them by game_id; duplicating them here
+                    # collides on that merge, and pandas answers a collision by
+                    # suffixing BOTH sides rather than raising.
+                    #
+                    # Everything below is model-internal on purpose. Nothing
+                    # the market said belongs in a measure of how sure the
+                    # MODEL is entitled to be: a coin-flip spread can sit on a
+                    # projection the model has every right to be certain of.
+                    "mu_home": float(proj.mu_home),
+                    "mu_away": float(proj.mu_away),
+                    "sd_margin": float(np.std(proj.sim.margin)),
+                    "sd_total": float(np.std(proj.sim.total)),
+                    # How much history the fit had when it made this call --
+                    # the obvious suspect for an early-season projection being
+                    # worse than a late-season one.
+                    "train_games": int(train["game_id"].nunique()),
                 }
             )
 

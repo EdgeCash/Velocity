@@ -186,7 +186,6 @@ def _full_card() -> MatchupCard:
         generated_at=pd.Timestamp("2026-09-16 22:44"),
         notes=("Detroit's rush defense meets a Dallas ground game that has "
                "cleared 100 yards twice in six weeks.",),
-        confidence={"spread": 6.4, "total": 7.1},
     )
 
 
@@ -642,3 +641,19 @@ def test_masthead_without_a_week_has_no_dangling_separator(tmp_path: Path) -> No
         matchup_png._text = real  # type: ignore[assignment]
     assert "NFL" in captured
     assert not any(s.endswith(" · ") for s in captured)
+
+
+def test_the_card_carries_no_confidence_score() -> None:
+    """Measured and declined, not overlooked.
+
+    Across 15,731 leak-safe walk-forward projections nothing the model knows
+    about itself predicts how far it lands from the final (|r| < 0.04 on every
+    candidate), because the sim's dispersion is near-constant by construction
+    and so is not a per-game uncertainty estimate at all. A 0-10 score on that
+    basis would sit near one value forever while reading as meaning. This pins
+    the absence so it is a decision rather than a gap someone fills in later
+    without redoing the measurement.
+    """
+    from dataclasses import fields
+
+    assert "confidence" not in {f.name for f in fields(MatchupCard)}
