@@ -54,3 +54,31 @@ market on the most-bet markets. The takeaway is not "the model is broken" — it
 - The ratings are plain opponent-adjusted EPA with no QB adjustment, rest/travel,
   or weather yet — real improvements the design calls for, but none likely to
   clear the ~4-point gap to the closing line on NFL sides.
+
+## Addendum (2026-09-17): the calibrated total, and a cut to watch
+
+The 2026-09-17 lab rounds (`docs/MODEL_LAB.md`) changed the NFL projection
+in three ways that bear on this record: each backtest game is priced with
+its announced starters, the projection's margin and total deviations are
+rescaled by the slopes fitted on the residual bank (the total's about 0.50),
+and rain takes a point a side off the total at a quarter-inch. On the live
+chain as it now runs (wind over rest over the scaled starters fit), 2011–
+2025 out of sample:
+
+| | value |
+|---|---|
+| Brier | 0.2186 (the de-vigged moneyline close: 0.2102) |
+| margin RMSE | 13.27 (the close: 12.97) |
+| total RMSE | 13.54 (the close: 13.23) |
+| O/U vs close, all games | 50.4% |
+| **O/U vs close, model ≥ 4 pts from the close** | **53.7% on 869** |
+| spread vs close, model ≥ 6 pts from the close | 56.2% on 210 |
+
+The ≥4 totals cut is the first NFL disagreement cut above break-even at a
+real sample size in this lab: before the scale the same cut read 51.4% on
+1,537, because half the model's total deviation was noise and the filter
+selected on it. **Not promoted as a strategy** — the earlier rounds'
+verdict that a disagreement filter needs a robust >52.4% across seasons
+stands, and this one has been measured once. It is the thing to
+re-measure each season, and the live card's NFL totals are graded against
+it from here (the anchored belief still gates and sizes them).
