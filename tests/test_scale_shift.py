@@ -79,3 +79,23 @@ def test_scale_model_reads_the_neutral_flags_off_the_games_frame() -> None:
     # Without the flag the calibration is the old one.
     _model, plain = scale_model(_Even(), bank, games, sim)
     assert plain.margin_shift == 0.0
+
+
+def test_phase_margin_only_takes_the_total_slope_from_the_whole_bank() -> None:
+    bank, _neutral = _bank()
+    # Make the early phase's total slope differ from the whole bank's.
+    early = bank["week"] <= 4
+    bank.loc[early, "resid_total"] = bank.loc[early, "resid_total"] + 0.5 * (
+        bank.loc[early, "mu_total"] - bank["mu_total"].mean())
+    games = pd.DataFrame({
+        "game_id": bank["game_id"], "season": 2024, "week": bank["week"],
+        "home_team": "A", "away_team": "B", "home_score": 24.0, "away_score": 21.0,
+        "neutral_site": False,
+    })
+    sim = SimConfig(n_sims=100)
+    _m, whole = scale_model(_Even(), bank, games, sim)
+    _m, phase = scale_model(_Even(), bank, games, sim, weeks=(1, 4))
+    _m, mixed = scale_model(_Even(), bank, games, sim, weeks=(1, 4), phase_margin_only=True)
+    assert phase.total_slope != pytest.approx(whole.total_slope, abs=0.05)
+    assert mixed.margin_slope == pytest.approx(phase.margin_slope)
+    assert mixed.total_slope == pytest.approx(whole.total_slope)

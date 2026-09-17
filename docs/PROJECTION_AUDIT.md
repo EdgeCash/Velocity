@@ -350,9 +350,14 @@ shifted chain (`NCAAF_SD_MARGIN` / `NCAAF_SD_TOTAL` 18.2 / 16.7 → 16.2 /
 16.2; calibration error → 0.014, Brier 0.1866 → 0.1860). The NFL bank's
 intercept is noise around zero — off there. Then the early-season blend
 weight (#17), a wash over the flat fit and worth 0.03 on the margin over
-the recency chain: **promoted at 0.4** through week 4. Still open:
-college weather and venues (#10), a college special-teams rating (#14's
-other half), the joint phase ridge (#16).
+the recency chain: **promoted at 0.4** through week 4. Then the
+NFL phase round: the **joint phase ridge** (#16) built as one design —
+pass-phase deviations per team on offense and defense in the QB fit — and
+**rejected** at every ridge (a team's pass-phase deviation is not stable
+enough to price a game with); the phase scale re-measured on the gapped
+bank (#19) and **not promoted** (0.01 on the margin, paid in calibration).
+Still open: college weather and venues (#10), a college special-teams
+rating (#14's other half).
 
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,

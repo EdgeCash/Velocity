@@ -348,6 +348,10 @@ def fit_ratings(
 # QB-blind recency fit, calibration error 0.0148 vs 0.0335).
 DEFAULT_QB_LAMBDA = 300.0
 DEFAULT_MIN_DROPBACKS = 40
+# The pass-phase deviations' ridge (the joint phase ridge): they fire on
+# roughly 60% of a team's snaps and sit on top of the team columns, so the
+# prior must be heavier than the team ridge or the split re-emerges.
+DEFAULT_PHASE_LAMBDA = 1000.0
 
 
 @dataclass(frozen=True)
@@ -379,6 +383,13 @@ class QBTeamRatings:
     # As on :class:`TeamRatings`: the fitted home-field edge in EPA/play when
     # the fit carried a home column, 0.0 otherwise.
     home_epa: float = 0.0
+    # The joint phase ridge (``phase_col``): each team's pass-phase deviation
+    # from its own offense and defense, shrunk toward 0 at ``phase_lambda``
+    # — the passing game's edge over the team's all-plays rating. Empty when
+    # the fit carried no phase columns.
+    pass_offense: dict[str, float] = field(default_factory=dict)
+    pass_defense: dict[str, float] = field(default_factory=dict)
+    phase_lambda: float = 0.0
 
     def matchup_delta(
         self, off_team: str, def_team: str, qb_id: str | None = None
@@ -387,15 +398,18 @@ class QBTeamRatings:
 
         ``qb_id`` overrides the detected starter (an announced change the
         training data hasn't seen yet); ``None`` uses ``starters``. An unknown
-        team or passer contributes 0 — league average, never a guess.
+        team or passer contributes 0 — league average, never a guess. The
+        phase deviations, when fitted, enter at the offense's pass rate like
+        the passer does: a matchup's plays are that share passes.
         """
         starter = qb_id if qb_id is not None else self.starters.get(off_team)
         qb_effect = self.qb.get(starter, 0.0) if starter else 0.0
         rate = self.pass_rate.get(off_team, 0.6)
+        phase = self.pass_offense.get(off_team, 0.0) + self.pass_defense.get(def_team, 0.0)
         return (
             self.offense.get(off_team, 0.0)
             + self.defense.get(def_team, 0.0)
-            + rate * qb_effect
+            + rate * (qb_effect + phase)
         )
 
     def expected_epa(self, off_team: str, def_team: str) -> float:
@@ -412,6 +426,8 @@ def fit_qb_ratings(
     weights: pd.Series | None = None,
     home_col: str | None = None,
     count_col: str | None = None,
+    phase_col: str | None = None,
+    phase_lambda: float = DEFAULT_PHASE_LAMBDA,
 ) -> QBTeamRatings:
     """Fit ridge ratings with QB effects decomposed out of the offense.
 
@@ -427,9 +443,18 @@ def fit_qb_ratings(
     detection and the pass rate then count plays, not rows, so the cell fit
     reproduces the play-level fit exactly; pass the same column as
     ``weights``.
+
+    ``phase_col`` names the play-type column (NFL ``play_type``); the fit
+    then carries, for every team, a pass-phase deviation on offense and on
+    defense that fires on ``pass`` plays only, shrunk toward 0 at
+    ``phase_lambda`` — the joint phase ridge (docs/PROJECTION_AUDIT.md §3
+    #16), one design in place of the rejected two-fit split. The team
+    columns stay the all-plays rating; the deviations are what the passing
+    game adds to it, and ``matchup_delta`` prices them at the offense's
+    pass rate.
     """
-    if ridge_lambda <= 0 or qb_lambda <= 0:
-        raise ValueError("ridge_lambda and qb_lambda must be positive")
+    if ridge_lambda <= 0 or qb_lambda <= 0 or phase_lambda <= 0:
+        raise ValueError("ridge_lambda, qb_lambda and phase_lambda must be positive")
     if "passer_player_id" not in plays.columns:
         raise ValueError("plays need a passer_player_id column (rebuild the dataset)")
 
@@ -450,16 +475,26 @@ def fit_qb_ratings(
     qb_index = {qb: i for i, qb in enumerate(passers)}
 
     with_home = home_col is not None and home_col in df.columns
-    n_cols = 1 + 2 * n_teams + len(passers) + (1 if with_home else 0)
+    with_phase = phase_col is not None and phase_col in df.columns
+    n_phase = 2 * n_teams if with_phase else 0
+    n_cols = 1 + 2 * n_teams + len(passers) + n_phase + (1 if with_home else 0)
     x = np.zeros((n_plays, n_cols))
     rows = np.arange(n_plays)
     x[:, 0] = 1.0
-    x[rows, df["posteam"].map(index).to_numpy() + 1] = 1.0
-    x[rows, df["defteam"].map(index).to_numpy() + 1 + n_teams] = 1.0
+    off_idx = df["posteam"].map(index).to_numpy()
+    def_idx = df["defteam"].map(index).to_numpy()
+    x[rows, off_idx + 1] = 1.0
+    x[rows, def_idx + 1 + n_teams] = 1.0
     qb_col = df["passer_player_id"].map(qb_index)
     has_qb = qb_col.notna().to_numpy()
     x[rows[has_qb], qb_col.to_numpy(dtype=float)[has_qb].astype(int)
       + 1 + 2 * n_teams] = 1.0
+    phase_base = 1 + 2 * n_teams + len(passers)
+    if with_phase:
+        is_pass = (df[phase_col].astype("string").str.lower() == "pass").fillna(False)
+        pass_rows = rows[is_pass.to_numpy(dtype=bool)]
+        x[pass_rows, off_idx[pass_rows] + phase_base] = 1.0
+        x[pass_rows, def_idx[pass_rows] + phase_base + n_teams] = 1.0
     if with_home:
         x[:, n_cols - 1] = pd.to_numeric(df[home_col], errors="coerce").fillna(0.0).to_numpy()
     y = df[epa_col].to_numpy(dtype=float)
@@ -468,6 +503,7 @@ def fit_qb_ratings(
         [0.0],
         np.full(2 * n_teams, ridge_lambda),
         np.full(len(passers), qb_lambda),
+        np.full(n_phase, phase_lambda),
         [0.0] if with_home else [],
     ])
     if weights is not None:
@@ -513,6 +549,11 @@ def fit_qb_ratings(
         n_plays=n_plays,
         teams=tuple(teams),
         home_epa=float(beta[n_cols - 1]) if with_home else 0.0,
+        pass_offense=({t: float(beta[phase_base + index[t]]) for t in teams}
+                      if with_phase else {}),
+        pass_defense=({t: float(beta[phase_base + n_teams + index[t]]) for t in teams}
+                      if with_phase else {}),
+        phase_lambda=float(phase_lambda) if with_phase else 0.0,
     )
 
 

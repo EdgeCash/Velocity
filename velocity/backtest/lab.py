@@ -173,6 +173,7 @@ def nfl_variants(
         garbage: tuple[str, float, float] | None = None,
         turnover: float | None = None, winsor: float | None = None,
         epa_col: str = "epa", home: bool = False, offseason_weeks: float = 0.0,
+        phase_lambda: float | None = None,
     ) -> VariantFactory:
         """The QB-decomposed recency fit, optionally conditioned on the play
         context the rebuilt plays carry (velocity.features.team):
@@ -209,6 +210,8 @@ def nfl_variants(
                 frame,
                 qb_lambda=qb_lam if qb_lam is not None else DEFAULT_QB_LAMBDA,
                 weights=weights, epa_col=epa_col, home_col=home_col,
+                phase_col="play_type" if phase_lambda is not None else None,
+                phase_lambda=phase_lambda if phase_lambda is not None else 1000.0,
             )
             config = NFLModelConfig(sim=sim)
             if home_col is not None:
@@ -269,7 +272,7 @@ def nfl_variants(
 
     def scaled(
         inner: VariantFactory, league: str = "nfl", *, by_phase: bool = False,
-        shift: bool = False,
+        shift: bool = False, phase_margin_only: bool = False,
     ) -> VariantFactory:
         """``inner`` under a ScaleCalibration fitted on the league's residual
         bank, seasons strictly before the one being projected
@@ -294,7 +297,8 @@ def nfl_variants(
             # outside it keeps its kickoff keying, so wrap in that order.
             core = model.inner if isinstance(model, ScheduleStarterModel) else model
             scaled_model, _cal = scale_model(
-                core, bank, window, sim, before_season=predicting[0], weeks=weeks, shift=shift)
+                core, bank, window, sim, before_season=predicting[0], weeks=weeks, shift=shift,
+                phase_margin_only=phase_margin_only)
             if isinstance(model, ScheduleStarterModel):
                 return ScheduleStarterModel(scaled_model, schedule)  # type: ignore[arg-type]
             return scaled_model
@@ -552,13 +556,20 @@ def nfl_variants(
                                    cold_points=0.5, cold_threshold_f=40.0)),
             })
 
-            def promoted(core: VariantFactory, *, shift: bool = False) -> VariantFactory:
+            def promoted(
+                core: VariantFactory, *, shift: bool = False, by_phase: bool = False,
+                phase_margin_only: bool = False,
+            ) -> VariantFactory:
                 """``core`` under the whole promoted chain — level, scale,
                 starters, rest, the injury burden, wind and rain — so a
                 change to the fit itself is scored exactly as it would run.
-                ``shift`` keeps the scale's home-margin intercept."""
-                return windy(injured(rested(scaled(starters(levelled(core, 2)), shift=shift)),
-                                     4.0), precip_points=1.0)
+                ``shift`` keeps the scale's home-margin intercept;
+                ``by_phase`` fits the scale on the projected week's phase
+                (``phase_margin_only``: the margin's slope alone)."""
+                return windy(injured(rested(scaled(starters(levelled(core, 2)), shift=shift,
+                                                   by_phase=by_phase,
+                                                   phase_margin_only=phase_margin_only)), 4.0),
+                             precip_points=1.0)
 
             variants.update({
                 # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
@@ -602,6 +613,25 @@ def nfl_variants(
                 # the live runner prices.
                 "live-nfl-promoted": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                # The joint phase ridge (docs/PROJECTION_AUDIT.md §3 #16)
+                # over the promoted chain, and the phase scale again (the
+                # bank's margin slope reads 0.80 in weeks 1–3, 0.89 in 4–6,
+                # 1.04 in 7–10 and 1.15 after, on the gapped core).
+                "live-nfl-promoted-phase300": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 phase_lambda=300.0))),
+                "live-nfl-promoted-phase1000": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 phase_lambda=1000.0))),
+                "live-nfl-promoted-phase3000": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 phase_lambda=3000.0))),
+                "live-nfl-promoted-scalephase": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      by_phase=True)),
+                "live-nfl-promoted-scalephase-margin": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      by_phase=True, phase_margin_only=True)),
                 # The scale's home-margin intercept, over the promoted chain.
                 "live-nfl-promoted-shift": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
