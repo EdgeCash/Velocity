@@ -502,3 +502,50 @@ Ordered by value for the projection and the card, across leagues:
 7. Officials for NFL and NBA/WNBA.
 8. NHL confirmed goalies and MoneyPuck xG, if the NHL posture ever moves off
    content.
+
+---
+
+## 6. The scoreboard — distance to the closing line, in points
+
+The goal is the most accurate score projection. The closing line *is* a score
+projection, and the sharpest one available, so it is the yardstick. RMSE of
+actual against projected, out-of-sample walk-forward of the promoted models
+(`sim_residuals.parquet`) joined to the committed closes, 2015+:
+
+| | n | margin: model / close | total: model / close | weight on (model − close) |
+|---|---:|---|---|---|
+| NFL | 3,028 | 13.16 / **12.72** | 13.94 / **13.23** | +0.01 ± 0.07 (margin), −0.07 ± 0.06 (total) |
+| NCAAF | 11,572 | 18.46 / **15.53** | 17.38 / **16.24** | −0.01 ± 0.02 (margin), **+0.03 ± 0.03** (total) |
+
+The last column is the least-squares weight the actual result puts on the
+model's disagreement with the close: 0 means the close already contains
+everything the model knows; 1 means the model is the better forecast. Today
+the margin projection carries nothing beyond the close in either league, and
+the college total carries a little — which is the thin totals edge measured
+the other way round.
+
+By phase of season (margin, model / close): NFL weeks 1–4 13.28 / 12.96,
+weeks 5–9 12.91 / 12.56, weeks 10+ 13.22 / 12.70. NCAAF weeks 1–4
+**19.38 / 15.58**, weeks 5–9 17.79 / 15.36, weeks 10+ 18.34 / 15.63. The
+college gap is ~3 points in every season 2015–2025 with no trend, and 3.8 in
+September. On FBS-vs-FBS games since 2022 it is 17.94 / 15.26.
+
+What this says about the plan:
+
+- **College is where the accuracy is.** A three-point RMSE gap on margin is
+  roster knowledge the market has and the model lacks — starters, returning
+  production, recruiting, injuries — plus the early-season prior. The NFL
+  gap is under half a point on margin and 0.7 on totals.
+- **NFL totals are the more fixable NFL market.** The model's total carries
+  half the signal it claims (§2.2), and pace, kickoff-hour weather and crews
+  are all unmodelled; the margin is already close to the ceiling.
+- **Accuracy has to come from information, not fit.** Every promoted lab
+  round to date moved Brier by fitting the same inputs better; the weight
+  column says the result converges to the close rather than past it. The
+  items in §3 and §5 that add *inputs the market prices* (starters,
+  injuries, priors, pace, weather, officials) are the ones that move both
+  RMSE and that weight.
+- **Gate on it.** The lab scores Brier, log-loss, calibration and ATS/O/U.
+  Add margin and total RMSE against actual and against the close, and the
+  weight above, so a variant is promoted for score accuracy and independent
+  information rather than for win-probability alone.
