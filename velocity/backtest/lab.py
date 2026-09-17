@@ -448,6 +448,26 @@ def nfl_variants(
             # The live chain as it runs today — wind over rest over the
             # scaled starters fit — and the situational candidates over it.
             live_core = rested(scaled(starters(levelled(qb_recency(17.0, 300.0), 2))))
+
+            def injured(inner: VariantFactory, points_per_unit: float) -> VariantFactory:
+                """``inner`` under the injury burden, from the committed
+                designations and usage banks (both absent → ``inner``)."""
+                injuries_path = Path("datasets/nfl/injuries.parquet")
+                weeks_path = Path("datasets/nfl/player_weeks.parquet")
+                if not injuries_path.exists() or not weeks_path.exists():
+                    return inner
+                from velocity.features.injuries import burden_by_team_week
+
+                burden = burden_by_team_week(
+                    pd.read_parquet(injuries_path), pd.read_parquet(weeks_path))
+
+                @functools.wraps(inner)
+                def factory(train: pd.DataFrame, **kwargs: object) -> object:
+                    return InjuryBurdenModel(
+                        inner(train, **kwargs), schedule, burden, points_per_unit)
+
+                return factory
+
             variants.update({
                 "wind-15-0.15": ("plays", wind(15.0, 0.15)),
                 "wind-15-0.30": ("plays", wind(15.0, 0.30)),
@@ -461,6 +481,11 @@ def nfl_variants(
                     "plays", windy(live_core, precip_points=0.5, precip_threshold_in=0.1)),
                 "live-nfl-full-div0.5": ("plays", windy(divisional(live_core, 0.5))),
                 "live-nfl-full-div1.0": ("plays", windy(divisional(live_core, 1.0))),
+                # Points per whole team's worth of touches ruled out: a 15%
+                # burden (the 90th percentile) costs 0.6 / 1.2 / 2.4 points.
+                "live-nfl-full-injury4": ("plays", windy(injured(live_core, 4.0))),
+                "live-nfl-full-injury8": ("plays", windy(injured(live_core, 8.0))),
+                "live-nfl-full-injury16": ("plays", windy(injured(live_core, 16.0))),
             })
     return variants
 
@@ -1726,6 +1751,71 @@ class DivisionalModel:
         return self.inner.project(  # type: ignore[attr-defined]
             home_team, away_team, neutral_site=neutral_site, rng=rng,
             home_bonus=home_bonus - shift, away_bonus=away_bonus + shift, **kwargs,
+        )
+
+
+class InjuryBurdenModel:
+    """A situational wrapper: points off a team for the production it has out.
+
+    ``burden`` is :func:`velocity.features.injuries.burden_by_team_week`'s
+    frame; the game's (season, week) comes from the schedule by the two
+    teams and the kickoff date, like the other wrappers. A team-week with
+    no row costs nothing. The week's official designations are public
+    before kickoff, so this is not leakage; the usage shares behind them
+    are the season to date or the previous season (never the week itself).
+    """
+
+    def __init__(
+        self, inner: object, schedule: pd.DataFrame, burden: pd.DataFrame,
+        points_per_unit: float,
+    ) -> None:
+        import inspect
+
+        self.inner = inner
+        self.points_per_unit = float(points_per_unit)
+        keyed = schedule.dropna(subset=["kickoff"])
+        dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        self._game_week: dict[tuple[str, str, pd.Timestamp], tuple[int, int]] = {
+            (str(h), str(a), d): (int(s), int(w))
+            for h, a, d, s, w in zip(keyed["home_team"], keyed["away_team"], dates,
+                                     keyed["season"], keyed["week"], strict=True)
+        }
+        self._burden: dict[tuple[int, int, str], float] = {
+            (int(s), int(w), str(t)): float(b)
+            for s, w, t, b in zip(burden["season"], burden["week"], burden["team"],
+                                  burden["burden"], strict=True)
+        } if not burden.empty else {}
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters  # type: ignore[attr-defined]
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
+
+    def _cost(self, team: str, season_week: tuple[int, int] | None) -> float:
+        if season_week is None:
+            return 0.0
+        return -self.points_per_unit * self._burden.get((*season_week, team), 0.0)
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
+    ) -> object:
+        season_week = None
+        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            season_week = self._game_week.get((home_team, away_team, date))
+        kwargs: dict[str, object] = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
+        return self.inner.project(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site, rng=rng,
+            home_bonus=home_bonus + self._cost(home_team, season_week),
+            away_bonus=away_bonus + self._cost(away_team, season_week), **kwargs,
         )
 
 
