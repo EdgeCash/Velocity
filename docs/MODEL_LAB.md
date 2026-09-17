@@ -1037,3 +1037,39 @@ The closing line on the same games: margin RMSE 12.97, total RMSE 13.23.
 
 Not run here: starters and scale together, pace, and the live chain (rest
 over the fit) for the incumbent and the candidate — the next table.
+
+
+## The plays, scale and pace round (2026-09-17) — NCAAF
+
+The same candidates over the college base (`blend-level2-sp12`, the live
+configuration; 2015–2026, all history, 4,000 sims; the residual bank the
+scale fits on was rebuilt from this base first). The close on the same
+games: margin RMSE 15.54, total RMSE 16.23.
+
+| variant | Brier | log loss | calib. | RMSE margin | RMSE total | info_w total | O/U ≥4 (n) | O/U ≥6 (n) |
+|---|---|---|---|---|---|---|---|---|
+| base (live) | 0.1933 | 0.5655 | 0.0203 | 18.52 | 17.36 | +0.027 | 52.1% (6,420) | 52.9% (4,277) |
+| base-scrim | 0.1932 | 0.5651 | 0.0190 | 18.51 | 17.36 | +0.026 | 51.9% (6,404) | 52.7% (4,266) |
+| **base-scale** | 0.1932 | 0.5646 | **0.0095** | **18.46** | **17.22** | **+0.045** | 52.0% (6,283) | **53.4% (4,104)** |
+| base-scrim-scale | 0.1932 | 0.5644 | 0.0098 | 18.46 | 17.22 | +0.044 | 52.0% (6,275) | 53.4% (4,102) |
+| base-scrim-pace | **0.1930** | 0.5645 | 0.0172 | 18.49 | 17.39 | +0.029 | 52.1% (6,438) | 52.7% (4,332) |
+
+**Readings, honestly:**
+
+1. **The scale is a promotion on every column that matters.** Calibration
+   error halves, both RMSEs improve, the total's information weight rises
+   by two-thirds, and the one staked market moves the right way at the
+   promoted filter: 53.4% on 4,104 bets against 52.9% on 4,277 — half a
+   point of hit rate, worth about a point of ROI at −110, on fewer bets,
+   which is what a total that stops over-claiming its deviation should do.
+   The margin slope on the rebuilt bank is above 1 (the prior-carrying
+   blend under-disperses big favourites) and the total's about 0.66.
+   **Promoted: `--ncaaf-scale fit`** (`DEFAULT_SCALE_BY_LEAGUE`).
+2. **The scrimmage cut is a wash.** A hair better on Brier and calibration,
+   identical RMSE, a hair worse at the filter — all inside one standard
+   error, on a frame that is 0.9% non-scrimmage rows. Not promoted; the
+   flag stays for the day the plays are rebuilt with clock and score state.
+3. **Pace buys Brier and costs the total.** The best Brier in the table
+   (−0.0003) and a better margin, but the totals RMSE is the one column
+   that got worse (+0.03) and the filter record did not move. Not
+   promoted; pace over the scaled model is the next thing to run.

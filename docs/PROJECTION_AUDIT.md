@@ -282,6 +282,17 @@ is banked and unread.
 
 ## 3. The improvement list, in order
 
+**Status (2026-09-17).** Landed through the lab and merged: the points
+gate (§3 #5's measurement half), the 2025 re-key (#2), the SP+ prior in the
+lab (#3), the FBS evaluation population and the FCS paper rule (#4), the
+scale (#5 — promoted in both leagues; NFL totals RMSE 13.90 → 13.59, college
+calibration error halved), the nflverse schedule columns and the
+announced-starter backtest (#6's ingest and starter halves), and the NFL
+pace machinery (#11, not promoted). The scrimmage-only fit (#1) was built,
+measured and **rejected**: the NFL kicks and punts carry field position the
+ratings want (Brier 0.2224 vs 0.2195 without them); the kneel finding stands
+and the narrower cut is in the lab. Tables in `docs/MODEL_LAB.md`.
+
 Ordered by expected value × certainty ÷ effort. "Gate" is what promotes it:
 every model change goes through `model_lab.py` on the standard walk-forward,
 as the repo's rule requires.

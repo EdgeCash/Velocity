@@ -1287,8 +1287,13 @@ def resolve_ncaaf_level(explicit: str | None) -> str:
 # * NFL scale "fit": totals RMSE 13.90 → 13.59 (the close: 13.23), margin
 #   and Brier unchanged — the projection's total had been claiming twice the
 #   deviation it earned, and the fitted slope (~0.50) returns it.
+# * NCAAF scale "fit": calibration error 0.0203 → 0.0095, margin RMSE 18.52
+#   → 18.46, totals RMSE 17.36 → 17.22, and the staked ≥6 totals record
+#   52.9% → 53.4% on ~4,100 bets. College plays stay "all" too: the
+#   scrimmage cut was a wash on every column (the college frame is 0.9%
+#   non-scrimmage rows).
 DEFAULT_PLAYS_BY_LEAGUE = {"nfl": "all", "ncaaf": "all"}
-DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "off"}
+DEFAULT_SCALE_BY_LEAGUE = {"nfl": "fit", "ncaaf": "fit"}
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:
