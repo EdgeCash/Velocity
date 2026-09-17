@@ -934,3 +934,54 @@ Unchanged: **WNBA stays paper** (docs/STRATEGY_REVIEW.md §1.3). It is priced,
 logged and graded at stake zero, which is what a league with a replicating
 but sub-vig edge has earned. The two things that would change the answer are
 the sim repair above and a third season of closes.
+
+## The parity round (2026-09-17) — the lab measures the live model, in points
+
+`docs/PROJECTION_AUDIT.md` found three things between the lab and the model
+that runs: the college blend's EPA half had never seen a 2025 play (the
+backfilled 2025 games rows carried boxscore-style ids; 4 of 934 matched the
+plays), the SP+ prior the live runner applies had never been through the
+harness, and the gate scored win probabilities while the goal is the score.
+This round fixes all three before anything else is judged.
+
+**The gate grows a points half.** Every variant row now carries RMSE of the
+projected margin and total against the actual result and against the
+closing line, the market's own Brier from real moneyline closes where the
+games frame has them, and the weight the result puts on (model − close) —
+`info_w`, 0 meaning the close already contains everything the model knows.
+The closing line is the yardstick, not a baseline.
+
+**The incumbents, scored that way** (NFL 2011–2025 trailing-4, 4,000 sims;
+NCAAF 2015–2026 all history, with the 2025 plays keyed at last):
+
+| variant | Brier | calib. | RMSE margin (close) | RMSE total (close) | info_w margin / total |
+|---|---|---|---|---|---|
+| NFL `qb-recency-17-q300-level2` | 0.21953 | 0.0118 | 13.33 (12.97) | 13.90 (13.23) | +0.08 / −0.00 |
+| NCAAF `blend-level2` (2025 plays keyed) | **0.1945** | 0.0192 | 18.61 (15.54) | 17.36 (16.23) | +0.01 / +0.02 |
+
+The college number moved on the re-key alone: the level round recorded
+`blend-level2` at Brier 0.19753 on the old ids; with the 2025 season in the
+EPA half it is 0.1945 (the populations differ slightly — 11,943 projected
+games here — so read the gap as the direction, not the fourth decimal).
+
+**The SP+ prior in the harness** (`blend-level2-sp<K>`: last season's final
+SP+ as K pseudo-games in the scores half, leak-gated on the *projected*
+season, which the engine now hands every factory):
+
+| variant | Brier | log loss | calib. | RMSE margin | RMSE total | O/U ≥6 (n) | info_w margin |
+|---|---|---|---|---|---|---|---|
+| blend-level2 | 0.1945 | 0.5683 | 0.0192 | 18.61 | 17.36 | 53.0% (4,312) | +0.007 |
+| blend-level2-sp6 | 0.1937 | 0.5664 | 0.0195 | 18.55 | 17.35 | 52.9% (4,275) | +0.004 |
+| **blend-level2-sp12** (live) | 0.1933 | 0.5655 | 0.0203 | 18.52 | 17.36 | 52.9% (4,277) | +0.003 |
+| blend-level2-sp24 | **0.1929** | **0.5643** | **0.0187** | **18.48** | 17.38 | 52.7% (4,299) | +0.001 |
+
+Brier and margin RMSE improve monotonically with K, as the 2026-08-31 sweep
+found on the scores fit alone; the totals record at the filter is flat
+within its standard error (~0.8pp at 4,300 bets) and the information weight
+drifts toward zero — the prior moves the model toward the market, which is
+what roster knowledge the market already has should do. **The lab's college
+base is now `blend-level2-sp12`, the configuration the runner prices**, and
+the college residual bank (`datasets/ncaaf/sim_residuals.parquet`) is
+rebuilt from its projections. K=24 is the better forecaster by every
+accuracy column and is left as a candidate for the next round rather than
+moved on the same table that chose 12.
