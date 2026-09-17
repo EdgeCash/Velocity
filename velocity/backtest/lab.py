@@ -557,8 +557,12 @@ def nfl_variants(
 
             variants.update({
                 # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
-                # plays rebuild): the promoted fit conditioned on the win
-                # probability, the turnover flags and the home flag.
+                # plays rebuild): the chain as promoted before the round —
+                # the fit on the plays as recorded — conditioned on the win
+                # probability, the turnover flags and the home flag. Each
+                # candidate was scored against "live-nfl-promoted-to1.0".
+                "live-nfl-promoted-to1.0": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0)),
                 "live-nfl-promoted-gt0.5": (
                     "plays", promoted(qb_recency(17.0, 300.0, garbage=("wp", 0.5, 0.05)))),
                 "live-nfl-promoted-gt0.25": (
@@ -580,6 +584,12 @@ def nfl_variants(
                     "plays", promoted(qb_recency(17.0, 300.0, epa_col="qb_epa"))),
                 "live-nfl-promoted-home": (
                     "plays", promoted(qb_recency(17.0, 300.0, home=True))),
+                # The promoted chain after the play-context round: the
+                # turnover shrink at 0.5 in the fit, the residual bank rebuilt
+                # on its core (qb-recency-17-q300-level2-starters-to0.5), the
+                # scale fitted on that bank.
+                "live-nfl-promoted": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5))),
             })
     return variants
 

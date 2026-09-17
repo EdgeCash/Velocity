@@ -312,6 +312,12 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_injury_points(0.0) == 0.0
     assert runner.resolve_plays(None, "mlb") == "all"
     assert runner.resolve_scale(None, "mlb") == "off"
+    # The turnover-EPA shrink: a factor in [0, 1] the lab sets, 1 = as recorded.
+    assert args.nfl_turnover_shrink is None
+    assert runner.resolve_turnover_shrink(None) == runner.DEFAULT_NFL_TURNOVER_SHRINK == 0.5
+    assert runner.resolve_turnover_shrink(0.5) == 0.5
+    assert runner.resolve_turnover_shrink(3.0) == 1.0
+    assert runner.resolve_turnover_shrink(-1.0) == 0.0
 
 
 def test_a_papered_game_prices_but_never_stakes() -> None:

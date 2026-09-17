@@ -74,6 +74,13 @@ chain as it now runs (wind over rest over the scaled starters fit), 2011–
 | **O/U vs close, model ≥ 4 pts from the close** | **53.7% on 869** |
 | spread vs close, model ≥ 6 pts from the close | 56.2% on 210 |
 
+After the play-context round (the turnover-EPA shrink at ×0.5 in the fit,
+the residual bank rebuilt on the shrunk core; `docs/MODEL_LAB.md`), the
+same chain reads Brier 0.2181, margin RMSE 13.25, total RMSE 13.52, O/U vs
+close 50.7% on all games, **53.8% on 784** at the ≥4 cut, and 52.0% on 196
+at the ≥6 spread cut — the totals cut holds, the thin spread cut does not,
+which is the point about sample size below.
+
 The ≥4 totals cut is the first NFL disagreement cut above break-even at a
 real sample size in this lab: before the scale the same cut read 51.4% on
 1,537, because half the model's total deviation was noise and the filter
