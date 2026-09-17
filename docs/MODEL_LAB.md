@@ -1149,3 +1149,22 @@ slope was 1.19 on a prior-less half, the NFL's 0.72 was mostly the
 unscaled total, and the whole-bank scale already took that. **Not
 promoted** for the NFL; the flag (`--nfl-scale phase`) stays for a season
 with more early-season rows in the bank. The NFL runs `fit`.
+
+**The early-season blend weight (NCAAF)**, over the promoted
+`blend-level2-sp12-scale-phase`: the EPA half's weight through week 4 (it
+has no prior; the scores half carries SP+), 0.5 after.
+
+| early weight | Brier | calib. | RMSE margin | RMSE total | O/U ≥6 (n) | weeks 1–4 margin / total RMSE |
+|---|---|---|---|---|---|---|
+| 0.5 (promoted) | 0.1931 | 0.0081 | 18.43 | 17.21 | 53.6% (4,108) | 19.19 / 16.81 |
+| 0.3 | 0.1933 | 0.0088 | 18.47 | **17.19** | 53.3% (4,041) | 19.31 / **16.73** |
+| 0.4 | 0.1931 | 0.0087 | 18.44 | 17.20 | 53.5% (4,070) | 19.23 / 16.77 |
+| 0.6 | 0.1931 | **0.0075** | **18.43** | 17.23 | 53.7% (4,155) | **19.18** / 16.87 |
+
+A wash that teaches something: leaning on the scores half in September
+buys a tenth of a point on the early total and pays it back on the early
+margin; leaning on the EPA half does the reverse. The prior-carrying half
+is not the better half in the early weeks — the two carry different
+information and the even split is already close to the optimum. **Not
+promoted**; the early-season college gap (§2.2 of the audit) wants a
+prior in the EPA half, not a different weight on the one that has it.
