@@ -237,9 +237,17 @@ class ScaledModel:
     def expected_points(
         self, home_team: str, away_team: str, *, neutral_site: bool = False,
         home_bonus: float = 0.0, away_bonus: float = 0.0,
+        home_qb: str | None = None, away_qb: str | None = None,
     ) -> tuple[float, float]:
-        mu_home, mu_away = self.inner.expected_points(  # type: ignore[attr-defined]
-            home_team, away_team, neutral_site=neutral_site)
+        # Named starters reach an inner that prices them (the NFL model);
+        # any other inner is asked the two-team question.
+        if home_qb is not None or away_qb is not None:
+            mu_home, mu_away = self.inner.expected_points(  # type: ignore[attr-defined]
+                home_team, away_team, neutral_site=neutral_site,
+                home_qb=home_qb, away_qb=away_qb)
+        else:
+            mu_home, mu_away = self.inner.expected_points(  # type: ignore[attr-defined]
+                home_team, away_team, neutral_site=neutral_site)
         home, away = self.calibration.apply(mu_home, mu_away, anchor_total=self.anchor_total)
         return home + home_bonus, away + away_bonus
 
@@ -252,11 +260,14 @@ class ScaledModel:
         rng: np.random.Generator | None = None,
         home_bonus: float = 0.0,
         away_bonus: float = 0.0,
+        home_qb: str | None = None,
+        away_qb: str | None = None,
     ) -> GameProjection:
         rng = rng if rng is not None else make_rng()
         mu_home, mu_away = self.expected_points(
             home_team, away_team, neutral_site=neutral_site,
             home_bonus=home_bonus, away_bonus=away_bonus,
+            home_qb=home_qb, away_qb=away_qb,
         )
         sim = simulate_game(
             mu_margin=mu_home - mu_away, mu_total=mu_home + mu_away, rng=rng, config=self.sim)

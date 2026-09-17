@@ -227,9 +227,29 @@ def nfl_variants(
             if bank is None or schedule is None or predicting is None:
                 return model
             window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
+            # The scale sits directly over the game model; a starter wrapper
+            # outside it keeps its kickoff keying, so wrap in that order.
+            core = model.inner if isinstance(model, ScheduleStarterModel) else model
             scaled_model, _cal = scale_model(
-                model, bank, window, sim, before_season=predicting[0])
+                core, bank, window, sim, before_season=predicting[0])
+            if isinstance(model, ScheduleStarterModel):
+                return ScheduleStarterModel(scaled_model, schedule)  # type: ignore[arg-type]
             return scaled_model
+
+        return factory
+
+    def rested(
+        inner: VariantFactory, bye_pts: float = 1.0, short_pts: float = 1.0
+    ) -> VariantFactory:
+        """``inner`` under the promoted rest wrapper — the live chain's outer
+        layer, so a candidate can be scored exactly as it would run."""
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            model = inner(train, **kwargs)
+            if schedule is None:
+                return model
+            return RestAdjustedModel(
+                model, schedule,  # type: ignore[arg-type]
+                bye_points=bye_pts, short_points=short_pts)
 
         return factory
 
@@ -289,6 +309,19 @@ def nfl_variants(
             # pace map is attached, so the two calibrate together.
             "qb-recency-17-q300-level2-scrim-pace": (
                 "plays", scrimmage(levelled(paced(qb_recency(17.0, 300.0)), 2))),
+            # The live chain (rest over the fit) for the incumbent and the
+            # candidate composites, so the promotion is scored as it runs.
+            "live-nfl-incumbent": ("plays", rested(levelled(qb_recency(17.0, 300.0), 2))),
+            "live-nfl-scrim": ("plays", rested(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))),
+            "live-nfl-scrim-scale": (
+                "plays", rested(scaled(scrimmage(levelled(qb_recency(17.0, 300.0), 2))))),
+            "live-nfl-scrim-starters-scale": (
+                "plays", rested(scaled(starters(scrimmage(levelled(qb_recency(17.0, 300.0), 2)))))),
+            "live-nfl-scrim-pace-scale": (
+                "plays", rested(scaled(scrimmage(levelled(paced(qb_recency(17.0, 300.0)), 2))))),
+            "live-nfl-scrim-pace-starters-scale": (
+                "plays", rested(scaled(starters(scrimmage(
+                    levelled(paced(qb_recency(17.0, 300.0)), 2)))))),
         })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)
@@ -1500,6 +1533,8 @@ class RestAdjustedModel:
         max_rest_days: int = 30,
         same_game_hours: float = 24.0,
     ) -> None:
+        import inspect
+
         self.inner = inner
         self.bye_points = bye_points
         self.short_points = short_points
@@ -1507,6 +1542,13 @@ class RestAdjustedModel:
         self.short_days = short_days
         self.max_rest_days = max_rest_days
         self.same_game_hours = same_game_hours
+        # An inner wrapper keyed on the kickoff (the schedule-starter model)
+        # gets it forwarded; a bare game model would raise on it.
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
         sched = schedule.dropna(subset=["kickoff"]).copy()
         sched["kickoff"] = pd.to_datetime(sched["kickoff"])
         long = pd.concat([
@@ -1559,6 +1601,14 @@ class RestAdjustedModel:
         moment a forecast came back. Each wrapper adds its own term and
         forwards the sum, so any stacking order composes.
         """
+        if self._inner_takes_kickoff:
+            return self.inner.project(
+                home_team, away_team, neutral_site=neutral_site,
+                rng=rng,  # type: ignore[arg-type]
+                home_bonus=home_bonus + self._bonus(home_team, kickoff),
+                away_bonus=away_bonus + self._bonus(away_team, kickoff),
+                kickoff=kickoff,  # type: ignore[call-arg]
+            )
         return self.inner.project(
             home_team, away_team, neutral_site=neutral_site,
             rng=rng,  # type: ignore[arg-type]

@@ -1029,3 +1029,40 @@ def test_fbs_games_keeps_only_pairs_the_ratings_rate() -> None:
     kept = fbs_games(games, sp)
     assert kept.index.tolist() == [0, 3]  # 2026 borrows the latest list
     assert fbs_games(games, sp.iloc[0:0]).equals(games)
+
+
+def test_rest_wrapper_forwards_the_kickoff_to_a_starter_wrapper() -> None:
+    from velocity.backtest.lab import RestAdjustedModel, ScheduleStarterModel
+    from velocity.features.team import QBTeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.level import ScaleCalibration, ScaledModel
+    from velocity.models.simulate import SimConfig
+
+    ratings = QBTeamRatings(
+        offense={"A": 0.0, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+        qb={"star": 0.2, "backup": -0.2}, starters={"A": "backup", "B": "star"},
+        pass_rate={"A": 0.5, "B": 0.5}, league_epa=0.0, ridge_lambda=200.0,
+        qb_lambda=300.0, n_plays=10, teams=("A", "B"),
+    )
+    sim = SimConfig(n_sims=300)
+    model = NFLGameModel(ratings, NFLModelConfig(sim=sim))
+    kickoff = pd.Timestamp("2025-09-14 17:00")
+    schedule = pd.DataFrame({
+        "home_team": ["A", "A"], "away_team": ["B", "B"],
+        "kickoff": [kickoff - pd.Timedelta(days=14), kickoff],  # a bye before this one
+        "home_qb_id": ["backup", "star"], "away_qb_id": [None, None],
+    })
+    # rest ∘ starters ∘ scale: the kickoff reaches the starter lookup through
+    # the rest wrapper, and the named passer reaches the scaled model.
+    scaled = ScaledModel(model, ScaleCalibration(margin_slope=0.5, n=1), 44.0, sim)
+    chain = RestAdjustedModel(ScheduleStarterModel(scaled, schedule), schedule)
+    rng = np.random.default_rng(1)
+    proj = chain.project("A", "B", kickoff=kickoff, rng=rng)
+    bare = scaled.project("A", "B", rng=rng)
+    # Star over backup moves A's own points by 0.4 × 0.5 × 63 = 12.6: +12.6 on
+    # the margin (halved by the scale → 6.3) and +12.6 on the total (slope 1),
+    # so home = (12.6 + 6.3) / 2 and away = (12.6 − 6.3) / 2 — then the bye
+    # bonus +1.0 on top of each, since the schedule gives both teams the same
+    # fortnight off.
+    assert proj.mu_home - bare.mu_home == pytest.approx(9.45 + 1.0)
+    assert proj.mu_away - bare.mu_away == pytest.approx(3.15 + 1.0)
