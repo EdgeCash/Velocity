@@ -212,6 +212,33 @@ the weights and the rules only make sense as a pair:
   demoted the way a model change is rejected in the lab. Empty until the
   first tiered slates are graded.
 
+**2026-09-17, the report round.** The graphics read the same table the
+gate does, so a card can no longer say something the list would not:
+
+- **Leans keyed to the rule tiers** (`velocity.report.social.rule_call`,
+  used by the social card's verdict row and the matchup card's panels):
+  a lean fires only where a rule with a record admits the disagreement, and
+  carries the rule and its record ("under by 4.3 · rule A · 55.6% on
+  340"). The fixed bars it replaces (2.5 spread / 3.0 total / 7 points of
+  win probability) were never measured. The blanks say why they are blank:
+  "no rule with a record" on the spread and moneyline in both leagues,
+  "no rule for overs" in college, "under by 2.1 · below the 4 bar" on a
+  total short of the rule. The matchup card's "unusually wide" caution
+  now applies only where no rule admits the number — the lab measured the
+  widest total gaps directly and found them the strongest rule, not the
+  worst bet.
+- **The PLAY badge reads the rule tier** (`plays_from_bets` takes the
+  runner's `rule_tiers_for` map): the letter on the chip is the one the
+  publish gate ranked on, with the rule's record beside the price and
+  stake; the intel conviction tier it printed before was the null the
+  backtest measured.
+- **The WHY band leads with the argument that admitted the play**
+  (`model_why(plays=)`): the model's number against the market's, the
+  disagreement in the side's direction, and the rule's walk-forward record
+  — "UNDER 45.5: model 41.2, under by 4.3; unders 4+ ran 55.6% over 340
+  bets, 9 of 15 seasons." The intel layer keeps one line on the card: its
+  veto, when it fired.
+
 Every item on the list is landed. What the list now needs is time: the
 record by tier, at a sample the lab would accept, before any rule is
 re-ranked on live evidence.

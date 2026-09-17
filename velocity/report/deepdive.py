@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from velocity.report.social import MarketView, PlayCall, SocialCard, WatchEntry
+from velocity.wagering.tiers import RuleTier
 
 __all__ = ["DeepDive", "PlayCall", "StatRow", "build_deep_dives",
            "deep_dive_caption", "plays_from_bets"]
@@ -422,17 +423,42 @@ def model_why(
     *,
     signals: Sequence[str] = (),
     n_sims: int = 0,
+    plays: Sequence[PlayCall] = (),
 ) -> str:
     """The model's rationale as plain statements — the card's WHY snippet.
 
-    Composed from what the reader can verify: the projection vs the market's
-    numbers, the sim's cover/over rates against those numbers, the clearest
-    unit advantages from the stat table, and (when the intelligence layer
-    ran) its evidence lines. Statements, never hype — the same register as
-    :func:`deep_dive_caption`.
+    Leads with the play's own argument where a rule admitted it: the model's
+    number against the market's, the disagreement in the side's direction,
+    and the rule's walk-forward record (:mod:`velocity.wagering.tiers`). Then
+    what the reader can verify: the projection vs the market's numbers, the
+    sim's cover/over rates against those numbers, the clearest unit
+    advantages from the stat table, and (when the intelligence layer ran)
+    its lines — today the injury veto. Statements, never hype — the same
+    register as :func:`deep_dive_caption`.
     """
     away, home = card.away_code, card.home_code
     parts: list[str] = []
+    for play in plays:
+        rule = play.rule
+        if rule is None:
+            continue
+        pos = play.position(away, home)
+        if play.market == "total" and play.point is not None:
+            pts = ((card.fair_total - play.point) if play.side == "over"
+                   else (play.point - card.fair_total))
+            parts.append(f"{pos}: model {card.fair_total:.1f}, {play.side} by "
+                         f"{pts:.1f}; {rule.name} ran {rule.record}.")
+        else:
+            parts.append(f"{pos}: {rule.name} ran {rule.record}.")
+    # The intel layer's lines — today the injury veto — sit right behind the
+    # play's argument: the band renders three lines and keeps the rest for
+    # the caption, and a veto is not the sentence to lose off the end.
+    for line in signals[:2]:
+        # The intel layer speaks in σ; the card's face lacks the glyph and
+        # "sd" reads fine in prose.
+        text = str(line).strip().replace("σ", " sd")
+        if text:
+            parts.append(text[0].upper() + text[1:] + ("" if text.endswith(".") else "."))
     fav = home if card.p_home_win >= 0.5 else away
     fav_p = card.p_home_win if fav == home else 1.0 - card.p_home_win
     core = (f"Model projects {away} {card.mu_away:.1f}–{home} {card.mu_home:.1f} "
@@ -466,26 +492,22 @@ def model_why(
             others = row.home_rank if row.advantage == "away" else row.away_rank
             edges.append(f"{row.label.lower()} ({who} #{theirs} vs #{others})")
         parts.append(f"Clearest unit edges: {'; '.join(edges)}.")
-    for line in signals[:2]:
-        # The intel layer speaks in σ; the card's face lacks the glyph and
-        # "sd" reads fine in prose.
-        text = str(line).strip().replace("σ", " sd")
-        if text:
-            parts.append(text[0].upper() + text[1:] + ("" if text.endswith(".") else "."))
     return " ".join(parts)
 
 
 def plays_from_bets(
     bets: Iterable[object],
     *,
-    tiers: Mapping[tuple[str, str, str], str] | None = None,
+    tiers: Mapping[tuple[str, str, str], str | RuleTier] | None = None,
 ) -> dict[str, tuple[PlayCall, ...]]:
     """Game-market slate bets → per-game :class:`PlayCall` tuples.
 
     ``bets`` is any iterable of :class:`~velocity.wagering.bet_log.Bet`-shaped
     records; prop bets (a ``player``) stay out — the card's props strip and
-    the prop slate own those. ``tiers`` optionally maps
-    ``(game_id, market, side)`` to the intelligence layer's tier letter.
+    the prop slate own those. ``tiers`` maps ``(game_id, market, side)`` to
+    the play's rule tier — a :class:`~velocity.wagering.tiers.RuleTier`
+    (``velocity.wagering.live.rule_tiers_for``), whose letter and record the
+    call then carries, or a bare letter.
     """
     tier_map = dict(tiers or {})
     out: dict[str, list[PlayCall]] = {}
@@ -496,6 +518,8 @@ def plays_from_bets(
         edge = None
         if getattr(bet, "p_fair", None) is not None:
             edge = float(bet.p_model - bet.p_fair)  # type: ignore[attr-defined]
+        tier = tier_map.get((gid, str(bet.market), str(bet.side)))  # type: ignore[attr-defined]
+        rule = tier if isinstance(tier, RuleTier) else None
         out.setdefault(gid, []).append(PlayCall(
             market=str(bet.market),  # type: ignore[attr-defined]
             side=str(bet.side),  # type: ignore[attr-defined]
@@ -504,7 +528,8 @@ def plays_from_bets(
             book=str(getattr(bet, "book", "")),
             stake=float(getattr(bet, "stake", 0.0)),
             edge=edge,
-            tier=tier_map.get((gid, str(bet.market), str(bet.side))),  # type: ignore[attr-defined]
+            tier=rule.tier if rule is not None else (tier if isinstance(tier, str) else None),
+            rule=rule,
         ))
     return {gid: tuple(calls) for gid, calls in out.items()}
 
@@ -579,6 +604,7 @@ def build_deep_dives(
             card, rows, p_cover, p_over,
             signals=tuple((why_signals or {}).get(card.game_id, ())),
             n_sims=card.n_sims,
+            plays=game_plays,
         )
         dives.append(DeepDive(
             card=card,

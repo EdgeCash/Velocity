@@ -3,10 +3,12 @@
 The public face of a slate run: one **MARKET vs MODEL** card per game. The
 market's consensus numbers sit on top as the benchmark; the model's numbers
 sit directly under them in equal type; the delta between the two is the
-content. A lean is stated only where the disagreement clears a fixed,
-published threshold — everything else renders "no edge", because a board
-where every cell has a play is a tout sheet, and the empty leans are what
-make the highlighted ones credible.
+content. A lean is stated only where the disagreement clears a rule with a
+walk-forward record (:mod:`velocity.wagering.tiers` — the wager lab's table,
+docs/OUTPUT_AUDIT.md §2.2) — everything else renders "no edge", because a
+board where every cell has a play is a tout sheet, and the empty leans are
+what make the highlighted ones credible. Markets the lab found no edge on
+(spreads, the moneyline) show the model's number and say so.
 
 The props strip repeats the same micro-grammar: **players to watch are chosen
 where the model most disagrees with the market's prop line** (when a board is
@@ -26,6 +28,7 @@ import pandas as pd
 
 from velocity.models.game_nfl import GameProjection
 from velocity.models.props_football import FootballPropSim
+from velocity.wagering.tiers import RuleTier, rules_for, tier_for
 
 # Prop markets a watch entry may come from, with display units. Kept to the
 # stats a casual reader recognizes on sight.
@@ -95,6 +98,9 @@ class PlayCall:
     stake: float
     edge: float | None = None
     tier: str | None = None
+    # The rule that admitted the play, with its record (None when the play
+    # came from a market no rule covers, or the slate ran without the table).
+    rule: RuleTier | None = None
 
     def position(self, away_code: str, home_code: str) -> str:
         """Just the position ("DET -3.5" / "OVER 47.5") — the badge text."""
@@ -113,12 +119,19 @@ class PlayCall:
                 if self.point is not None else f"{who} team total {self.side}"
         return f"{self.market} {self.side}"
 
-    def label(self, away_code: str, home_code: str) -> str:
-        """"DET -3.5 · -110 (bookA) · 2.1u" — the position as a bettor writes it."""
+    def label(self, away_code: str, home_code: str, *, record: bool = True) -> str:
+        """"DET -3.5 · -110 (bookA) · 2.1u · tier A" — the position as a bettor writes it.
+
+        With ``record`` the rule's name and walk-forward record follow the
+        tier (the caption's form); the deep dive's band, one line per play,
+        leaves it to the WHY text beside it.
+        """
         bits = [self.position(away_code, home_code),
                 f"{self.price:+.0f} ({self.book})", f"{self.stake:.1f}u"]
         if self.tier:
             bits.append(f"tier {self.tier}")
+        if record and self.rule is not None:
+            bits.append(f"{self.rule.name} {self.rule.record}")
         return " · ".join(bits)
 
 
@@ -148,19 +161,44 @@ class MarketView:
         return float(devig([self.ml_away, self.ml_home])[1])
 
 
-# Published lean thresholds — a disagreement below these renders "no edge".
-SPREAD_EDGE_PTS = 2.5
-TOTAL_EDGE_PTS = 3.0
-WIN_EDGE_PROB = 0.07
-
-
 @dataclass(frozen=True)
 class EdgeCall:
-    """One market's verdict strip: a lean label when the threshold fires."""
+    """One market's verdict strip: a lean label when a rule admits the number."""
 
     fired: bool
     label: str  # "DET +6.5" / "OVER 51.5" / "" — the lean at the market number
-    detail: str  # "model diff 4.5 pts" / "no edge"
+    detail: str  # "under by 4.3 · rule A · 55.6% on 340" / "no edge"
+    rule: RuleTier | None = None  # the rule that fired, with its record
+    points: float | None = None  # the disagreement in the side's direction
+
+
+def rule_call(league: str, market: str, side: str, points: float, label: str) -> EdgeCall:
+    """The verdict for one market: a lean only where a rule with a record admits it.
+
+    ``points`` is the model's disagreement with the market's number in the
+    side's direction (``velocity.wagering.slate.total_disagreement`` for a
+    total). The blanks say why they are blank: a market no rule covers (the
+    lab measured no edge on spreads or the moneyline), a side the league's
+    rule does not take (college overs), or a gap short of the rule's bar.
+    """
+    tier = tier_for(league, market, side, points)
+    if tier is not None:
+        return EdgeCall(
+            True, label,
+            f"{side} by {points:.1f} · rule {tier.tier} · {tier.short_record}",
+            rule=tier, points=points,
+        )
+    rules = rules_for(league, market)
+    if not rules:
+        return EdgeCall(False, "", "no rule with a record", points=points)
+    on_side = [t for t in rules if side in t.sides]
+    if not on_side:
+        return EdgeCall(False, "", f"no rule for {side}s", points=points)
+    bar = min(t.min_points for t in on_side)
+    if points <= 0:
+        return EdgeCall(False, "", "no edge", points=points)
+    return EdgeCall(False, "", f"{side} by {points:.1f} · below the {bar:g} bar",
+                    points=points)
 
 
 @dataclass(frozen=True)
@@ -180,6 +218,8 @@ class SocialCard:
     fair_total: float
     total_points_pmf: Mapping[int, float]  # simulated full-game total points
     n_sims: int = 0  # simulations behind every number — stated on the card
+    # Which league's rule table the leans read (velocity.wagering.tiers).
+    league: str = "nfl"
     watch: Sequence[WatchEntry] = field(default_factory=tuple)
     # The running graded record ("SEASON 41-38 · +6.2U"), carried on every card
     # so each graphic doubles as the receipt. None until a record exists.
@@ -210,43 +250,36 @@ class SocialCard:
         """The matrix's verdict row: one :class:`EdgeCall` per market.
 
         A lean is always stated **at the market's own number** (the bettable
-        thing), and fires only past the published thresholds. Missing market
-        numbers yield unfired calls with an em-dash detail — absence of a
-        board is not an edge.
+        thing), and fires only where a rule with a walk-forward record admits
+        the disagreement (:func:`rule_call`). Missing market numbers yield
+        unfired calls with an em-dash detail — absence of a board is not an
+        edge.
         """
         view = self.market_view or MarketView()
         none = EdgeCall(False, "", "—")
         out = {"spread": none, "total": none, "win": none}
 
         if view.spread_home is not None:
+            # diff > 0: the model likes the home side LESS than the market
+            # does, so the lean would be the away side at the away number.
             diff = self.fair_spread - view.spread_home
-            if diff >= SPREAD_EDGE_PTS:  # model likes home less than the market
-                out["spread"] = EdgeCall(
-                    True, f"{self.away_code} {-view.spread_home:+g}",
-                    f"model diff {abs(diff):.1f} pts")
-            elif diff <= -SPREAD_EDGE_PTS:
-                out["spread"] = EdgeCall(
-                    True, f"{self.home_code} {view.spread_home:+g}",
-                    f"model diff {abs(diff):.1f} pts")
+            if diff > 0:
+                side, label = "away", f"{self.away_code} {-view.spread_home:+g}"
             else:
-                out["spread"] = EdgeCall(False, "", "no edge")
+                side, label = "home", f"{self.home_code} {view.spread_home:+g}"
+            out["spread"] = rule_call(self.league, "spread", side, abs(diff), label)
         if view.total is not None:
             diff = self.fair_total - view.total
-            if abs(diff) >= TOTAL_EDGE_PTS:
-                side = "OVER" if diff > 0 else "UNDER"
-                out["total"] = EdgeCall(
-                    True, f"{side} {view.total:g}", f"model diff {abs(diff):.1f} pts")
-            else:
-                out["total"] = EdgeCall(False, "", "no edge")
+            side = "over" if diff > 0 else "under"
+            out["total"] = rule_call(self.league, "total", side, abs(diff),
+                                     f"{side.upper()} {view.total:g}")
         implied = view.implied_home_prob()
         if implied is not None:
+            # A moneyline rule would state its bar in probability, not points.
             diff = self.p_home_win - implied
-            if abs(diff) >= WIN_EDGE_PROB:
-                code = self.home_code if diff > 0 else self.away_code
-                out["win"] = EdgeCall(
-                    True, f"{code} ML", f"model diff {abs(diff):.0%}")
-            else:
-                out["win"] = EdgeCall(False, "", "no edge")
+            side = "home" if diff > 0 else "away"
+            code = self.home_code if diff > 0 else self.away_code
+            out["win"] = rule_call(self.league, "moneyline", side, abs(diff), f"{code} ML")
         return out
 
 
@@ -366,6 +399,7 @@ def build_social_cards(
     team_colors: Mapping[str, str] | None = None,
     plays_by_game: Mapping[str, Sequence[PlayCall]] | None = None,
     watch_by_game: Mapping[str, Sequence[WatchEntry]] | None = None,
+    league: str = "nfl",
 ) -> list[SocialCard]:
     """One :class:`SocialCard` per projected event, in board order.
 
@@ -377,7 +411,8 @@ def build_social_cards(
     tuples, worn as PLAY badges on the matrix. ``watch_by_game`` supplies
     pre-built :class:`WatchEntry` tuples per game — the path for leagues
     whose prop model isn't the football sim (MLB pitcher Ks) — and takes
-    precedence over the sim-built watch for those games.
+    precedence over the sim-built watch for those games. ``league`` picks
+    the rule table the leans read.
     """
     from velocity.wagering.live import NFL_TEAM_ALIASES, resolve_team
 
@@ -424,6 +459,7 @@ def build_social_cards(
                 fair_total=float(proj.fair_total()),
                 total_points_pmf=_pmf(total_points),
                 n_sims=int(proj.sim.home_score.shape[0]),
+                league=league,
                 watch=watch,
                 record_line=record_line,
                 market=market_strip(lines, gid, away_code, home_code),
@@ -545,11 +581,14 @@ def caption(card: SocialCard) -> str:
                           for p in card.plays)
         lines.append(f"The play: {calls}.")
     leans = [
-        f"{call.label} ({call.detail})"
+        (f"{call.label} (by {call.points:.1f} · rule {call.rule.tier}: "
+         f"{call.rule.name} {call.rule.record})")
+        if call.rule is not None and call.points is not None
+        else f"{call.label} ({call.detail})"
         for call in card.edges().values() if call.fired
     ]
     lines.append("Model lean: " + ("; ".join(leans) + "." if leans
-                                   else "no edge on this board."))
+                                   else "no rule with a record fires on this board."))
     lines.extend(
         (f"PLAY — {entry.player} ({entry.play}): {entry.fact()}."
          if entry.play else f"{entry.player}: {entry.fact()}.")

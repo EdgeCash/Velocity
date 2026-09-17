@@ -12,7 +12,7 @@ Three cards, one visual language:
   team-colored win split, then the heart of the card: the market's consensus
   numbers over the model's numbers in equal type (spread / total / win prob),
   a verdict strip that only wears color where disagreement clears the
-  published thresholds, a top-props strip in the same micro-grammar, and the
+  rule table, a top-props strip in the same micro-grammar, and the
   season receipt line. The market is the benchmark; the delta is the content.
 * **Sim Check** (post-game) — the actual result pinned on the pregame
   distribution, percentile as the hero number.
@@ -280,7 +280,7 @@ _COLS = (("spread", 0.335), ("total", 0.585), ("win", 0.825))
 
 def _matrix(fig: plt.Figure, card: SocialCard) -> None:
     """The heart of the card: MARKET on top, MODEL under it in equal type, and
-    a verdict strip that only wears the edge color past the thresholds."""
+    a verdict strip that only wears the edge color where a rule admits the number."""
     view = card.market_view or MarketView()
     heads = {"spread": "SPREAD", "total": "TOTAL", "win": "WIN PROB"}
     for key, cx in _COLS:
@@ -350,6 +350,8 @@ def _matrix(fig: plt.Figure, card: SocialCard) -> None:
             bits = [f"{staked.price:+.0f}", f"{staked.stake:.1f}u"]
             if staked.tier:
                 bits.append(f"tier {staked.tier}")
+            if staked.rule is not None:
+                bits.append(staked.rule.short_record)
             # The detail line sits inside the filled chip — dark ink, not dim.
             _text(fig, cx, 0.280, " · ".join(bits), color=BG, fontsize=11.5,
                   ha="center", fontweight="semibold")
@@ -428,7 +430,7 @@ def _matchup_footer_note(card: SocialCard) -> str:
         parts.append(f"lines: consensus of {view.books} {noun}")
     if view.captured is not None:
         parts.append(f"captured {view.captured.strftime('%b %-d %H:%M')} UTC")
-    parts.append("leans fire only past fixed thresholds · informational only")
+    parts.append("leans fire only on rules with a walk-forward record · informational only")
     return " · ".join(parts)
 
 

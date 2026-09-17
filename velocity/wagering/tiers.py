@@ -42,6 +42,17 @@ class RuleTier:
         return (f"{self.win_rate:.1%} over {self.n} bets, "
                 f"{self.seasons_cleared} of {self.seasons} seasons")
 
+    @property
+    def short_record(self) -> str:
+        """The record at chip width: ``"55.6% on 340"``."""
+        return f"{self.win_rate:.1%} on {self.n}"
+
+    @property
+    def name(self) -> str:
+        """The rule as a reader says it: ``"unders 4+"`` / ``"overs and unders 4+"``."""
+        sides = " and ".join(f"{s}s" for s in sorted(self.sides))
+        return f"{sides} {self.min_points:g}+"
+
 
 # The wager lab's records on the promoted chains (2026-09-17). Tier A is the
 # side of the rule with the stronger record; tier B the promoted rule's
@@ -58,6 +69,15 @@ RULE_TIERS: Mapping[str, tuple[RuleTier, ...]] = {
 }
 
 TIER_ORDER = {"A": 0, "B": 1, "C": 2}
+
+
+def rules_for(
+    league: str, market: str,
+    tiers: Mapping[str, Iterable[RuleTier]] | None = None,
+) -> tuple[RuleTier, ...]:
+    """Every rule with a record on this league's market, in table order."""
+    table = (tiers or RULE_TIERS).get(league, ())
+    return tuple(t for t in table if t.market == market)
 
 
 def tier_for(

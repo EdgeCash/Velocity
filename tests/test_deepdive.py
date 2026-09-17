@@ -250,6 +250,37 @@ def test_plays_from_bets_skips_props_and_maps_tiers() -> None:
     assert call.tier == "A"
     assert call.edge == pytest.approx(0.07)
     assert plays["g2"][0].tier is None
+    # The live path hands over RuleTiers (velocity.wagering.live.rule_tiers_for):
+    # the call carries the letter AND the rule with its record.
+    from velocity.wagering.tiers import RULE_TIERS
+
+    ruled = plays_from_bets(bets, tiers={("g2", "total", "under"): RULE_TIERS["nfl"][0]})
+    assert ruled["g2"][0].tier == "A"
+    assert ruled["g2"][0].rule is RULE_TIERS["nfl"][0]
+    assert ruled["g1"][0].rule is None
+
+
+def test_model_why_leads_with_the_play_and_its_record() -> None:
+    from velocity.report.deepdive import PlayCall, model_why
+    from velocity.wagering.tiers import RULE_TIERS
+
+    dive = build_deep_dives([_card()], {"g1": _projection()}, _games(), _plays())[0]
+    play = PlayCall("total", "under", 47.5, -110, "bookA", 2.0, tier="A",
+                    rule=RULE_TIERS["nfl"][0])
+    why = model_why(dive.card, dive.rows, dive.p_home_cover, dive.p_over,
+                    plays=(play,), signals=("VETO — QB out: KC P. Mahomes",),
+                    n_sims=4000)
+    # The disagreement in the side's direction, then the rule's record — first;
+    # the intel layer's veto right behind it, where the band's three lines
+    # still show it, and the projection detail after.
+    assert why.startswith(
+        f"UNDER 47.5: model {dive.card.fair_total:.1f}, under by "
+        f"{47.5 - dive.card.fair_total:.1f}; unders 4+ ran 55.6% over 340 bets, "
+        "9 of 15 seasons. VETO — QB out: KC P. Mahomes. Model projects")
+    # A play without a rule adds no lead line.
+    bare = model_why(dive.card, dive.rows, dive.p_home_cover, dive.p_over,
+                     plays=(PlayCall("spread", "home", -6.5, -110, "bookA", 2.0),))
+    assert bare.startswith("Model projects")
 
 
 def test_model_why_states_projection_market_and_evidence() -> None:
@@ -283,7 +314,8 @@ def test_build_deep_dives_attaches_plays_and_why() -> None:
     assert "Rest edge: KC 10d vs BUF 6d." in dive.why
     caption = deep_dive_caption(dive)
     assert "The play: KC -6.5 · -110 (bookA) · 2.0u · tier B." in caption
-    assert "Why: Model projects" in caption
+    # The intel line leads the snippet when no rule admitted the play.
+    assert "Why: Rest edge: KC 10d vs BUF 6d. Model projects" in caption
 
 
 def test_caption_renders_a_pass_verdict_when_no_plays() -> None:
