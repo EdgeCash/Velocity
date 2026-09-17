@@ -272,18 +272,30 @@ _NOTE_PAIRS = (("off_pass", "def_pass", "passing game", "pass defense"),
                ("off_rush", "def_rush", "running game", "run defense"))
 
 
-def split_name(full_name: str, code: str) -> tuple[str, str]:
+def split_name(full_name: str, code: str, mascot: str | None = None) -> tuple[str, str]:
     """``"Dallas Cowboys"`` → ``("Dallas", "Cowboys")``.
 
-    The nickname is the last word and the place is everything before it, which
-    is right for every club in the leagues this renders and wrong for a team
-    whose nickname is two words. There is no such team in the NFL or in the
-    FBS, so the simple rule stands until one appears; a name with no space at
-    all falls back to the club code as the place.
+    ``mascot``, when the identity source states it, is authoritative and the
+    place is whatever the name has left once it is removed.
+
+    Without one the nickname is the last word and the place is everything
+    before it. That is right for all 32 NFL clubs, whose nicknames are every
+    one a single word, and WRONG for a great many college teams: Crimson Tide,
+    Fighting Irish, Blue Devils, Tar Heels, Yellow Jackets and Horned Frogs all
+    split into a stray adjective and a fragment ("Alabama Crimson" / "Tide").
+
+    So the fallback is a fallback, not a rule that happens to hold. College
+    identity comes from CFBD, which states school and mascot in separate
+    fields; pass the mascot and none of this guessing applies. A name with no
+    space at all falls back to the club code as the place.
     """
-    parts = str(full_name).split()
+    name = str(full_name)
+    if mascot:
+        head = name[: -len(mascot)].strip() if name.endswith(mascot) else name
+        return (head or code), mascot
+    parts = name.split()
     if len(parts) < 2:
-        return code, str(full_name)
+        return code, name
     return " ".join(parts[:-1]), parts[-1]
 
 
@@ -472,6 +484,7 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
     roster: pd.DataFrame | None = None,
     team_names: Mapping[str, str] | None = None,
     espn_ids: Mapping[str, int] | None = None,
+    mascots: Mapping[str, str] | None = None,
     venue_by_game: Mapping[str, str] | None = None,
     notes_by_game: Mapping[str, Sequence[str]] | None = None,
     generated_at: pd.Timestamp | None = None,
@@ -512,7 +525,7 @@ def build_matchup_cards(  # noqa: PLR0913 - one graphic, assembled from the slat
         for code, full_name in ((card.away_code, card.away_name),
                                 (card.home_code, card.home_name)):
             key = names.get(code, code)
-            city, nickname = split_name(full_name, code)
+            city, nickname = split_name(full_name, code, (mascots or {}).get(code))
             sides.append(TeamSide(
                 code=code, city=city, nickname=nickname,
                 record=_record(scoring, key) if not scoring.empty else "",

@@ -297,10 +297,47 @@ def test_form_games_without_results_is_empty() -> None:
     ("Ohio State Buckeyes", "Ohio State", "Buckeyes"),
     ("DAL", "DAL", "DAL"),  # a bare code falls back rather than splitting
 ])
-def test_split_name(full: str, city: str, nickname: str) -> None:
+def test_split_name_without_a_mascot_takes_the_last_word(
+        full: str, city: str, nickname: str) -> None:
     from velocity.report.matchup import split_name
 
     assert split_name(full, "DAL") == (city, nickname)
+
+
+@pytest.mark.parametrize(("full", "mascot", "city"), [
+    ("Alabama Crimson Tide", "Crimson Tide", "Alabama"),
+    ("Notre Dame Fighting Irish", "Fighting Irish", "Notre Dame"),
+    ("Duke Blue Devils", "Blue Devils", "Duke"),
+    ("North Carolina Tar Heels", "Tar Heels", "North Carolina"),
+    ("Georgia Tech Yellow Jackets", "Yellow Jackets", "Georgia Tech"),
+    ("TCU Horned Frogs", "Horned Frogs", "TCU"),
+])
+def test_split_name_uses_a_stated_mascot(full: str, mascot: str, city: str) -> None:
+    """Two-word college nicknames are common, and the last-word rule mangles them.
+
+    Without the mascot every one of these splits into a stray adjective and a
+    fragment -- "Alabama Crimson" over "Tide" -- which is what the card printed
+    before CFBD's own mascot field was carried through.
+    """
+    from velocity.report.matchup import split_name
+
+    assert split_name(full, "ALA", mascot) == (city, mascot)
+    # ...and the fallback really does get these wrong, which is why it is only
+    # ever a fallback.
+    assert split_name(full, "ALA") != (city, mascot)
+
+
+def test_split_name_mascot_that_is_not_a_suffix_still_wins() -> None:
+    # A display name that does not end in the mascot (a provider spelling
+    # difference) keeps the name as the place rather than slicing it blindly.
+    from velocity.report.matchup import split_name
+
+    assert split_name("Miami (FL)", "MIA", "Hurricanes") == ("Miami (FL)", "Hurricanes")
+
+
+def test_builder_takes_the_nickname_from_the_mascot_map() -> None:
+    built = _build(card=_social(), mascots={"DET": "Lions", "DAL": "Cowboys"})[0]
+    assert (built.home.city, built.home.nickname) == ("Detroit", "Lions")
 
 
 @pytest.mark.parametrize(("n", "expected"), [

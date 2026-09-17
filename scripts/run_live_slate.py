@@ -2908,8 +2908,10 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
         aliases = None
         team_colors = None
         code_to_team: dict[str, str] = {}
+        code_to_mascot: dict[str, str] = {}
         if args.league == "ncaaf":
-            aliases, team_colors, code_to_team = _ncaaf_identity(events, asset_dir)
+            aliases, team_colors, code_to_team, code_to_mascot = _ncaaf_identity(
+                events, asset_dir)
         elif args.league in ("mlb", "wnba", "ncaab", "nhl"):
             # Non-NFL identity: abbreviation + brand color blocks, no marks —
             # the NCAAF licensing posture (velocity/report/league_identity).
@@ -3046,7 +3048,7 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
                 week_label=_slate_week_label(games),
                 league=args.league,
                 props_by_game=props_by_game, roster=prop_roster,
-                team_names=code_to_team,
+                team_names=code_to_team, mascots=code_to_mascot,
                 # The stamp is left to the builder's default (now, UTC), which
                 # is what the line on the card claims: when this graphic was
                 # generated, not when the slate run began.
@@ -3085,9 +3087,10 @@ def _write_social_cards(  # noqa: PLR0913 - a report writer with several inputs
 
 def _ncaaf_identity(
     events: pd.DataFrame, asset_dir: Path
-) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     """Provider-name → school-abbreviation aliases, abbreviation → color map,
-    and abbreviation → school (the datasets' team key, for the deep dive).
+    abbreviation → school (the datasets' team key, for the deep dive), and
+    abbreviation → mascot (the matchup card's nickname line).
 
     Built from the cached CFBD identity table (``CFBD_API_KEY``); provider
     names bridge to schools via the same nickname-prefix logic the slate
@@ -3106,6 +3109,7 @@ def _ncaaf_identity(
     aliases = {name: name for name in provider_names}
     team_colors: dict[str, str] = {}
     code_to_team: dict[str, str] = {}
+    code_to_mascot: dict[str, str] = {}
     meta = ncaaf_team_index(os.environ.get("CFBD_API_KEY"), asset_dir)
     if meta:
         to_school = nickname_aliases(sorted(provider_names), sorted(meta))
@@ -3115,7 +3119,11 @@ def _ncaaf_identity(
             m.abbreviation: m.color for m in meta.values() if m.color
         }
         code_to_team = {m.abbreviation: school for school, m in meta.items()}
-    return aliases, team_colors, code_to_team
+        # The mascot cannot be recovered by splitting a display name -- college
+        # nicknames are routinely two words -- so it rides along from CFBD,
+        # which states school and mascot separately.
+        code_to_mascot = {m.abbreviation: m.mascot for m in meta.values() if m.mascot}
+    return aliases, team_colors, code_to_team, code_to_mascot
 
 
 def _parlay_slate(
