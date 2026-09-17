@@ -341,6 +341,64 @@ Worth building:
 | Trend angles ("division dogs 23-6") | Mined small samples; documented decay |
 | A single "best" projection source | Ensembles beat every individual system, everywhere it's been measured |
 | Chasing >58% win rates | No credible documentation of anyone sustaining it at -110; treat any internal result >56% at volume as a leak until proven otherwise |
+| A per-game model-confidence score | Measured on our own walk-forward and found to have nothing behind it — see §6.1 |
+
+### 6.1 Per-game confidence: measured, then declined (2026-09)
+
+The matchup card was designed to carry a 0–10 "model confidence" per market —
+a number stating how sure the MODEL is about its projection, kept strictly
+separate from whether a bet is worth making. The separation is sound and still
+is: a coin-flip spread can sit on a projection a model is entitled to be
+certain of, and a confidence number that reads the closing line is a
+disagreement number wearing a different label.
+
+The number itself does not survive measurement.
+
+**Method.** `walk_forward` already makes a leak-safe projection for every game
+with a final — each fit on plays strictly before its own week. Recording the
+model's own state beside each one gives 15,731 held-out-by-construction rows:
+3,904 NFL (2011–2026) and 11,827 NCAAF (2015–2026). Candidate drivers were
+all model-internal (the sim's margin/total dispersion, the size of the
+projected margin, how much history the fit had, the week number), tested
+against `|actual − projected|` for margin and total.
+
+**Result.** Nothing predicts it.
+
+| driver | NFL r vs \|marg err\| | NFL r vs \|tot err\| | NCAAF r vs \|marg err\| | NCAAF r vs \|tot err\| |
+|---|---|---|---|---|
+| `sd_margin` | −0.035 | +0.016 | +0.000 | +0.025 |
+| `sd_total` | −0.025 | +0.003 | −0.010 | +0.018 |
+| `\|mu_margin\|` | +0.019 | −0.009 | +0.015 | −0.032 |
+| `train_games` | −0.012 | −0.002 | +0.014 | −0.027 |
+| `week` | +0.017 | +0.000 | −0.023 | +0.019 |
+
+Every |r| < 0.04, against a per-game error sd of 8.75 (NFL) and 11.60 (NCAAF).
+Quintiles of the sim's own dispersion run the WRONG way in the NFL — the
+highest-dispersion fifth misses by 0.89 points *less* than the lowest. Size of
+the projected margin does not separate either (NFL Q5−Q1 = +0.12 across a
+0.6 → 8.0 point spread of projected margins).
+
+**Why, and this is the part worth keeping.** The sim's standard deviations are
+near-constant by construction. `sd_margin` has a coefficient of variation of
+**0.018 (NFL) / 0.024 (NCAAF)** — under 2.5% of movement across sixteen
+seasons. So this is not a calibration that needs fitting: the model does not
+produce a per-game uncertainty estimate at all, and there is nothing there to
+calibrate.
+
+**Decision.** No confidence score ships. A 0–10 number on these inputs would
+sit near one value forever while reading to a viewer as meaning, and would not
+survive being checked against outcomes later — the same failure as a health
+check that passes because it never ran. The card prints the distributions
+instead: the curve *is* the uncertainty, and its width is visible without a
+score implying a precision the model does not have.
+
+**What would change this.** Making the sim express genuine per-game
+uncertainty first — rating uncertainty for thin-sample teams, quarterback
+availability, pace variance — and only then asking whether it calibrates.
+That is model work, not a display feature. Note the model is not weak at what
+it does do: Brier 0.237 vs 0.247 baseline (NFL) and 0.200 vs 0.237 (NCAAF).
+It beats the base rate at picking winners; it just cannot say which of its
+projections to trust more than the others.
 
 ---
 

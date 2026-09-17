@@ -188,21 +188,6 @@ def _curve(fig: plt.Figure, rect: tuple[float, float, float, float],
     ax.spines["bottom"].set_color(EDGE)
 
 
-def _meter(fig: plt.Figure, x: float, y: float, w: float, value: float) -> None:
-    """A 0-10 confidence meter — the track, and how much of it is filled."""
-    ax = fig.add_axes((0, 0, 1, 1))
-    ax.axis("off")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.set_zorder(3)
-    for width, color in ((w, TRACK), (w * max(min(value, 10.0), 0.0) / 10.0, MODEL)):
-        if width <= 0:
-            continue
-        ax.add_patch(FancyBboxPatch(
-            (x, y), width, 0.0048, boxstyle="round,pad=0,rounding_size=0.002",
-            mutation_aspect=ASPECT, facecolor=color, edgecolor="none"))
-
-
 def _rank_track(fig: plt.Figure, card: MatchupCard, key: str,
                 x: float, y: float, w: float) -> None:
     """One measure as a 1→N track with both clubs on it, each dot labelled."""
@@ -262,35 +247,35 @@ def _market_panel(fig: plt.Figure, card: MatchupCard, key: str, label: str,
                   rect: tuple[float, float, float, float],
                   pmf: Mapping[int, float], market: float | None, model: float,
                   market_text: str, model_text: str) -> None:
-    """One market's block: its curve, its three numbers, its confidence, its lean."""
+    """One market's block: its curve, its three numbers, its lean.
+
+    The curve takes the room a confidence meter used to, which is the right
+    trade even before the measurement that removed the meter: the distribution
+    is the argument, and a taller one shows the width of the belief the gap
+    sits in.
+    """
     x, y, w, h = rect
     _panel(fig, rect)
     _text(fig, x + 0.020, y + h - 0.020, label, color=INK, fontsize=13,
           fontweight="bold")
     _text(fig, x + w - 0.020, y + h - 0.020, f"{card.n_sims:,} sims",
           color=INK_DIM, fontsize=10.5, ha="right")
-    _curve(fig, (x + 0.020, y + h - 0.115, w - 0.040, 0.082), pmf, market, model)
+    _curve(fig, (x + 0.020, y + 0.077, w - 0.040, 0.113), pmf, market, model)
 
     lean = card.spread_lean() if key == "spread" else card.total_lean()
     diff = "—" if market is None else f"{abs(model - market):.1f} pts"
     for i, (head, body) in enumerate((("MARKET", market_text),
                                       ("MODEL", model_text), ("DIFF", diff))):
         cx = x + 0.020 + i * ((w - 0.040) / 3.0)
-        _text(fig, cx, y + h - 0.140, head,
+        _text(fig, cx, y + 0.052, head,
               color=MODEL if head == "MODEL" else INK_DIM, fontsize=9)
-        _display(fig, cx, y + h - 0.164, body, color=INK, fontsize=19)
+        _display(fig, cx, y + 0.028, body, color=INK, fontsize=19)
 
-    conf = card.confidence.get(key)
-    if conf is not None:
-        _text(fig, x + 0.020, y + 0.048, "MODEL CONFIDENCE", color=INK_DIM, fontsize=9)
-        _meter(fig, x + 0.020, y + 0.036, w - 0.105, float(conf))
-        _display(fig, x + w - 0.020, y + 0.030, f"{conf:.1f}", color=INK,
-                 fontsize=24, ha="right")
     tone = CAUTION if lean.wide else (INK if lean.fired else INK_DIM)
     text = f"Lean {lean.label} · {lean.detail}" if lean.fired else lean.detail.capitalize()
     if lean.wide:
         text += " · unusually wide"
-    _text(fig, x + 0.020, y + 0.014, text, color=tone, fontsize=11.5)
+    _text(fig, x + 0.020, y + 0.008, text, color=tone, fontsize=11.5)
 
 
 def render_matchup_card(card: MatchupCard, path: Path | str,
