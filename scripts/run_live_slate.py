@@ -370,6 +370,17 @@ def _build_projection(
         plays = load_plays(plays_path)
         cutoff = int(plays["season"].max()) - 3
         plays = plays[plays["season"] >= cutoff]
+        if resolve_plays(args.nfl_plays, "nfl") == "scrimmage":
+            # The offense's own snaps only (velocity.features.team
+            # .scrimmage_plays): a quarter of the committed frame is kicks,
+            # returns, no-plays, kneels and spikes, and the unfiltered fit
+            # docked the teams that kneel most (docs/PROJECTION_AUDIT.md §2.1).
+            from velocity.features.team import scrimmage_plays
+
+            before = len(plays)
+            plays = scrimmage_plays(plays, "nfl")
+            print(f"NFL plays: {before - len(plays)} non-scrimmage rows dropped, "
+                  f"{len(plays)} snaps kept")
         weights = recency_weights(plays, DEFAULT_RECENCY_HALF_LIFE)
         if "passer_player_id" in plays.columns and plays["passer_player_id"].notna().any():
             # The promoted fit (docs/MODEL_LAB.md Round 3): QB decomposed out
@@ -436,18 +447,41 @@ def _build_projection(
         # deviations were centered on — every projected total ran ~2.3 pts
         # high over fifteen walk-forward seasons. Shift base_points so the
         # training window's mean projected total matches what it scored.
+        # The training window's games: the level and the scale both fit
+        # through the model on the trailing seasons of it.
+        window = load_games(_find_games(folder), league="nfl")
+        window = window[window["season"] >= cutoff]
         if resolve_nfl_level(args.nfl_level) == "fit":
             from velocity.models.level import calibrate_level, level_shift
 
             # The trailing two seasons (docs/MODEL_LAB.md, the sim-shape
             # round): the whole four-season window lagged the era by +0.7.
-            window = load_games(_find_games(folder), league="nfl")
-            window = window[window["season"] >= cutoff]
             shift = level_shift(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
             nfl_model = calibrate_level(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
             kind += f", level {nfl_model.config.base_points:.2f} ({shift:+.2f} vs 22.5)"
             print(f"NFL level: base {nfl_model.config.base_points:.2f} pts/team "
                   f"(the fit ran {shift:+.2f} vs the constant on {len(window)} games)")
+
+        # The scale (velocity.models.level): the level fixed the intercept;
+        # the residual bank says the deviations run wide — the total's by
+        # half. Fitted on the banked out-of-sample rows, applied under the
+        # situational wrappers so a bye is still worth its point.
+        core: object = nfl_model
+        if resolve_scale(args.nfl_scale, "nfl") == "fit":
+            from velocity.models.level import scale_model
+            from velocity.models.residuals import load_residual_frame
+
+            bank = load_residual_frame("nfl")
+            if bank is None:
+                print("no residual bank for nfl; projecting unscaled")
+            else:
+                core, calibration = scale_model(
+                    nfl_model, bank, window, nfl_model.config.sim,
+                    anchor_seasons=NFL_LEVEL_SEASONS)
+                kind += (f", scale ×{calibration.margin_slope:.2f} margin "
+                         f"/ ×{calibration.total_slope:.2f} total")
+                print(f"NFL scale: margin ×{calibration.margin_slope:.3f}, total "
+                      f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
 
         # Rest spots (docs/MODEL_LAB.md Round 4): bye +1.0 / short week −1.0 on
         # top of the fit — small, consistent across every tested grid.
@@ -455,7 +489,7 @@ def _build_projection(
 
         if schedule is None:
             schedule = load_games(_find_games(folder), league="nfl")
-        rest_model = RestAdjustedModel(nfl_model, schedule)
+        rest_model = RestAdjustedModel(core, schedule)  # type: ignore[arg-type]
 
         # Wind on totals (Round 5 constants, live forecast): best-effort — a
         # failed forecast fetch just leaves totals unadjusted.
@@ -665,6 +699,13 @@ def _build_projection(
         from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
 
         plays = load_plays(ncaaf_plays)
+        if resolve_plays(args.ncaaf_plays, "ncaaf") == "scrimmage":
+            from velocity.features.team import scrimmage_plays
+
+            before = len(plays)
+            plays = scrimmage_plays(plays, "ncaaf")
+            print(f"NCAAF plays: {before - len(plays)} non-scrimmage rows dropped, "
+                  f"{len(plays)} snaps kept")
         cells = compress_plays(plays)
         base = ncaaf_base_points(games)
         epa_model = NFLGameModel(
@@ -686,6 +727,20 @@ def _build_projection(
         model = BlendedGameModel(epa_model, scores_model, 0.5, sim)
         kind = (f"EPA×scores blend (λ50/λ{ridge:g}, w=0.5, "
                 f"base {base:.1f}) on {len(plays)} plays")
+        if resolve_scale(args.ncaaf_scale, "ncaaf") == "fit":
+            from velocity.models.level import scale_model
+            from velocity.models.residuals import load_residual_frame
+
+            bank = load_residual_frame("ncaaf")
+            if bank is None:
+                print("no residual bank for ncaaf; projecting unscaled")
+            else:
+                model, calibration = scale_model(
+                    model, bank, games, sim, anchor_seasons=NFL_LEVEL_SEASONS)
+                kind += (f", scale ×{calibration.margin_slope:.2f} margin "
+                         f"/ ×{calibration.total_slope:.2f} total")
+                print(f"NCAAF scale: margin ×{calibration.margin_slope:.3f}, total "
+                      f"×{calibration.total_slope:.3f} on {calibration.n} banked games")
 
     print(f"{args.league.upper()} ratings: {kind}, {len(games)} games")
 
@@ -722,6 +777,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-level", choices=["fit", "constant"], default=None,
                         help="NFL scoring level: fitted through the model on the training "
                              "window, or the 22.5 constant (default: fit)")
+    parser.add_argument("--nfl-plays", choices=["scrimmage", "all"], default=None,
+                        help="which plays the NFL ratings fit sees: the offense's own "
+                             "snaps, or every labelled play including kicks, kneels and "
+                             "no-plays (default: the lab's pick)")
+    parser.add_argument("--ncaaf-plays", choices=["scrimmage", "all"], default=None,
+                        help="the same choice for the college blend's EPA half "
+                             "(default: the lab's pick)")
+    parser.add_argument("--nfl-scale", choices=["fit", "off"], default=None,
+                        help="rescale the NFL projection's margin and total deviations by "
+                             "the slopes fitted on the residual bank "
+                             "(velocity.models.level), or leave them (default: the lab's pick)")
+    parser.add_argument("--ncaaf-scale", choices=["fit", "off"], default=None,
+                        help="the same for the college blend (default: the lab's pick)")
     parser.add_argument("--sim-shape", choices=["normal", "empirical"], default=None,
                         help="football sim draw: bivariate normal, or the banked "
                              "walk-forward residual pool (default: the gate's pick per league)")
@@ -771,6 +839,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stake NCAAF moneylines (default off — walk-forward tested "
                              "2021–2025 and negative in every price bucket, "
                              "docs/BACKTEST_NCAAF.md S3)")
+    # A college game with an FCS side is priced and graded but not staked:
+    # the promoted totals filter pays on FBS-vs-FBS games (55.4% at ≥6 since
+    # 2022) and loses on FBS-vs-FCS ones (47.4% on 152), where one side's
+    # rating rests on a handful of games (docs/PROJECTION_AUDIT.md §2.3).
+    parser.add_argument("--ncaaf-fcs", action=argparse.BooleanOptionalAction, default=False,
+                        help="stake college games with an FCS side (default off: paper)")
     # Paper posture — priced, logged and graded for CLV, never staked. Team
     # totals stay paper until banked posted closes calibrate their gate; the
     # content-posture leagues (NCAAB, NHL, WNBA — no promoted edge) run paper
@@ -1199,6 +1273,22 @@ def resolve_ncaaf_level(explicit: str | None) -> str:
     return explicit or DEFAULT_NCAAF_LEVEL
 
 
+# Which plays the ratings fits see (velocity.features.team.scrimmage_plays)
+# and whether the projection's deviations are rescaled by the residual bank's
+# slopes (velocity.models.level.ScaleCalibration). Both wait on their lab
+# tables (docs/MODEL_LAB.md); "all" / "off" is the model as it was.
+DEFAULT_PLAYS_BY_LEAGUE = {"nfl": "all", "ncaaf": "all"}
+DEFAULT_SCALE_BY_LEAGUE = {"nfl": "off", "ncaaf": "off"}
+
+
+def resolve_plays(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_PLAYS_BY_LEAGUE.get(league, "all")
+
+
+def resolve_scale(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_SCALE_BY_LEAGUE.get(league, "off")
+
+
 def resolve_sim_shape(explicit: str | None, league: str) -> str:
     return explicit or DEFAULT_SIM_SHAPE_BY_LEAGUE.get(league, "normal")
 
@@ -1249,6 +1339,40 @@ def resolve_paper(explicit: bool | None, league: str) -> bool:
     if explicit is not None:
         return explicit
     return DEFAULT_PAPER_BY_LEAGUE.get(league, False)
+
+
+def fbs_teams(folder: Path) -> set[str]:
+    """The FBS programs, as the latest committed SP+ season rates them."""
+    sp_file = folder / "sp_ratings.parquet"
+    if not sp_file.exists():
+        return set()
+    sp = pd.read_parquet(sp_file, columns=["season", "team"])
+    if sp.empty:
+        return set()
+    latest = sp[sp["season"] == sp["season"].max()]
+    return set(latest["team"].astype(str))
+
+
+def fcs_paper_games(
+    args: argparse.Namespace, projections: Mapping[str, GameProjection]
+) -> dict[str, str]:
+    """``{game_id: reason}`` for the college games with an FCS side, unless staked.
+
+    The FBS list is the latest SP+ season's; with no ratings file on disk
+    nothing is papered, and the run says nothing — a missing prior is a
+    build gap, not a policy.
+    """
+    if args.league != "ncaaf" or getattr(args, "ncaaf_fcs", False) or not args.data:
+        return {}
+    fbs = fbs_teams(Path(args.data))
+    if not fbs:
+        return {}
+    out: dict[str, str] = {}
+    for gid, proj in projections.items():
+        if proj.home_team not in fbs or proj.away_team not in fbs:
+            side = proj.away_team if proj.home_team in fbs else proj.home_team
+            out[str(gid)] = f"FCS side {side}: totals 47% at the filter, no promoted edge"
+    return out
 
 
 def resolve_paper_markets(args: argparse.Namespace) -> frozenset[str]:
@@ -1602,6 +1726,13 @@ def main() -> None:
         projections, unresolved = project_board(
             events, project, known_teams, aliases, neutral_by_game=neutral
         )
+        paper_games = fcs_paper_games(args, projections)
+        if paper_games:
+            from dataclasses import replace as _replace
+
+            print(f"FCS opponents: {len(paper_games)} game(s) priced and graded, staked at "
+                  "zero (--ncaaf-fcs stakes them)")
+            cfg = _replace(cfg, paper_games=paper_games)
         canonical = canonicalize_sides(lines, events)
         canonical = canonical[canonical["game_id"].astype(str).isin(projections)]
         games_min = events[["game_id", "kickoff"]].copy()

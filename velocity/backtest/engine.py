@@ -20,6 +20,7 @@ drawdown) — the full acceptance report for a phase.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Protocol
@@ -41,7 +42,9 @@ from velocity.util.seed import DEFAULT_SEED, make_rng
 from velocity.wagering.slate import SlateConfig, build_slate
 
 # A model exposes just this: project a matchup into a priced GameProjection.
-ModelFactory = Callable[[pd.DataFrame], "ProjectionModel"]
+# A factory takes the training frame; one that also declares a keyword-only
+# ``predicting`` is handed the ``(season, week)`` it is about to project.
+ModelFactory = Callable[..., "ProjectionModel"]
 
 
 class ProjectionModel(Protocol):
@@ -94,21 +97,31 @@ def walk_forward(
     ledger_frames: list[pd.DataFrame] = []
     curve_rows: list[dict[str, object]] = []
 
+    # A factory that declares ``predicting`` is told which (season, week) it is
+    # about to project. That is the knowledge point a leak gate needs: a prior
+    # built from last season's FINAL ratings may enter only once that season
+    # is over, and the training slice alone cannot say so — during bowl
+    # season the slice already holds postseason rows of the season being
+    # projected. Rest and weather wrappers get the same answer from the
+    # kickoff below; a prior gets it from here.
+    wants_predicting = "predicting" in inspect.signature(model_factory).parameters
+
     for season, week in points.itertuples(index=False):
         before_week = (plays["season"] == season) & (plays["week"] < week)
         train = plays[(plays["season"] < season) | before_week]
         if train["game_id"].nunique() < config.min_train_games:
             continue
 
-        model = model_factory(train)
+        model = (
+            model_factory(train, predicting=(int(season), int(week)))
+            if wants_predicting else model_factory(train)
+        )
         week_games = played[(played["season"] == season) & (played["week"] == week)]
         rng = make_rng(config.seed + int(week))
 
         # Schedule-aware models (rest spots) take the game's kickoff; plain
         # models keep the two-team signature. Rest is public schedule
         # knowledge, so passing the kickoff is not leakage.
-        import inspect
-
         accepts_kickoff = "kickoff" in inspect.signature(model.project).parameters
 
         projections: dict[str, GameProjection] = {}

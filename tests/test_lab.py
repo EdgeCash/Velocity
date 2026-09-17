@@ -873,3 +873,196 @@ def test_situational_wrappers_stack_without_colliding() -> None:
     bare = WeatherAdjustedModel(_Base(), weather, threshold_mph=15.0, points_per_mph=0.15)
     bare.project("GB", "CHI", kickoff=kickoff)
     assert captured["home_bonus"] == pytest.approx(-1.5)
+
+
+def _scored_frames(seed: int = 3, n: int = 300):
+    """Games with closes, and a projections ledger keyed to them."""
+    rng = np.random.default_rng(seed)
+    margin = rng.normal(0.0, 13.0, n)
+    total = rng.normal(45.0, 13.0, n)
+    home = np.rint((total + margin) / 2.0)
+    away = np.rint((total - margin) / 2.0)
+    games = pd.DataFrame({
+        "game_id": [f"g{i}" for i in range(n)],
+        "home_score": home, "away_score": away,
+        # The close is the truth plus market noise.
+        "spread_line": (home - away) + rng.normal(0.0, 10.0, n),
+        "total_line": (home + away) + rng.normal(0.0, 10.0, n),
+    })
+    return games, rng
+
+
+def test_score_accuracy_perfect_model_scores_zero_and_carries_all_the_information() -> None:
+    from velocity.backtest.lab import score_accuracy
+
+    games, _rng = _scored_frames()
+    projections = pd.DataFrame({
+        "game_id": games["game_id"],
+        "mu_home": games["home_score"], "mu_away": games["away_score"],
+        "fair_spread": -(games["home_score"] - games["away_score"]),
+        "fair_total": games["home_score"] + games["away_score"],
+    })
+    out = score_accuracy(projections, games)
+    assert out["n_scored"] == len(games)
+    assert out["rmse_margin"] == pytest.approx(0.0, abs=1e-9)
+    assert out["rmse_total"] == pytest.approx(0.0, abs=1e-9)
+    assert out["close_rmse_margin"] > 5.0  # the close carries its noise
+    # actual = close + 1·(model − close) exactly: the model is the forecast.
+    assert out["info_w_margin"] == pytest.approx(1.0, abs=1e-6)
+    assert out["info_w_total"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_score_accuracy_model_equal_to_the_close_has_no_information_to_weigh() -> None:
+    from velocity.backtest.lab import score_accuracy
+
+    games, _rng = _scored_frames()
+    mu_home = (games["total_line"] + games["spread_line"]) / 2.0
+    mu_away = (games["total_line"] - games["spread_line"]) / 2.0
+    projections = pd.DataFrame({
+        "game_id": games["game_id"], "mu_home": mu_home, "mu_away": mu_away,
+        "fair_spread": -games["spread_line"], "fair_total": games["total_line"],
+    })
+    out = score_accuracy(projections, games)
+    assert out["rmse_margin"] == pytest.approx(out["close_rmse_margin"])
+    assert out["rmse_total"] == pytest.approx(out["close_rmse_total"])
+    assert np.isnan(out["info_w_margin"]) and np.isnan(out["info_w_total"])
+
+
+def test_score_accuracy_falls_back_to_the_sim_medians_and_tolerates_no_lines() -> None:
+    from velocity.backtest.lab import score_accuracy
+
+    games, _rng = _scored_frames(n=40)
+    projections = pd.DataFrame({
+        "game_id": games["game_id"],
+        "fair_spread": -(games["home_score"] - games["away_score"]) + 3.0,  # 3 pts off
+        "fair_total": games["home_score"] + games["away_score"],
+    })
+    out = score_accuracy(projections, games.drop(columns=["spread_line", "total_line"]))
+    assert out["rmse_margin"] == pytest.approx(3.0)
+    assert out["rmse_total"] == pytest.approx(0.0, abs=1e-9)
+    assert np.isnan(out["close_rmse_margin"]) and np.isnan(out["info_w_total"])
+
+
+def test_scrimmage_plays_keeps_only_the_offenses_own_snaps() -> None:
+    from velocity.features.team import scrimmage_plays
+
+    nfl = pd.DataFrame({
+        "play_type": ["pass", "run", "kickoff", "punt", "field_goal", "extra_point",
+                      "no_play", "qb_kneel", "qb_spike", None],
+        "epa": [0.1] * 10,
+    })
+    kept = scrimmage_plays(nfl, "nfl")
+    assert list(kept["play_type"]) == ["pass", "run"]
+
+    college = pd.DataFrame({
+        "play_type": ["Rush", "Pass Reception", "Pass Incompletion", "Sack",
+                      "Interception Return Touchdown", "Fumble Return Touchdown", "Safety",
+                      "Kickoff Return Touchdown", "Punt Return Touchdown", "Field Goal Good",
+                      "Blocked Punt Touchdown", "End Period", "End of Regulation", "Penalty",
+                      "placeholder", None],
+        "epa": [0.1] * 16,
+    })
+    kept = scrimmage_plays(college, "ncaaf")
+    assert list(kept["play_type"]) == [
+        "Rush", "Pass Reception", "Pass Incompletion", "Sack",
+        "Interception Return Touchdown", "Fumble Return Touchdown", "Safety"]
+
+    # No label column: nothing to filter on, nothing dropped.
+    bare = pd.DataFrame({"epa": [0.1, 0.2]})
+    assert scrimmage_plays(bare, "nfl") is bare
+
+
+def test_schedule_starter_model_prices_the_announced_passer() -> None:
+    from velocity.backtest.lab import ScheduleStarterModel
+    from velocity.features.team import QBTeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.simulate import SimConfig
+
+    ratings = QBTeamRatings(
+        offense={"A": 0.0, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+        qb={"star": 0.2, "backup": -0.2}, starters={"A": "backup", "B": "star"},
+        pass_rate={"A": 0.5, "B": 0.5}, league_epa=0.0, ridge_lambda=200.0,
+        qb_lambda=300.0, n_plays=10, teams=("A", "B"),
+    )
+    model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=500)))
+    schedule = pd.DataFrame({
+        "home_team": ["A"], "away_team": ["B"], "kickoff": [pd.Timestamp("2025-09-07 17:00")],
+        "home_qb_id": ["star"], "away_qb_id": [None],
+    })
+    wrapped = ScheduleStarterModel(model, schedule)
+    rng = np.random.default_rng(0)
+    # The schedule names A's star: +0.2 × 0.5 × 63 = +6.3 over the detected backup (−6.3).
+    named = wrapped.project("A", "B", kickoff=pd.Timestamp("2025-09-07 20:00"), rng=rng)
+    detected = model.project("A", "B", rng=rng)
+    assert named.mu_home - detected.mu_home == pytest.approx(0.4 * 0.5 * 63.0)
+    assert named.mu_away == pytest.approx(detected.mu_away)  # B: schedule blank → detection
+    # An unknown date falls back to the ratings' own starters.
+    other = wrapped.project("A", "B", kickoff=pd.Timestamp("2025-10-01"), rng=rng)
+    assert other.mu_home == pytest.approx(detected.mu_home)
+
+
+def test_score_accuracy_reads_the_market_brier_off_real_moneylines() -> None:
+    from velocity.backtest.lab import score_accuracy
+
+    games, _rng = _scored_frames(n=50)
+    won = games["home_score"] > games["away_score"]
+    # A market that is sure and right: Brier → 0.
+    games["home_moneyline"] = np.where(won, -10000.0, 10000.0)
+    games["away_moneyline"] = np.where(won, 10000.0, -10000.0)
+    projections = pd.DataFrame({
+        "game_id": games["game_id"], "mu_home": games["home_score"], "mu_away": games["away_score"],
+    })
+    out = score_accuracy(projections, games)
+    assert out["close_brier"] == pytest.approx(0.0, abs=1e-3)
+
+
+def test_fbs_games_keeps_only_pairs_the_ratings_rate() -> None:
+    from velocity.backtest.lab import fbs_games
+
+    games = pd.DataFrame({
+        "season": [2024, 2024, 2024, 2026],
+        "home_team": ["Georgia", "Georgia", "Towson", "Georgia"],
+        "away_team": ["Clemson", "Towson", "Delaware", "Clemson"],
+    })
+    sp = pd.DataFrame({"season": [2024, 2024, 2025, 2025],
+                       "team": ["Georgia", "Clemson", "Georgia", "Clemson"]})
+    kept = fbs_games(games, sp)
+    assert kept.index.tolist() == [0, 3]  # 2026 borrows the latest list
+    assert fbs_games(games, sp.iloc[0:0]).equals(games)
+
+
+def test_rest_wrapper_forwards_the_kickoff_to_a_starter_wrapper() -> None:
+    from velocity.backtest.lab import RestAdjustedModel, ScheduleStarterModel
+    from velocity.features.team import QBTeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.level import ScaleCalibration, ScaledModel
+    from velocity.models.simulate import SimConfig
+
+    ratings = QBTeamRatings(
+        offense={"A": 0.0, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+        qb={"star": 0.2, "backup": -0.2}, starters={"A": "backup", "B": "star"},
+        pass_rate={"A": 0.5, "B": 0.5}, league_epa=0.0, ridge_lambda=200.0,
+        qb_lambda=300.0, n_plays=10, teams=("A", "B"),
+    )
+    sim = SimConfig(n_sims=300)
+    model = NFLGameModel(ratings, NFLModelConfig(sim=sim))
+    kickoff = pd.Timestamp("2025-09-14 17:00")
+    schedule = pd.DataFrame({
+        "home_team": ["A", "A"], "away_team": ["B", "B"],
+        "kickoff": [kickoff - pd.Timedelta(days=14), kickoff],  # a bye before this one
+        "home_qb_id": ["backup", "star"], "away_qb_id": [None, None],
+    })
+    # rest ∘ starters ∘ scale: the kickoff reaches the starter lookup through
+    # the rest wrapper, and the named passer reaches the scaled model.
+    scaled = ScaledModel(model, ScaleCalibration(margin_slope=0.5, n=1), 44.0, sim)
+    chain = RestAdjustedModel(ScheduleStarterModel(scaled, schedule), schedule)
+    rng = np.random.default_rng(1)
+    proj = chain.project("A", "B", kickoff=kickoff, rng=rng)
+    bare = scaled.project("A", "B", rng=rng)
+    # Star over backup moves A's own points by 0.4 × 0.5 × 63 = 12.6: +12.6 on
+    # the margin (halved by the scale → 6.3) and +12.6 on the total (slope 1),
+    # so home = (12.6 + 6.3) / 2 and away = (12.6 − 6.3) / 2 — then the bye
+    # bonus +1.0 on top of each, since the schedule gives both teams the same
+    # fortnight off.
+    assert proj.mu_home - bare.mu_home == pytest.approx(9.45 + 1.0)
+    assert proj.mu_away - bare.mu_away == pytest.approx(3.15 + 1.0)

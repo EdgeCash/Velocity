@@ -190,14 +190,27 @@ def fit_sd_slope(
     return float(intercept + slope * anchor), float(slope), anchor
 
 
-def load_residual_pool(
+def load_residual_frame(
     league: str, datasets: Path | None = None
-) -> ResidualPool | None:
-    """The banked pool for ``league``, or ``None`` when none is committed."""
+) -> pd.DataFrame | None:
+    """The banked residual frame for ``league`` (``RESIDUAL_COLUMNS``), or ``None``.
+
+    The scale calibration (velocity.models.level) reads the rows themselves —
+    it needs the seasons, to fit on the ones before the projected one — where
+    the sim's shape reads the standardized pool below.
+    """
     path = (datasets or DATASETS) / league / RESIDUALS_FILE
     if not path.exists():
         return None
     frame = pd.read_parquet(path)
-    if frame.empty:
+    return None if frame.empty else frame
+
+
+def load_residual_pool(
+    league: str, datasets: Path | None = None
+) -> ResidualPool | None:
+    """The banked pool for ``league``, or ``None`` when none is committed."""
+    frame = load_residual_frame(league, datasets)
+    if frame is None:
         return None
     return ResidualPool.from_frame(frame)

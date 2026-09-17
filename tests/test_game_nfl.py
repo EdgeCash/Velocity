@@ -77,3 +77,36 @@ def test_golden_projection(model: NFLGameModel) -> None:
     assert proj.p_home_win() == pytest.approx(0.803925, abs=1e-6)
     assert proj.fair_spread() == pytest.approx(-11.0, abs=1e-9)
     assert proj.fair_total() == pytest.approx(57.0, abs=1e-9)
+
+
+def test_pace_map_scales_the_matchup_by_the_two_teams_snaps() -> None:
+    from velocity.features.team import TeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.level import calibrate_level
+    from velocity.models.simulate import SimConfig
+
+    ratings = TeamRatings(
+        offense={"A": 0.1, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+        league_epa=0.0, ridge_lambda=200.0, n_plays=10, teams=("A", "B"),
+    )
+    cfg = NFLModelConfig(sim=SimConfig(n_sims=200))
+    constant = NFLGameModel(ratings, cfg)
+    paced = NFLGameModel(ratings, cfg, pace={"A": 70.0, "B": 56.0})
+    h0, _ = constant.expected_points("A", "B", neutral_site=True)
+    h1, _ = paced.expected_points("A", "B", neutral_site=True)
+    # 0.1 EPA/play × 63 vs × mean(70, 56) = 63: identical here by construction…
+    assert h1 == pytest.approx(h0)
+    # …and a faster pair scores the same edge over more snaps.
+    faster = NFLGameModel(ratings, cfg, pace={"A": 80.0, "B": 80.0})
+    h2, _ = faster.expected_points("A", "B", neutral_site=True)
+    assert h2 - cfg.base_points == pytest.approx((h0 - cfg.base_points) * 80.0 / 63.0)
+    # A team the map does not carry takes the league constant.
+    partial = NFLGameModel(ratings, cfg, pace={"A": 80.0})
+    h3, _ = partial.expected_points("A", "B", neutral_site=True)
+    assert h3 - cfg.base_points == pytest.approx((h0 - cfg.base_points) * 71.5 / 63.0)
+    # The level calibration keeps the pace map.
+    games = pd.DataFrame({
+        "season": [2025], "home_team": ["A"], "away_team": ["B"],
+        "home_score": [30.0], "away_score": [20.0], "neutral_site": [True],
+    })
+    assert calibrate_level(faster, games).pace == faster.pace

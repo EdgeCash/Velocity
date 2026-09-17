@@ -34,7 +34,12 @@ from pathlib import Path
 from statistics import median
 
 import pandas as pd
-from velocity.ingest.nfl import NFLVERSE_SCHEDULE_URL, load_pbp, normalize_schedules
+from velocity.ingest.nfl import (
+    NFLVERSE_SCHEDULE_URL,
+    load_pbp,
+    normalize_schedules,
+    schedule_extras,
+)
 
 _CFBD_BASE = "https://api.collegefootballdata.com"
 
@@ -73,7 +78,12 @@ def nfl_games_from_schedules(raw: pd.DataFrame, season: int) -> pd.DataFrame:
     lines["game_id"] = lines["game_id"].astype(str)
     for col in ("spread_line", "total_line"):
         lines[col] = pd.to_numeric(raw[col], errors="coerce") if col in raw.columns else None
-    return games.merge(lines, on="game_id", how="left")
+    # The schedule's starters, moneylines, juice, rest, weather and crew ride
+    # along (velocity.ingest.nfl.schedule_extras); ``merge_season`` aligns
+    # the season onto the committed columns, so a column the file carries
+    # and the feed drops goes null rather than vanishing.
+    return (games.merge(lines, on="game_id", how="left")
+            .merge(schedule_extras(raw), on="game_id", how="left"))
 
 
 def nfl_plays_for_season(season: int) -> pd.DataFrame:  # pragma: no cover - network

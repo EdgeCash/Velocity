@@ -154,6 +154,12 @@ class SlateConfig:
     # is that money does not follow a market whose evidence is not in yet.
     # Empty = stake every venue that qualifies.
     paper_venues: frozenset[str] = frozenset()
+    # Games priced, logged and graded but never staked, with the reason each
+    # carries into ``Bet.note``. The college slate papers a game with an FCS
+    # side this way: the totals filter that pays on FBS-vs-FBS games (55.4%
+    # at ≥6 since 2022) loses on FBS-vs-FCS ones (47.4%), where one side's
+    # rating rests on a handful of games (docs/PROJECTION_AUDIT.md §2.3).
+    paper_games: Mapping[str, str] = field(default_factory=dict)
     # Edge ceilings — the adverse-selection guard applied where the money is.
     # On the repo's own graded record the highest-edge quartile carried the
     # worst closing-line value (mean CLV −0.048 vs +0.037 in the lowest;
@@ -189,17 +195,20 @@ class SlateConfig:
         return float(self.min_edge_by_market.get(market, self.min_edge))
 
     def paper_reason(self, market: str, edge: float, p_fair: float | None,
-                     book: str | None = None) -> str | None:
+                     book: str | None = None, game_id: str | None = None) -> str | None:
         """Why a qualifying bet on ``market`` stays paper, or ``None`` to stake it.
 
         Checked after the EV gate: the bet is real enough to log and grade;
-        this decides whether money follows. A paper market says so first;
-        otherwise the absolute and relative ceilings, in that order.
+        this decides whether money follows. A paper market says so first,
+        then a paper venue, then a paper game; otherwise the absolute and
+        relative ceilings, in that order.
         """
         if market in self.paper_markets or "__all__" in self.paper_markets:
             return "paper market"
         if book is not None and str(book).strip().lower() in self.paper_venues:
             return f"paper venue ({str(book).strip().lower()})"
+        if game_id is not None and str(game_id) in self.paper_games:
+            return f"paper game ({self.paper_games[str(game_id)]})"
         if self.max_edge is not None and edge > self.max_edge:
             return f"edge {edge:.3f} above ceiling {self.max_edge:.2f}"
         if (
@@ -420,7 +429,8 @@ def build_slate(
                 if best is None:
                     continue
                 paper = config.paper_reason(
-                    market, best["edge"], best.get("p_fair"), best.get("book"))
+                    market, best["edge"], best.get("p_fair"), best.get("book"),
+                    game_id=str(game_id))
                 stake = stake_amount(
                     config.starting_bankroll,
                     best["p_model"],

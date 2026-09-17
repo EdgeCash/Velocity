@@ -50,14 +50,19 @@ def test_attach_matches_flips_and_appends() -> None:
     ])
 
     merged, counts = mod.attach(games, pulled, 2025)
-    assert counts == {"attached": 2, "appended": 1, "still_lineless": 0}
+    assert counts == {"attached": 2, "appended": 1, "still_lineless": 0, "rekeyed": 2}
     by_id = {r["game_id"]: r for r in merged.to_dict("records")}
-    assert by_id["box1"]["spread_line"] == 12.5  # same orientation: verbatim
-    assert by_id["box1"]["total_line"] == 49.5
+    # The backfilled rows adopt CFBD's id: every other frame keys on it.
+    assert "box1" not in by_id and "box2" not in by_id
+    assert by_id["401001"]["home_team"] == "Georgia"  # the games row, re-keyed
+    assert by_id["401001"]["spread_line"] == 12.5  # same orientation: verbatim
+    assert by_id["401001"]["total_line"] == 49.5
     # Reversed pair: pulled says Iowa State -(-3.0)=… favored — flipping to the
     # games row's Iowa-home orientation negates the spread, keeps the total.
-    assert by_id["box2"]["spread_line"] == 3.0
-    assert by_id["box2"]["total_line"] == 41.5
+    assert by_id["401002"]["home_team"] == "Iowa"
+    assert by_id["401002"]["spread_line"] == 3.0
+    assert by_id["401002"]["total_line"] == 41.5
+    assert not merged["game_id"].duplicated().any()
     assert "401003" in by_id  # appended CFBD-only game
     assert by_id["g2024"]["spread_line"] == -13.5  # untouched
 

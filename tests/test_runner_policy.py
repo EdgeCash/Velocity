@@ -283,3 +283,59 @@ def test_a_papered_venue_prices_but_never_stakes() -> None:
     both = SlateConfig(paper_markets=frozenset({"total"}),
                        paper_venues=frozenset({"kalshi"}))
     assert both.paper_reason("total", 0.04, 0.51, "kalshi") == "paper market"
+
+
+def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
+    """The scrimmage filter and the scale are flags whose defaults the lab sets."""
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl"])
+    assert args.nfl_plays is None and args.ncaaf_plays is None
+    assert args.nfl_scale is None and args.ncaaf_scale is None
+    for league in ("nfl", "ncaaf"):
+        assert runner.resolve_plays(None, league) == runner.DEFAULT_PLAYS_BY_LEAGUE[league]
+        assert runner.resolve_scale(None, league) == runner.DEFAULT_SCALE_BY_LEAGUE[league]
+        assert runner.resolve_plays("scrimmage", league) == "scrimmage"
+        assert runner.resolve_scale("fit", league) == "fit"
+    assert runner.resolve_plays(None, "mlb") == "all"
+    assert runner.resolve_scale(None, "mlb") == "off"
+
+
+def test_a_papered_game_prices_but_never_stakes() -> None:
+    """The per-game rule, at the point that decides whether money follows."""
+    from velocity.wagering.slate import SlateConfig
+
+    config = SlateConfig(paper_games={"g1": "FCS side Towson"})
+    assert config.paper_reason("total", 0.04, 0.51, "draftkings", game_id="g1") == (
+        "paper game (FCS side Towson)")
+    assert config.paper_reason("total", 0.04, 0.51, "draftkings", game_id="g2") is None
+    assert config.paper_reason("total", 0.04, 0.51, "draftkings") is None
+
+
+def test_fcs_games_are_papered_by_default_on_the_college_slate(tmp_path) -> None:
+    import numpy as np
+    import pandas as pd
+    from velocity.models.game_nfl import GameProjection
+    from velocity.models.simulate import GameSim
+
+    runner = _runner()
+    pd.DataFrame({"season": [2024, 2025, 2025], "team": ["Old", "Georgia", "Clemson"]}).to_parquet(
+        tmp_path / "sp_ratings.parquet", index=False)
+    sim = GameSim(home_score=np.array([28.0]), away_score=np.array([21.0]))
+    projections = {
+        "g1": GameProjection("Georgia", "Clemson", 28.0, 21.0, sim),
+        "g2": GameProjection("Georgia", "Towson", 42.0, 10.0, sim),
+        "g3": GameProjection("Old", "Clemson", 20.0, 30.0, sim),  # rated last season only
+    }
+    args = runner.build_parser().parse_args(["--league", "ncaaf", "--data", str(tmp_path)])
+    assert args.ncaaf_fcs is False
+    papered = runner.fcs_paper_games(args, projections)
+    assert set(papered) == {"g2", "g3"}
+    assert "Towson" in papered["g2"] and "Old" in papered["g3"]
+    # Staked on request; never on another league; nothing without a ratings file.
+    staked = runner.build_parser().parse_args(
+        ["--league", "ncaaf", "--data", str(tmp_path), "--ncaaf-fcs"])
+    assert runner.fcs_paper_games(staked, projections) == {}
+    nfl = runner.build_parser().parse_args(["--league", "nfl", "--data", str(tmp_path)])
+    assert runner.fcs_paper_games(nfl, projections) == {}
+    bare = runner.build_parser().parse_args(["--league", "ncaaf", "--data", str(tmp_path / "x")])
+    assert runner.fcs_paper_games(bare, projections) == {}

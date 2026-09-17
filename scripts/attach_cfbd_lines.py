@@ -45,6 +45,12 @@ def attach(games: pd.DataFrame, pulled: pd.DataFrame, season: int,
 
     matched_pull_rows: set[int] = set()
     attached = 0
+    rekeyed = 0
+    # A backfilled row carries a synthetic id; the pulled row carries CFBD's.
+    # Adopt it, so the plays, the lines and the intel context — all keyed on
+    # CFBD's id — find the game (docs/PROJECTION_AUDIT.md §2.3). Never at the
+    # cost of a duplicate id.
+    known_ids = set(games["game_id"].astype(str))
     target = (games["season"] == season) & games["spread_line"].isna() \
         & games["total_line"].isna()
     for gi in games.index[target]:
@@ -61,6 +67,13 @@ def attach(games: pd.DataFrame, pulled: pd.DataFrame, season: int,
         spread = pulled.iloc[pi]["spread_line"]
         games.loc[gi, "spread_line"] = -spread if flipped and pd.notna(spread) else spread
         games.loc[gi, "total_line"] = pulled.iloc[pi]["total_line"]
+        pulled_id = str(pulled.iloc[pi]["game_id"])
+        own_id = str(games.loc[gi, "game_id"])
+        if own_id != pulled_id and pulled_id not in known_ids:
+            games.loc[gi, "game_id"] = pulled_id
+            known_ids.discard(own_id)
+            known_ids.add(pulled_id)
+            rekeyed += 1
         matched_pull_rows.add(pi)
         attached += 1
 
@@ -70,7 +83,7 @@ def attach(games: pd.DataFrame, pulled: pd.DataFrame, season: int,
     lineless = ((merged["season"] == season) & merged["spread_line"].isna()
                 & merged["total_line"].isna())
     counts = {"attached": attached, "appended": len(extra),
-              "still_lineless": int(lineless.sum())}
+              "still_lineless": int(lineless.sum()), "rekeyed": rekeyed}
     return merged, counts
 
 

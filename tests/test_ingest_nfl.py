@@ -172,3 +172,21 @@ def test_normalize_injury_reports_tolerates_missing_date_column() -> None:
     assert len(out) == 1
     assert pd.isna(out.loc[0, "date_modified"])
     assert bool(out.loc[0, "is_out"])
+
+
+def test_schedule_extras_carries_every_column_coerced_or_null(raw_schedules: pd.DataFrame) -> None:
+    from velocity.ingest.nfl import SCHEDULE_EXTRA_COLUMNS, schedule_extras
+
+    raw = raw_schedules.copy()
+    raw["home_qb_id"] = ["00-0033873", "00-0033873", "00-0000001", None]
+    raw["home_moneyline"] = ["-425", "bad", None, "145"]
+    raw["div_game"] = [1, 0, 0, 1]
+    extras = schedule_extras(raw)
+    assert list(extras.columns) == ["game_id", *SCHEDULE_EXTRA_COLUMNS]
+    assert len(extras) == len(raw)
+    assert extras["home_moneyline"].tolist()[0] == -425.0
+    assert pd.isna(extras["home_moneyline"].iloc[1])  # coerced, not raised
+    assert extras["home_qb_id"].iloc[0] == "00-0033873" and pd.isna(extras["home_qb_id"].iloc[3])
+    assert extras["div_game"].tolist() == [1.0, 0.0, 0.0, 1.0]
+    # A column the feed does not carry is present and all null.
+    assert extras["referee"].isna().all() and extras["wind"].isna().all()

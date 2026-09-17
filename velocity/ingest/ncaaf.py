@@ -217,6 +217,103 @@ def distill_rest_plays(rows: list[dict] | pd.DataFrame, season: int, week: int) 
     return plays[keep].reset_index(drop=True)
 
 
+_CFBD_ID = r"\d+"
+
+
+def rekey_games_to_cfbd(
+    games: pd.DataFrame,
+    reference: pd.DataFrame,
+    plays: pd.DataFrame | None = None,
+    *,
+    max_days: float = 2.0,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Replace synthetic game ids with CFBD's wherever the same game can be found.
+
+    The 2025 season entered ``games.parquet`` through the boxscore backfill,
+    which mints ids of its own (``2025_20250823_IowaState_KansasState``),
+    while every other frame — the plays, the lines pull, the intel context —
+    keys on CFBD's numeric id. The consequences were silent: the lab's college
+    blend cuts plays to ``game_id ∈ train_games`` and matched **4 of 934**
+    2025 games, so its EPA half projected 2025 and 2026 without a single 2025
+    play (docs/PROJECTION_AUDIT.md §2.3).
+
+    A synthetic row (any id that is not all digits) takes the id of the
+    ``reference`` row with the same season and team pair, either orientation,
+    kicking off within ``max_days`` — the lines pull is the natural reference,
+    it carries CFBD ids for every game with a line. Rows the reference cannot
+    place fall back to the plays frame on (season, week, teams). A match whose
+    id is already on the frame is a collision and is left alone rather than
+    creating a duplicate game. Returns the re-keyed frame and the counts.
+    """
+    out = games.copy()
+    ids = out["game_id"].astype(str)
+    synthetic = ~ids.str.fullmatch(_CFBD_ID)
+    counts = {"synthetic": int(synthetic.sum()), "by_reference": 0, "by_plays": 0,
+              "collisions": 0, "unmatched": 0}
+    if not synthetic.any():
+        return out, counts
+    taken = set(ids[~synthetic])
+    kick = pd.to_datetime(out["kickoff"], errors="coerce")
+
+    ref = reference[reference["game_id"].astype(str).str.fullmatch(_CFBD_ID)]
+    ref_kick = pd.to_datetime(ref["kickoff"], errors="coerce")
+    ref_index: dict[tuple[int, str, str], list[tuple[str, pd.Timestamp]]] = {}
+    for gid, season, home, away, when in zip(
+        ref["game_id"].astype(str), ref["season"].astype(int),
+        ref["home_team"].astype(str), ref["away_team"].astype(str), ref_kick, strict=True,
+    ):
+        for pair in ((home, away), (away, home)):
+            ref_index.setdefault((season, pair[0], pair[1]), []).append((gid, when))
+
+    play_index: dict[tuple[int, int, str, str], str] = {}
+    if plays is not None and not plays.empty:
+        distinct = (plays.dropna(subset=["posteam", "defteam"])
+                    [["game_id", "season", "week", "posteam", "defteam"]]
+                    .drop_duplicates("game_id"))
+        for gid, season, week, offense, defense in zip(
+            distinct["game_id"].astype(str), distinct["season"].astype(int),
+            distinct["week"].astype(int), distinct["posteam"].astype(str),
+            distinct["defteam"].astype(str), strict=True,
+        ):
+            for pair in ((offense, defense), (defense, offense)):
+                play_index.setdefault((season, week, pair[0], pair[1]), gid)
+
+    new_ids = ids.to_numpy(dtype=object).copy()
+    seasons = out["season"].astype(int).to_numpy()
+    weeks = out["week"].astype(int).to_numpy()
+    homes = out["home_team"].astype(str).to_numpy()
+    aways = out["away_team"].astype(str).to_numpy()
+    kicks = kick.to_numpy()
+    for idx in np.flatnonzero(synthetic.to_numpy()):
+        row_season, home, away = int(seasons[idx]), str(homes[idx]), str(aways[idx])
+        chosen: str | None = None
+        how = ""
+        best: tuple[str, float] | None = None
+        for gid, when in ref_index.get((row_season, home, away), []):
+            if pd.isna(when) or pd.isna(kicks[idx]):
+                continue
+            gap = abs((when - pd.Timestamp(kicks[idx])) / pd.Timedelta(days=1))
+            if gap <= max_days and (best is None or gap < best[1]):
+                best = (gid, gap)
+        if best is not None:
+            chosen, how = best[0], "by_reference"
+        elif play_index:
+            hit = play_index.get((row_season, int(weeks[idx]), home, away))
+            if hit is not None:
+                chosen, how = hit, "by_plays"
+        if chosen is None:
+            counts["unmatched"] += 1
+            continue
+        if chosen in taken:
+            counts["collisions"] += 1
+            continue
+        new_ids[idx] = chosen
+        taken.add(chosen)
+        counts[how] += 1
+    out["game_id"] = pd.Series(new_ids, index=out.index, dtype=object)
+    return out, counts
+
+
 SP_PRIOR_ANCHOR = "__SP_PRIOR__"
 
 

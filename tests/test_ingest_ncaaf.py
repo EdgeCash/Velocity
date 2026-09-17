@@ -253,3 +253,54 @@ def test_no_training_window_reaches_a_game_that_had_not_kicked_off() -> None:
                       | ((games["season"] == season) & (games["week"] < week))]
         inversions += int((train["kickoff"] > start).sum())
     assert inversions == 0, "a training window reached a game not yet played"
+
+
+def _game(gid, season, week, home, away, kickoff):
+    return {"game_id": gid, "season": season, "week": week, "home_team": home,
+            "away_team": away, "kickoff": pd.Timestamp(kickoff)}
+
+
+def test_rekey_games_to_cfbd_by_reference_then_plays_never_duplicating() -> None:
+    from velocity.ingest.ncaaf import rekey_games_to_cfbd
+
+    games = pd.DataFrame([
+        _game("2025_20250830_Clemson_Georgia", 2025, 1, "Georgia", "Clemson", "2025-08-30 19:00"),
+        # Reversed orientation in the reference, kickoff a day apart (UTC drift).
+        _game("2025_20250906_IowaState_Iowa", 2025, 2, "Iowa", "Iowa State", "2025-09-06 16:00"),
+        # No reference row; the plays frame knows it.
+        _game("2025_20250913_Texas_OhioState", 2025, 3, "Ohio State", "Texas", "2025-09-13 12:00"),
+        # Nothing knows it: stays synthetic.
+        _game("2025_20250920_Rice_Army", 2025, 4, "Army", "Rice", "2025-09-20 12:00"),
+        # Already CFBD-keyed: untouched, and a synthetic twin must not steal it.
+        _game("401009", 2025, 5, "Navy", "Tulane", "2025-09-27 12:00"),
+        _game("2025_20250927_Tulane_Navy", 2025, 5, "Navy", "Tulane", "2025-09-27 12:00"),
+    ])
+    reference = pd.DataFrame([
+        _game("401001", 2025, 1, "Georgia", "Clemson", "2025-08-30 23:30"),
+        _game("401002", 2025, 2, "Iowa State", "Iowa", "2025-09-07 01:00"),
+        _game("401009", 2025, 5, "Navy", "Tulane", "2025-09-27 16:00"),
+        # A different meeting of the same pair, months away: not a match.
+        _game("401099", 2025, 14, "Georgia", "Clemson", "2025-12-06 20:00"),
+    ])
+    plays = pd.DataFrame({
+        "game_id": ["401003", "401003"], "season": [2025, 2025], "week": [3, 3],
+        "posteam": ["Texas", "Ohio State"], "defteam": ["Ohio State", "Texas"],
+    })
+    out, counts = rekey_games_to_cfbd(games, reference, plays)
+    assert counts == {"synthetic": 5, "by_reference": 2, "by_plays": 1,
+                      "collisions": 1, "unmatched": 1}
+    assert list(out["game_id"]) == ["401001", "401002", "401003",
+                                    "2025_20250920_Rice_Army", "401009",
+                                    "2025_20250927_Tulane_Navy"]
+    assert not out["game_id"].duplicated().any()
+    # Everything but the id is exactly as it was.
+    pd.testing.assert_frame_equal(out.drop(columns="game_id"), games.drop(columns="game_id"))
+
+
+def test_rekey_is_a_no_op_on_a_cfbd_keyed_frame() -> None:
+    from velocity.ingest.ncaaf import rekey_games_to_cfbd
+
+    games = pd.DataFrame([_game("401001", 2025, 1, "Georgia", "Clemson", "2025-08-30")])
+    out, counts = rekey_games_to_cfbd(games, games.iloc[0:0])
+    assert counts["synthetic"] == 0
+    pd.testing.assert_frame_equal(out, games)
