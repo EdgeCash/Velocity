@@ -333,3 +333,45 @@ gate does the rest of the selection: a six-point disagreement now claims
 ~0.018 and sits below the gate, an eight-point one ~0.023 and clears it, so
 the live card concentrates where the sweep says the edge is. The filter's
 own threshold stays at 6 — the gate, not the filter, moved.
+
+## Addendum (2026-09-17): the population the board prices, and the FCS rule
+
+Two things the projection audit (`docs/PROJECTION_AUDIT.md` §2.3) found
+about every college table above. Since 2022 the games frame carries every
+game with a line, and 45% of those are FCS games — 39% FCS-vs-FCS, which
+the live Odds API board never carries, and 8% FBS-vs-FCS. And the lab's EPA
+half had never seen a 2025 play (the backfilled rows carried boxscore-style
+ids), which is fixed in the parity round (`docs/MODEL_LAB.md`).
+
+**The promoted base (`blend-level2-sp12`, the live configuration, 2025 plays
+keyed), scored on FBS-vs-FBS games only** — `model_lab.py --league ncaaf
+--eval-population fbs`, training unchanged, 2015–2026, 4,000 sims:
+
+| population | games | Brier | calib. | RMSE margin (close) | RMSE total (close) | O/U ≥4 (n) | O/U ≥6 (n) | info_w total |
+|---|---:|---|---|---|---|---|---|---|
+| every game with a result | 11,943 | 0.1933 | 0.0203 | 18.52 (15.54) | 17.36 (16.23) | 52.1% (6,420) | 52.9% (4,277) | +0.027 |
+| **FBS vs FBS** | 8,360 | 0.2028 | 0.0135 | 17.89 (15.64) | 17.42 (16.30) | 52.5% (4,646) | **53.3% (3,129)** | **+0.059** |
+
+The Brier is higher on the FBS population because FBS games are closer
+contests, not because the model is worse there — the margin RMSE is 0.6
+points better and the calibration error a third lower. The totals record
+at the promoted ≥6 filter is 53.3% on the games the board actually prices,
+and the information weight on the total (what the result puts on the
+model's disagreement with the close) is twice the all-games figure. That
+is the population every future college table should quote; the flag is
+there so it does.
+
+**The FCS rule.** Split by class on the residual bank joined to the closes,
+side picked by the model at ≥6 points of disagreement:
+
+| class | all history | 2022+ |
+|---|---|---|
+| FBS vs FBS | 53.2% (3,157) | 55.4% (1,222) |
+| FCS vs FCS | 53.9% (854) | 53.9% (854) |
+| FBS vs FCS | **48.7% (310)** | **47.4% (152)** |
+
+A game with one FCS side is where one rating rests on a handful of games
+and the model's total is worst-scaled (slope 0.40). The live slate now
+papers any college game with an FCS side by default — priced, logged and
+graded, staked at zero, the reason in the bet note — and `--ncaaf-fcs`
+stakes them (`SlateConfig.paper_games`).
