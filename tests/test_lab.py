@@ -1192,3 +1192,13 @@ def test_weather_wrapper_adds_rain_to_wind_and_divisional_discount_moves_the_mar
     neutral = div.project("A", "B", kickoff=kick, neutral_site=True, rng=rng)
     assert neutral.mu_margin == pytest.approx(model.project("A", "B", neutral_site=True,
                                                              rng=rng).mu_margin)
+
+
+def test_cold_bonus_is_a_step_below_the_threshold() -> None:
+    from velocity.features.weather import cold_total_bonus
+
+    assert cold_total_bonus(25.0, points=0.5) == -0.5
+    assert cold_total_bonus(35.0, points=0.5) == 0.0
+    assert cold_total_bonus(35.0, threshold_f=40.0, points=1.0) == -1.0
+    assert cold_total_bonus(None, points=0.5) == 0.0
+    assert cold_total_bonus(20.0, points=0.0) == 0.0

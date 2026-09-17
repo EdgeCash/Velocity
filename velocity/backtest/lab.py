@@ -430,17 +430,19 @@ def nfl_variants(
 
             def windy(
                 inner: VariantFactory, *, precip_points: float = 0.0,
-                precip_threshold_in: float = 0.25,
+                precip_threshold_in: float = 0.25, cold_points: float = 0.0,
+                cold_threshold_f: float = 32.0,
             ) -> VariantFactory:
                 """``inner`` under the promoted wind wrapper (15 mph, 0.30
-                a mph) — the live chain's outermost layer — with an
-                optional precipitation step."""
+                a mph) — the live chain's outermost layer — with optional
+                precipitation and cold steps."""
                 @functools.wraps(inner)
                 def factory(train: pd.DataFrame, **kwargs: object) -> object:
                     return WeatherAdjustedModel(
                         inner(train, **kwargs), joined,  # type: ignore[arg-type]
                         threshold_mph=15.0, points_per_mph=0.30,
                         precip_points=precip_points, precip_threshold_in=precip_threshold_in,
+                        cold_points=cold_points, cold_threshold_f=cold_threshold_f,
                     )
 
                 return factory
@@ -486,6 +488,18 @@ def nfl_variants(
                 "live-nfl-full-injury4": ("plays", windy(injured(live_core, 4.0))),
                 "live-nfl-full-injury8": ("plays", windy(injured(live_core, 8.0))),
                 "live-nfl-full-injury16": ("plays", windy(injured(live_core, 16.0))),
+                # Cold over the promoted chain (rain at 1.0, burden at 4).
+                "live-nfl-promoted": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0)),
+                "live-nfl-promoted-cold32-0.5": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=0.5)),
+                "live-nfl-promoted-cold32-1.0": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=1.0)),
+                "live-nfl-promoted-cold40-0.5": (
+                    "plays", windy(injured(live_core, 4.0), precip_points=1.0,
+                                   cold_points=0.5, cold_threshold_f=40.0)),
             })
     return variants
 
@@ -1955,16 +1969,21 @@ class WeatherAdjustedModel:
         points_per_mph: float = 0.15,
         precip_points: float = 0.0,
         precip_threshold_in: float = 0.25,
+        cold_points: float = 0.0,
+        cold_threshold_f: float = 32.0,
     ) -> None:
         import inspect
 
         self.inner = inner
         self.threshold_mph = threshold_mph
         self.points_per_mph = points_per_mph
-        # Precipitation (velocity.features.weather.precip_total_bonus): off
-        # at zero points, which is the promoted state until its lab table.
+        # Precipitation (velocity.features.weather.precip_total_bonus): a
+        # point a side at a quarter-inch, promoted by the situational round.
         self.precip_points = precip_points
         self.precip_threshold_in = precip_threshold_in
+        # Cold (velocity.features.weather.cold_total_bonus): off at zero.
+        self.cold_points = cold_points
+        self.cold_threshold_f = cold_threshold_f
         # Decided once, at construction: a bare game model has no ``kickoff``
         # parameter and raises if handed one.
         try:
@@ -1982,6 +2001,10 @@ class WeatherAdjustedModel:
             (str(r["home_team"]), r["_date"]): r.get("precip")
             for r in keyed.to_dict("records")
         } if "precip" in keyed.columns else {}
+        self._temp = {
+            (str(r["home_team"]), r["_date"]): r.get("temp_mean")
+            for r in keyed.to_dict("records")
+        } if "temp_mean" in keyed.columns else {}
 
     def project(
         self,
@@ -2003,7 +2026,11 @@ class WeatherAdjustedModel:
         model would raise, and *not* passing it to a rest wrapper would
         silently zero every rest bonus.
         """
-        from velocity.features.weather import precip_total_bonus, wind_total_bonus
+        from velocity.features.weather import (
+            cold_total_bonus,
+            precip_total_bonus,
+            wind_total_bonus,
+        )
 
         bonus = 0.0
         if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
@@ -2017,6 +2044,10 @@ class WeatherAdjustedModel:
                 bonus += precip_total_bonus(
                     self._precip.get((home_team, date)),
                     threshold_in=self.precip_threshold_in, points=self.precip_points)
+            if self.cold_points > 0:
+                bonus += cold_total_bonus(
+                    self._temp.get((home_team, date)),
+                    threshold_f=self.cold_threshold_f, points=self.cold_points)
         if self._inner_takes_kickoff:
             return self.inner.project(
                 home_team, away_team, neutral_site=neutral_site,

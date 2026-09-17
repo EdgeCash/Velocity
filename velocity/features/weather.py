@@ -132,6 +132,21 @@ def precip_total_bonus(
     return -float(points) if float(precip) >= threshold_in else 0.0
 
 
+def cold_total_bonus(
+    temp_mean: float | None, *, threshold_f: float = 32.0, points: float = 0.5
+) -> float:
+    """The per-team point suppression for a freezing outdoor game (≤ 0).
+
+    A step at ``threshold_f`` on the day's mean temperature (Open-Meteo daily
+    mean, °F): 9.7% of outdoor game-days in the archive sit under 32. The
+    literature calls cold a weaker and less reliable effect than wind; this
+    is the variant that tests it, off at zero points.
+    """
+    if temp_mean is None or pd.isna(temp_mean) or points <= 0:
+        return 0.0
+    return -float(points) if float(temp_mean) < threshold_f else 0.0
+
+
 # Teams whose current home is weatherproof (dome or reliably-closed roof) —
 # the live forecast path skips them; historical joins use the per-game roof.
 INDOOR_TEAMS = frozenset(
