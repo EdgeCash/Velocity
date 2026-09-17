@@ -61,11 +61,25 @@ NCAAF_NON_SCRIMMAGE_MARKERS = (
 )
 
 
-def scrimmage_plays(plays: pd.DataFrame, league: str = "nfl") -> pd.DataFrame:
+# Plays that are not football at all — the clock being run out, the ball
+# spiked, a pre-snap penalty with no play, a row with no label. The lab
+# found the full frame beat the scrimmage-only fit (the kicks and punts
+# carry field position the ratings want), so this is the narrower cut:
+# everything live stays, only the dead plays go.
+NFL_DEAD_PLAY_TYPES = frozenset({"qb_kneel", "qb_spike", "no_play"})
+NCAAF_DEAD_MARKERS = ("end period", "end of", "timeout", "penalty", "placeholder",
+                      "uncategorized")
+
+
+def scrimmage_plays(
+    plays: pd.DataFrame, league: str = "nfl", *, keep_kicks: bool = False
+) -> pd.DataFrame:
     """Only the offense's own snaps — what an offense/defense fit should see.
 
     ``league`` picks the labelling: the NFL keeps ``pass`` and ``run``; college
-    drops any kind carrying a :data:`NCAAF_NON_SCRIMMAGE_MARKERS` word. A frame
+    drops any kind carrying a :data:`NCAAF_NON_SCRIMMAGE_MARKERS` word. With
+    ``keep_kicks`` the kicks, punts and returns stay and only the dead plays
+    (kneels, spikes, no-plays, period markers, unlabelled rows) go. A frame
     with no ``play_type`` column is returned unchanged (nothing to filter on),
     never emptied.
     """
@@ -73,10 +87,11 @@ def scrimmage_plays(plays: pd.DataFrame, league: str = "nfl") -> pd.DataFrame:
         return plays
     kind = plays["play_type"].astype("string").str.lower()
     if league == "nfl":
-        keep = kind.isin(NFL_SCRIMMAGE_PLAY_TYPES)
+        keep = (kind.notna() & ~kind.isin(NFL_DEAD_PLAY_TYPES) if keep_kicks
+                else kind.isin(NFL_SCRIMMAGE_PLAY_TYPES))
     else:
-        pattern = "|".join(NCAAF_NON_SCRIMMAGE_MARKERS)
-        keep = kind.notna() & ~kind.str.contains(pattern, regex=True)
+        markers = NCAAF_DEAD_MARKERS if keep_kicks else NCAAF_NON_SCRIMMAGE_MARKERS
+        keep = kind.notna() & ~kind.str.contains("|".join(markers), regex=True)
     return plays[keep.fillna(False).to_numpy(dtype=bool)]
 
 # Exponential recency half-life (in on-field weeks) for the NFL ratings fit.

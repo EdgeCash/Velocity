@@ -289,6 +289,14 @@ def nfl_variants(
 
         return factory
 
+    def live_plays(inner: VariantFactory) -> VariantFactory:
+        """``inner`` fitted on every live play — kicks and returns kept, only
+        kneels, spikes, no-plays and unlabelled rows dropped."""
+        def factory(train: pd.DataFrame, **kwargs: object) -> object:
+            return inner(scrimmage_plays(train, "nfl", keep_kicks=True), **kwargs)
+
+        return factory
+
     if schedule is not None:
         variants.update({
             # The promoted fit with its level calibrated on the training
@@ -309,6 +317,14 @@ def nfl_variants(
             # pace map is attached, so the two calibrate together.
             "qb-recency-17-q300-level2-scrim-pace": (
                 "plays", scrimmage(levelled(paced(qb_recency(17.0, 300.0)), 2))),
+            "qb-recency-17-q300-level2-pace": (
+                "plays", levelled(paced(qb_recency(17.0, 300.0)), 2)),
+            "qb-recency-17-q300-level2-live": (
+                "plays", live_plays(levelled(qb_recency(17.0, 300.0), 2))),
+            "qb-recency-17-q300-level2-starters-scale": (
+                "plays", scaled(starters(levelled(qb_recency(17.0, 300.0), 2)))),
+            "qb-recency-17-q300-level2-starters-pace-scale": (
+                "plays", scaled(starters(levelled(paced(qb_recency(17.0, 300.0)), 2)))),
             # The live chain (rest over the fit) for the incumbent and the
             # candidate composites, so the promotion is scored as it runs.
             "live-nfl-incumbent": ("plays", rested(levelled(qb_recency(17.0, 300.0), 2))),
@@ -322,6 +338,10 @@ def nfl_variants(
             "live-nfl-scrim-pace-starters-scale": (
                 "plays", rested(scaled(starters(scrimmage(
                     levelled(paced(qb_recency(17.0, 300.0)), 2)))))),
+            "live-nfl-starters-scale": (
+                "plays", rested(scaled(starters(levelled(qb_recency(17.0, 300.0), 2))))),
+            "live-nfl-starters-pace-scale": (
+                "plays", rested(scaled(starters(levelled(paced(qb_recency(17.0, 300.0)), 2))))),
         })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)

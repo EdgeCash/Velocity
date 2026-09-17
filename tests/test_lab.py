@@ -1066,3 +1066,23 @@ def test_rest_wrapper_forwards_the_kickoff_to_a_starter_wrapper() -> None:
     # fortnight off.
     assert proj.mu_home - bare.mu_home == pytest.approx(9.45 + 1.0)
     assert proj.mu_away - bare.mu_away == pytest.approx(3.15 + 1.0)
+
+
+def test_scrimmage_plays_live_mode_keeps_the_kicks_and_drops_the_dead_plays() -> None:
+    from velocity.features.team import scrimmage_plays
+
+    nfl = pd.DataFrame({
+        "play_type": ["pass", "run", "kickoff", "punt", "field_goal", "extra_point",
+                      "no_play", "qb_kneel", "qb_spike", None],
+        "epa": [0.1] * 10,
+    })
+    kept = scrimmage_plays(nfl, "nfl", keep_kicks=True)
+    assert list(kept["play_type"]) == ["pass", "run", "kickoff", "punt", "field_goal",
+                                       "extra_point"]
+    college = pd.DataFrame({
+        "play_type": ["Rush", "Kickoff Return Touchdown", "Field Goal Good", "End Period",
+                      "Penalty", "placeholder", None],
+        "epa": [0.1] * 7,
+    })
+    kept = scrimmage_plays(college, "ncaaf", keep_kicks=True)
+    assert list(kept["play_type"]) == ["Rush", "Kickoff Return Touchdown", "Field Goal Good"]
