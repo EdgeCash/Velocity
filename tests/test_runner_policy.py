@@ -306,6 +306,10 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_precip_points(None) == runner.DEFAULT_NFL_PRECIP_POINTS == 1.0
     assert runner.resolve_precip_points(0.0) == 0.0
     assert runner.resolve_precip_points(-2.0) == 0.0
+    # The injury burden: 4 points a unit, off on request.
+    assert args.nfl_injury_points is None
+    assert runner.resolve_injury_points(None) == runner.DEFAULT_NFL_INJURY_POINTS == 4.0
+    assert runner.resolve_injury_points(0.0) == 0.0
     assert runner.resolve_plays(None, "mlb") == "all"
     assert runner.resolve_scale(None, "mlb") == "off"
 

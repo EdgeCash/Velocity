@@ -1206,3 +1206,31 @@ candidates the schedule columns and the weather bank made possible. 2011–
    elsewhere, but the model's divisional-game margin error is already −0.02:
    the ratings absorb the familiarity. Half a point of discount leaves +0.48
    of error, a point +0.97. **Rejected.**
+
+
+**The injury burden**, over the same live chain: the share of a team's
+targets and carries ruled Out or Doubtful that week (quarterbacks excluded —
+the starters carry them), at a few points per whole team's worth
+(`velocity/features/injuries.py`). The usage bank starts in 2020, so the
+feature fires on 2020–2025 (1,709 games) and the conditional is the 223 of
+those where one side is 15%+ shorter than the other.
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | 2020+ margin RMSE | short-side games: margin RMSE / mean error toward the shorter side |
+|---|---|---|---|---|---|---|---|
+| live-nfl-full (no burden) | 0.2186 | 0.0143 | 13.27 | **13.55** | +0.095 | 13.08 | 13.70 / **−1.57** |
+| **+ burden, 4 a unit** | **0.2184** | 0.0164 | 13.26 | 13.57 | +0.108 | 13.05 | **13.57 / −0.55** |
+| + burden, 8 a unit | **0.2184** | 0.0173 | **13.26** | 13.59 | +0.119 | **13.04** | 13.53 / +0.47 |
+| + burden, 16 a unit | 0.2186 | 0.0128 | 13.27 | 13.66 | +0.132 | 13.06 | 13.71 / +2.52 |
+
+**Reading, honestly:** the bias is real — the side missing its production
+ran a point and a half under the projection, and 4 a unit removes two
+thirds of it, 8 slightly over-corrects, 16 is worse everywhere. The
+aggregate gains are as small as a feature touching a tenth of games can
+show (Brier −0.0002, margin RMSE −0.01), the total gets a hundredth worse
+(the burden comes off one team's points and the total with it), and
+calibration drifts up by 0.002. **Promoted at 4 a unit**
+(`DEFAULT_NFL_INJURY_POINTS`) as a bias correction on the games it targets:
+the live runner reads the current week's designations off the committed
+bank (refreshed daily from nflverse) and says which teams are heaviest. A
+week the bank has not reached yet costs nothing, which is honest and is
+also the reason to refresh before the slate runs.

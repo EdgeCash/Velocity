@@ -495,6 +495,33 @@ def _build_projection(
             schedule = load_games(_find_games(folder), league="nfl")
         rest_model = RestAdjustedModel(core, schedule)  # type: ignore[arg-type]
 
+        # The injury burden (velocity.features.injuries): the share of a
+        # team's touches ruled Out or Doubtful this week, from the committed
+        # designations (refreshed daily from nflverse) and the usage bank,
+        # at a few points per whole team's worth. The situational round:
+        # the side missing 15%+ ran 1.6 points under the projection; 4 a
+        # unit takes that to −0.6 with Brier and margin RMSE a hair better.
+        injury_points = resolve_injury_points(args.nfl_injury_points)
+        injuries_path = folder / "injuries.parquet"
+        if injury_points > 0 and injuries_path.exists() and weeks_path.exists():
+            from velocity.backtest.lab import InjuryBurdenModel
+            from velocity.features.injuries import burden_by_team_week
+            from velocity.models.level import next_week
+
+            burden = burden_by_team_week(
+                pd.read_parquet(injuries_path), pd.read_parquet(weeks_path))
+            season_week = (int(window["season"].max()), next_week(window))
+            this_week = burden[(burden["season"] == season_week[0])
+                               & (burden["week"] == season_week[1])]
+            rest_model = InjuryBurdenModel(  # type: ignore[assignment]
+                rest_model, schedule, this_week, injury_points, fixed_season_week=season_week)
+            heaviest = this_week.sort_values("burden", ascending=False).head(3)
+            named = ", ".join(f"{t} {b:.0%}" for t, b in zip(heaviest["team"], heaviest["burden"],
+                                                          strict=True))
+            print(f"injury burden: week {season_week[1]} designations on {len(this_week)} "
+                  f"teams at {injury_points:g} pts a unit" + (f" — heaviest {named}" if named
+                                                              else " — none banked yet"))
+
         # Wind on totals (Round 5 constants, live forecast): best-effort — a
         # failed forecast fetch just leaves totals unadjusted.
         model: object = rest_model
@@ -815,6 +842,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nfl-precip-points", type=float, default=None,
                         help="points off each NFL team on a forecast of ≥ 0.25 in of rain "
                              "(0 switches it off; default: the lab's pick)")
+    parser.add_argument("--nfl-injury-points", type=float, default=None,
+                        help="points off an NFL team per whole team's worth of touches ruled "
+                             "Out or Doubtful this week (0 switches it off; default: the "
+                             "lab's pick)")
     parser.add_argument("--sim-shape", choices=["normal", "empirical"], default=None,
                         help="football sim draw: bivariate normal, or the banked "
                              "walk-forward residual pool (default: the gate's pick per league)")
@@ -1332,6 +1363,17 @@ DEFAULT_NFL_PRECIP_POINTS = 1.0
 
 def resolve_precip_points(explicit: float | None) -> float:
     return DEFAULT_NFL_PRECIP_POINTS if explicit is None else max(0.0, float(explicit))
+
+
+# The injury burden on NFL points (the situational round): 4 points per whole
+# team's worth of touches ruled out, so a 15% burden — the 90th percentile of
+# team-weeks — costs 0.6. Measured at 4 / 8 / 16: 8 over-corrects the games
+# it targets (+0.5 the other way) and 16 is worse everywhere.
+DEFAULT_NFL_INJURY_POINTS = 4.0
+
+
+def resolve_injury_points(explicit: float | None) -> float:
+    return DEFAULT_NFL_INJURY_POINTS if explicit is None else max(0.0, float(explicit))
 
 
 def resolve_plays(explicit: str | None, league: str) -> str:

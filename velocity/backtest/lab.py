@@ -1767,12 +1767,15 @@ class InjuryBurdenModel:
 
     def __init__(
         self, inner: object, schedule: pd.DataFrame, burden: pd.DataFrame,
-        points_per_unit: float,
+        points_per_unit: float, *, fixed_season_week: tuple[int, int] | None = None,
     ) -> None:
         import inspect
 
         self.inner = inner
         self.points_per_unit = float(points_per_unit)
+        # A live slate is one week: the runner names it outright rather than
+        # keying every board game through a schedule it may not be on.
+        self.fixed_season_week = fixed_season_week
         keyed = schedule.dropna(subset=["kickoff"])
         dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
         self._game_week: dict[tuple[str, str, pd.Timestamp], tuple[int, int]] = {
@@ -1807,8 +1810,8 @@ class InjuryBurdenModel:
         home_bonus: float = 0.0,
         away_bonus: float = 0.0,
     ) -> object:
-        season_week = None
-        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
+        season_week = self.fixed_season_week
+        if season_week is None and kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
             date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
             season_week = self._game_week.get((home_team, away_team, date))
         kwargs: dict[str, object] = {"kickoff": kickoff} if self._inner_takes_kickoff else {}

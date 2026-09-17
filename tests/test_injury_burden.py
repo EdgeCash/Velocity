@@ -76,3 +76,24 @@ def test_injury_burden_model_takes_points_off_the_side_that_is_short() -> None:
     # An unknown game, or a team with no row, costs nothing.
     other = wrapped.project("A", "B", kickoff=kick + pd.Timedelta(days=7), rng=rng)
     assert other.mu_home == pytest.approx(bare.mu_home)
+
+
+def test_injury_burden_model_can_be_pinned_to_one_week_for_a_live_slate() -> None:
+    from velocity.backtest.lab import InjuryBurdenModel
+    from velocity.features.team import TeamRatings
+    from velocity.models.game_nfl import NFLGameModel, NFLModelConfig
+    from velocity.models.simulate import SimConfig
+
+    ratings = TeamRatings(offense={"A": 0.0, "B": 0.0}, defense={"A": 0.0, "B": 0.0},
+                          league_epa=0.0, ridge_lambda=200.0, n_plays=10, teams=("A", "B"))
+    model = NFLGameModel(ratings, NFLModelConfig(sim=SimConfig(n_sims=200)))
+    burden = pd.DataFrame({"season": [2025], "week": [3], "team": ["B"], "burden": [0.25]})
+    # No schedule row for the board game, but the week is named outright.
+    pinned = InjuryBurdenModel(model, pd.DataFrame(columns=["home_team", "away_team", "kickoff",
+                                                            "season", "week"]),
+                               burden, 4.0, fixed_season_week=(2025, 3))
+    rng = np.random.default_rng(0)
+    bare = model.project("A", "B", rng=rng)
+    proj = pinned.project("A", "B", kickoff=pd.Timestamp("2025-09-21"), rng=rng)
+    assert bare.mu_away - proj.mu_away == pytest.approx(1.0)
+    assert proj.mu_home == pytest.approx(bare.mu_home)
