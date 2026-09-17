@@ -278,6 +278,29 @@ def build_publish(slate_dir: Path) -> pd.DataFrame:
     return audit
 
 
+def build_clv_by_tier(record: pd.DataFrame) -> pd.DataFrame:
+    """Per-league record and CLV by rule tier (``eval.metrics.clv_by_tier``).
+
+    The curated list's live gate (docs/OUTPUT_AUDIT.md §3 #6): each tier's
+    win rate, ROI and closing-line value on the settled record, with the
+    un-tiered plays as the ``none`` control. Empty until a graded slate
+    carries ``rule_tier``.
+    """
+    from velocity.eval.metrics import clv_by_tier
+
+    if record.empty or "rule_tier" not in record.columns or "result" not in record.columns:
+        return pd.DataFrame()
+    settled = record[record["result"].isin(["win", "loss", "push"])]
+    frames = []
+    for league, part in settled.groupby("league", sort=True):
+        table = clv_by_tier(part)
+        if table.empty:
+            continue
+        table["league"] = str(league)
+        frames.append(table)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
 def build_clv_by_market(record: pd.DataFrame) -> pd.DataFrame:
     """Per-league, per-market CLV with the trust flag (``eval.metrics``).
 
@@ -861,6 +884,7 @@ def main() -> None:
               else tables["record"])
     tables["units"] = build_units(season)
     tables["clv_by_market"] = build_clv_by_market(season)
+    tables["clv_by_tier"] = build_clv_by_tier(season)
     tables.update(build_bankroll(
         None if args.ledger is None else Path(args.ledger),
         game_directory(slate_dir, Path(args.prev_dir))))
@@ -876,7 +900,8 @@ def main() -> None:
                   "kickoff": "datetime64[ns]", "p_home_win": float,
                   "mu_home": float, "mu_away": float, "fair_spread": float,
                   "fair_total": float, "tier": str, "conviction": float,
-                  "rationale": str, "stake_sized": float, "venue": str, "note": str},
+                  "rationale": str, "stake_sized": float, "venue": str, "note": str,
+                  "rule_tier": str, "rule_record": str},
         "parlays": {"legs": str, "n_legs": int, "price": float, "decimal": float,
                     "p_win": float, "ev": float, "same_game": bool, "stake": float,
                     "legs_json": str, "league": str, "stamp": str},
@@ -920,6 +945,10 @@ def main() -> None:
         "clv_by_market": {"market": str, "n_bets": int, "mean_price_clv": float,
                           "mean_line_clv": float, "pct_beat_close": float,
                           "clv_trusted": bool, "league": str, "units": float},
+        "clv_by_tier": {"rule_tier": str, "n_bets": int, "n_decided": int,
+                        "win_rate": float, "roi": float, "mean_price_clv": float,
+                        "mean_line_clv": float, "pct_beat_close": float,
+                        "league": str},
         "exposure": {"league": str, "bets": int, "games": int,
                      "stake_sized": float, "stake_solo": float,
                      "bankroll": float, "cap_fraction": float,
@@ -965,7 +994,8 @@ def main() -> None:
                     "drift": float, "conviction": float, "context": float,
                     "published": bool, "reason": str, "league": str,
                     "stamp": str, "home_team": str, "away_team": str,
-                    "kickoff": "datetime64[ns]", "stake_sized": float},
+                    "kickoff": "datetime64[ns]", "stake_sized": float,
+                    "rule_tier": str, "rule_record": str},
         "model_config": {"league": str, "label": str, "detail": str},
         "cards": {"kind": str, "league": str, "stamp": str, "file": str,
                   "away": str, "home": str, "caption": str, "game_id": str},

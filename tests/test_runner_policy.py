@@ -376,6 +376,10 @@ def test_the_plays_and_scale_defaults_are_the_gated_ones() -> None:
     assert runner.resolve_ncaaf_st_prior(None) is runner.DEFAULT_NCAAF_ST_PRIOR is True
     assert runner.resolve_ncaaf_st_prior("on") is True
     assert runner.resolve_ncaaf_st_prior("off") is False
+    # The publish gate runs by rule tier unless told otherwise.
+    assert args.publish_by_rule is None
+    assert runner.resolve_publish_by_rule(None) is runner.DEFAULT_PUBLISH_BY_RULE is True
+    assert runner.resolve_publish_by_rule("off") is False
     # The scale's home-margin shift, per league, the lab's pick.
     assert args.nfl_scale_shift is None and args.ncaaf_scale_shift is None
     for league in ("nfl", "ncaaf"):

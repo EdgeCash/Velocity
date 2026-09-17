@@ -33,6 +33,7 @@ import pandas as pd
 from velocity.models.game_nfl import GameProjection
 from velocity.wagering.bet_log import BetLog
 from velocity.wagering.slate import SlateConfig, build_slate
+from velocity.wagering.tiers import RuleTier
 
 # Full team name (normalized) → nflverse abbreviation, the key the NFL ratings
 # use. NCAAF has no such fixed table (250+ teams); it leans on the normalized
@@ -526,10 +527,21 @@ def build_live_slate(
     return log, unresolved
 
 
-def slate_to_frame(log: BetLog) -> pd.DataFrame:
-    """Render a :class:`BetLog` as a readable slate table (one row per staked bet)."""
-    rows = [
-        {
+def slate_to_frame(
+    log: BetLog, tiers: Mapping[tuple[str, str, str], RuleTier] | None = None,
+) -> pd.DataFrame:
+    """Render a :class:`BetLog` as a readable slate table (one row per staked bet).
+
+    ``tiers`` maps ``(game_id, market, side)`` to the rule tier the play
+    earned (velocity.wagering.tiers); the frame then carries ``rule_tier``
+    and the tier's ``rule_record`` beside every row (null where no rule
+    admits the play), and the grader keeps the tier on the settled record.
+    """
+    tier_map = dict(tiers or {})
+    rows = []
+    for bet in log:
+        tier = tier_map.get((str(bet.game_id), str(bet.market), str(bet.side)))
+        rows.append({
             "game_id": bet.game_id,
             "market": bet.market,
             "side": bet.side,
@@ -541,9 +553,35 @@ def slate_to_frame(log: BetLog) -> pd.DataFrame:
             "edge": None if bet.p_fair is None else round(bet.p_model - bet.p_fair, 4),
             "stake": round(bet.stake, 4),
             "note": bet.note,
-        }
-        for bet in log
-    ]
+            "rule_tier": None if tier is None else tier.tier,
+            "rule_record": None if tier is None else tier.record,
+        })
     cols = ["game_id", "market", "side", "point", "book", "price", "p_model",
-            "p_fair", "edge", "stake", "note"]
+            "p_fair", "edge", "stake", "note", "rule_tier", "rule_record"]
     return pd.DataFrame(rows, columns=cols)
+
+
+def rule_tiers_for(
+    log: BetLog, projections: Mapping[str, GameProjection], league: str,
+) -> dict[tuple[str, str, str], RuleTier]:
+    """The rule tier each staked game bet earns, keyed by ``(game_id, market, side)``.
+
+    Only the full-game total has rules with a record today; its disagreement
+    is the model's fair total against the bet's number in the side's
+    direction (:func:`velocity.wagering.slate.total_disagreement`).
+    """
+    from velocity.wagering.slate import total_disagreement
+    from velocity.wagering.tiers import tier_for
+
+    out: dict[tuple[str, str, str], RuleTier] = {}
+    for bet in log:
+        if bet.player is not None or bet.market != "total" or bet.point is None:
+            continue
+        proj = projections.get(str(bet.game_id))
+        if proj is None:
+            continue
+        points = total_disagreement(proj, str(bet.side), float(bet.point))
+        tier = tier_for(league, str(bet.market), str(bet.side), points)
+        if tier is not None:
+            out[(str(bet.game_id), str(bet.market), str(bet.side))] = tier
+    return out

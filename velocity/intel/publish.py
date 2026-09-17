@@ -30,12 +30,13 @@ Pure functions of frames and dataclasses; offline-testable, no network.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import pandas as pd
 
 from velocity.intel.score import TIER_FLAGGED, Conviction
+from velocity.wagering.tiers import RuleTier, tier_rank
 
 # Tiers a post may carry. "C" is bettable but never publishable.
 PUBLISHABLE_TIERS = ("A",)
@@ -145,8 +146,17 @@ def gate_bet(
     publishable_tiers: Sequence[str] = PUBLISHABLE_TIERS,
     min_conviction: float = DEFAULT_MIN_CONVICTION,
     min_context: float = DEFAULT_MIN_CONTEXT,
+    rule_tier: RuleTier | None = None,
+    by_rule: bool = False,
 ) -> GateResult:
-    """Decide whether one judged bet is post-worthy."""
+    """Decide whether one judged bet is post-worthy.
+
+    ``by_rule`` is the curated list's gate (docs/OUTPUT_AUDIT.md §3 #5): the
+    play must carry a ``rule_tier`` — a rule with a walk-forward record —
+    and the conviction and context floors stand down, because the intel
+    backtest measured them as a null. The injury veto, the edge band and
+    the drift check keep their say either way.
+    """
     bet = conviction.bet
     tier = conviction.tier
     if float(bet.stake) <= 0.0:
@@ -156,16 +166,20 @@ def gate_bet(
         return GateResult(False, f"paper — priced, not staked{why}", tier=tier)
     if tier == TIER_FLAGGED or conviction.vetoed:
         return GateResult(False, "vetoed by the intel layer", tier=tier)
-    if tier not in publishable_tiers:
-        return GateResult(False, f"tier {tier} below publishable", tier=tier)
-    if conviction.score < min_conviction:
-        return GateResult(False,
-                          f"conviction {conviction.score:.2f} below "
-                          f"{min_conviction:.2f}", tier=tier)
-    if conviction.context_score < min_context:
-        return GateResult(False,
-                          f"context {conviction.context_score:+.2f} does not "
-                          "corroborate the edge", tier=tier)
+    if by_rule:
+        if rule_tier is None:
+            return GateResult(False, "no rule with a record admits this play", tier=tier)
+    else:
+        if tier not in publishable_tiers:
+            return GateResult(False, f"tier {tier} below publishable", tier=tier)
+        if conviction.score < min_conviction:
+            return GateResult(False,
+                              f"conviction {conviction.score:.2f} below "
+                              f"{min_conviction:.2f}", tier=tier)
+        if conviction.context_score < min_context:
+            return GateResult(False,
+                              f"context {conviction.context_score:+.2f} does not "
+                              "corroborate the edge", tier=tier)
 
     p_fair = bet.p_fair
     if p_fair is None or pd.isna(p_fair):
@@ -206,12 +220,19 @@ def publish_slate(
     min_conviction: float = DEFAULT_MIN_CONVICTION,
     min_context: float = DEFAULT_MIN_CONTEXT,
     max_plays: int = DEFAULT_MAX_PLAYS,
+    rule_tiers: Mapping[tuple[str, str, str], RuleTier] | None = None,
 ) -> tuple[list[Conviction], pd.DataFrame]:
     """Split judged bets into the publishable set and a full audit frame.
 
     Returns ``(published, audit)``. The audit frame carries every candidate
     with its verdict and reason, so a quiet night is explainable rather than
     mysterious — the same discipline the vetoed-picks table already follows.
+
+    ``rule_tiers`` maps ``(game_id, market, side)`` to the rule tier the
+    play earned (velocity.wagering.tiers). Given, the gate runs by rule: a
+    play posts only with a tier, the running order is tier then edge, and
+    the audit frame carries ``rule_tier`` and ``rule_record``. ``None`` is
+    the conviction gate as it was.
     """
     # Drift needs two moments. ``lines`` is the board the slate priced from
     # (now); ``reference`` is an earlier snapshot of the same board — the
@@ -222,9 +243,12 @@ def publish_slate(
     earlier = current_prices(reference) if reference is not None else {}
     rows: list[dict[str, object]] = []
     passed: list[tuple[int, Conviction]] = []
+    by_rule = rule_tiers is not None
+    ranked: dict[int, tuple[int, float]] = {}
     for index, conviction in enumerate(convictions):
         bet = conviction.bet
         key = (str(bet.game_id), str(bet.market), str(bet.side))
+        rule = (rule_tiers or {}).get(key)
         result = gate_bet(
             conviction,
             current_price=prices.get(key),
@@ -233,9 +257,12 @@ def publish_slate(
             max_adverse_drift=max_adverse_drift,
             publishable_tiers=publishable_tiers,
             min_conviction=min_conviction, min_context=min_context,
+            rule_tier=rule, by_rule=by_rule,
         )
         if result.published:
             passed.append((index, conviction))
+            edge = result.edge if result.edge is not None else 0.0
+            ranked[index] = (tier_rank(rule), -float(edge))
         rows.append({
             "game_id": str(bet.game_id), "market": str(bet.market),
             "side": str(bet.side), "player": bet.player,
@@ -245,20 +272,28 @@ def publish_slate(
             # rather than argued about — see docs/PUBLISH_GATE.md §6.
             "conviction": float(conviction.score),
             "context": float(conviction.context_score),
+            "rule_tier": None if rule is None else rule.tier,
+            "rule_record": None if rule is None else rule.record,
             "published": result.published, "reason": result.reason,
         })
 
-    # Highest conviction first — the post's running order — then the ceiling.
-    passed.sort(key=lambda pair: pair[1].score, reverse=True)
+    # The post's running order: by rule tier then edge when the gate runs by
+    # rule, highest conviction first otherwise — then the ceiling.
+    if by_rule:
+        passed.sort(key=lambda pair: ranked[pair[0]])
+        order = "by rule tier and edge"
+    else:
+        passed.sort(key=lambda pair: pair[1].score, reverse=True)
+        order = "by conviction"
     if max_plays >= 0 and len(passed) > max_plays:
         for index, _conviction in passed[max_plays:]:
             rows[index]["published"] = False
-            rows[index]["reason"] = f"outside the top {max_plays} by conviction"
+            rows[index]["reason"] = f"outside the top {max_plays} {order}"
         passed = passed[:max_plays]
 
     columns = ["game_id", "market", "side", "player", "price", "stake",
                "edge", "tier", "drift", "conviction", "context",
-               "published", "reason"]
+               "published", "reason", "rule_tier", "rule_record"]
     audit = pd.DataFrame(rows, columns=columns)
     return [conviction for _index, conviction in passed], audit
 

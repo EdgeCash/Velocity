@@ -159,6 +159,13 @@ from velocity.clv_by_market
 where league != '__none__'
 ```
 
+```sql clv_tier
+select rule_tier, n_bets, n_decided, win_rate, roi, mean_price_clv,
+  mean_line_clv, pct_beat_close, league
+from velocity.clv_by_tier
+where league != '__none__'
+```
+
 ```sql health
 select market, window_days, since, n_bets, n_decided, staked, profit, roi,
   clv_trusted, n_clv, mean_line_clv, mean_price_clv, pct_beat_close,

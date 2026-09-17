@@ -187,6 +187,31 @@ the weights and the rules only make sense as a pair:
   moneylines and the NFL spread and moneyline produce no rows. The paper
   flags stay for the day a market has a rule.
 
-Open: the count-capped tiered list (#5) and live closing-line value by rule
-(#6).
+**2026-09-17, the curated-list round (items 5–6).**
 
+- **Rule tiers on every play** (`velocity/wagering/tiers.py`): the tier a
+  play earns is the rule that admitted it — market, side, points of
+  disagreement — and the tier carries the lab's record. NFL: A = unders at
+  4+ (55.6% over 340 bets, 9 of 15 seasons), B = overs at 4+ (52.8%, 301,
+  9 of 14). College: A = unders at 8+ (57.2%, 297, 8 of 11), B = unders at
+  4–8 (53.6%, 1,263, 7 of 12). The table is pinned in code and a test
+  recomputes it from the committed projections, so it cannot drift from
+  the evidence silently. The slate row carries ``rule_tier`` and
+  ``rule_record``; the card's POST line prints them.
+- **The publish gate runs by rule** (`publish_slate(rule_tiers=)`,
+  `--publish-by-rule`, on by default): a play posts only when a rule with
+  a record admits it, the running order is tier then edge, and the
+  conviction and context floors stand down — the intel backtest measured
+  them as a null. The injury veto, the edge band, the drift check and the
+  five-play cap keep their say.
+- **Closing-line value by tier** (`velocity.eval.metrics.clv_by_tier`, the
+  site's `clv_by_tier` table): the tier rides the ``Bet`` into the settled
+  record, so the grader's CLV and the win rate and ROI accrue per tier,
+  with the un-tiered plays as the control. It is the live gate on the
+  list: a tier whose live record parts from its walk-forward record is
+  demoted the way a model change is rejected in the lab. Empty until the
+  first tiered slates are graded.
+
+Every item on the list is landed. What the list now needs is time: the
+record by tier, at a sample the lab would accept, before any rule is
+re-ranked on live evidence.
