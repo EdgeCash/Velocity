@@ -116,6 +116,22 @@ def wind_total_bonus(
     return -min(excess * points_per_mph, cap_points)
 
 
+def precip_total_bonus(
+    precip: float | None, *, threshold_in: float = 0.25, points: float = 0.5
+) -> float:
+    """The per-team point suppression for a wet outdoor game (≤ 0).
+
+    A step, not a slope: the banked archive carries the day's precipitation
+    total (Open-Meteo daily sum, inches), which says it rained but not when,
+    so anything past ``threshold_in`` takes ``points`` off each team and
+    anything under it nothing. Missing weather (indoor, or no data) is never
+    treated as rain. The archive reads ≥ 0.25 in on 13% of outdoor game-days.
+    """
+    if precip is None or pd.isna(precip) or points <= 0:
+        return 0.0
+    return -float(points) if float(precip) >= threshold_in else 0.0
+
+
 # Teams whose current home is weatherproof (dome or reliably-closed roof) —
 # the live forecast path skips them; historical joins use the per-game roof.
 INDOOR_TEAMS = frozenset(
