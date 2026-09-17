@@ -99,3 +99,35 @@ def test_scale_model_anchors_on_the_models_own_mean_total() -> None:
     # No games to anchor on: the total is left unscaled, the margin still is.
     scaled, cal = scale_model(_Flat(), _bank(n=3000), games.iloc[0:0], SimConfig(n_sims=100))
     assert cal.total_slope == 1.0 and cal.margin_slope != 1.0
+
+
+def test_from_residuals_can_fit_one_phase_and_scale_model_falls_back_when_thin() -> None:
+    bank = _bank(n=6000)
+    bank["week"] = (bank.index % 17) + 1
+    early = ScaleCalibration.from_residuals(bank, weeks=(1, 6))
+    assert early.n == int(bank["week"].between(1, 6).sum())
+    late = ScaleCalibration.from_residuals(bank, weeks=(7, 30))
+    assert early.n + late.n == len(bank)
+    games = pd.DataFrame({
+        "season": [2024], "home_team": ["H"], "away_team": ["A"],
+        "home_score": [1.0], "away_score": [0.0], "neutral_site": [False],
+    })
+    # A phase with no rows falls back to the whole bank, never the identity.
+    scaled, cal = scale_model(_Flat(), bank, games, SimConfig(n_sims=50), weeks=(40, 50))
+    assert cal.n == len(bank)
+
+
+def test_phase_weeks_and_next_week() -> None:
+    from velocity.models.level import next_week, phase_weeks
+
+    assert phase_weeks(1, "nfl") == (1, 6) and phase_weeks(6, "nfl") == (1, 6)
+    assert phase_weeks(7, "nfl") == (7, 30)
+    assert phase_weeks(4, "ncaaf") == (1, 4) and phase_weeks(5, "ncaaf") == (5, 30)
+    games = pd.DataFrame({
+        "season": [2025, 2026, 2026, 2026], "week": [17, 1, 2, 3],
+        "home_score": [1.0, 1.0, 1.0, None], "away_score": [0.0, 0.0, 0.0, None],
+    })
+    assert next_week(games) == 3  # weeks 1–2 of 2026 played; week 3 is on the board
+    assert next_week(games[games["season"] == 2025]) == 18
+    assert next_week(games.iloc[0:0]) == 1
+    assert next_week(games[games["week"] == 3]) == 1  # the season has not started

@@ -26,6 +26,7 @@ rate as a function of model-vs-close disagreement, per variant.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -63,6 +64,11 @@ __all__ = [
 # into a win probability (probit link). A fixed historical constant, never fit
 # on the evaluation data.
 NFL_MARGIN_SIGMA = 13.45
+
+# The phase boundary for a phase-specific scale lives with the scale
+# (velocity.models.level.EARLY_WEEK_BY_LEAGUE); these are its two names here.
+NFL_EARLY_WEEK = 6
+NCAAF_EARLY_WEEK = 4
 
 # A variant maps a training frame to a projection model. `train` names which
 # frame the engine should slice for it: "plays" (EPA fits) or "games" (the
@@ -178,10 +184,17 @@ def nfl_variants(
         # The schedule-only fit the live slate currently runs — the promotion bar.
         return ScoresGameModel(fit_scores_ratings(train_games), ScoresModelConfig(sim=sim))
 
+    # Every wrapper below forwards ``**kwargs`` and carries ``functools.wraps``:
+    # the engine decides whether to pass ``predicting`` by inspecting the
+    # OUTERMOST factory's signature, and ``wraps`` lets that inspection see
+    # through to a scaled factory further in. Without it a chain such as
+    # rest-over-scale silently ran unscaled (docs/MODEL_LAB.md, the NFL
+    # composites round).
     def levelled(inner: VariantFactory, seasons: int | None = None) -> VariantFactory:
         """``inner`` with its scoring level fitted through the model on the
         training window's own games (velocity.models.level) — the totals
         bias the residual bank found, corrected where it arises."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> NFLGameModel:
             from velocity.models.level import calibrate_level
 
@@ -213,10 +226,14 @@ def nfl_variants(
         "qb-recency-17-q300": ("plays", qb_recency(17.0, 300.0)),
     }
 
-    def scaled(inner: VariantFactory, league: str = "nfl") -> VariantFactory:
+    def scaled(
+        inner: VariantFactory, league: str = "nfl", *, by_phase: bool = False
+    ) -> VariantFactory:
         """``inner`` under a ScaleCalibration fitted on the league's residual
         bank, seasons strictly before the one being projected
-        (velocity.models.level). Absent bank → the identity."""
+        (velocity.models.level). ``by_phase`` fits it on the bank rows of
+        the same phase of the season as the projected week (early: through
+        week 6). Absent bank → the identity."""
         from velocity.models.level import scale_model
         from velocity.models.residuals import load_residual_frame
 
@@ -227,11 +244,15 @@ def nfl_variants(
             if bank is None or schedule is None or predicting is None:
                 return model
             window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
+            weeks: tuple[int, int] | None = None
+            if by_phase:
+                early = predicting[1] <= NFL_EARLY_WEEK
+                weeks = (1, NFL_EARLY_WEEK) if early else (NFL_EARLY_WEEK + 1, 30)
             # The scale sits directly over the game model; a starter wrapper
             # outside it keeps its kickoff keying, so wrap in that order.
             core = model.inner if isinstance(model, ScheduleStarterModel) else model
             scaled_model, _cal = scale_model(
-                core, bank, window, sim, before_season=predicting[0])
+                core, bank, window, sim, before_season=predicting[0], weeks=weeks)
             if isinstance(model, ScheduleStarterModel):
                 return ScheduleStarterModel(scaled_model, schedule)  # type: ignore[arg-type]
             return scaled_model
@@ -243,6 +264,7 @@ def nfl_variants(
     ) -> VariantFactory:
         """``inner`` under the promoted rest wrapper — the live chain's outer
         layer, so a candidate can be scored exactly as it would run."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if schedule is None:
@@ -259,6 +281,7 @@ def nfl_variants(
         .team_pace) — the college model's pace treatment, in the NFL."""
         from velocity.features.team import team_pace
 
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if not isinstance(model, NFLGameModel):
@@ -272,6 +295,7 @@ def nfl_variants(
 
     def starters(inner: VariantFactory) -> VariantFactory:
         """``inner`` priced with the schedule's announced starters per game."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             model = inner(train, **kwargs)
             if schedule is None or "home_qb_id" not in schedule.columns:
@@ -284,6 +308,7 @@ def nfl_variants(
         """``inner`` fitted on the offense's own snaps only (kicks, returns,
         kneels, spikes and no-plays dropped before the ridge —
         docs/PROJECTION_AUDIT.md §2.1)."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             return inner(scrimmage_plays(train, "nfl"), **kwargs)
 
@@ -292,6 +317,7 @@ def nfl_variants(
     def live_plays(inner: VariantFactory) -> VariantFactory:
         """``inner`` fitted on every live play — kicks and returns kept, only
         kneels, spikes, no-plays and unlabelled rows dropped."""
+        @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> object:
             return inner(scrimmage_plays(train, "nfl", keep_kicks=True), **kwargs)
 
@@ -325,6 +351,8 @@ def nfl_variants(
                 "plays", scaled(starters(levelled(qb_recency(17.0, 300.0), 2)))),
             "qb-recency-17-q300-level2-starters-pace-scale": (
                 "plays", scaled(starters(levelled(paced(qb_recency(17.0, 300.0)), 2)))),
+            "qb-recency-17-q300-level2-starters-scale-phase": (
+                "plays", scaled(starters(levelled(qb_recency(17.0, 300.0), 2)), by_phase=True)),
             # The live chain (rest over the fit) for the incumbent and the
             # candidate composites, so the promotion is scored as it runs.
             "live-nfl-incumbent": ("plays", rested(levelled(qb_recency(17.0, 300.0), 2))),
@@ -342,6 +370,9 @@ def nfl_variants(
                 "plays", rested(scaled(starters(levelled(qb_recency(17.0, 300.0), 2))))),
             "live-nfl-starters-pace-scale": (
                 "plays", rested(scaled(starters(levelled(paced(qb_recency(17.0, 300.0)), 2))))),
+            "live-nfl-starters-scale-phase": (
+                "plays", rested(scaled(starters(levelled(qb_recency(17.0, 300.0), 2)),
+                                       by_phase=True))),
         })
         def rest(bye_pts: float, short_pts: float) -> VariantFactory:
             base = qb_recency(17.0)
@@ -744,10 +775,12 @@ def ncaaf_variants(
             "blend-hfa-own-pace": ("games", blend_hfa("own", pace=True)),
         })
 
-        def college_scaled(inner: VariantFactory) -> VariantFactory:
+        def college_scaled(inner: VariantFactory, *, by_phase: bool = False) -> VariantFactory:
             """``inner`` under the college residual bank's ScaleCalibration
             (seasons before the projected one); the anchor is the model's
-            mean total over the trailing two training seasons."""
+            mean total over the trailing two training seasons. ``by_phase``
+            fits on the bank rows of the projected week's phase (early:
+            through week 4)."""
             from velocity.models.level import scale_model
             from velocity.models.residuals import load_residual_frame
 
@@ -765,9 +798,61 @@ def ncaaf_variants(
                 model = inner(train_games, **inner_kwargs)
                 if bank is None or predicting is None:
                     return model
+                weeks = (
+                    ((1, NCAAF_EARLY_WEEK) if predicting[1] <= NCAAF_EARLY_WEEK
+                     else (NCAAF_EARLY_WEEK + 1, 30))
+                    if by_phase else None
+                )
                 scaled_model, _cal = scale_model(
-                    model, bank, train_games, sim, before_season=predicting[0])
+                    model, bank, train_games, sim, before_season=predicting[0], weeks=weeks)
                 return scaled_model
+
+            return factory
+
+        def college_rested(
+            inner: VariantFactory, bye_pts: float = 1.0, *, bye_days: int = 12,
+            max_rest_days: int = 30,
+        ) -> VariantFactory:
+            """``inner`` with a bye-week bonus, from the training slice's own
+            kickoffs (public schedule knowledge, as the NFL wrapper argues).
+            College has no rest treatment at all today; a fortnight off is
+            the common case. An offseason gap is not a bye."""
+            def factory(
+                train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
+            ) -> object:
+                import inspect
+
+                inner_kwargs = (
+                    {"predicting": predicting}
+                    if "predicting" in inspect.signature(inner).parameters else {}
+                )
+                model = inner(train_games, **inner_kwargs)
+                sched = train_games.dropna(subset=["kickoff"])
+                long = pd.concat([
+                    sched[["home_team", "kickoff"]].rename(columns={"home_team": "team"}),
+                    sched[["away_team", "kickoff"]].rename(columns={"away_team": "team"}),
+                ], ignore_index=True)
+                by_team = {
+                    str(team): pd.to_datetime(group["kickoff"]).sort_values().to_numpy()
+                    for team, group in long.groupby("team")
+                }
+
+                def rested(team: str, when: object) -> bool:
+                    played = by_team.get(team)
+                    if played is None or when is None or pd.isna(when):  # type: ignore[call-overload]
+                        return False
+                    ts = pd.Timestamp(when).to_datetime64()  # type: ignore[arg-type]
+                    prior = played[played < ts - np.timedelta64(1, "D")]
+                    if len(prior) == 0:
+                        return False
+                    rest_days = (ts - prior[-1]) / np.timedelta64(1, "D")
+                    return bool(bye_days <= rest_days <= max_rest_days)
+
+                def bonus(home: str, away: str, kickoff: object) -> tuple[float, float]:
+                    return (bye_pts if rested(home, kickoff) else 0.0,
+                            bye_pts if rested(away, kickoff) else 0.0)
+
+                return BonusAdjustedModel(model, bonus, sim)
 
             return factory
 
@@ -837,6 +922,14 @@ def ncaaf_variants(
                 "blend-level2-sp12-scrim-scale": (
                     "games", college_scaled(blend_sp(12, scrimmage=True))),
                 "blend-level2-sp12-scrim-pace": ("games", blend_sp(12, scrimmage=True, pace=True)),
+                # Over the promoted scale: the K=24 prior, pace, the phase-
+                # specific scale, and a college bye bonus.
+                "blend-level2-sp24-scale": ("games", college_scaled(blend_sp(24))),
+                "blend-level2-sp12-pace-scale": ("games", college_scaled(blend_sp(12, pace=True))),
+                "blend-level2-sp12-scale-phase": (
+                    "games", college_scaled(blend_sp(12), by_phase=True)),
+                "blend-level2-sp12-scale-rest": (
+                    "games", college_rested(college_scaled(blend_sp(12)), 1.0)),
             })
 
     return variants

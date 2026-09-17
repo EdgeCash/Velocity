@@ -1073,3 +1073,59 @@ games: margin RMSE 15.54, total RMSE 16.23.
    (−0.0003) and a better margin, but the totals RMSE is the one column
    that got worse (+0.03) and the filter record did not move. Not
    promoted; pace over the scaled model is the next thing to run.
+
+
+## The composites round (2026-09-17) — over the promoted scale
+
+**NCAAF**, each over `blend-level2-sp12-scale` (the promoted configuration):
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w total | O/U ≥6 (n) |
+|---|---|---|---|---|---|---|
+| sp12-scale (promoted) | 0.1932 | 0.0095 | 18.46 | 17.22 | +0.045 | 53.4% (4,104) |
+| sp24-scale | **0.1929** | 0.0100 | 18.44 | 17.23 | +0.045 | 53.3% (4,092) |
+| sp12-pace-scale | 0.1933 | 0.0129 | 18.48 | 17.23 | +0.049 | 53.6% (4,139) |
+| **sp12-scale-phase** | 0.1931 | **0.0081** | **18.43** | **17.21** | **+0.054** | **53.6% (4,108)** |
+| sp12-scale-rest | 0.1933 | 0.0117 | 18.46 | 17.23 | +0.048 | 53.3% (4,179) |
+
+**Readings, honestly:** the phase-specific scale — fitted on the bank rows
+of the phase being projected, through week 4 or after — is better than the
+whole-bank scale on every column, by small amounts in the same direction:
+it is the early-season slope (1.19 through week 4) being corrected where it
+occurs instead of averaged with the rest of the year. **Promoted:
+`--ncaaf-scale phase`** (`DEFAULT_SCALE_BY_LEAGUE`); the runner reads the
+week about to be played off the current season's played games. K=24 again
+edges Brier and margin and again costs the total and the information
+weight; the college bye bonus and pace are washes over the scale. None of
+the three promoted.
+
+**NFL**, each over the starters base (`qb-recency-17-q300-level2-starters`):
+
+| variant | Brier | calib. | RMSE margin | RMSE total | info_w margin | O/U ≥4 (n) |
+|---|---|---|---|---|---|---|
+| base-live (kicks kept, dead plays dropped) | 0.2198 | 0.0149 | 13.36 | 13.98 | +0.093 | 52.2% (1,637) |
+| base-pace | 0.2215 | 0.0410 | 13.58 | 14.49 | +0.064 | 50.8% (2,149) |
+| **base-starters-scale** | **0.2188** | 0.0159 | **13.27** | **13.58** | **+0.100** | 51.7% (853) |
+| base-starters-pace-scale | 0.2196 | 0.0267 | 13.41 | 13.68 | +0.079 | 51.5% (1,019) |
+| live-nfl-incumbent (rest over base) | 0.2194 | **0.0123** | 13.33 | 13.92 | +0.077 | 51.4% (1,559) |
+
+**Readings, honestly:**
+
+1. **Even the narrow plays cut loses.** Keeping the kicks and dropping only
+   kneels, spikes and no-plays is still worse than the full frame on every
+   column. A kneel is the winning team's fingerprint, and the ratings want
+   it. The plays question is closed for the NFL: **`all`**, and the flag
+   stays for a plays rebuild with clock and score state.
+2. **Pace is rejected in the NFL** — worse on everything, badly on the
+   total (14.49). Thirty-two teams within a few snaps of each other and a
+   per-team pace map fitted on the trailing window is noise the constant
+   does not carry.
+3. **Starters and the scale together are the best NFL forecaster
+   recorded**: Brier 0.2188, margin RMSE 13.27 (the close: 12.97), total
+   13.58 (the close: 13.23) — and that is the configuration the runner
+   prices, depth-chart starter plus the promoted scale.
+4. The rest wrapper is a wash on accuracy (total RMSE +0.02): it stays as
+   promoted history, and the live composite is scored in the next table.
+   The first attempt to score it ran the scale off: a wrapper whose factory
+   forwarded ``**kwargs`` hid the inner factory's ``predicting`` parameter
+   from the engine, so the leak gate never fired and the scale was never
+   fitted. ``functools.wraps`` on every wrapper fixes it and a test pins it.

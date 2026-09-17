@@ -132,6 +132,31 @@ def calibrate_scores_level(
 # season and a half of noise is worse than none.
 SCALE_MIN_GAMES = 200
 
+# Where the early season ends for a phase-specific scale: the audit's slope
+# by week put the NFL margin at 0.72 through week 6 and 0.97 after, and the
+# college margin at 1.19 through week 4 (docs/PROJECTION_AUDIT.md §2.2). A
+# scale fitted on the bank rows of the phase being projected is a different
+# number from the whole-season one, and in college a better one.
+EARLY_WEEK_BY_LEAGUE = {"nfl": 6, "ncaaf": 4}
+
+
+def phase_weeks(week: int, league: str) -> tuple[int, int]:
+    """The inclusive week window of ``week``'s phase of the season."""
+    early = EARLY_WEEK_BY_LEAGUE.get(league, 6)
+    return (1, early) if int(week) <= early else (early + 1, 30)
+
+
+def next_week(games: pd.DataFrame) -> int:
+    """The week the latest season on ``games`` is about to play (1 with none played)."""
+    if games.empty or "season" not in games.columns or "week" not in games.columns:
+        return 1
+    latest = games[games["season"] == games["season"].max()]
+    played = latest.dropna(subset=["home_score", "away_score"]) if {
+        "home_score", "away_score"} <= set(latest.columns) else latest
+    if played.empty:
+        return 1
+    return int(played["week"].max()) + 1
+
 
 @dataclass(frozen=True)
 class ScaleCalibration:
@@ -156,17 +181,24 @@ class ScaleCalibration:
         *,
         before_season: int | None = None,
         seasons: int | None = None,
+        weeks: tuple[int, int] | None = None,
         min_games: int = SCALE_MIN_GAMES,
     ) -> ScaleCalibration:
         """Fit on a residual bank (``RESIDUAL_COLUMNS``).
 
         ``before_season`` keeps only seasons strictly before it — the leak
         gate for a walk-forward. ``seasons`` then keeps the trailing that
-        many. Under ``min_games`` rows the identity is returned.
+        many. ``weeks`` keeps one phase of the season (inclusive bounds):
+        the audit found the NFL margin slope 0.72 in weeks 1–6 and 0.97
+        after, so a scale fitted on the phase being projected can be a
+        different number. Under ``min_games`` rows the identity is returned.
         """
         frame = residuals.dropna(subset=["mu_margin", "mu_total", "resid_margin", "resid_total"])
         if before_season is not None and "season" in frame.columns:
             frame = frame[frame["season"].astype(int) < int(before_season)]
+        if weeks is not None and "week" in frame.columns:
+            lo, hi = int(weeks[0]), int(weeks[1])
+            frame = frame[frame["week"].astype(int).between(lo, hi)]
         if seasons is not None and not frame.empty and "season" in frame.columns:
             cutoff = int(frame["season"].astype(int).max()) - int(seasons) + 1
             frame = frame[frame["season"].astype(int) >= cutoff]
@@ -280,16 +312,21 @@ class ScaledModel:
 def scale_model(
     model: object, residuals: pd.DataFrame, games: pd.DataFrame, sim: SimConfig, *,
     before_season: int | None = None, seasons: int | None = None,
+    weeks: tuple[int, int] | None = None,
     anchor_seasons: int | None = 2,
 ) -> tuple[ScaledModel, ScaleCalibration]:
     """``model`` under a :class:`ScaleCalibration` fitted on ``residuals``.
 
     The anchor is the model's own mean projected total over the trailing
     ``anchor_seasons`` of ``games`` (the level's window); with nothing to
-    anchor on the total is left unscaled.
+    anchor on the total is left unscaled. A ``weeks`` phase too thin to fit
+    falls back to the whole bank rather than to the identity.
     """
     calibration = ScaleCalibration.from_residuals(
-        residuals, before_season=before_season, seasons=seasons)
+        residuals, before_season=before_season, seasons=seasons, weeks=weeks)
+    if weeks is not None and calibration.n == 0:
+        calibration = ScaleCalibration.from_residuals(
+            residuals, before_season=before_season, seasons=seasons)
     anchor = mean_projected_total(model, games, seasons=anchor_seasons)
     if anchor is None:
         calibration = replace(calibration, total_slope=1.0)
