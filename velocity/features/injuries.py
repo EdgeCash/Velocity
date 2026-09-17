@@ -99,8 +99,8 @@ def burden_by_team_week(
     rows: list[dict[str, object]] = []
     usage_seasons = pd.to_numeric(player_weeks["season"], errors="coerce").dropna()
     seasons_with_usage = set(usage_seasons.astype(int))
-    for key, group in outs.groupby(["season", "week"]):
-        season, week = int(key[0]), int(key[1])
+    for _key, group in outs.groupby(["season", "week"]):
+        season, week = int(group["season"].iloc[0]), int(group["week"].iloc[0])
         needs = season if week >= SEASON_TO_DATE_FROM_WEEK else season - 1
         if needs not in seasons_with_usage:
             continue
