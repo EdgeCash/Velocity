@@ -219,3 +219,36 @@ def test_solve_showdown_end_to_end() -> None:
     assert run.n_games == 1
     assert [s.slot for s in run.lineup.slots] == ["CPT"] + ["UTIL"] * 5
     assert run.lineup.total_salary <= SALARY_CAP
+
+
+def test_solve_showdown_scores_with_the_leagues_own_scorer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The college bank has no ``stat`` column; the FantasyPros scorer raised on it.
+
+    The showdown solver now takes the scorer the classic path uses for the
+    league (LEAGUE_SPECS), so a college frame is projected by the college
+    model rather than crashing the whole ncaaf build.
+    """
+    from velocity.dfs import pipeline
+    from velocity.dfs.showdown import CFB_SHOWDOWN
+
+    salaries = normalize_draftables(_draftables(), "999")
+    seen: list[pd.DataFrame] = []
+
+    def college_scorer(frame: pd.DataFrame) -> pd.DataFrame:
+        seen.append(frame)
+        return pd.DataFrame({
+            "player_id": list("123456"),
+            "player_name": ["Ace", "Bat", "Cat", "Dog", "Eel", "Fox"],
+            "team": ["AAA"] * 3 + ["BBB"] * 3,
+            "position": ["QB"] + ["WR"] * 5,
+            "points": [24.0, 12.0, 10.0, 9.0, 8.0, 7.0],
+        })
+
+    monkeypatch.setitem(pipeline.LEAGUE_SPECS, "ncaaf", (pipeline.LEAGUE_SPECS["ncaaf"][0],
+                                                        college_scorer))
+    assert CFB_SHOWDOWN.name == "cfb_showdown"  # the college showdown spec exists
+    bank = pd.DataFrame({"player_id": list("123456"), "season": 2026, "week": 3,
+                         "pass_yards": 0.0})  # a college-bank shape: no "stat"
+    run = solve_showdown(salaries, bank, draft_group="999", league="ncaaf")
+    assert len(seen) == 1 and seen[0] is bank  # the college scorer, not FantasyPros
+    assert run.draft_group_id == "999"

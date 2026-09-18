@@ -340,8 +340,12 @@ def build_showdown_boards(
     frames: list[pd.DataFrame] = []
     solved: list[tuple] = []
     for board in boards:
-        run = solve_showdown(salaries, fp, draft_group=board.draft_group_id,
-                             league=league, points=points)
+        try:
+            run = solve_showdown(salaries, fp, draft_group=board.draft_group_id,
+                                 league=league, points=points)
+        except Exception as exc:  # noqa: BLE001 - a board's failure never costs the classic slate
+            print(f"showdown {board.suffix or board.draft_group_id}: failed ({exc}); skipping")
+            continue
         if run.lineup is None:
             print(f"showdown {board.suffix or board.draft_group_id}: no lineup "
                   f"({run.n_salaried} salaried, {run.n_pool} projected)")
