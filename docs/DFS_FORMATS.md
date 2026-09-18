@@ -29,10 +29,19 @@ salaries", the site showed no lineups). The client now sends a browser's
 own headers and, when the API still refuses (401/403/429), reads the older
 lineup-builder endpoint on the www host,
 `https://www.draftkings.com/lineup/getavailableplayers?draftGroupId={id}`,
-rewritten into the draftables shape (`legacy_players_to_draftables`). That
-payload has no roster-slot ids and no per-game start, so a showdown board
-served this way lacks its captain rows and kickoffs read as the slate's
-start. The collector's log names which host served each league, a league
+rewritten into the draftables shape (`legacy_players_to_draftables`). The
+payload carries the game's start (its `teamList`, keyed by each player's
+`tsid`, holds a .NET epoch), DK's player id (`pdkid`), the probable-pitcher
+flag (`pp`), the roster slot (`rosposid`, the tier on a Tiers board) and
+the lobby's stat (`ppg`), so kickoffs, the MLB pitcher pool and the
+salary-free boards all survive the fallback; a salary of 0 is read as "no
+salary" so those boards take the tiered path. What it lacks is a showdown
+board's captain rows — each player appears once at the flex price, and the
+showdown solver prices the captain at 1.5x from that single row as it
+already did for any player without one. The first live run through the
+fallback (2026-09-18 00:10 UTC) served 43 NFL, 15 NCAAF and 14 MLB boards,
+14,742 salary rows, with the API still refusing every one of them. The
+collector's log names which host served each league, a league
 whose boards all refused gets a warning annotation, and the collector
 workflow runs with `--fail-on-empty` so a day of refusals is a red run, not
 an empty artifact.

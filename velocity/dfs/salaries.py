@@ -26,10 +26,12 @@ DFS equivalent of the CLV archive, so it starts accruing before the season.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -187,48 +189,88 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
     return Salaries.validate(df[_COLUMNS])
 
 
+def _dotnet_date(value: Any) -> str | None:
+    """DK's ``/Date(1789676100000)/`` (or a bare epoch-ms) → ISO-8601 UTC."""
+    if value is None:
+        return None
+    if isinstance(value, int | float):
+        ms = int(value)
+    else:
+        match = re.search(r"-?\d+", str(value))
+        if match is None:
+            return None
+        ms = int(match.group())
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+
+
 def legacy_players_to_draftables(
     payload: Mapping[str, Any], draft_group_id: str, *, start: Any = None,
 ) -> dict[str, Any]:
     """The legacy lineup endpoint's payload, rewritten in the draftables shape.
 
     ``getavailableplayers`` lists one entry per player with the short keys
-    the old lineup builder used: ``fn``/``ln`` (name), ``pn`` (position),
-    ``s`` (salary), ``tid`` (the player's team id) beside ``htid``/``atid``
-    and ``htabbr``/``atabbr`` (the game's two teams), and ``i`` (the injury
-    designation, empty when healthy). It carries no roster-slot ids and no
-    per-game start time, so the slate's own ``start`` stands in for the
-    kickoff (every game on a slate starts at or after it) and a showdown
-    board comes back without its captain rows — the salary board is what the
-    fallback preserves. Nothing is guessed: a player without a name or a
-    price is dropped by :func:`normalize_draftables` exactly as before. The
-    raw payload rides along under ``_legacy`` so the banked JSON keeps DK's
-    actual shape for the day the mapping needs a look.
+    the old lineup builder used, read off the real payload on 2026-09-18:
+    ``fn``/``ln`` (name), ``pn`` (position), ``s`` (salary, 0 on the
+    salary-free Tiers and Single Stat boards), ``pdkid`` (DK's player id,
+    the API's ``playerDkId``), ``tid`` (the player's team id) beside
+    ``htid``/``atid`` and ``htabbr``/``atabbr`` (the game's two teams),
+    ``i`` (the injury designation, empty when healthy), ``pp`` (DK's
+    probable-pitcher flag — the API's ``playerGameAttributes`` id 1),
+    ``rosposid`` (the roster-slot id; on a Tiers board the tier), ``ppg``
+    (the number the lobby shows beside a player — the API's draft-stat
+    attribute 408), and ``tsid``, the game's key into ``teamList``, whose
+    ``tz`` is the game's start as a .NET epoch. So the kickoff is the game's
+    own, not the slate's; ``start`` (the slate's, from the lobby) is only
+    the last resort. What the endpoint lacks is a showdown board's captain
+    rows — each player appears once, at the flex price, and
+    :func:`velocity.dfs.showdown.showdown_board` prices the captain at 1.5x
+    from a single row as it already does for any player without one.
+    Nothing is guessed: a player without a name or a price is dropped by
+    :func:`normalize_draftables` exactly as before, and a salary of 0 is
+    read as "no salary" so those boards take the tiered path. The raw
+    payload rides along under ``_legacy`` so the banked JSON keeps DK's
+    actual shape.
     """
+    games_raw = payload.get("teamList") or {}
+    games: dict[str, Mapping[str, Any]] = (
+        {str(k): v for k, v in games_raw.items()} if isinstance(games_raw, Mapping)
+        else {str(g.get("tsid")): g for g in games_raw if isinstance(g, Mapping)}
+    )
     draftables: list[dict[str, Any]] = []
     for p in payload.get("playerList") or []:
         name = " ".join(str(part) for part in (p.get("fn"), p.get("ln")) if part).strip()
+        game = games.get(str(p.get("tsid"))) or {}
         tid = None if p.get("tid") is None else str(p.get("tid"))
-        home_id = None if p.get("htid") is None else str(p.get("htid"))
-        away_id = None if p.get("atid") is None else str(p.get("atid"))
-        home, away = p.get("htabbr"), p.get("atabbr")
-        team = home if tid is not None and tid == home_id else (
-            away if tid is not None and tid == away_id else None)
+        home_id = game.get("htid", p.get("htid"))
+        away_id = game.get("atid", p.get("atid"))
+        home = game.get("ht") or p.get("htabbr")
+        away = game.get("at") or p.get("atabbr")
+        team = home if tid is not None and tid == str(home_id) else (
+            away if tid is not None and tid == str(away_id) else None)
         competition = f"{away} @ {home}" if home and away else None
+        salary = p.get("s")
+        if salary in (0, "0"):
+            salary = None  # a salary-free board, not a free player
+        game_attrs = [{"id": 1, "value": "true"}] if p.get("pp") else []
+        stat_attrs = ([{"id": 408, "value": p.get("ppg")}]
+                      if p.get("ppg") is not None else [])
         draftables.append({
-            "playerDkId": p.get("pid"),
+            "playerDkId": p.get("pdkid") or p.get("pid"),
             "playerId": p.get("pid"),
             "displayName": name or None,
             "position": p.get("pn"),
-            "salary": p.get("s"),
+            "salary": salary,
             "teamAbbreviation": team,
             # The API spells a healthy player "None"; the legacy field is "".
             "status": p.get("i") or "None",
             "isDisabled": bool(p.get("IsDisabledFromDrafting")),
-            "rosterSlotId": None,
+            "rosterSlotId": p.get("rosposid"),
+            "playerGameAttributes": game_attrs,
+            "draftStatAttributes": stat_attrs,
             "competition": {
                 "name": competition,
-                "startTime": p.get("gameStartTime") or start,
+                "startTime": _dotnet_date(game.get("tz")) or _dotnet_date(p.get("dgst"))
+                or start,
             },
         })
     return {"draftables": draftables, "_source": "legacy", "_legacy": dict(payload)}
@@ -348,7 +390,7 @@ class DraftKingsClient:
         The draftables API first; when it refuses (:data:`_FALLBACK_STATUSES`)
         the legacy lineup endpoint on the www host answers instead, rewritten
         by :func:`legacy_players_to_draftables` with ``start`` (the slate's
-        start, from the lobby) as the kickoff. The payload names its source
+        start, from the lobby) as the kickoff of last resort. The payload names its source
         under ``_source`` so the collector's log says which host is carrying
         the archive. A refusal on both hosts raises the API's error, with the
         legacy one chained.
