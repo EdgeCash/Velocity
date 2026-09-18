@@ -398,8 +398,12 @@ def test_expected_stat_reads_the_window_and_shrinks_to_the_position() -> None:
     assert tds.loc["Arm Only", "points"] == 0.0
 
     yards = expected_stat_ncaaf(_stat_bank(), TOTAL_YARDS).set_index("player_name")
+    # The lone quarterback IS his position's mean, so shrinkage moves nothing.
     assert yards.loc["Arm Only", "points"] == pytest.approx(300.0)
-    assert yards.loc["Steady Back", "points"] == pytest.approx(90.0)
+    # Steady's 90 a game shrinks toward the RB mean (six 90s and one 120 → 660/7).
+    rb_yards = 660 / 7
+    assert yards.loc["Steady Back", "points"] == pytest.approx(
+        (6 * 90.0 + rb_yards * 4.0) / (6 + 4.0), abs=1e-3)
 
 
 def test_expected_stat_handles_an_empty_or_statless_stat_bank() -> None:
