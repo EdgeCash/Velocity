@@ -19,6 +19,35 @@ Two unauthenticated endpoints carry everything:
   roster slots and their counts), `salaryCap`, `teamCount.minValue`,
   `uniquePlayers`, `draftType`, and per-slot multipliers.
 
+The salaries themselves come from
+`https://api.draftkings.com/draftgroups/v1/draftgroups/{id}/draftables?format=json`,
+with a fallback. From 2026-09-16 that endpoint answered every request from
+the Actions runners with 403 while the lobby on `www.draftkings.com` kept
+serving, and the salary archive banked zero rows for two days behind green
+runs (the collector wrote empty parquets, the DFS builder said "empty
+salaries", the site showed no lineups). The client now sends a browser's
+own headers and, when the API still refuses (401/403/429), reads the older
+lineup-builder endpoint on the www host,
+`https://www.draftkings.com/lineup/getavailableplayers?draftGroupId={id}`,
+rewritten into the draftables shape (`legacy_players_to_draftables`). The
+payload carries the game's start (its `teamList`, keyed by each player's
+`tsid`, holds a .NET epoch of the **Eastern wall clock** — 8:15 PM ET
+arrives as 20:15 "UTC" and is moved to UTC on read), DK's player id
+(`pdkid`), the probable-pitcher
+flag (`pp`), the roster slot (`rosposid`, the tier on a Tiers board) and
+the lobby's stat (`ppg`), so kickoffs, the MLB pitcher pool and the
+salary-free boards all survive the fallback; a salary of 0 is read as "no
+salary" so those boards take the tiered path. What it lacks is a showdown
+board's captain rows — each player appears once at the flex price, and the
+showdown solver prices the captain at 1.5x from that single row as it
+already did for any player without one. The first live run through the
+fallback (2026-09-18 00:10 UTC) served 43 NFL, 15 NCAAF and 14 MLB boards,
+14,742 salary rows, with the API still refusing every one of them. The
+collector's log names which host served each league, a league
+whose boards all refused gets a warning annotation, and the collector
+workflow runs with `--fail-on-empty` so a day of refusals is a red run, not
+an empty artifact.
+
 Two traps worth stating, both of which cost real time to find:
 
 1. **`ContestTypeId` is not `gameTypeId`.** They agree for the newer formats

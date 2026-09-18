@@ -10,7 +10,12 @@ then each group's draftables (players + salaries), and:
 
 Runs as a GitHub Action and uploads an Actions artifact — salary history is
 part of the edge, so it stays out of git like the odds archives
-(docs/FOOTBALL_CUTOVER.md §5a). An empty lobby (off-season) succeeds.
+(docs/FOOTBALL_CUTOVER.md §5a). An empty lobby (off-season) succeeds. A lobby
+with boards that all refuse to be fetched does NOT pass quietly: each such
+league gets a warning annotation, and ``--fail-on-empty`` (the collector
+workflow's setting) fails the run when every league with boards came back
+empty — from 2026-09-16 to 09-17 the draftables API 403'd every request and
+the archive banked zero rows for two days behind green runs.
 
     python scripts/collect_dk_salaries.py --out artifacts/dk_salaries
 
@@ -23,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -106,6 +113,10 @@ def main() -> None:
     parser.add_argument("--draft-group", default="0",
                         help="draft group id label for --from-file")
     parser.add_argument("--league", default="nfl", help="league label for --from-file")
+    parser.add_argument("--fail-on-empty", action="store_true",
+                        help="exit non-zero when every league with boards in its "
+                             "lobby fetched no salary rows (a refusal, not an "
+                             "off-season)")
     args = parser.parse_args()
 
     now = datetime.now(UTC)
@@ -149,6 +160,8 @@ def main() -> None:
     owned = assign_draft_groups(
         {league: frame["draft_group_id"].tolist() for league, frame in lobbies.items()}
     )
+    boards_seen = 0
+    empty_leagues: list[str] = []
     for league, groups in lobbies.items():
         mine = owned.get(league, set())
         borrowed = len(groups) - len(mine)
@@ -158,12 +171,18 @@ def main() -> None:
 
         frames: list[pd.DataFrame] = []
         tiered: list[pd.DataFrame] = []
-        for group_id in groups["draft_group_id"]:
+        served: Counter[str] = Counter()
+        last_error = ""
+        for group in groups.itertuples(index=False):
+            group_id = group.draft_group_id
+            start = None if pd.isna(group.start) else pd.Timestamp(group.start).isoformat()
             try:
-                payload = client.draftables(group_id)
+                payload = client.draftables(group_id, start=start)
             except Exception as exc:  # noqa: BLE001 - one group's fetch never blocks the rest
                 print(f"  {league}: draft group {group_id} skipped ({exc})")
+                last_error = str(exc)
                 continue
+            served[str(payload.get("_source", "api"))] += 1
             (raw_dir / f"{league}_draftables_{tag}_{group_id}.json").write_text(
                 json.dumps(payload)
             )
@@ -173,8 +192,27 @@ def main() -> None:
                 tiered.append(normalize_tiered(payload, str(group_id)))
             else:
                 frames.append(priced)
+        if served.get("legacy"):
+            print(f"  {league}: {served['legacy']} of {sum(served.values())} draft "
+                  "group(s) served by the legacy lineup endpoint (the draftables "
+                  "API refused them)")
+        if len(groups) and not sum(served.values()):
+            # Boards in the lobby, none fetched: a refusal, and the archive
+            # is about to bank an empty day. Say so where the run summary
+            # shows it rather than only in a green log.
+            print(f"::warning title=DraftKings salaries empty::{league}: "
+                  f"{len(groups)} draft group(s) in the lobby, none fetched "
+                  f"(last error: {last_error})")
+            empty_leagues.append(league)
+        boards_seen += int(len(groups) > 0)
         _write_league(league, frames, out, tag, collected_at, groups=groups)
         _write_tiered(league, tiered, out, tag, collected_at, groups=groups)
+
+    if args.fail_on_empty and boards_seen and len(empty_leagues) == boards_seen:
+        print("::error title=DraftKings salaries empty::every lobby with boards "
+              f"fetched nothing ({', '.join(empty_leagues)}); the archive banked "
+              "no salaries this run")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

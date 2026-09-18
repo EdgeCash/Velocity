@@ -46,12 +46,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      # --fail-on-empty: boards in every lobby and no salary rows fetched is
+      # a refusal by DK, not an off-season, and this run goes red so the
+      # Actions list shows it. The upload below still runs on failure — the
+      # raw lobby and board payloads are the diagnosis.
       - name: Snapshot salaries
         run: |
           python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
-            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba nba ncaab nhl' }}"
+            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba nba ncaab nhl' }}" \
+            --fail-on-empty
 
       - name: Upload salaries (Actions artifact)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dk-salaries-${{ github.run_id }}
