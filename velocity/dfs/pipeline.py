@@ -191,7 +191,12 @@ def solve_showdown(
     board = showdown_board(board)
     board = eligible_board(normalize_positions(board, spec), spec)
     if points is None:
-        scorer = (dk_expected_points_mlb if league == "mlb" else dk_expected_points)
+        # The league's own scorer, exactly as the classic path picks it: the
+        # old mlb-or-FantasyPros choice sent the college bank (no ``stat``
+        # column) through the FantasyPros scorer, which raised KeyError and,
+        # because the showdown boards solve first, cost NCAAF its classic
+        # slates too (2026-09-18).
+        _spec, scorer = LEAGUE_SPECS.get(league, (None, dk_expected_points))
         points = scorer(fp)
     pool = lineup_pool(board, points)
     lineup = build_showdown(pool, spec=spec) if not pool.empty else None
