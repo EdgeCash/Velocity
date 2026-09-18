@@ -187,3 +187,122 @@ def test_ownership_does_not_depend_on_iteration_order() -> None:
 def test_an_uncontested_lobby_is_left_exactly_as_it_came() -> None:
     owned = assign_draft_groups({"nfl": ["1", "2", "3"]})
     assert owned["nfl"] == {"1", "2", "3"}
+
+
+# ---------------------------------------------------------------------------
+# The legacy lineup endpoint as the fallback when the draftables API refuses.
+# From 2026-09-16 every api.draftkings.com draftables call from the Actions
+# runners came back 403 while the lobby on www kept answering; the archive
+# banked zero rows for two days behind green runs.
+# ---------------------------------------------------------------------------
+
+
+def _legacy_payload() -> dict:
+    return {
+        "playerList": [
+            {"pid": 1001, "fn": "Josh", "ln": "Allen", "pn": "QB", "s": 8200,
+             "tid": 324, "htid": 324, "atid": 325, "htabbr": "BUF", "atabbr": "DET",
+             "i": "", "IsDisabledFromDrafting": False},
+            {"pid": 1002, "fn": "Jahmyr", "ln": "Gibbs", "pn": "RB", "s": 7900,
+             "tid": 325, "htid": 324, "atid": 325, "htabbr": "BUF", "atabbr": "DET",
+             "i": "Q", "IsDisabledFromDrafting": False},
+            # No price: dropped by the normalizer, never guessed.
+            {"pid": 1003, "fn": "Practice", "ln": "Squad", "pn": "WR", "s": None,
+             "tid": 325, "htid": 324, "atid": 325, "htabbr": "BUF", "atabbr": "DET",
+             "i": ""},
+        ],
+    }
+
+
+def test_legacy_players_convert_to_the_draftables_shape() -> None:
+    from velocity.dfs.salaries import legacy_players_to_draftables
+
+    converted = legacy_players_to_draftables(
+        _legacy_payload(), "555", start="2026-09-18T00:15:00")
+    assert converted["_source"] == "legacy"
+    assert converted["_legacy"] == _legacy_payload()  # DK's real shape is kept
+    out = normalize_draftables(converted, "555")
+    Salaries.validate(out)
+    assert list(out["player_name"]) == ["Josh Allen", "Jahmyr Gibbs"]
+    allen = out[out["player_name"] == "Josh Allen"].iloc[0]
+    gibbs = out[out["player_name"] == "Jahmyr Gibbs"].iloc[0]
+    # The player's team is whichever of the game's two the tid matches.
+    assert (allen["team"], gibbs["team"]) == ("BUF", "DET")
+    assert allen["competition"] == "DET @ BUF"
+    assert allen["salary"] == 8200 and gibbs["position"] == "RB"
+    # The API spells a healthy player "None"; the legacy field is "".
+    assert (allen["status"], gibbs["status"]) == ("None", "Q")
+    # No per-game start on this endpoint: the slate's start stands in.
+    assert pd.Timestamp(allen["kickoff"]) == pd.Timestamp("2026-09-18 00:15:00")
+    assert out["roster_slot_id"].isna().all()
+
+
+def test_client_falls_back_to_the_legacy_endpoint_when_the_api_refuses() -> None:
+    import urllib.error
+
+    from velocity.dfs.salaries import (
+        DRAFTABLES_URL,
+        LEGACY_PLAYERS_URL,
+        DraftKingsClient,
+    )
+
+    calls: list[str] = []
+
+    class Refusing(DraftKingsClient):
+        def _get(self, url: str) -> dict:
+            calls.append(url)
+            if url == DRAFTABLES_URL.format(group_id="555"):
+                raise urllib.error.HTTPError(url, 403, "Forbidden", None, None)  # type: ignore[arg-type]
+            assert url == LEGACY_PLAYERS_URL.format(group_id="555")
+            return _legacy_payload()
+
+    payload = Refusing().draftables("555", start="2026-09-18T00:15:00")
+    assert payload["_source"] == "legacy"
+    assert len(payload["draftables"]) == 3
+    assert calls == [DRAFTABLES_URL.format(group_id="555"),
+                     LEGACY_PLAYERS_URL.format(group_id="555")]
+
+
+def test_client_keeps_the_api_payload_and_names_its_source() -> None:
+    from velocity.dfs.salaries import DraftKingsClient
+
+    class Serving(DraftKingsClient):
+        def _get(self, url: str) -> dict:
+            return _payload()
+
+    payload = Serving().draftables("12345")
+    assert payload["_source"] == "api"
+    assert len(normalize_draftables(payload, "12345")) == 2
+
+
+def test_client_reraises_when_both_hosts_refuse_and_on_a_final_status() -> None:
+    import urllib.error
+
+    import pytest
+    from velocity.dfs.salaries import DraftKingsClient
+
+    class BothRefuse(DraftKingsClient):
+        def _get(self, url: str) -> dict:
+            code = 403 if "api.draftkings.com" in url else 500
+            raise urllib.error.HTTPError(url, code, "nope", None, None)  # type: ignore[arg-type]
+
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        BothRefuse().draftables("555")
+    assert caught.value.code == 403  # the API's refusal, the legacy one chained
+    assert isinstance(caught.value.__cause__, urllib.error.HTTPError)
+
+    class Missing(DraftKingsClient):
+        def _get(self, url: str) -> dict:
+            raise urllib.error.HTTPError(url, 404, "gone", None, None)  # type: ignore[arg-type]
+
+    with pytest.raises(urllib.error.HTTPError) as gone:
+        Missing().draftables("555")
+    assert gone.value.code == 404  # no such group is final, not a refusal
+
+
+def test_client_identifies_as_a_browser() -> None:
+    from velocity.dfs.salaries import _HEADERS
+
+    assert "Chrome/" in _HEADERS["User-Agent"] and "Safari/" in _HEADERS["User-Agent"]
+    assert _HEADERS["Accept"].startswith("application/json")
+    assert _HEADERS["Referer"].startswith("https://www.draftkings.com")

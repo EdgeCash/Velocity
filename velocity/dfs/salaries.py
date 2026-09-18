@@ -5,6 +5,13 @@ the draft groups (slates), and the draftables endpoint lists every player in a
 group with salary, position, team, and game. Two layers, kept strictly separate
 so the test gate stays offline (the same pattern as the odds ingest):
 
+* :func:`legacy_players_to_draftables` — **pure**: the older lineup
+  endpoint's payload (``www.draftkings.com/lineup/getavailableplayers``)
+  rewritten into the draftables shape, so one normalizer serves both. The
+  client falls back to it when the draftables API refuses a request: from
+  2026-09-16 every ``api.draftkings.com`` draftables call from the Actions
+  runners came back 403 while the lobby on ``www`` kept answering, and the
+  salary archive went silently empty for two days.
 * :func:`normalize_draftables` — **pure**: flattens a draftables payload onto
   the canonical :class:`Salaries` schema, one row per player per draft group
   (DK repeats a player once per eligible roster slot — deduped here).
@@ -19,6 +26,7 @@ DFS equivalent of the CLV archive, so it starts accruing before the season.
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -33,9 +41,31 @@ LOBBY_URL = "https://www.draftkings.com/lobby/getcontests?sport={sport}"
 DRAFTABLES_URL = (
     "https://api.draftkings.com/draftgroups/v1/draftgroups/{group_id}/draftables?format=json"
 )
+# The older lineup-builder endpoint on the www host — the same host as the
+# lobby, and the fallback when the draftables API refuses a request.
+LEGACY_PLAYERS_URL = (
+    "https://www.draftkings.com/lineup/getavailableplayers?draftGroupId={group_id}"
+)
 _FETCH_TIMEOUT = 60
-# DK serves these endpoints to browsers; the default urllib UA gets rejected.
-_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+# DK serves these endpoints to browsers and rejects the default urllib
+# identity. The headers are what a browser's own fetch of the lobby sends:
+# a full user-agent string (the truncated one without the Chrome/Safari
+# tokens was accepted until 2026-09-15), an Accept for JSON, a language,
+# and the site as referer and origin.
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+_HEADERS = {
+    "User-Agent": _USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.draftkings.com/lobby",
+    "Origin": "https://www.draftkings.com",
+}
+# HTTP statuses on the draftables API that send the client to the legacy
+# endpoint: a refusal, not an absence. A 404 (no such group) is final.
+_FALLBACK_STATUSES = frozenset({401, 403, 429})
 
 # DK sport codes per league. Every covered vertical banks salary history
 # (the DFS analog of the CLV archive); the optimizer prices the leagues it
@@ -157,6 +187,53 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
     return Salaries.validate(df[_COLUMNS])
 
 
+def legacy_players_to_draftables(
+    payload: Mapping[str, Any], draft_group_id: str, *, start: Any = None,
+) -> dict[str, Any]:
+    """The legacy lineup endpoint's payload, rewritten in the draftables shape.
+
+    ``getavailableplayers`` lists one entry per player with the short keys
+    the old lineup builder used: ``fn``/``ln`` (name), ``pn`` (position),
+    ``s`` (salary), ``tid`` (the player's team id) beside ``htid``/``atid``
+    and ``htabbr``/``atabbr`` (the game's two teams), and ``i`` (the injury
+    designation, empty when healthy). It carries no roster-slot ids and no
+    per-game start time, so the slate's own ``start`` stands in for the
+    kickoff (every game on a slate starts at or after it) and a showdown
+    board comes back without its captain rows — the salary board is what the
+    fallback preserves. Nothing is guessed: a player without a name or a
+    price is dropped by :func:`normalize_draftables` exactly as before. The
+    raw payload rides along under ``_legacy`` so the banked JSON keeps DK's
+    actual shape for the day the mapping needs a look.
+    """
+    draftables: list[dict[str, Any]] = []
+    for p in payload.get("playerList") or []:
+        name = " ".join(str(part) for part in (p.get("fn"), p.get("ln")) if part).strip()
+        tid = None if p.get("tid") is None else str(p.get("tid"))
+        home_id = None if p.get("htid") is None else str(p.get("htid"))
+        away_id = None if p.get("atid") is None else str(p.get("atid"))
+        home, away = p.get("htabbr"), p.get("atabbr")
+        team = home if tid is not None and tid == home_id else (
+            away if tid is not None and tid == away_id else None)
+        competition = f"{away} @ {home}" if home and away else None
+        draftables.append({
+            "playerDkId": p.get("pid"),
+            "playerId": p.get("pid"),
+            "displayName": name or None,
+            "position": p.get("pn"),
+            "salary": p.get("s"),
+            "teamAbbreviation": team,
+            # The API spells a healthy player "None"; the legacy field is "".
+            "status": p.get("i") or "None",
+            "isDisabled": bool(p.get("IsDisabledFromDrafting")),
+            "rosterSlotId": None,
+            "competition": {
+                "name": competition,
+                "startTime": p.get("gameStartTime") or start,
+            },
+        })
+    return {"draftables": draftables, "_source": "legacy", "_legacy": dict(payload)}
+
+
 def _clean_suffix(suffix: Any) -> str:
     """DK's ``ContestStartTimeSuffix`` (" (Turbo)", " (Night)") → "Turbo"."""
     if not suffix:
@@ -257,7 +334,7 @@ class DraftKingsClient:
     """Network client for the unauthenticated DK lobby + draftables endpoints."""
 
     def _get(self, url: str) -> Any:  # pragma: no cover - network
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        req = urllib.request.Request(url, headers=_HEADERS)
         with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
             return json.loads(resp.read())
 
@@ -265,6 +342,27 @@ class DraftKingsClient:
         """Raw lobby payload for a DK sport code (contests + draft groups)."""
         return self._get(LOBBY_URL.format(sport=sport))
 
-    def draftables(self, group_id: str) -> Any:  # pragma: no cover - network
-        """Raw draftables payload for one draft group."""
-        return self._get(DRAFTABLES_URL.format(group_id=group_id))
+    def draftables(self, group_id: str, *, start: Any = None) -> Any:
+        """One draft group's board in the draftables shape, whichever host served it.
+
+        The draftables API first; when it refuses (:data:`_FALLBACK_STATUSES`)
+        the legacy lineup endpoint on the www host answers instead, rewritten
+        by :func:`legacy_players_to_draftables` with ``start`` (the slate's
+        start, from the lobby) as the kickoff. The payload names its source
+        under ``_source`` so the collector's log says which host is carrying
+        the archive. A refusal on both hosts raises the API's error, with the
+        legacy one chained.
+        """
+        try:
+            payload = self._get(DRAFTABLES_URL.format(group_id=group_id))
+        except urllib.error.HTTPError as exc:
+            if exc.code not in _FALLBACK_STATUSES:
+                raise
+            try:
+                legacy = self._get(LEGACY_PLAYERS_URL.format(group_id=group_id))
+            except Exception as legacy_exc:
+                raise exc from legacy_exc
+            return legacy_players_to_draftables(legacy, str(group_id), start=start)
+        if isinstance(payload, dict):
+            payload["_source"] = "api"
+        return payload

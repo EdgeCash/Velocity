@@ -19,6 +19,24 @@ Two unauthenticated endpoints carry everything:
   roster slots and their counts), `salaryCap`, `teamCount.minValue`,
   `uniquePlayers`, `draftType`, and per-slot multipliers.
 
+The salaries themselves come from
+`https://api.draftkings.com/draftgroups/v1/draftgroups/{id}/draftables?format=json`,
+with a fallback. From 2026-09-16 that endpoint answered every request from
+the Actions runners with 403 while the lobby on `www.draftkings.com` kept
+serving, and the salary archive banked zero rows for two days behind green
+runs (the collector wrote empty parquets, the DFS builder said "empty
+salaries", the site showed no lineups). The client now sends a browser's
+own headers and, when the API still refuses (401/403/429), reads the older
+lineup-builder endpoint on the www host,
+`https://www.draftkings.com/lineup/getavailableplayers?draftGroupId={id}`,
+rewritten into the draftables shape (`legacy_players_to_draftables`). That
+payload has no roster-slot ids and no per-game start, so a showdown board
+served this way lacks its captain rows and kickoffs read as the slate's
+start. The collector's log names which host served each league, a league
+whose boards all refused gets a warning annotation, and the collector
+workflow runs with `--fail-on-empty` so a day of refusals is a red run, not
+an empty artifact.
+
 Two traps worth stating, both of which cost real time to find:
 
 1. **`ContestTypeId` is not `gameTypeId`.** They agree for the newer formats
