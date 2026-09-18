@@ -543,15 +543,16 @@ def main() -> None:
             from velocity.dfs.gpp import GppConfig, build_gpp_portfolio, portfolio_frame
             from velocity.dfs.optimizer import lineup_pool
             from velocity.dfs.pipeline import eligible_board, normalize_positions
-            from velocity.dfs.scoring import dk_expected_points
             from velocity.util.seed import make_rng
 
             board = salaries[
                 salaries["draft_group_id"].astype(str) == str(run.draft_group_id)
             ]
             board = eligible_board(normalize_positions(board, spec), spec)
-            pool = lineup_pool(board, points if points is not None
-                               else dk_expected_points(fp))
+            # The league's own scorer, as the classic solve above used: the
+            # FantasyPros scorer here sent the college bank (no ``stat``
+            # column) into a KeyError and skipped every college portfolio.
+            pool = lineup_pool(board, points if points is not None else scorer(fp))
             portfolio = build_gpp_portfolio(
                 pool, spec=spec, rng=make_rng(), samples=samples or None,
                 config=GppConfig(n_lineups=args.gpp, max_overlap=args.gpp_overlap,

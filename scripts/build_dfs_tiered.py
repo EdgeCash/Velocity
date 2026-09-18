@@ -45,6 +45,16 @@ _SOURCE_NOTES = {
 }
 assert set(_SOURCE_NOTES) == set(_SUPPORTED)
 
+# College prices the football Single Stat formats from its own banked box
+# scores (FantasyPros serves no college players), so its footers credit
+# the bank rather than a consensus it never read.
+_SOURCE_NOTES_NCAAF = {
+    "Single Stat - Touchdowns":
+        "banked box-score rushing + receiving touchdowns, six-game window",
+    "Single Stat - Total Yards":
+        "banked box-score passing + rushing + receiving yards, six-game window",
+}
+
 
 def _mlb_dk_points() -> pd.DataFrame:
     """Today's contextual MLB DK projections (the same input Tiers wants)."""
@@ -202,15 +212,29 @@ def main() -> None:
     points_cache: dict[str, pd.DataFrame] = {}
 
     def points_for(game_type: str) -> pd.DataFrame:
+        # College's ``--fp`` is the banked player-games frame, not a
+        # FantasyPros frame: the FP readers raised KeyError('stat') on it and
+        # every college Single Stat board skipped (2026-09-18).
+        from velocity.models.dfs_ncaaf import (
+            TOTAL_YARDS,
+            TOUCHDOWNS_SCORED,
+            expected_stat_ncaaf,
+        )
+
+        college = args.league == "ncaaf"
         if game_type not in points_cache:
             if game_type == "Tiers":
                 points_cache[game_type] = _mlb_dk_points()
             elif game_type == "Single Stat - Home Runs":
                 points_cache[game_type] = _mlb_home_runs()
             elif game_type == "Single Stat - Total Yards":
-                points_cache[game_type] = _football_total_yards(fp)
+                points_cache[game_type] = (
+                    expected_stat_ncaaf(fp, TOTAL_YARDS) if college
+                    else _football_total_yards(fp))
             else:
-                points_cache[game_type] = _football_touchdowns(fp)
+                points_cache[game_type] = (
+                    expected_stat_ncaaf(fp, TOUCHDOWNS_SCORED) if college
+                    else _football_touchdowns(fp))
         return points_cache[game_type]
 
     out = Path(args.out)
@@ -263,6 +287,8 @@ def main() -> None:
         # killed the run before the tiered parquet was written, so the whole
         # NFL board — cards, captions and data — silently produced nothing.
         source = _SOURCE_NOTES[game_type]
+        if args.league == "ncaaf":
+            source = _SOURCE_NOTES_NCAAF.get(game_type, source)
         card = out / f"dfs_{slug}_{stamp}.png"
         render_tier_card(entry, card, when=when, slate_label=label, unit=unit,
                          source_note=source)

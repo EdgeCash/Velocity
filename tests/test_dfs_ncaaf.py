@@ -10,6 +10,7 @@ derived from ESPN's play text, and these pin the three places that matters.
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from velocity.ingest.cfb_players import (
     CFB_POSITIONS,
     fold_usable_weeks,
@@ -348,3 +349,65 @@ def test_a_season_is_gated_by_week_because_that_is_how_it_breaks() -> None:
 def test_an_empty_release_drops_no_weeks() -> None:
     folded, covered, dropped = fold_usable_weeks(pd.DataFrame())
     assert folded.empty and covered == 0.0 and dropped == []
+
+
+# ---------------------------------------------------------------------------
+# The Single Stat projections: one stat from the bank, shrunk to the position.
+# ---------------------------------------------------------------------------
+
+
+def _stat_bank() -> pd.DataFrame:
+    """Three players over ten weeks: a steady RB, a one-game RB, a passing QB."""
+    rows = []
+    for week in range(1, 11):
+        # Steady: one touchdown every game — but in the four OLDEST weeks two
+        # a game, which the six-game window must not see.
+        rows.append({"season": 2026, "week": week, "player_id": 1, "player_name": "Steady Back",
+                     "team": "AAA", "position": "RB", "rush_tds": 2.0 if week <= 4 else 1.0,
+                     "receiving_tds": 0.0, "pass_tds": 0.0,
+                     "pass_yards": 0.0, "rush_yards": 80.0, "receiving_yards": 10.0})
+        rows.append({"season": 2026, "week": week, "player_id": 3, "player_name": "Arm Only",
+                     "team": "BBB", "position": "QB", "rush_tds": 0.0, "receiving_tds": 0.0,
+                     "pass_tds": 3.0, "pass_yards": 300.0, "rush_yards": 0.0,
+                     "receiving_yards": 0.0})
+    rows.append({"season": 2026, "week": 10, "player_id": 2, "player_name": "One Game",
+                 "team": "AAA", "position": "RB", "rush_tds": 3.0, "receiving_tds": 0.0,
+                 "pass_tds": 0.0, "pass_yards": 0.0, "rush_yards": 120.0,
+                 "receiving_yards": 0.0})
+    return pd.DataFrame(rows)
+
+
+def test_expected_stat_reads_the_window_and_shrinks_to_the_position() -> None:
+    from velocity.models.dfs_ncaaf import (
+        TOTAL_YARDS,
+        TOUCHDOWNS_SCORED,
+        expected_stat_ncaaf,
+    )
+
+    tds = expected_stat_ncaaf(_stat_bank(), TOUCHDOWNS_SCORED).set_index("player_name")
+    assert list(tds.columns) == ["player_id", "team", "position", "points"]
+    # The RB position mean over the window: Steady's six 1-TD games and One
+    # Game's one 3-TD game → 9 / 7. Steady shrinks toward it from 1.0, and
+    # never sees his older 2-TD games; One Game shrinks hard from 3.0.
+    rb_mean = 9 / 7
+    steady, one = tds.loc["Steady Back", "points"], tds.loc["One Game", "points"]
+    assert 1.0 < steady < rb_mean
+    assert rb_mean < one < 3.0
+    assert one == pytest.approx((3.0 + rb_mean * 4.0) / (1 + 4.0), abs=1e-3)
+    # A passing touchdown is thrown, not scored: the quarterback projects to 0.
+    assert tds.loc["Arm Only", "points"] == 0.0
+
+    yards = expected_stat_ncaaf(_stat_bank(), TOTAL_YARDS).set_index("player_name")
+    # The lone quarterback IS his position's mean, so shrinkage moves nothing.
+    assert yards.loc["Arm Only", "points"] == pytest.approx(300.0)
+    # Steady's 90 a game shrinks toward the RB mean (six 90s and one 120 → 660/7).
+    rb_yards = 660 / 7
+    assert yards.loc["Steady Back", "points"] == pytest.approx(
+        (6 * 90.0 + rb_yards * 4.0) / (6 + 4.0), abs=1e-3)
+
+
+def test_expected_stat_handles_an_empty_or_statless_stat_bank() -> None:
+    from velocity.models.dfs_ncaaf import expected_stat_ncaaf
+
+    assert expected_stat_ncaaf(pd.DataFrame()).empty
+    assert expected_stat_ncaaf(_stat_bank(), ("no_such_column",)).empty
