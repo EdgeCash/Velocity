@@ -33,6 +33,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 import pandera.pandas as pa
@@ -189,8 +190,19 @@ def normalize_draftables(payload: Mapping[str, Any], draft_group_id: str) -> pd.
     return Salaries.validate(df[_COLUMNS])
 
 
-def _dotnet_date(value: Any) -> str | None:
-    """DK's ``/Date(1789676100000)/`` (or a bare epoch-ms) → ISO-8601 UTC."""
+# The legacy team list's ``tz`` is a .NET epoch of the EASTERN wall clock —
+# DK's old lineup builder ran on New York time and serialized the local
+# reading as if it were UTC (DET @ BUF's 8:15 PM ET kickoff arrives as
+# 20:15 "UTC"). The draft-group start ``dgst`` beside it is a true epoch.
+_LEGACY_WALL_TZ = "America/New_York"
+
+
+def _dotnet_date(value: Any, *, wall_tz: str | None = None) -> str | None:
+    """DK's ``/Date(1789676100000)/`` (or a bare epoch-ms) → ISO-8601 UTC.
+
+    With ``wall_tz`` the epoch is read as that zone's wall clock and moved
+    to UTC (the legacy ``tz`` quirk above); without it, as a true epoch.
+    """
     if value is None:
         return None
     if isinstance(value, int | float):
@@ -200,7 +212,14 @@ def _dotnet_date(value: Any) -> str | None:
         if match is None:
             return None
         ms = int(match.group())
-    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+    stamp = datetime.fromtimestamp(ms / 1000, tz=UTC)
+    if wall_tz is None:
+        return stamp.isoformat()
+    try:
+        zone = ZoneInfo(wall_tz)
+    except ZoneInfoNotFoundError:  # pragma: no cover - a runner without tzdata
+        return stamp.isoformat()
+    return stamp.replace(tzinfo=zone).astimezone(UTC).isoformat()
 
 
 def legacy_players_to_draftables(
@@ -219,18 +238,28 @@ def legacy_players_to_draftables(
     ``rosposid`` (the roster-slot id; on a Tiers board the tier), ``ppg``
     (the number the lobby shows beside a player — the API's draft-stat
     attribute 408), and ``tsid``, the game's key into ``teamList``, whose
-    ``tz`` is the game's start as a .NET epoch. So the kickoff is the game's
-    own, not the slate's; ``start`` (the slate's, from the lobby) is only
-    the last resort. What the endpoint lacks is a showdown board's captain
-    rows — each player appears once, at the flex price, and
-    :func:`velocity.dfs.showdown.showdown_board` prices the captain at 1.5x
-    from a single row as it already does for any player without one.
+    ``tz`` is the game's start as a .NET epoch of the Eastern wall clock
+    (:data:`_LEGACY_WALL_TZ`). So the kickoff is the game's own, not the
+    slate's; the draft group's true-epoch ``dgst`` and then ``start`` (the
+    slate's, from the lobby) are the fallbacks. What the endpoint lacks is
+    a showdown board's captain rows — each player appears once, at the flex
+    price, and :func:`velocity.dfs.showdown.showdown_board` prices the
+    captain at 1.5x from a single row as it already does for any player
+    without one.
     Nothing is guessed: a player without a name or a price is dropped by
     :func:`normalize_draftables` exactly as before, and a salary of 0 is
     read as "no salary" so those boards take the tiered path. The raw
     payload rides along under ``_legacy`` so the banked JSON keeps DK's
     actual shape.
     """
+    # The slate start arrives as whatever the lobby frame held (a naive UTC
+    # stamp, usually); spelled the same way as the team list's converted
+    # starts so the column parses as one format downstream rather than
+    # coercing the odd one to NaT.
+    if start is not None:
+        stamp = pd.Timestamp(start)
+        start = (stamp.tz_localize("UTC") if stamp.tzinfo is None
+                 else stamp.tz_convert("UTC")).isoformat()
     games_raw = payload.get("teamList") or {}
     games: dict[str, Mapping[str, Any]] = (
         {str(k): v for k, v in games_raw.items()} if isinstance(games_raw, Mapping)
@@ -269,8 +298,8 @@ def legacy_players_to_draftables(
             "draftStatAttributes": stat_attrs,
             "competition": {
                 "name": competition,
-                "startTime": _dotnet_date(game.get("tz")) or _dotnet_date(p.get("dgst"))
-                or start,
+                "startTime": _dotnet_date(game.get("tz"), wall_tz=_LEGACY_WALL_TZ)
+                or _dotnet_date(p.get("dgst")) or start,
             },
         })
     return {"draftables": draftables, "_source": "legacy", "_legacy": dict(payload)}

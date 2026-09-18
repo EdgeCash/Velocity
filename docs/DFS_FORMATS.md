@@ -31,7 +31,9 @@ lineup-builder endpoint on the www host,
 `https://www.draftkings.com/lineup/getavailableplayers?draftGroupId={id}`,
 rewritten into the draftables shape (`legacy_players_to_draftables`). The
 payload carries the game's start (its `teamList`, keyed by each player's
-`tsid`, holds a .NET epoch), DK's player id (`pdkid`), the probable-pitcher
+`tsid`, holds a .NET epoch of the **Eastern wall clock** — 8:15 PM ET
+arrives as 20:15 "UTC" and is moved to UTC on read), DK's player id
+(`pdkid`), the probable-pitcher
 flag (`pp`), the roster slot (`rosposid`, the tier on a Tiers board) and
 the lobby's stat (`ppg`), so kickoffs, the MLB pitcher pool and the
 salary-free boards all survive the fallback; a salary of 0 is read as "no

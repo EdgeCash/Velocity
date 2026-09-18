@@ -250,8 +250,9 @@ def test_legacy_players_convert_to_the_draftables_shape() -> None:
     assert (allen["player_id"], gibbs["player_id"]) == ("693001", "693002")
     # The API spells a healthy player "None"; the legacy field is "".
     assert (allen["status"], gibbs["status"]) == ("None", "Q")
-    # The game's own start from the team list (a .NET epoch), the slate's
-    # start only where the team list is silent.
+    # The game's own start from the team list — a .NET epoch of the Eastern
+    # wall clock (20:15 "UTC" is 8:15 PM ET) — and the slate's start only
+    # where the team list is silent.
     assert pd.Timestamp(allen["kickoff"]) == pd.Timestamp("2026-09-18 00:15:00")
     assert pd.Timestamp(bijan["kickoff"]) == pd.Timestamp("2026-09-20 17:00:00")
     # The roster slot and the probable flag ride through.
@@ -277,6 +278,8 @@ def test_legacy_salary_free_boards_take_the_tiered_path() -> None:
                            "tz": "/Date(1789689600000)/"}},
     }
     converted = legacy_players_to_draftables(payload, "777")
+    # 00:00 on the Eastern wall clock → 04:00 UTC.
+    assert converted["draftables"][0]["competition"]["startTime"] == "2026-09-18T04:00:00+00:00"
     assert normalize_draftables(converted, "777").empty  # a 0 is no salary, not a free player
     tiers = normalize_tiered(converted, "777")
     assert list(tiers["tier"]) == [1, 2]
