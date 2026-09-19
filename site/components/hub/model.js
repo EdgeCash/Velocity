@@ -124,6 +124,7 @@ export function buildGames({
   publish = [],
   positions = [],
   dfs = [],
+  pool = [],
   weather = [],
   props = [],
   lineMoves = [],
@@ -149,6 +150,7 @@ export function buildGames({
     (r) => `${r.league}|${String(r.team ?? '').toUpperCase()}`,
   );
   const dfsByTeam = byTeam(dfs);
+  const poolByTeam = byTeam(pool);
   const injuredByTeam = byTeam(injuries);
 
   const out = [];
@@ -171,10 +173,12 @@ export function buildGames({
     // is one of the two. Which side they are on is kept, because "who is out"
     // is only useful when you can see it is not evenly split.
     const dfsPlayers = [];
+    const priced = [];
     const injured = [];
     for (const [side, team] of [['away', game.away_team], ['home', game.home_team]]) {
       const code = String(team ?? '').toUpperCase();
       for (const row of dfsByTeam.get(`${league}|${code}`) ?? []) dfsPlayers.push(row);
+      for (const row of poolByTeam.get(`${league}|${code}`) ?? []) priced.push({ ...row, side });
       for (const row of injuredByTeam.get(`${league}|${code}`) ?? []) {
         injured.push({ ...row, side });
       }
@@ -195,6 +199,10 @@ export function buildGames({
       staked: markets.reduce((sum, m) => sum + (m.stake || 0), 0),
       positions: open,
       dfs: dfsPlayers,
+      // Every priced player on this game, rostered or not. `dfs` above is
+      // the roster the optimizer returned; this is what it chose from, which
+      // is the half a research surface reads.
+      pool: priced,
       // A prop is a bet on this game, so it belongs in this game's sheet
       // rather than on a board of its own — that separation is exactly what
       // the rebuild exists to undo.
@@ -925,8 +933,13 @@ const normName = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]
 export function playerBook(games) {
   const rows = [];
   for (const g of games ?? []) {
+    // The pool first, the roster second: the pool prices every draftable, so
+    // a player with a prop line but no roster spot still gets their salary
+    // and projection. Before the pool was persisted, this map held the nine
+    // rostered players and every other row showed an em-dash.
     const dfsByName = new Map();
     for (const d of g.dfs ?? []) dfsByName.set(normName(d.player_name), d);
+    for (const d of g.pool ?? []) dfsByName.set(normName(d.player_name), d);
     const pairs = new Map();
     for (const p of collapseProps(g.props ?? [])) {
       const key = `${p.player}|${p.market}|${p.point}`;
@@ -945,8 +958,10 @@ export function playerBook(games) {
       const fromUnder = row.under?.p_model;
       const pOver = Number.isFinite(fromOver) ? fromOver
         : Number.isFinite(fromUnder) ? 1 - fromUnder : null;
-      const salary = Number(dfs?.salary);
-      const points = Number(dfs?.points);
+      // Same null-is-not-zero trap as playerPool above.
+      const salary = isNum(dfs?.salary) ? Number(dfs.salary) : null;
+      const points = isNum(dfs?.points) ? Number(dfs.points) : null;
+      const value = isNum(dfs?.value) ? Number(dfs.value) : null;
       rows.push({
         ...row,
         p_over: pOver,
@@ -955,8 +970,9 @@ export function playerBook(games) {
         sure: pOver === null ? 0 : Math.max(pOver, 1 - pOver),
         team: String(dfs?.team ?? ''),
         position: String(dfs?.position ?? ''),
-        salary: Number.isFinite(salary) ? salary : null,
-        dfs_points: Number.isFinite(points) ? points : null,
+        salary,
+        dfs_points: points,
+        dfs_value: value,
       });
     }
   }
@@ -1034,4 +1050,46 @@ export function accuracySummary(rows, league = 'all') {
     middle_share: withPct ? middle / withPct : null,
     n_pct: withPct,
   };
+}
+
+/** Every priced player on the visible games, one row each, dearest value first.
+ *
+ * The DFS half of Ballpark Pal's player pages: what each draftable costs,
+ * what the model projects, and the points per $1,000 that decides whether
+ * the price is right. `rostered` marks the ones the optimizer took, so the
+ * lineup reads as a subset of the pool rather than a separate list.
+ */
+export function playerPool(games) {
+  const rows = [];
+  for (const g of games ?? []) {
+    for (const p of realRows(g.pool ?? [])) {
+      // `isNum` rather than `Number.isFinite(Number(x))`: Number(null) is 0,
+      // not NaN, and the public tier blanks salary and value to null — so the
+      // naive test renders a priceless row as "$0" instead of an em-dash.
+      const salary = isNum(p.salary) ? Number(p.salary) : null;
+      const points = isNum(p.points) ? Number(p.points) : null;
+      const value = isNum(p.value) ? Number(p.value) : null;
+      rows.push({
+        game_id: g.game_id,
+        league: g.league,
+        kickoff: g.kickoff ?? null,
+        away_team: String(g.away_team ?? ''),
+        home_team: String(g.home_team ?? ''),
+        player: String(p.player_name ?? ''),
+        position: String(p.position ?? ''),
+        team: String(p.team ?? ''),
+        slate: String(p.slate ?? ''),
+        status: String(p.status ?? ''),
+        salary,
+        points,
+        value,
+        rostered: !!p.rostered,
+      });
+    }
+  }
+  // By the model's number, because that is the column a reader scans first;
+  // value sorts on demand in the panel.
+  rows.sort((a, b) => (b.points ?? -Infinity) - (a.points ?? -Infinity)
+    || a.player.localeCompare(b.player));
+  return rows;
 }

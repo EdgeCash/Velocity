@@ -21,7 +21,8 @@
   import { hubState, VIEWS } from './state.js';
   import {
     accuracySummary, buildCard, buildGames, buildLineups, buildParlays,
-    flaggedMarkets, leagueCounts, mostLikely, playerBook, realRows, splitCards,
+    flaggedMarkets, leagueCounts, mostLikely, playerBook, playerPool, realRows,
+    splitCards,
   } from './model.js';
   import { stampLabel, stampTime, teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
@@ -50,6 +51,7 @@
   export let dfsLineup = [];
   export let dfsShowdown = [];
   export let dfsTiered = [];
+  export let dfsPool = [];
   export let ledgerOpen = [];
   export let bankroll = [];
   export let record = [];
@@ -90,6 +92,7 @@
     games, projections, board, publish,
     positions: openPositions,
     dfs: allDfs,
+    pool: dfsPool,
     weather, lineMoves, injuries, ratings, cards, props: playerProps,
     parlays: parlayRows,
   });
@@ -136,6 +139,7 @@
   // and the season's finals against their pregame distributions.
   $: likelySections = mostLikely(visibleGames);
   $: playerRows = playerBook(visibleGames);
+  $: poolRows = playerPool(visibleGames);
   $: accuracyRows = accuracySummary(accuracy, activeLeague);
 
   let detachState;
@@ -182,7 +186,7 @@
     record: realRows(record).length,
     ratings: realRows(ratings).length,
     likely: likelySections.reduce((sum, s) => sum + s.n, 0),
-    players: playerRows.length,
+    players: playerRows.length + poolRows.length,
     accuracy: accuracyRows.n,
   };
 
@@ -264,7 +268,7 @@
       {:else if view === 'likely'}
         <LikelyPanel sections={likelySections} {isPrivate} />
       {:else if view === 'players'}
-        <PlayersPanel rows={playerRows} {isPrivate} />
+        <PlayersPanel rows={playerRows} pool={poolRows} {isPrivate} />
       {:else if view === 'accuracy'}
         <AccuracyPanel summary={accuracyRows} />
       {:else if view === 'dfs'}

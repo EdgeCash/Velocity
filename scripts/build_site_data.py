@@ -87,6 +87,10 @@ PUBLIC_DROP_COLUMNS = {
     "dfs_showdown": ("salary",),
     "dfs_tiered": ("salary",),
     "dfs_gpp": ("total_salary",),
+    # `value` is points per $1,000, so publishing it beside `points` lets the
+    # salary be solved exactly — the same reason `edge` cannot ride beside
+    # `p_model` on the board.
+    "dfs_pool": ("salary", "value"),
 }
 
 # A board row from a sportsbook is a paid quote even with its price stripped —
@@ -871,6 +875,9 @@ def main() -> None:
         "dfs_showdown": collect(slate_dir, "dfs_showdown"),
         "dfs_tiered": collect(slate_dir, "dfs_tiered"),
         "dfs_gpp": collect(slate_dir, "dfs_gpp"),
+        # Every priced player on the slate, not only the rostered ones — the
+        # pool the optimizer chose from (docs/FOOTBALL_PAL.md).
+        "dfs_pool": collect(slate_dir, "dfs_pool"),
         "portfolio": collect(slate_dir, "portfolio"),
         "publish": build_publish(slate_dir),
         "parlays": collect(slate_dir, "slate_{league}_parlays"),
@@ -979,6 +986,14 @@ def main() -> None:
                   "p_model": float, "p_fair": float, "edge": float,
                   "stake": float, "note": str,
                   "league": str, "stamp": str},
+        "dfs_pool": {"player_name": str, "position": str, "team": str,
+                     "salary": float, "points": float, "value": float,
+                     "rostered": bool, "competition": str,
+                     "kickoff": "datetime64[ns]", "status": str,
+                     "probable": bool, "draft_group_id": str,
+                     "slate_start": "datetime64[ns]", "suffix": str,
+                     "slate": str, "game_time": str,
+                     "league": str, "stamp": str},
         "dfs_lineup": {"slot": str, "player_name": str, "position": str,
                        "kickoff": "datetime64[ns]", "game_time": str,
                        "slate_start": "datetime64[ns]",

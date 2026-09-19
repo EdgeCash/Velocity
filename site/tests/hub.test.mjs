@@ -27,6 +27,7 @@ import {
   mostLikely,
   outcomeLabel,
   playerBook,
+  playerPool,
   marketMove,
   modelVsMarket,
   playHeadline,
@@ -247,6 +248,20 @@ test('only lines that actually moved count as moves', () => {
   });
   // The point move and the price move both count; the unchanged one does not.
   assert.deepEqual(built[0].moves.map((m) => m.market), ['total', 'spread']);
+});
+
+test('the pool attaches to a game by team, both sides of it', () => {
+  const games = [{ game_id: 'g1', league: 'nfl', home_team: 'BAL', away_team: 'KC', kickoff: null }];
+  const pool = [
+    { league: 'nfl', team: 'BAL', player_name: 'L. Jackson', points: 22.4 },
+    { league: 'nfl', team: 'KC', player_name: 'P. Mahomes', points: 21.1 },
+    { league: 'nfl', team: 'SF', player_name: 'B. Purdy', points: 18.0 },
+  ];
+  const [game] = buildGames({ games, pool });
+  assert.equal(game.pool.length, 2);
+  assert.deepEqual(game.pool.map((p) => p.side).sort(), ['away', 'home']);
+  // A team not in this game does not leak into it.
+  assert.ok(!game.pool.some((p) => p.team === 'SF'));
 });
 
 test('injuries attach by team and remember which side they are on', () => {
@@ -1022,6 +1037,54 @@ test('a prop line collapses to its best price across books', () => {
   assert.equal(over.venue, 'betmgm');
   assert.equal(over.n_books, 2);
   assert.equal(over.p_model, 0.58);
+});
+
+test('the pool prices every draftable, and the lineup is a subset of it', () => {
+  const g = likelyGame();
+  g.pool = [
+    { league: 'nfl', team: 'BAL', player_name: 'Lamar Jackson', position: 'QB',
+      salary: 8200, points: 22.4, value: 2.73, rostered: true, slate: 'Sun Main' },
+    { league: 'nfl', team: 'BAL', player_name: 'Zay Flowers', position: 'WR',
+      salary: 6400, points: 14.1, value: 2.2, rostered: false, slate: 'Sun Main' },
+    { league: '__none__', player_name: '', position: '', team: '' },
+  ];
+  const rows = playerPool([g]);
+  assert.equal(rows.length, 2);
+  // By the model's number, because that is the column a reader scans first.
+  assert.deepEqual(rows.map((r) => r.player), ['Lamar Jackson', 'Zay Flowers']);
+  assert.equal(rows[0].rostered, true);
+  assert.equal(rows[1].rostered, false);
+  assert.equal(rows[1].salary, 6400);
+  assert.equal(rows[1].value, 2.2);
+  assert.equal(rows[0].away_team, 'Kansas City');
+  assert.equal(rows[0].slate, 'Sun Main');
+});
+
+test('a public-tier pool row carries no salary without becoming a NaN', () => {
+  // apply_tier blanks salary and value; the panel must render an em-dash,
+  // which means null rather than NaN reaching it.
+  const g = likelyGame();
+  g.pool = [{ league: 'nfl', team: 'BAL', player_name: 'Zay Flowers', position: 'WR',
+    salary: null, points: 14.1, value: null, rostered: false }];
+  const [row] = playerPool([g]);
+  assert.equal(row.salary, null);
+  assert.equal(row.value, null);
+  assert.equal(row.points, 14.1);
+});
+
+test('the player book prefers the pool over the roster for a player DFS row', () => {
+  // The roster holds nine players; the pool holds every priced one. A player
+  // with a prop line but no roster spot showed an em-dash in the DFS column
+  // until the pool was persisted.
+  const g = likelyGame();
+  g.dfs = [];
+  g.pool = [{ league: 'nfl', team: 'BAL', player_name: 'Lamar Jackson', position: 'QB',
+    salary: 8200, points: 22.4, value: 2.73, rostered: false }];
+  const [r] = playerBook([g]);
+  assert.equal(r.salary, 8200);
+  assert.equal(r.dfs_points, 22.4);
+  assert.equal(r.dfs_value, 2.73);
+  assert.equal(r.team, 'BAL');
 });
 
 test('the player book pairs both sides of a line and carries the DFS row', () => {

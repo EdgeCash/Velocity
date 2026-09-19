@@ -127,6 +127,27 @@ def test_a_dfs_lineup_keeps_our_points_and_drops_draftkings_salary() -> None:
     assert out["points"].tolist() == [8.77]
 
 
+def test_a_public_dfs_pool_keeps_the_projection_and_drops_the_price() -> None:
+    """Value is the trap here, not salary.
+
+    Blanking the salary alone would look right and leak anyway: value is
+    projected points per $1,000, so it and `points` together give the salary
+    exactly — the same arithmetic that keeps `edge` off a public board beside
+    `p_model`.
+    """
+    pool = pd.DataFrame([
+        {"player_name": "J. Jefferson", "team": "MIN", "position": "WR",
+         "salary": 8600.0, "points": 18.9, "value": 2.198, "rostered": True,
+         "league": "nfl"},
+    ])
+    out = apply_tier("dfs_pool", pool, "public")
+    assert out["salary"].isna().all()
+    assert out["value"].isna().all()
+    # Ours, and the reason the row is worth reading at all.
+    assert out["points"].tolist() == [18.9]
+    assert out["rostered"].tolist() == [True]
+
+
 def test_the_meta_row_names_the_tier_and_the_newest_stamp() -> None:
     tables = {
         "games": pd.DataFrame([{"stamp": "20260912T000116Z"}]),

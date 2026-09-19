@@ -117,6 +117,14 @@ from velocity.dfs_tiered
 where league != '__none__'
 ```
 
+<!-- Every priced player, not only the rostered ones (docs/FOOTBALL_PAL.md). -->
+```sql dfs_pool
+select player_name, position, team, salary, points, value, rostered,
+  competition, kickoff, status, probable, slate, game_time, league, stamp
+from velocity.dfs_pool
+where league != '__none__'
+```
+
 ```sql ledger_open
 select bet_id, league, kind, game_id, market, side, player, point, book,
   price, stake, home_team, away_team, placed_at
@@ -226,6 +234,7 @@ where league != '__none__'
   dfsLineup={dfs_lineup}
   dfsShowdown={dfs_showdown}
   dfsTiered={dfs_tiered}
+  dfsPool={dfs_pool}
   ledgerOpen={ledger_open}
   bankroll={bankroll}
   exposure={exposure}

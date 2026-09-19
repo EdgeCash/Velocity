@@ -363,3 +363,36 @@ def test_the_accuracy_chain_rides_into_the_site(tmp_path: Path) -> None:
     row = table[table["game_id"] == "n1"].iloc[0]
     assert row["league"] == "nfl" and row["home_score"] == 27 and row["mu_home"] == 25.0
     assert row["total_percentile"] == 0.55 and row["stamp"] == "20260914T120000Z"
+
+
+def test_the_dfs_pool_rides_into_the_site(tmp_path: Path) -> None:
+    """Every priced player reaches the site, not only the rostered nine."""
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    _slate_frames(slate_dir)
+    pd.DataFrame([
+        {"player_name": "J. Jefferson", "position": "WR", "team": "MIN",
+         "salary": 8600.0, "points": 18.9, "value": 2.198, "rostered": True,
+         "competition": "MIN @ CHI", "kickoff": pd.Timestamp("2026-09-20 17:00"),
+         "status": "", "probable": False, "draft_group_id": "1",
+         "slate_start": pd.Timestamp("2026-09-20 17:00"), "suffix": "",
+         "slate": "Sun Main", "game_time": "12:00P CT"},
+        {"player_name": "J. Addison", "position": "WR", "team": "MIN",
+         "salary": 5400.0, "points": 11.2, "value": 2.074, "rostered": False,
+         "competition": "MIN @ CHI", "kickoff": pd.Timestamp("2026-09-20 17:00"),
+         "status": "", "probable": False, "draft_group_id": "1",
+         "slate_start": pd.Timestamp("2026-09-20 17:00"), "suffix": "",
+         "slate": "Sun Main", "game_time": "12:00P CT"},
+    ]).to_parquet(slate_dir / "dfs_pool_nfl_20260102T120000Z.parquet", index=False)
+    out = tmp_path / "data"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir), "--out", str(out),
+         "--cards-out", str(tmp_path / "cards"), "--no-weather"],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    table = pd.read_parquet(out / "dfs_pool.parquet")
+    assert set(table["player_name"]) == {"J. Jefferson", "J. Addison"}
+    assert (table["league"] == "nfl").all()
+    # The unrostered row is the whole reason the table exists.
+    assert not table.set_index("player_name").loc["J. Addison", "rostered"]
