@@ -15,7 +15,13 @@ import { writable } from 'svelte/store';
 
 // The card leads and is the default: it is the primary output of the
 // system, and the plays are scattered across games by definition.
-export const VIEWS = ['card', 'games', 'dfs', 'positions', 'record', 'ratings'];
+// Grouped on the command bar the way Ballpark Pal groups its menu
+// (docs/FOOTBALL_PAL.md): Outlook, Odds & probability, Fantasy, Research,
+// The model. The list stays flat here because the hash names one view.
+export const VIEWS = [
+  'card', 'games', 'likely', 'players', 'dfs', 'positions', 'record',
+  'accuracy', 'ratings',
+];
 
 const DEFAULTS = { view: 'card', league: 'all', game: '' };
 

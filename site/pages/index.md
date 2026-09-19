@@ -195,6 +195,18 @@ from velocity.parlays
 where league != '__none__'
 ```
 
+<!-- The accuracy chain (docs/FOOTBALL_PAL.md): what the model said before
+     each graded game, what happened, and the percentile the final sat at on
+     the pregame distribution. Model output and finals only. -->
+```sql accuracy
+select game_id, league, game_date, away_name, home_name, away_code, home_code,
+  mu_away, mu_home, fair_spread, fair_total, p_home_win, away_score, home_score,
+  actual_total, total_percentile, winner_code, winner_percentile,
+  p_winner_pregame, n_sims, graded_stamp
+from velocity.accuracy
+where league != '__none__'
+```
+
 ```sql model_config
 select league, label, detail from velocity.model_config
 where league != '__none__'
@@ -225,6 +237,7 @@ where league != '__none__'
   ratings={ratings}
   cards={cards}
   parlays={parlays}
+  accuracy={accuracy}
   stamp={meta[0]?.stamp ?? ''}
   builtAt={meta[0]?.built_at ?? ''}
   tier={meta[0]?.tier ?? 'private'}
