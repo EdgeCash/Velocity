@@ -41,6 +41,8 @@ import {
   heldRule,
   impliedProb,
   leagueCounts,
+  matchupBoard,
+  matchupUnits,
   parlayCounts,
   ratingAliases,
   ratingRows,
@@ -48,6 +50,7 @@ import {
   realRows,
   splitCards,
   toTime,
+  unitIndex,
   weatherBoard,
   weatherSummary,
   WIND_THRESHOLD_MPH,
@@ -1224,4 +1227,90 @@ test('an empty weather board summarises to zeroes rather than throwing', () => {
   assert.equal(s.n, 0);
   assert.equal(s.windy, 0);
   assert.equal(s.points_moved, 0);
+});
+
+/* ---- Unit matchups (docs/FOOTBALL_PAL.md) -------------------------------- */
+
+const SPLITS = [
+  { league: 'nfl', team: 'BUF', side: 'offense', phase: 'pass', plays: 686,
+    epa_per_play: 0.191, epa_adjusted: 0.212, success_rate: 0.51,
+    games: 18, season_from: 2025, season_to: 2026 },
+  { league: 'nfl', team: 'BUF', side: 'offense', phase: 'rush', plays: 400,
+    epa_per_play: 0.02, epa_adjusted: 0.03, success_rate: 0.45,
+    games: 18, season_from: 2025, season_to: 2026 },
+  { league: 'nfl', team: 'HOU', side: 'defense', phase: 'pass', plays: 690,
+    epa_per_play: -0.186, epa_adjusted: -0.199, success_rate: 0.42,
+    games: 18, season_from: 2025, season_to: 2026 },
+  { league: 'nfl', team: 'HOU', side: 'defense', phase: 'rush', plays: 380,
+    epa_per_play: 0.01, epa_adjusted: 0.02, success_rate: 0.44,
+    games: 18, season_from: 2025, season_to: 2026 },
+  { league: 'nfl', team: 'HOU', side: 'offense', phase: 'pass', plays: 600,
+    epa_per_play: 0.0, epa_adjusted: 0.01, success_rate: 0.46,
+    games: 18, season_from: 2025, season_to: 2026 },
+  { league: '__none__', team: '', side: '', phase: '' },
+];
+
+const matchupGame = () => ({
+  game_id: 'm1', league: 'nfl', home_team: 'Houston Texans',
+  away_team: 'Buffalo Bills', kickoff: null,
+  proj: { away: 'BUF', home: 'HOU', fair_total: 45.5 },
+  markets: [],
+});
+
+test('a pairing puts each offense against the unit that has to stop it', () => {
+  const index = unitIndex(SPLITS);
+  const units = matchupUnits(index, 'nfl', 'BUF', 'HOU');
+  const pass = units.find((u) => u.offense === 'BUF' && u.phase === 'pass');
+  assert.equal(pass.defense, 'HOU');
+  assert.equal(pass.off.epa, 0.212);
+  assert.equal(pass.def.epa, -0.199);
+  // Both are deviations from league average on the same scale, so they ADD.
+  assert.ok(Math.abs(pass.net - 0.013) < 1e-9);
+  assert.equal(pass.off.plays, 686);
+});
+
+test('a pairing with only one side of the data still appears, without a net', () => {
+  const index = unitIndex(SPLITS);
+  // HOU's offense is present but BUF has no defensive rows at all.
+  const units = matchupUnits(index, 'nfl', 'BUF', 'HOU');
+  const houPass = units.find((u) => u.offense === 'HOU' && u.phase === 'pass');
+  assert.equal(houPass.off.epa, 0.01);
+  assert.equal(houPass.def, null);
+  assert.equal(houPass.net, null);
+});
+
+test('a pairing with neither side is left out rather than shown empty', () => {
+  const units = matchupUnits(unitIndex(SPLITS), 'nfl', 'BUF', 'HOU');
+  // BUF has no defensive splits, so HOU's rush offense has no row either.
+  assert.ok(!units.some((u) => u.offense === 'HOU' && u.phase === 'rush'));
+});
+
+test('the sentinel row never becomes a unit', () => {
+  const index = unitIndex(SPLITS);
+  assert.ok(!index.has('__none__||||'));
+  assert.equal(matchupUnits(index, '__none__', '', '').length, 0);
+});
+
+test('units attach to a game through the projection, and the board ranks by the sharpest', () => {
+  const [game] = buildGames({
+    games: [{ game_id: 'm1', league: 'nfl', home_team: 'Houston Texans',
+              away_team: 'Buffalo Bills', kickoff: null }],
+    projections: [{ game_id: 'm1', away: 'BUF', home: 'HOU' }],
+    units: SPLITS,
+  });
+  assert.ok(game.units.length >= 2);
+  const board = matchupBoard([game]);
+  assert.equal(board.length, 1);
+  // The sharpest pairing is what makes one matchup worth opening first.
+  assert.ok(board[0].edge > 0);
+  assert.equal(board[0].away, 'BUF');
+});
+
+test('a game with no projection has nothing to key units on', () => {
+  const [game] = buildGames({
+    games: [{ game_id: 'm2', league: 'nfl', home_team: 'X', away_team: 'Y', kickoff: null }],
+    units: SPLITS,
+  });
+  assert.deepEqual(game.units, []);
+  assert.equal(matchupBoard([game]).length, 0);
 });
