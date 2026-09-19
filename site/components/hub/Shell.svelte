@@ -20,8 +20,8 @@
   import { live } from './liveStore.js';
   import { hubState, VIEWS } from './state.js';
   import {
-    buildCard, buildGames, buildLineups, buildParlays, flaggedMarkets,
-    leagueCounts, realRows, splitCards,
+    accuracySummary, buildCard, buildGames, buildLineups, buildParlays,
+    flaggedMarkets, leagueCounts, mostLikely, playerBook, realRows, splitCards,
   } from './model.js';
   import { stampLabel, stampTime, teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
@@ -31,6 +31,9 @@
   import CardPanel from './CardPanel.svelte';
   import RecordPanel from './RecordPanel.svelte';
   import RatingsPanel from './RatingsPanel.svelte';
+  import LikelyPanel from './LikelyPanel.svelte';
+  import PlayersPanel from './PlayersPanel.svelte';
+  import AccuracyPanel from './AccuracyPanel.svelte';
   import Rail from './Rail.svelte';
   import Stamp from './Stamp.svelte';
 
@@ -58,6 +61,7 @@
   export let ratings = [];
   export let cards = [];
   export let parlays = [];
+  export let accuracy = [];
   /** The newest slate capture stamp in the build — when the DATA is from. */
   export let stamp = '';
   /** When build_site_data.py ran — when the PAGE was made. */
@@ -127,6 +131,13 @@
   // The live store keyed by our game_id, merged onto the cards.
   $: scored = visibleGames.map((g) => ({ ...g, score: $live.byGame[g.game_id] ?? null }));
 
+  // The research views (docs/FOOTBALL_PAL.md), each a different cut of the
+  // same joined games: what the sim is surest of, the prop board by player,
+  // and the season's finals against their pregame distributions.
+  $: likelySections = mostLikely(visibleGames);
+  $: playerRows = playerBook(visibleGames);
+  $: accuracyRows = accuracySummary(accuracy, activeLeague);
+
   let detachState;
   onMount(() => {
     detachState = hubState.attach();
@@ -148,9 +159,19 @@
   }
 
   const VIEW_LABEL = {
-    card: 'Card', games: 'Games', dfs: 'DFS', positions: 'Positions',
-    record: 'Record', ratings: 'Ratings',
+    card: 'Card', games: 'Games', likely: 'Most likely', players: 'Players',
+    dfs: 'DFS', positions: 'Positions', record: 'Record', accuracy: 'Accuracy',
+    ratings: 'Ratings',
   };
+  // Ballpark Pal's menu, for football (docs/FOOTBALL_PAL.md): the views stay
+  // one surface, and the groups say which question each answers.
+  const GROUPS = [
+    { label: 'Outlook', views: ['games'] },
+    { label: 'Odds', views: ['card', 'likely', 'positions'] },
+    { label: 'Fantasy', views: ['dfs', 'players'] },
+    { label: 'Research', views: ['ratings'] },
+    { label: 'Model', views: ['record', 'accuracy'] },
+  ].map((g) => ({ ...g, views: g.views.filter((v) => VIEWS.includes(v)) }));
   $: viewCount = {
     // The card counts what CLEARED, not what was priced — the number that
     // means something is "2", not "88".
@@ -160,6 +181,9 @@
     positions: openPositions.length,
     record: realRows(record).length,
     ratings: realRows(ratings).length,
+    likely: likelySections.reduce((sum, s) => sum + s.n, 0),
+    players: playerRows.length,
+    accuracy: accuracyRows.n,
   };
 
   // The footer's absolute reading of the same thing the topbar chip shows as
@@ -195,16 +219,21 @@
 
   <nav class="cmd" aria-label="views">
     <div class="views" role="tablist">
-      {#each VIEWS as v}
-        <button
-          role="tab"
-          aria-selected={view === v}
-          class:on={view === v}
-          on:click={() => setView(v)}
-        >
-          {VIEW_LABEL[v]}
-          <span class="count">{viewCount[v] ?? 0}</span>
-        </button>
+      {#each GROUPS as g (g.label)}
+        <div class="group">
+          <span class="glabel">{g.label}</span>
+          {#each g.views as v}
+            <button
+              role="tab"
+              aria-selected={view === v}
+              class:on={view === v}
+              on:click={() => setView(v)}
+            >
+              {VIEW_LABEL[v]}
+              <span class="count">{viewCount[v] ?? 0}</span>
+            </button>
+          {/each}
+        </div>
       {/each}
     </div>
 
@@ -232,6 +261,12 @@
           games={scored} {identity} {distributions} {openGame} {isPrivate} {flagged}
           parlays={parlayRows} league={activeLeague}
         />
+      {:else if view === 'likely'}
+        <LikelyPanel sections={likelySections} {isPrivate} />
+      {:else if view === 'players'}
+        <PlayersPanel rows={playerRows} {isPrivate} />
+      {:else if view === 'accuracy'}
+        <AccuracyPanel summary={accuracyRows} />
       {:else if view === 'dfs'}
         <DfsPanel {lineups} league={activeLeague} />
       {:else if view === 'positions'}
@@ -353,6 +388,22 @@
   }
   .views::-webkit-scrollbar,
   .leagues::-webkit-scrollbar { display: none; }
+  .group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding-left: 0.55rem;
+  }
+  .group + .group { margin-left: 0.2rem; border-left: 1px solid var(--v-line); }
+  .glabel {
+    margin-right: 0.3rem;
+    font-family: var(--v-board);
+    font-size: 0.56rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--v-ink-3);
+  }
   .views button,
   .leagues button {
     display: inline-flex;

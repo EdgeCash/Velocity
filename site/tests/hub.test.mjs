@@ -19,9 +19,14 @@ import {
   scoreboardPlan,
 } from '../components/hub/live.js';
 import {
+  accuracySummary,
   buildCard,
   buildGames,
   clvTrust,
+  collapseProps,
+  mostLikely,
+  outcomeLabel,
+  playerBook,
   marketMove,
   modelVsMarket,
   playHeadline,
@@ -942,4 +947,138 @@ test('buildCard carries the brief onto the row', () => {
   assert.equal(play.injuries.length, 1);
   assert.equal(play.ratings.home.net, 4.2);
   assert.equal(play.headline, 'why');
+});
+
+/* ---- Most Likely, Players, Accuracy (docs/FOOTBALL_PAL.md) --------------- */
+
+const likelyGame = () => ({
+  game_id: 'g1', league: 'nfl', kickoff: null,
+  away_team: 'Kansas City', home_team: 'Baltimore',
+  markets: [
+    { market: 'moneyline', side: 'home', point: null, p_model: 0.62, p_fair: 0.58, tier: '',
+      best: { price: -150, venue: 'fanduel' } },
+    { market: 'moneyline', side: 'away', point: null, p_model: 0.38, p_fair: 0.42, tier: '',
+      best: { price: 130, venue: 'fanduel' } },
+    { market: 'total', side: 'under', point: 45.5, p_model: 0.55, p_fair: 0.51, tier: 'B',
+      best: { price: -108, venue: 'kalshi' } },
+    { market: 'spread', side: 'home', point: -3.5, p_model: 0.51, p_fair: 0.5, tier: '',
+      best: { price: -110, venue: 'dk' } },
+    { market: 'team_total_away', side: 'over', point: 20.5, p_model: 0.57, p_fair: null, tier: '',
+      best: null },
+  ],
+  props: [
+    { league: 'nfl', game_id: 'g1', player: 'Lamar Jackson', market: 'pass_yards', side: 'over',
+      point: 224.5, book: 'fanduel', price: -115, p_model: 0.58, p_fair: 0.52 },
+    { league: 'nfl', game_id: 'g1', player: 'Lamar Jackson', market: 'pass_yards', side: 'over',
+      point: 224.5, book: 'betmgm', price: -105, p_model: 0.58, p_fair: 0.5 },
+    { league: 'nfl', game_id: 'g1', player: 'Lamar Jackson', market: 'pass_yards', side: 'under',
+      point: 224.5, book: 'fanduel', price: -105, p_model: 0.42, p_fair: 0.48 },
+    { league: '__none__', game_id: 'g1', player: '', market: '', side: '', point: null },
+  ],
+  dfs: [{ player_name: 'Lamar Jackson', team: 'BAL', position: 'QB', salary: 8200, points: 22.4 }],
+});
+
+test('outcomes read as sentences, with the handicap and the over/under spelled out', () => {
+  const g = likelyGame();
+  assert.equal(outcomeLabel(g, g.markets[0]), 'Baltimore win');
+  assert.equal(outcomeLabel(g, g.markets[2]), 'Under 45.5');
+  assert.equal(outcomeLabel(g, g.markets[3]), 'Baltimore −3.5');
+  assert.equal(outcomeLabel(g, g.markets[4]), 'Kansas City team total Over 20.5');
+});
+
+test('most likely ranks by the sim, surest first, within each family', () => {
+  const sections = mostLikely([likelyGame()]);
+  assert.deepEqual(sections.map((s) => s.key), ['winners', 'spreads', 'totals', 'players']);
+  const winners = sections.find((s) => s.key === 'winners');
+  assert.equal(winners.rows[0].label, 'Baltimore win');
+  assert.equal(winners.rows[0].p_model, 0.62);
+  assert.equal(winners.rows[0].price, -150);
+  assert.equal(winners.rows[0].venue, 'fanduel');
+  assert.equal(winners.rows[1].label, 'Kansas City win');
+  const totals = sections.find((s) => s.key === 'totals');
+  assert.deepEqual(totals.rows.map((r) => r.label), ['Kansas City team total Over 20.5', 'Under 45.5']);
+  assert.equal(totals.rows[0].price, null);
+  const players = sections.find((s) => s.key === 'players');
+  // The two sides of one line are two outcomes; the surer one leads and the
+  // sentinel row never reaches the surface.
+  assert.equal(players.n, 2);
+  assert.equal(players.rows[0].label, 'Lamar Jackson Over 224.5 pass yards');
+  assert.equal(players.rows[0].price, -105);
+});
+
+test('a family caps at the limit but keeps its full list for the toggle', () => {
+  const sections = mostLikely([likelyGame()], { limit: 1 });
+  const winners = sections.find((s) => s.key === 'winners');
+  assert.equal(winners.top.length, 1);
+  assert.equal(winners.rows.length, 2);
+  assert.equal(winners.n, 2);
+});
+
+test('a prop line collapses to its best price across books', () => {
+  const lines = collapseProps(likelyGame().props);
+  assert.equal(lines.length, 2);
+  const over = lines.find((l) => l.side === 'over');
+  assert.equal(over.price, -105);
+  assert.equal(over.venue, 'betmgm');
+  assert.equal(over.n_books, 2);
+  assert.equal(over.p_model, 0.58);
+});
+
+test('the player book pairs both sides of a line and carries the DFS row', () => {
+  const rows = playerBook([likelyGame()]);
+  assert.equal(rows.length, 1);
+  const r = rows[0];
+  assert.equal(r.player, 'Lamar Jackson');
+  assert.equal(r.point, 224.5);
+  assert.equal(r.p_over, 0.58);
+  assert.ok(Math.abs(r.p_under - 0.42) < 1e-9);
+  assert.equal(r.lean, 'over');
+  assert.equal(r.over.price, -105);
+  assert.equal(r.under.price, -105);
+  assert.equal(r.team, 'BAL');
+  assert.equal(r.position, 'QB');
+  assert.equal(r.salary, 8200);
+  assert.equal(r.dfs_points, 22.4);
+});
+
+test('a line quoted on one side only still gets both probabilities', () => {
+  const g = likelyGame();
+  g.props = g.props.filter((p) => p.side !== 'over');
+  const [r] = playerBook([g]);
+  assert.equal(r.over, null);
+  assert.ok(Math.abs(r.p_over - 0.58) < 1e-9);
+  assert.equal(r.lean, 'over');
+});
+
+test('accuracy summarises bias, error and calibration, newest game first', () => {
+  const rows = [
+    { league: 'nfl', game_id: 'a', game_date: '2026-09-13', mu_home: 25, mu_away: 21,
+      fair_total: 46, p_home_win: 0.62, home_score: 27, away_score: 20,
+      total_percentile: 0.55, winner_percentile: 0.6, p_winner_pregame: 0.62 },
+    { league: 'nfl', game_id: 'b', game_date: '2026-09-06', mu_home: 20, mu_away: 24,
+      fair_total: 44, p_home_win: 0.4, home_score: 31, away_score: 17,
+      total_percentile: 0.85, winner_percentile: 0.9, p_winner_pregame: 0.4 },
+    { league: '__none__', game_id: 'x' },
+  ];
+  const s = accuracySummary(rows);
+  assert.equal(s.n, 2);
+  assert.equal(s.games[0].game_id, 'a');
+  // Sim minus actual: (46 − 47) and (44 − 48), so the sim ran 2.5 points low.
+  assert.ok(Math.abs(s.total_bias + 2.5) < 1e-9);
+  assert.ok(Math.abs(s.total_mae - 2.5) < 1e-9);
+  // Margins: (4 − 7) and (−4 − 14) → 3 and 18 → 10.5.
+  assert.ok(Math.abs(s.margin_mae - 10.5) < 1e-9);
+  assert.equal(s.fav_won, 0.5);
+  assert.ok(Math.abs(s.brier - ((0.62 - 1) ** 2 + (0.4 - 1) ** 2) / 2) < 1e-9);
+  assert.equal(s.deciles[5], 1);
+  assert.equal(s.deciles[8], 1);
+  assert.equal(s.middle_share, 0.5);
+  assert.equal(accuracySummary(rows, 'ncaaf').n, 0);
+});
+
+test('an empty accuracy chain is a typed empty summary, not a crash', () => {
+  const s = accuracySummary([{ league: '__none__' }]);
+  assert.equal(s.n, 0);
+  assert.equal(s.total_bias, null);
+  assert.equal(s.deciles.length, 10);
 });

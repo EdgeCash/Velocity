@@ -11,7 +11,7 @@
 // Everything below is pure. No fetches, no stores, no Svelte — so the joins
 // can be tested without a browser (site/tests/hub.test.mjs).
 
-import { isNum } from '../format.js';
+import { isNum, line as handicap, marketLabel, overUnder } from '../format.js';
 
 /** Rows grouped by a key, preserving input order within each group. */
 export function groupBy(rows, key) {
@@ -793,4 +793,245 @@ export function buildLineups(rows, kind) {
   }
   out.sort((a, b) => b.points - a.points);
   return out;
+}
+
+/* ---- Most Likely ---------------------------------------------------------
+   The outcomes the simulation is surest of, ranked by probability, with the
+   market's best price beside each so a reader sees at once whether the book
+   agrees — Ballpark Pal's page of the same name, for football
+   (docs/FOOTBALL_PAL.md). Nothing here is a pick: an 80% favourite at −400
+   is 80% likely and no bet at all, and the row says both. The card is the
+   other question (what cleared the gate); this is what the sim expects. */
+
+export const LIKELY_FAMILIES = [
+  ['winners', 'Winners'],
+  ['spreads', 'Spreads'],
+  ['totals', 'Totals'],
+  ['players', 'Players'],
+];
+
+function likelyFamily(market) {
+  const m = String(market ?? '');
+  if (m === 'moneyline') return 'winners';
+  if (m.startsWith('spread')) return 'spreads';
+  if (m === 'total' || m.startsWith('team_total')) return 'totals';
+  return null;
+}
+
+function teamFor(game, side) {
+  if (side === 'home') return String(game.home_team ?? '');
+  if (side === 'away') return String(game.away_team ?? '');
+  return '';
+}
+
+/** The outcome in words: "Chiefs win", "Chiefs −3.5", "Over 45.5", "Bills team total Under 20.5". */
+export function outcomeLabel(game, market) {
+  const m = String(market.market ?? '');
+  const side = String(market.side ?? '').toLowerCase();
+  const point = market.point;
+  if (m === 'moneyline') return `${teamFor(game, side)} win`;
+  if (m.startsWith('spread')) {
+    const hcp = handicap(point, 'spread');
+    return `${teamFor(game, side)}${hcp ? ` ${hcp}` : ''}`;
+  }
+  const ou = overUnder(side, point, 'long');
+  if (m === 'total') return ou ?? `${side} ${point ?? ''}`.trim();
+  if (m.startsWith('team_total')) {
+    const team = teamFor(game, m.endsWith('home') ? 'home' : 'away');
+    return `${team} team total ${ou ?? ''}`.trim();
+  }
+  return `${side} ${point ?? ''}`.trim();
+}
+
+/** One row per player line and side, at its best price across books. */
+export function collapseProps(rows) {
+  const out = new Map();
+  for (const r of realRows(rows)) {
+    const side = String(r.side ?? '').toLowerCase();
+    const key = `${r.player}|${r.market}|${side}|${r.point}`;
+    const price = Number(r.price);
+    const cur = out.get(key);
+    const better = Number.isFinite(price) && (!cur || !Number.isFinite(cur.price) || price > cur.price);
+    if (!cur || better) {
+      out.set(key, {
+        player: String(r.player ?? ''),
+        market: String(r.market ?? ''),
+        side,
+        point: r.point === null || r.point === undefined ? null : Number(r.point),
+        p_model: Number(r.p_model),
+        p_fair: r.p_fair === null || r.p_fair === undefined ? null : Number(r.p_fair),
+        price: Number.isFinite(price) ? price : null,
+        venue: String(r.book ?? ''),
+        n_books: (cur?.n_books ?? 0) + 1,
+      });
+    } else {
+      cur.n_books += 1;
+    }
+  }
+  return [...out.values()];
+}
+
+/** The most likely outcomes by family, each family's rows sorted surest first. */
+export function mostLikely(games, { limit = 12 } = {}) {
+  const rows = [];
+  for (const g of games ?? []) {
+    const base = {
+      game_id: g.game_id, league: g.league, kickoff: g.kickoff ?? null,
+      away_team: String(g.away_team ?? ''), home_team: String(g.home_team ?? ''),
+    };
+    for (const m of g.markets ?? []) {
+      const family = likelyFamily(m.market);
+      if (!family || !Number.isFinite(m.p_model)) continue;
+      rows.push({
+        ...base, family, player: '',
+        market: m.market, side: m.side, point: m.point,
+        label: outcomeLabel(g, m),
+        p_model: m.p_model,
+        p_fair: Number.isFinite(m.p_fair) ? m.p_fair : null,
+        price: Number.isFinite(m.best?.price) ? m.best.price : null,
+        venue: m.best?.venue ?? '',
+        tier: m.tier ?? '',
+      });
+    }
+    for (const p of collapseProps(g.props ?? [])) {
+      if (!Number.isFinite(p.p_model)) continue;
+      const ou = overUnder(p.side, p.point, 'long') ?? '';
+      rows.push({
+        ...base, family: 'players', player: p.player,
+        market: p.market, side: p.side, point: p.point,
+        label: `${p.player} ${ou} ${marketLabel(p.market).toLowerCase()}`.replace(/\s+/g, ' ').trim(),
+        p_model: p.p_model, p_fair: p.p_fair, price: p.price, venue: p.venue, tier: '',
+      });
+    }
+  }
+  rows.sort((a, b) => b.p_model - a.p_model || a.label.localeCompare(b.label));
+  return LIKELY_FAMILIES
+    .map(([key, label]) => {
+      const all = rows.filter((r) => r.family === key);
+      return { key, label, rows: all, top: all.slice(0, limit), n: all.length };
+    })
+    .filter((s) => s.n > 0);
+}
+
+/* ---- Players -------------------------------------------------------------
+   The prop board turned around: one row per player line with both sides on
+   it, so a reader can look a PLAYER up rather than a game. Ballpark Pal's
+   "PrizePicks & Underdog" grammar (line, over %, under %, odds), against
+   the sportsbooks this repo actually prices. A DFS salary and projection
+   ride along when the player is on a built lineup. */
+
+const normName = (value) => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function playerBook(games) {
+  const rows = [];
+  for (const g of games ?? []) {
+    const dfsByName = new Map();
+    for (const d of g.dfs ?? []) dfsByName.set(normName(d.player_name), d);
+    const pairs = new Map();
+    for (const p of collapseProps(g.props ?? [])) {
+      const key = `${p.player}|${p.market}|${p.point}`;
+      const row = pairs.get(key) ?? {
+        game_id: g.game_id, league: g.league, kickoff: g.kickoff ?? null,
+        away_team: String(g.away_team ?? ''), home_team: String(g.home_team ?? ''),
+        player: p.player, market: p.market, point: p.point, over: null, under: null,
+      };
+      if (p.side === 'over') row.over = p;
+      else if (p.side === 'under') row.under = p;
+      pairs.set(key, row);
+    }
+    for (const row of pairs.values()) {
+      const dfs = dfsByName.get(normName(row.player)) ?? null;
+      const fromOver = row.over?.p_model;
+      const fromUnder = row.under?.p_model;
+      const pOver = Number.isFinite(fromOver) ? fromOver
+        : Number.isFinite(fromUnder) ? 1 - fromUnder : null;
+      const salary = Number(dfs?.salary);
+      const points = Number(dfs?.points);
+      rows.push({
+        ...row,
+        p_over: pOver,
+        p_under: pOver === null ? null : 1 - pOver,
+        lean: pOver === null ? '' : pOver >= 0.5 ? 'over' : 'under',
+        sure: pOver === null ? 0 : Math.max(pOver, 1 - pOver),
+        team: String(dfs?.team ?? ''),
+        position: String(dfs?.position ?? ''),
+        salary: Number.isFinite(salary) ? salary : null,
+        dfs_points: Number.isFinite(points) ? points : null,
+      });
+    }
+  }
+  rows.sort((a, b) => a.player.localeCompare(b.player)
+    || String(a.market).localeCompare(String(b.market))
+    || (a.point ?? 0) - (b.point ?? 0));
+  return rows;
+}
+
+/* ---- Accuracy ------------------------------------------------------------
+   The season's Sim Checks, summarised: is the sim biased, how wide is it
+   wrong, and is its WIDTH right. The last one is the honest check a
+   simulation owes its reader: if the pregame distributions are calibrated,
+   the actual totals land uniformly across their deciles and half of them
+   inside the middle 50%. Bias and error say how good the centre is; the
+   deciles say whether the spread of the belief is real. */
+
+export function accuracySummary(rows, league = 'all') {
+  const games = realRows(rows)
+    .filter((r) => league === 'all' || String(r.league) === league)
+    .map((r) => ({
+      ...r,
+      home_score: Number(r.home_score), away_score: Number(r.away_score),
+      mu_home: Number(r.mu_home), mu_away: Number(r.mu_away),
+      fair_total: Number(r.fair_total), p_home_win: Number(r.p_home_win),
+      total_percentile: Number(r.total_percentile),
+      winner_percentile: Number(r.winner_percentile),
+      p_winner_pregame: Number(r.p_winner_pregame),
+      date: toTime(r.game_date),
+    }))
+    .filter((r) => Number.isFinite(r.home_score) && Number.isFinite(r.away_score));
+  const n = games.length;
+  if (!n) {
+    return {
+      n: 0, games: [], total_bias: null, total_bias_pct: null, total_mae: null,
+      margin_mae: null, fav_won: null, brier: null, deciles: Array(10).fill(0),
+      middle_share: null, n_pct: 0,
+    };
+  }
+  const mean = (xs) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
+  const projTotal = (g) => (Number.isFinite(g.fair_total) ? g.fair_total : g.mu_home + g.mu_away);
+  const projMargin = (g) => g.mu_home - g.mu_away;
+  const withTotal = games.filter((g) => Number.isFinite(projTotal(g)));
+  const withMargin = games.filter((g) => Number.isFinite(projMargin(g)));
+  // Sim minus actual, so a positive bias means the sim expects more points
+  // than the games produced — the same sign Ballpark Pal reports.
+  const totalErr = withTotal.map((g) => projTotal(g) - (g.home_score + g.away_score));
+  const marginErr = withMargin.map((g) => projMargin(g) - (g.home_score - g.away_score));
+  const actualTotal = mean(withTotal.map((g) => g.home_score + g.away_score));
+  const withFav = games.filter((g) => Number.isFinite(g.p_winner_pregame));
+  const favWon = withFav.filter((g) => g.p_winner_pregame > 0.5).length;
+  const withP = games.filter((g) => Number.isFinite(g.p_home_win));
+  const brier = mean(withP.map((g) => (g.p_home_win - (g.home_score > g.away_score ? 1 : 0)) ** 2));
+  const deciles = Array(10).fill(0);
+  let middle = 0;
+  let withPct = 0;
+  for (const g of games) {
+    if (!Number.isFinite(g.total_percentile)) continue;
+    withPct += 1;
+    deciles[Math.min(9, Math.max(0, Math.floor(g.total_percentile * 10)))] += 1;
+    if (g.total_percentile >= 0.25 && g.total_percentile <= 0.75) middle += 1;
+  }
+  games.sort((a, b) => (b.date ?? 0) - (a.date ?? 0) || String(a.game_id).localeCompare(String(b.game_id)));
+  const bias = mean(totalErr);
+  return {
+    n,
+    games,
+    total_bias: bias,
+    total_bias_pct: bias === null || !actualTotal ? null : bias / actualTotal,
+    total_mae: mean(totalErr.map(Math.abs)),
+    margin_mae: mean(marginErr.map(Math.abs)),
+    fav_won: withFav.length ? favWon / withFav.length : null,
+    brier,
+    deciles,
+    middle_share: withPct ? middle / withPct : null,
+    n_pct: withPct,
+  };
 }

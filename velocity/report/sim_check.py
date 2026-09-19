@@ -131,6 +131,95 @@ def build_sim_checks(
     return cards
 
 
+# The accuracy chain: one row per graded game — the Sim Check card without
+# its pmf, plus the projection's own means. A card is a post; a frame is a
+# record, and the site's Accuracy view (docs/FOOTBALL_PAL.md) is built from
+# the season of these rather than from the cards.
+SIM_CHECK_COLUMNS = [
+    "game_id", "league", "game_date", "away_name", "home_name", "away_code",
+    "home_code", "mu_away", "mu_home", "fair_spread", "fair_total", "p_home_win",
+    "away_score", "home_score", "actual_total", "total_percentile",
+    "winner_code", "winner_percentile", "p_winner_pregame", "n_sims",
+    "graded_stamp",
+]
+
+
+def _num(value: object) -> float:
+    try:
+        out = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("nan")
+    return out
+
+
+def sim_check_frame(
+    checks: list[SimCheckCard],
+    projections: pd.DataFrame,
+    league: str,
+    graded_stamp: str,
+) -> pd.DataFrame:
+    """The day's Sim Checks as rows, with the projection's means beside the final.
+
+    ``projections`` is the slate run's persisted frame (``mu_home``/``mu_away``/
+    ``fair_spread``/``p_home_win`` by ``game_id``); a card whose projection row
+    is missing keeps its own numbers and NaN for the rest.
+    """
+    if not checks:
+        return pd.DataFrame(columns=SIM_CHECK_COLUMNS)
+    by_game = {str(r["game_id"]): r for r in projections.to_dict("records")}
+    rows = []
+    for card in checks:
+        proj = by_game.get(str(card.game_id), {})
+        rows.append({
+            "game_id": str(card.game_id),
+            "league": league,
+            "game_date": pd.NaT if card.game_date is None else pd.Timestamp(card.game_date),
+            "away_name": card.away_name,
+            "home_name": card.home_name,
+            "away_code": card.away_code,
+            "home_code": card.home_code,
+            "mu_away": _num(proj.get("mu_away")),
+            "mu_home": _num(proj.get("mu_home")),
+            "fair_spread": _num(proj.get("fair_spread")),
+            "fair_total": float(card.fair_total),
+            "p_home_win": _num(proj.get("p_home_win")),
+            "away_score": float(card.away_score),
+            "home_score": float(card.home_score),
+            "actual_total": float(card.actual_total),
+            "total_percentile": float(card.total_percentile),
+            "winner_code": card.winner_code,
+            "winner_percentile": float(card.winner_percentile),
+            "p_winner_pregame": float(card.p_winner_pregame),
+            "n_sims": int(card.n_sims),
+            "graded_stamp": graded_stamp,
+        })
+    return pd.DataFrame(rows, columns=SIM_CHECK_COLUMNS)
+
+
+def merge_sim_check_chain(*chains: pd.DataFrame | None) -> pd.DataFrame:
+    """The season's accuracy chain: every graded game once, the newest grade winning.
+
+    Copies come from every previous run's artifact (each run carries the whole
+    chain forward), so the union of every copy on hand is the chain, exactly
+    as the record chain and the ledger merge — append-only rows keyed by
+    identity, so no copy can overwrite another.
+    """
+    frames = [f for f in chains if f is not None and not f.empty]
+    if not frames:
+        return pd.DataFrame(columns=SIM_CHECK_COLUMNS)
+    merged = pd.concat(frames, ignore_index=True)
+    for column in SIM_CHECK_COLUMNS:
+        if column not in merged.columns:
+            merged[column] = pd.NA
+    merged = (
+        merged.sort_values("graded_stamp", kind="stable")
+        .drop_duplicates("game_id", keep="last")
+        .sort_values(["game_date", "game_id"], kind="stable", na_position="last")
+        .reset_index(drop=True)
+    )
+    return merged[SIM_CHECK_COLUMNS]
+
+
 def sim_check_caption(card: SimCheckCard) -> str:
     """Post copy: the result, its percentile, and what the model said pregame."""
     return "\n".join([

@@ -18,7 +18,7 @@ on:
       leagues:
         description: "Leagues to snapshot (space-separated)"
         required: false
-        default: "nfl ncaaf mlb wnba nba ncaab nhl"
+        default: "nfl ncaaf"
 
 concurrency:
   group: collect-dk-salaries
@@ -53,7 +53,7 @@ jobs:
       - name: Snapshot salaries
         run: |
           python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
-            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba nba ncaab nhl' }}" \
+            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf' }}" \
             --fail-on-empty
 
       - name: Upload salaries (Actions artifact)

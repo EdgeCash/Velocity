@@ -1916,6 +1916,37 @@ def parse_market_edges(pairs: Sequence[str]) -> dict[str, float]:
     return out
 
 
+def _window_events(
+    events: pd.DataFrame, now: pd.Timestamp, max_days: float
+) -> pd.DataFrame:
+    """The board games inside the pricing window: six hours back to ``max_days`` ahead.
+
+    ``max_days <= 0`` keeps the whole board, as it always has. The window also
+    decides whether the ratings are fitted at all (see ``main``), so it is one
+    function rather than the same filter written twice.
+    """
+    if max_days <= 0 or events.empty:
+        return events
+    kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
+    window = (kickoff >= now - pd.Timedelta(hours=6)) & (
+        kickoff <= now + pd.Timedelta(days=max_days)
+    )
+    return events[window].reset_index(drop=True)
+
+
+def _committed_teams(schedule: pd.DataFrame | None) -> list[str]:
+    """Every team in the committed games frame: the fit's universe, without the fit."""
+    if schedule is None or schedule.empty:
+        return []
+    teams = set(schedule["home_team"].astype(str)) | set(schedule["away_team"].astype(str))
+    return sorted(teams)
+
+
+def _no_projection(home: str, away: str) -> GameProjection:
+    """Stands in for the projection when no ratings were fitted (an empty board)."""
+    raise RuntimeError(f"no ratings were fitted: the board was empty ({away} @ {home})")
+
+
 def main() -> None:
     args = build_parser().parse_args()
 
@@ -1932,11 +1963,31 @@ def main() -> None:
     ledger = _open_ledger(args, generated_at)
 
     schedule = _league_schedule(args, Path(args.data), generated_at) if args.data else None
-    project, known_teams, ratings_frame, fit_kind = _build_projection(args, schedule)
 
     payload = _load_snapshot(args)
     lines = normalize_odds_events(payload)
     events = extract_events(payload)
+
+    # The board is read BEFORE the ratings are fitted, because the fit is the
+    # expensive half of the run and an empty board leaves it nothing to price.
+    # NCAAB's promoted fit (pace×efficiency over 111k games plus the Torvik
+    # pseudo-games) takes eleven minutes on a hosted runner, and for the five
+    # months of its off-season it ran to completion and then found zero games
+    # inside the window — a third of every live-slate run spent on a number
+    # nobody read. The 2026-09-19 16:53 run was inside exactly that fit when
+    # GitHub reclaimed the runner (exit 143), which cost the slate artifact,
+    # the email and the site. A league with nothing inside the window skips
+    # the fit; the team universe the exchange and BettingPros re-keys want
+    # comes straight from the committed games frame instead.
+    if _window_events(events, generated_at, args.max_days).empty:
+        print(f"ratings: fit skipped — no {args.league.upper()} game inside the "
+              f"{args.max_days:g}-day window, nothing to price")
+        project = _no_projection
+        known_teams = _committed_teams(schedule)
+        ratings_frame = pd.DataFrame()
+        fit_kind = "skipped (no games on the board)"
+    else:
+        project, known_teams, ratings_frame, fit_kind = _build_projection(args, schedule)
     # Live football boards: team totals ride the per-event endpoint. Best-effort
     # — a failed fetch just leaves the three main markets on the board.
     if (args.team_totals and not args.snapshot_file
@@ -2021,12 +2072,7 @@ def main() -> None:
             print(f"bettingpros board skipped: {exc}")
 
     n_board = len(events)
-    if args.max_days > 0 and not events.empty:
-        kickoff = pd.to_datetime(events["kickoff"], errors="coerce")
-        window = (kickoff >= generated_at - pd.Timedelta(hours=6)) & (
-            kickoff <= generated_at + pd.Timedelta(days=args.max_days)
-        )
-        events = events[window].reset_index(drop=True)
+    events = _window_events(events, generated_at, args.max_days)
     print(f"=== Live slate: {args.league.upper()} — {len(events)} of {n_board} board "
           f"games inside the {args.max_days:g}-day window ===")
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -129,3 +130,43 @@ def test_live_slate_starts_after_the_workflows_it_reads():
                     f"live-slate's {hour:02d}:{latest:02d} — live-slate would "
                     "download the previous run's artifact instead of this one's"
                 )
+
+
+def test_live_slate_windows_are_never_more_than_three_hours_apart():
+    """Three hours is the widest gap the site can carry between rebuilds.
+
+    GitHub starts this schedule two to three hours after its cron and drops
+    runs outright (docs/LAUNCH.md, "What the schedule really does"). Two
+    windows a day meant one reclaimed runner left the board eighteen hours
+    stale through a Saturday afternoon; windows three hours apart give every
+    kickoff a run landing before it and a neighbour to cover a dropped one.
+    """
+    # The union across game days: Saturday carries all five windows, and the
+    # other days a subset of the same hours, so the minute map stays one row.
+    hours = sorted(starts_by_hour("live-slate.yml"))
+    assert hours, "live-slate.yml has no schedule to check"
+    assert hours[0] <= 11, (
+        f"first window {hours[0]:02d}:xx — with the measured delay it lands "
+        "after the noon-ET college slate"
+    )
+    assert hours[-1] >= 23, (
+        f"last window {hours[-1]:02d}:xx leaves the late slates on an old board"
+    )
+    gaps = [b - a for a, b in pairwise(hours)]
+    assert max(gaps) <= 3, f"live-slate windows more than three hours apart: {hours}"
+
+
+
+@pytest.mark.parametrize("name", ["live-slate.yml", "dfs-slate.yml"])
+def test_the_slate_workflows_run_on_football_days(name):
+    """Football only: every slate cron names its days of the week.
+
+    A ``*`` day-of-week is the summer cadence coming back by copy-paste — the
+    summer leagues played every night, football does not, and a daily run on
+    a Tuesday prices an empty board for twenty minutes of billed runner time.
+    """
+    crons = [cron for other, cron in schedules() if other == name]
+    assert crons, f"{name} has no schedule"
+    for cron in crons:
+        dow = cron.split()[4]
+        assert dow != "*", f"{name}: {cron!r} runs every day of the week"

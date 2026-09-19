@@ -517,6 +517,23 @@ def _newest_cumulative(prev_dir: Path, league: str) -> pd.DataFrame | None:
     return newest_chain(_read_chains(matches))
 
 
+def _newest_sim_check_chain(prev_dir: Path, league: str) -> pd.DataFrame:
+    """Every copy of the accuracy chain on hand, merged (empty when none).
+
+    Unlike the record chain there is no "furthest" copy to choose: the rows
+    are keyed by game and the newest grade wins, so the union of every copy
+    is the chain (velocity.report.sim_check.merge_sim_check_chain).
+    """
+    from velocity.report.sim_check import merge_sim_check_chain
+
+    pattern = rf"cumulative_simcheck_{re.escape(league)}_{_STAMP}\.parquet"
+    matches = sorted(
+        (p for p in prev_dir.rglob("*.parquet") if re.fullmatch(pattern, p.name)),
+        key=lambda p: p.name,
+    )
+    return merge_sim_check_chain(*_read_chains(matches))
+
+
 def _read_chains(paths: list[Path]) -> list[pd.DataFrame]:
     """Every readable copy, skipping the ones that are not parquet at all.
 
@@ -997,7 +1014,11 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
     # distribution) and the model record card. Best-effort: rendering trouble
     # never blocks the graded record itself.
     try:
-        from velocity.report.sim_check import build_sim_checks
+        from velocity.report.sim_check import (
+            build_sim_checks,
+            merge_sim_check_chain,
+            sim_check_frame,
+        )
         from velocity.report.social_png import render_record_card, render_sim_checks
 
         projections_frame = _merged("projections")
@@ -1009,6 +1030,18 @@ def main() -> None:  # pragma: no cover - network orchestration (pure parts live
             and games_map is not None
         ):
             checks = build_sim_checks(projections_frame, distributions, finals, games_map)
+            # The accuracy chain, written BEFORE the render: a PNG is a post,
+            # a frame is a record, and the site's Accuracy view reads the
+            # season of these (docs/FOOTBALL_PAL.md). Today's rows join every
+            # copy of the chain on hand, so a run carries the whole season
+            # forward the way the record chain does.
+            today = sim_check_frame(checks, projections_frame, args.league, out_stamp)
+            chain = merge_sim_check_chain(
+                _newest_sim_check_chain(Path(args.prev_dir), args.league), today)
+            today.to_parquet(out / f"simcheck_{args.league}_{out_stamp}.parquet", index=False)
+            chain.to_parquet(
+                out / f"cumulative_simcheck_{args.league}_{out_stamp}.parquet", index=False)
+            print(f"accuracy chain: {len(chain)} graded game(s) ({len(today)} today)")
             rendered = render_sim_checks(checks, out, out_stamp,
                                          asset_dir=out / ".assets", league=args.league)
             print(f"rendered {len(rendered)} sim check card(s)")

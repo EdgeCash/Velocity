@@ -332,3 +332,34 @@ def test_market_health_rides_into_the_site(tmp_path: Path) -> None:
     # The record now carries what the model claimed, for the drift read.
     record = pd.read_parquet(out / "cumulative_record.parquet")
     assert "p_model" in record.columns and "p_fair" in record.columns
+
+
+def test_the_accuracy_chain_rides_into_the_site(tmp_path: Path) -> None:
+    """The grader's cumulative Sim Check frame becomes the Accuracy view's table."""
+    from velocity.report.sim_check import SimCheckCard, sim_check_frame
+
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    _slate_frames(slate_dir)
+    card = SimCheckCard(
+        game_id="n1", away_name="Buffalo Bills", home_name="Kansas City Chiefs",
+        away_code="BUF", home_code="KC", game_date=pd.Timestamp("2026-09-13"),
+        away_score=20, home_score=27, actual_total=47, total_percentile=0.55,
+        winner_code="KC", winner_percentile=0.6, p_winner_pregame=0.62,
+        fair_total=46.0, total_pmf={46: 1.0}, n_sims=4000,
+    )
+    projections = pd.DataFrame([{"game_id": "n1", "mu_away": 21.0, "mu_home": 25.0,
+                                 "p_home_win": 0.62, "fair_spread": -3.5}])
+    sim_check_frame([card], projections, "nfl", "20260914T120000Z").to_parquet(
+        slate_dir / "cumulative_simcheck_nfl_20260914T120000Z.parquet", index=False)
+    out = tmp_path / "data"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--slate-dir", str(slate_dir), "--out", str(out),
+         "--cards-out", str(tmp_path / "cards"), "--no-weather"],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    table = pd.read_parquet(out / "accuracy.parquet")
+    row = table[table["game_id"] == "n1"].iloc[0]
+    assert row["league"] == "nfl" and row["home_score"] == 27 and row["mu_home"] == 25.0
+    assert row["total_percentile"] == 0.55 and row["stamp"] == "20260914T120000Z"

@@ -160,6 +160,9 @@ site/
       RecordPanel.svelte  graded results, CLV first
       HealthPanel.svelte  the monitor's trailing per-market flags
       RatingsPanel.svelte every rated team, searchable, grouped by league
+      LikelyPanel.svelte  the sim's surest outcomes, with the market beside them
+      PlayersPanel.svelte the prop board by player, both sides, with DFS
+      AccuracyPanel.svelte the season's finals against their pregame distributions
       ParlayBlock.svelte  cross-game parlays; a leg opens its own game
       CardShelf.svelte    the rendered PNGs, with their post captions
       Rail.svelte         bankroll, what is riding, what is live, what is flagged
@@ -586,6 +589,14 @@ The football props ride on the FantasyPros pull: a slate without one prices
 the game markets only, and the page's empty state says so rather than
 implying the model had no opinion.
 
+## Football Pal
+
+The site is a football-only research surface now — Ballpark Pal's shape on
+Velocity's models, private and personal. `docs/FOOTBALL_PAL.md` maps their
+menu onto these views, records what shipped (Most likely, Players, Accuracy,
+and the grouped command bar) and what comes next. The one new data table is
+`accuracy`, the grader's cumulative Sim Check chain.
+
 ## Local preview
 
 ```bash
@@ -678,8 +689,10 @@ being asked; "Sep 12, 23:51 UTC" needs arithmetic and a timezone conversion
 first. The absolute instant is on the hover, in UTC and in the viewer's own
 zone, and spelled out again in the rail and the footer stub.
 
-Three tiers, from the slate's own cadence (`live-slate.yml` runs 16:53 and
-22:53 UTC, so six hours apart and then eighteen):
+Three tiers, from the slate's own cadence (`live-slate.yml` runs every three
+hours from 11:53 to 23:53 UTC — three hours apart through the day, twelve
+overnight — and GitHub starts each one two to three hours late; see
+docs/LAUNCH.md, "What the schedule really does"):
 
 | Age | Reads as | Means |
 |---|---|---|

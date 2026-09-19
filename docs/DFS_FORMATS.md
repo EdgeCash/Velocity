@@ -542,7 +542,7 @@ portfolio's tail is wider than the table above.
 ### The clock
 
 `.github/workflows/dfs-slate.yml` runs the DFS surfaces on their own
-schedule rather than riding the betting slate's 16:53/22:53 UTC cadence,
+schedule rather than riding the betting slate's three-hourly cadence,
 for exactly the reason the backtests give:
 
 Every window sits **after** the relevant availability news and **before**

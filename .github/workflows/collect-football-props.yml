@@ -60,6 +60,12 @@ jobs:
         env:
           THE_ODDS_API: ${{ secrets.THE_ODDS_API }}
         run: |
+          # Football only (docs/LAUNCH.md "Football only") — and MLB stays in
+          # this list, like collect-odds.yml's, ONLY until the ledger's open
+          # MLB prop rows settle: a prop graded without its close is a prop
+          # with no CLV. Drop it once no open MLB row remains, together with
+          # the mlb entry in LEAGUE_PROP_MARKETS (the schedule and the config
+          # are pinned to agree — tests/test_collect_football_props.py).
           ARGS="--out artifacts/props --leagues '${{ github.event.inputs.leagues || 'nfl ncaaf mlb' }}'"
           if [ -n "${{ github.event.inputs.markets }}" ]; then
             ARGS="$ARGS --markets ${{ github.event.inputs.markets }}"

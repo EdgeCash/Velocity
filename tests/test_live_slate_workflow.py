@@ -113,3 +113,45 @@ def test_the_ncaaf_prop_projection_defaults_to_a_bank_that_is_actually_there() -
         "than one printed line"
     )
 
+
+_LOOP = re.compile(r"for league in \$\{\{ github\.event\.inputs\.(\w+) \|\| '([^']+)' \}\}")
+
+
+def _loops(text: str) -> dict[str, set[str]]:
+    """Every per-league shell loop in a workflow: ``{input name: {defaults}}``."""
+    out: dict[str, set[str]] = {}
+    for name, default in _LOOP.findall(text):
+        out.setdefault(name, set()).add(default)
+    return out
+
+
+def test_the_slate_prices_football_only_but_grades_every_league(live: str) -> None:
+    """Football only (docs/LAUNCH.md), without abandoning the ledger.
+
+    The slate and DFS loops read ``leagues`` (nfl ncaaf); the grading and
+    season-chain loops read ``grade_leagues``, which keeps every league. The
+    two must not be collapsed back into one: on 2026-09-19 the ledger carried
+    249 open MLB rows, and a league that is no longer graded never settles,
+    so its open exposure fills the slate cap and zeroes every football stake.
+    """
+    loops = _loops(live)
+    assert loops["leagues"] == {"nfl ncaaf"}, loops
+    grade = loops["grade_leagues"]
+    assert len(grade) == 1, grade
+    graded = set(next(iter(grade)).split())
+    assert {"nfl", "ncaaf", "mlb"} <= graded, graded
+
+
+def test_the_dfs_workflow_prices_football_only() -> None:
+    text = (WORKFLOWS / "dfs-slate.yml").read_text()
+    assert _loops(text) == {"leagues": {"nfl ncaaf"}}, _loops(text)
+
+
+def test_the_mlb_only_steps_are_gated_on_mlb_being_priced() -> None:
+    """The home-run board and the MLB stats pull run only when MLB is a slate league."""
+    for name in ("live-slate.yml", "dfs-slate.yml"):
+        text = (WORKFLOWS / name).read_text()
+        step = _hr_board_step(text)
+        assert "if: contains(github.event.inputs.leagues || 'nfl ncaaf', 'mlb')" in step, name
+        gate = 'if [[ " ${{ github.event.inputs.leagues || \'nfl ncaaf\' }} " == *" mlb "* ]]'
+        assert gate in text, name

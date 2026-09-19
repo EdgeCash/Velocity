@@ -18,28 +18,32 @@ name: DFS slate
 
 on:
   schedule:
-    # UTC, and every window sits AFTER the relevant availability news and
-    # BEFORE the slate it serves locks. MLB posts batting orders 2-3 hours
-    # out; the NFL posts inactives 90 minutes out.
+    # UTC, football only (docs/LAUNCH.md "Football only"). Every window has
+    # to sit AFTER the inactives and BEFORE the lock it serves, and GitHub
+    # starts a scheduled run 1h48–3h00 late (docs/LAUNCH.md "What the
+    # schedule really does"), so each cron below is written about two and a
+    # half hours before the moment it is meant to run. The NFL posts
+    # inactives 90 minutes before kickoff: 15:30Z for the early slate,
+    # 18:35Z late, 22:50Z Sunday night, 22:45Z Monday and Thursday. The
+    # early slate is the one the delay can beat — a 13:41 cron starts
+    # 15:29–16:41Z against a 17:00Z lock, so the early board sometimes
+    # builds before the inactives post; the late and night boards do not
+    # have that problem. College boards lock at kickoff with no inactives
+    # list, so those windows only need to land before the lock.
     #
-    # Odd minutes, per the map in docs/LAUNCH.md. The 16:11 window matters
-    # beyond queue spread: it used to be 16:00, the same minute as
-    # live-slate.yml, and live-slate's "Fetch the latest DFS entries" step
-    # downloads this workflow's newest SUCCESSFUL run — so starting together
-    # meant the site always showed the PREVIOUS window's lineups. Forty
-    # minutes of head start is what makes that step fetch today's.
-    - cron: "11 16 * * *"   # MLB day games; NFL early-slate inactives (11:30 ET)
-    - cron: "29 19 * * *"   # NFL late-slate inactives (14:35 ET)
-    - cron: "31 21 * * *"   # MLB main slate, cards mostly in
-    - cron: "39 22 * * *"   # MLB main slate, second pass nearer lock
-    - cron: "29 23 * * *"   # Sunday-night inactives (18:50 ET); MLB west cards
-    - cron: "17 1 * * *"    # MLB night slate
+    # :41, per the map in docs/LAUNCH.md, and before live-slate's :53 on
+    # purpose: live-slate's "Fetch the latest DFS entries" step downloads
+    # this workflow's newest SUCCESSFUL run, and starting first is what
+    # makes that step fetch today's board rather than the previous window's.
+    - cron: "41 11,14,18 * * 6"   # Sat: DK's college main (16:00Z), afternoon (19:30Z), night (23:00Z) locks
+    - cron: "41 13,16,20 * * 0"   # Sun: NFL early (17:00Z), late (20:05Z), SNF (00:20Z) locks
+    - cron: "41 20 * * 1,4"       # Mon/Thu: the MNF/TNF showdown (00:15Z lock)
   workflow_dispatch:
     inputs:
       leagues:
         description: "Leagues to build (space-separated)"
         required: false
-        default: "mlb nfl ncaaf wnba"
+        default: "nfl ncaaf"
 
 concurrency:
   group: dfs-slate
@@ -73,7 +77,7 @@ jobs:
       - name: Snapshot DraftKings boards
         run: |
           python scripts/collect_dk_salaries.py --out artifacts/dk_salaries \
-            --leagues "${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}"
+            --leagues "${{ github.event.inputs.leagues || 'nfl ncaaf' }}"
 
       # Football prices from the FantasyPros consensus; MLB from the free
       # statsapi season stats (the FP public tier serves no MLB players).
@@ -104,9 +108,12 @@ jobs:
       - name: Build DFS entries
         run: |
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
-          python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
-          MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}; do
+          MLB_STATS=""
+          if [[ " ${{ github.event.inputs.leagues || 'nfl ncaaf' }} " == *" mlb "* ]]; then
+            python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
+            MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
+          fi
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
             echo "::group::${league} DFS"
             DK_FILE=$(ls -t artifacts/dk_salaries/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
             PROJ_FILE="$FP_FILE"
@@ -156,7 +163,7 @@ jobs:
               --limit 14 --json databaseId --jq '.[].databaseId'); do
             gh run download "$id" --dir "artifacts/dfs_prev/$id" || true
           done
-          for league in ${{ github.event.inputs.leagues || 'mlb nfl ncaaf wnba' }}; do
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
             echo "::group::grade ${league} DFS"
             python scripts/grade_dfs.py --prev-dir artifacts/dfs_prev \
               --out-dir artifacts/slate --league "${league}" || true
@@ -164,6 +171,7 @@ jobs:
           done
 
       - name: Build the MLB home-run board
+        if: contains(github.event.inputs.leagues || 'nfl ncaaf', 'mlb')
         continue-on-error: true
         run: |
           python scripts/collect_mlb_statcast.py --out artifacts/statcast || true

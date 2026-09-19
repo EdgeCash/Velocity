@@ -71,19 +71,17 @@ Every scheduled workflow gets its **own odd minute**, and none of them sit on
 
 | Minute | Workflow | Hours (UTC) |
 |---|---|---|
-| `:07` | `collect-exchanges.yml` | hourly |
-| `:11` | `dfs-slate.yml` | 16 |
+| `:07` | `collect-exchanges.yml` | every 3h |
 | `:13` | `collect-bettingpros.yml` | every 3h |
-| `:17` | `dfs-slate.yml` | 1 |
 | `:19` | `collect-football-props.yml` | 15, 22 |
 | `:23` | `collect-odds.yml` | hourly |
-| `:29` | `refresh-datasets.yml` · `collect-kalshi-candles.yml` · `dfs-slate.yml` | 9 · 12 · 19, 23 |
-| `:31` | `model-drift.yml` · `collect-dk-salaries.yml` · `dfs-slate.yml` | 6 (1st/15th) · 15 · 21 |
+| `:29` | `refresh-datasets.yml` · `collect-kalshi-candles.yml` | 9 · 12 |
+| `:31` | `model-drift.yml` · `collect-dk-salaries.yml` | 6 (1st/15th) · 15 |
 | `:33` | `collect-injuries.yml` | 16 (Sun) |
 | `:37` | `collect-fantasypros.yml` · `collect-injuries.yml` | 12 (Tue/Thu/Sat/Sun) · 15 |
-| `:39` | `dfs-slate.yml` | 22 |
+| `:41` | `dfs-slate.yml` | Sat 11, 14, 18 · Sun 13, 16, 20 · Mon/Thu 20 |
 | `:47` | `consolidate-exchanges.yml` | 9 (Mon) |
-| `:53` | `live-slate.yml` | 16, 22 |
+| `:53` | `live-slate.yml` | Sat 11, 14, 17, 20, 23 · Sun 11, 14, 17, 20 · Mon/Thu/Fri 17, 20 · Tue/Wed 17 |
 
 `tests/test_workflow_schedules.py` pins all of it: no crowded minutes, no two
 workflows on the same slot, and nothing `live-slate.yml` reads starting at or
@@ -92,6 +90,141 @@ after it. Adding a schedule means picking a free minute from this table.
 > Cron is *best effort* on GitHub's side no matter which minute you pick — a
 > run can still start late, and a busy hour can drop one entirely. The odd
 > minutes shorten the queue; they do not make the schedule a guarantee.
+
+### Football only (2026-09-19)
+
+The decision: this is a football operation. The repository is a private,
+personal research site — a football-centric Ballpark Pal — and trying to
+run six leagues was making it decent at all of them and great at none
+(docs/STRATEGY_REVIEW.md §0: the money went to the unbacktested market;
+the record chain broke; MLB's daily loop set the cadence for everything).
+`docs/FOOTBALL_CUTOVER.md` planned exactly this in August and the MLB half
+was reversed; it stands now.
+
+What changed, and where:
+
+* **Priced:** `live-slate.yml` and `dfs-slate.yml` build `nfl ncaaf` only,
+  on football's calendar (the minute map above; the windows are argued in
+  each workflow's schedule comment). Seventeen slate runs a week instead of
+  thirty-five; seven DFS runs instead of forty-two.
+* **Collected:** `collect-dk-salaries.yml`, `collect-bettingpros.yml` and
+  `collect-exchanges.yml` snapshot the two football leagues.
+  `refresh-datasets.yml` refreshes them (`--league both`). The exchange
+  collector runs every three hours, which is what GitHub was giving its
+  hourly cron anyway.
+* **Still graded — every league.** `live-slate.yml` has a second league
+  list, `grade_leagues`, that keeps `nfl ncaaf mlb wnba ncaab nhl`. The
+  grader settles every open row and parks every league's season chain, and
+  it must: on 2026-09-19 the ledger carried 249 open MLB bets, and an open
+  row in a league nobody grades never settles, so its exposure sits in the
+  25% slate cap and the kill-switch zeroes every football stake for good.
+  Grading is free (schedule feeds, ~2 minutes) and the MLB record chain
+  closes cleanly instead of dangling.
+* **`collect-odds.yml` and `collect-football-props.yml` keep MLB for now**
+  for the same reason: a row graded without its close is a row with no
+  CLV, and the open MLB rows include pitcher-strikeout props. The regular
+  season ends 2026-09-27; once the ledger shows no open MLB rows, drop
+  `mlb` from both workflows' defaults (and from the props collector's
+  `LEAGUE_PROP_MARKETS`, which a test pins to the schedule) and this bullet.
+* **The code stays, for now.** The MLB, WNBA, NCAAB and NHL models, sims
+  and collectors are unscheduled, not deleted. `docs/FOOTBALL_CUTOVER.md` §2
+  argues for deleting behind a tag rather than mothballing, and it is right;
+  that is a separate, larger PR once the MLB rows settle. Until then the
+  `leagues` input on either slate workflow can still price a summer league
+  by hand.
+* **Not coming back on their own:** NCAAB (November) and NHL (October) were
+  paper leagues with no promoted edge. They are not in any default and stay
+  out unless a lab promotes something.
+
+### What the schedule really does
+
+Measured, because the minute map's premise — move off `:00` and the queue
+clears — turned out to be only half true. Read off the Actions run list on
+2026-09-19:
+
+* **`live-slate.yml` starts 1h48–3h00 after its cron.** Every scheduled run
+  from Sep 16–19 (seven of them, both windows): +2:52, +2:01, +3:00, +1:56,
+  +2:21, +1:48, +2:06. The job itself is twenty to thirty minutes, so a
+  window written as `H:53` publishes between `H+2:10` and `H+3:30`. The old
+  `16:53`/`22:53` pair therefore published at roughly 19:00–20:15 and
+  01:00–02:15 UTC — after the noon-ET college slate, level with the 3:30
+  window, and after every prime-time kick. On Sep 19 the 16:53 run started
+  at 18:59, was reclaimed by GitHub mid-fit at 19:19 (exit 143, "the runner
+  has received a shutdown signal"), and the site sat on Friday evening's
+  board through the Saturday afternoon games.
+* **`collect-odds.yml` is hourly on paper and roughly four-hourly in
+  practice.** Forty runs in the seven days to Sep 19 — one every 4.2 hours
+  on average, with gaps of 1.7 to 7.5 hours — so most hourly slots are
+  dropped outright, not delayed. Two consequences: `live-slate.yml`'s
+  banked-board reuse (`board_max_age_min`, 75 minutes) rarely qualifies and
+  the run pays for a live pull, and a closing line is whichever snapshot
+  happened to land last, not the one nearest kickoff.
+* **`workflow_dispatch` runs start within a minute.** The delay is specific
+  to the `schedule` event. When the site has to be rebuilt *now*, run the
+  workflow by hand from the Actions tab.
+
+GitHub's status page reported nothing during any of this; it is the
+platform's normal best-effort behaviour, and no minute choice changes it.
+What the schedule can do is compensate: `live-slate.yml` fires five times a
+day, three hours apart from 11:53 to 23:53 UTC, so that
+
+| Window (UTC) | Publishes at (measured delay) | Lands before |
+|---|---|---|
+| 11:53 | 14:03–15:23 | Sat noon-ET college kicks (16:00); Sun 1 PM ET (17:00) |
+| 14:53 | 17:03–18:23 | Sat 3:30 ET (19:30); Sun 4:05/4:25 ET (20:05–20:25) |
+| 17:53 | 20:03–21:23 | 7/7:30 ET prime time (23:00–23:30); MLB's 7 PM ET slate; SNF/MNF/TNF (00:15–00:20) |
+| 20:53 | 23:03–00:23 | Sat 10:30 ET (02:30); a fresh board for the late prime-time swaps |
+| 23:53 | 02:03–03:23 | the west-coast MLB board; the overnight grade |
+
+and a run GitHub drops is covered by its neighbour three hours away.
+
+The other half of the fix is in the runner: a league with no game inside
+its window no longer fits its ratings first (NCAAB's fit alone was eleven
+of the run's thirty minutes, for a board that was empty from April to
+November), so each window publishes sooner and spends less time exposed to
+a reclaimed runner.
+
+### What the schedule costs
+
+Measured off the same runs (2026-09-19). Three budgets are in play, and only
+one of them moves.
+
+* **The Odds API (100k credits a month).** A live-slate run that finds no
+  banked board younger than `board_max_age_min` pays about **210 credits**:
+  nfl 108, ncaaf 77, mlb 19, wnba 3, nhl 3 (run #126). 195 of those are the
+  per-event team-total pulls for the two football boards — a market the
+  slate stakes at zero (`--no-team-totals` drops a live run to ~15). A run
+  that reuses a banked board pays nothing, team totals included. On the
+  football calendar (seventeen runs a week) the slate spends about 13.5k a
+  month at that rate; the props collector ~380 a run twice a day (~23k);
+  the odds collector 9 a run. The whole schedule projects to roughly 38k a
+  month against 100k, with 84.6k left on the 19th — down from 40–45k on
+  five daily windows. Tight on a 20k plan, fine on this one.
+* **BettingPros (5,000 calls a day).** Unchanged. `live-slate.yml` never
+  calls BettingPros: it reads the parquet the 3-hourly collector banked,
+  and the slate step is not given the key (only `collect-bettingpros.yml`
+  has it). The collector's ~45 calls a run, eight runs a day, is under 8%
+  of the cap.
+* **GitHub Actions.** This repository is **private**, so minutes and
+  artifact storage are metered: GitHub Free and Free for organizations
+  include 2,000 minutes and 500 MB a month, Pro and Team 3,000 minutes and
+  1–2 GB, and "if your account does not have a valid payment method on
+  file, usage is blocked once you use up your quota." The football
+  calendar books ~140 minutes a day as written (seventeen live-slate runs
+  a week at ~20 minutes, seven DFS runs, the 3-hourly exchange collector,
+  the hourly odds collector), ~100 at the rate GitHub actually fires it —
+  3,000–4,200 a month, past the Free plan's 2,000 but well under the
+  5,700–8,400 that five daily windows booked and the 4,500–7,200 of the
+  old two-window schedule. Retained artifacts are still gigabytes: the
+  slate artifact is ~51 MB a run kept 60 days (about 4 GB at seventeen a
+  week), the exchange snapshot ~26 MB kept 90 days (~19 GB at eight a
+  day). Overage is $0.006 a minute and $0.25 a GB-month, so the Actions
+  bill is on the order of $10 a month, most of it storage.
+  It runs only on an account with a payment method and a spending limit
+  above zero; check Settings → Billing → Usage. Cut retention before
+  minutes: the grader reads the newest twelve slate runs (about two and a
+  half days) and the season chain and ledger live in R2, so 60 days of
+  slate artifacts is the easiest gigabytes to give back.
 
 > **Note (2026-09):** the MLB-specific workflows referenced below were folded
 > into `live-slate.yml` per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md)
@@ -170,9 +303,11 @@ git (provider ToS + it would leak the edge). `artifacts/` is gitignored.
   workflow dispatch (defaults 0.02 and 100). The design's real edge is **selective
   NCAAF totals** (see `docs/BACKTEST_NCAAF.md`) — raise `min_edge` to bet only the
   bigger disagreements.
-- **Cron windows:** `live-slate.yml`'s cron is a sensible default (daily, 16:53
-  & 22:53 UTC); tighten it to the real kickoff windows. Keep the minute odd and
-  keep it last in its hour — see **The minute map** above for why.
+- **Cron windows:** `live-slate.yml` fires every three hours from 11:53 to
+  23:53 UTC. The spacing is set by what GitHub actually does with a schedule,
+  not by the kickoff times alone — see **What the schedule really does**
+  above before moving one. Keep the minute odd and keep it last in its hour —
+  see **The minute map** for why.
 - **Staking discipline:** fractional Kelly with per-bet and per-game group caps is
   already enforced (`velocity/wagering/staking.py`); the group cap keeps one
   game's correlated bets bounded.
