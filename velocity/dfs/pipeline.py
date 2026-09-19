@@ -455,8 +455,14 @@ def pool_frame(run: LineupRun) -> pd.DataFrame:
     if pool is None or pool.empty:
         return pd.DataFrame(columns=POOL_COLUMNS)
     frame = pool.copy()
-    salary = pd.to_numeric(frame.get("salary"), errors="coerce")
-    points = pd.to_numeric(frame.get("points"), errors="coerce")
+    # ``lineup_pool`` always returns both, but the column is guaranteed here
+    # rather than reached for with ``.get`` — a missing one becomes all-null
+    # instead of a KeyError, and ``to_numeric`` never sees a None.
+    for column in ("salary", "points"):
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    salary = pd.to_numeric(frame["salary"], errors="coerce")
+    points = pd.to_numeric(frame["points"], errors="coerce")
     frame["salary"] = salary
     frame["points"] = points
     frame["value"] = (points / (salary / 1000.0)).where(salary > 0)
