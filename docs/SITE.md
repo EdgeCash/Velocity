@@ -678,8 +678,10 @@ being asked; "Sep 12, 23:51 UTC" needs arithmetic and a timezone conversion
 first. The absolute instant is on the hover, in UTC and in the viewer's own
 zone, and spelled out again in the rail and the footer stub.
 
-Three tiers, from the slate's own cadence (`live-slate.yml` runs 16:53 and
-22:53 UTC, so six hours apart and then eighteen):
+Three tiers, from the slate's own cadence (`live-slate.yml` runs every three
+hours from 11:53 to 23:53 UTC — three hours apart through the day, twelve
+overnight — and GitHub starts each one two to three hours late; see
+docs/LAUNCH.md, "What the schedule really does"):
 
 | Age | Reads as | Means |
 |---|---|---|

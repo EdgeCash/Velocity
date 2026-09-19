@@ -81,3 +81,34 @@ def test_ncaab_slate_end_to_end(tmp_path: Path) -> None:
     assert games_files, result.stdout
     games_map = pd.read_parquet(games_files[0])
     assert set(games_map["home_team"]) == {"Duke Blue Devils"}
+
+
+def test_ncaab_empty_board_skips_the_fit(tmp_path: Path) -> None:
+    """An empty board must not pay for the fit first.
+
+    The pace×efficiency fit is the expensive half of a live-slate run (eleven
+    minutes on the committed bank) and its output is unread when nothing is on
+    the board — which is every run from April to November. The 2026-09-19
+    16:53 run was inside that fit when GitHub reclaimed the runner. The board
+    is read first now, and an empty one skips straight to the off-season note.
+    """
+    data = tmp_path / "datasets"
+    data.mkdir()
+    _tiny_datasets(data)
+    empty = tmp_path / "empty.json"
+    empty.write_text("[]")
+    out = tmp_path / "slate"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--league", "ncaab", "--data", str(data),
+         "--offline", "--snapshot-file", str(empty), "--n-sims", "200",
+         "--min-edge", "0.0", "--out", str(out)],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "fit skipped" in result.stdout, result.stdout
+    assert "pace×efficiency" not in result.stdout
+    assert "no games on the board" in result.stdout
+    # Nothing was fitted, so no ratings are written: a table from a fit that
+    # never saw the board would read as current on the site.
+    assert not list(out.glob("ratings_ncaab_*.parquet"))

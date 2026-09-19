@@ -83,7 +83,7 @@ Every scheduled workflow gets its **own odd minute**, and none of them sit on
 | `:37` | `collect-fantasypros.yml` · `collect-injuries.yml` | 12 (Tue/Thu/Sat/Sun) · 15 |
 | `:39` | `dfs-slate.yml` | 22 |
 | `:47` | `consolidate-exchanges.yml` | 9 (Mon) |
-| `:53` | `live-slate.yml` | 16, 22 |
+| `:53` | `live-slate.yml` | 11, 14, 17, 20, 23 |
 
 `tests/test_workflow_schedules.py` pins all of it: no crowded minutes, no two
 workflows on the same slot, and nothing `live-slate.yml` reads starting at or
@@ -92,6 +92,55 @@ after it. Adding a schedule means picking a free minute from this table.
 > Cron is *best effort* on GitHub's side no matter which minute you pick — a
 > run can still start late, and a busy hour can drop one entirely. The odd
 > minutes shorten the queue; they do not make the schedule a guarantee.
+
+### What the schedule really does
+
+Measured, because the minute map's premise — move off `:00` and the queue
+clears — turned out to be only half true. Read off the Actions run list on
+2026-09-19:
+
+* **`live-slate.yml` starts 1h48–3h00 after its cron.** Every scheduled run
+  from Sep 16–19 (seven of them, both windows): +2:52, +2:01, +3:00, +1:56,
+  +2:21, +1:48, +2:06. The job itself is twenty to thirty minutes, so a
+  window written as `H:53` publishes between `H+2:10` and `H+3:30`. The old
+  `16:53`/`22:53` pair therefore published at roughly 19:00–20:15 and
+  01:00–02:15 UTC — after the noon-ET college slate, level with the 3:30
+  window, and after every prime-time kick. On Sep 19 the 16:53 run started
+  at 18:59, was reclaimed by GitHub mid-fit at 19:19 (exit 143, "the runner
+  has received a shutdown signal"), and the site sat on Friday evening's
+  board through the Saturday afternoon games.
+* **`collect-odds.yml` is hourly on paper and roughly four-hourly in
+  practice.** Forty runs in the seven days to Sep 19 — one every 4.2 hours
+  on average, with gaps of 1.7 to 7.5 hours — so most hourly slots are
+  dropped outright, not delayed. Two consequences: `live-slate.yml`'s
+  banked-board reuse (`board_max_age_min`, 75 minutes) rarely qualifies and
+  the run pays for a live pull, and a closing line is whichever snapshot
+  happened to land last, not the one nearest kickoff.
+* **`workflow_dispatch` runs start within a minute.** The delay is specific
+  to the `schedule` event. When the site has to be rebuilt *now*, run the
+  workflow by hand from the Actions tab.
+
+GitHub's status page reported nothing during any of this; it is the
+platform's normal best-effort behaviour, and no minute choice changes it.
+What the schedule can do is compensate: `live-slate.yml` fires five times a
+day, three hours apart from 11:53 to 23:53 UTC, so that
+
+| Window (UTC) | Publishes at (measured delay) | Lands before |
+|---|---|---|
+| 11:53 | 14:03–15:23 | Sat noon-ET college kicks (16:00); Sun 1 PM ET (17:00) |
+| 14:53 | 17:03–18:23 | Sat 3:30 ET (19:30); Sun 4:05/4:25 ET (20:05–20:25) |
+| 17:53 | 20:03–21:23 | 7/7:30 ET prime time (23:00–23:30); MLB's 7 PM ET slate; SNF/MNF/TNF (00:15–00:20) |
+| 20:53 | 23:03–00:23 | Sat 10:30 ET (02:30); a fresh board for the late prime-time swaps |
+| 23:53 | 02:03–03:23 | the west-coast MLB board; the overnight grade |
+
+and a run GitHub drops is covered by its neighbour three hours away. The
+cost is three more runs a day of a public repository's free Actions minutes
+and, on the runs where no banked board is fresh enough, a live `/odds` pull
+per league. The other half of the fix is in the runner: a league with no
+game inside its window no longer fits its ratings first (NCAAB's fit alone
+was eleven of the run's thirty minutes, for a board that was empty from
+April to November), so each window publishes sooner and spends less time
+exposed to a reclaimed runner.
 
 > **Note (2026-09):** the MLB-specific workflows referenced below were folded
 > into `live-slate.yml` per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md)
@@ -170,9 +219,11 @@ git (provider ToS + it would leak the edge). `artifacts/` is gitignored.
   workflow dispatch (defaults 0.02 and 100). The design's real edge is **selective
   NCAAF totals** (see `docs/BACKTEST_NCAAF.md`) — raise `min_edge` to bet only the
   bigger disagreements.
-- **Cron windows:** `live-slate.yml`'s cron is a sensible default (daily, 16:53
-  & 22:53 UTC); tighten it to the real kickoff windows. Keep the minute odd and
-  keep it last in its hour — see **The minute map** above for why.
+- **Cron windows:** `live-slate.yml` fires every three hours from 11:53 to
+  23:53 UTC. The spacing is set by what GitHub actually does with a schedule,
+  not by the kickoff times alone — see **What the schedule really does**
+  above before moving one. Keep the minute odd and keep it last in its hour —
+  see **The minute map** for why.
 - **Staking discipline:** fractional Kelly with per-bet and per-game group caps is
   already enforced (`velocity/wagering/staking.py`); the group cap keeps one
   game's correlated bets bounded.
