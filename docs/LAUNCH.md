@@ -133,14 +133,53 @@ day, three hours apart from 11:53 to 23:53 UTC, so that
 | 20:53 | 23:03–00:23 | Sat 10:30 ET (02:30); a fresh board for the late prime-time swaps |
 | 23:53 | 02:03–03:23 | the west-coast MLB board; the overnight grade |
 
-and a run GitHub drops is covered by its neighbour three hours away. The
-cost is three more runs a day of a public repository's free Actions minutes
-and, on the runs where no banked board is fresh enough, a live `/odds` pull
-per league. The other half of the fix is in the runner: a league with no
-game inside its window no longer fits its ratings first (NCAAB's fit alone
-was eleven of the run's thirty minutes, for a board that was empty from
-April to November), so each window publishes sooner and spends less time
-exposed to a reclaimed runner.
+and a run GitHub drops is covered by its neighbour three hours away.
+
+The other half of the fix is in the runner: a league with no game inside
+its window no longer fits its ratings first (NCAAB's fit alone was eleven
+of the run's thirty minutes, for a board that was empty from April to
+November), so each window publishes sooner and spends less time exposed to
+a reclaimed runner.
+
+### What the schedule costs
+
+Measured off the same runs (2026-09-19). Three budgets are in play, and only
+one of them moves.
+
+* **The Odds API (100k credits a month).** A live-slate run that finds no
+  banked board younger than `board_max_age_min` pays about **210 credits**:
+  nfl 108, ncaaf 77, mlb 19, wnba 3, nhl 3 (run #126). 195 of those are the
+  per-event team-total pulls for the two football boards — a market the
+  slate stakes at zero (`--no-team-totals` drops a live run to ~15). A run
+  that reuses a banked board pays nothing, team totals included. So the
+  three extra windows add at most ~630 credits a day, ~19k a month. For
+  scale, the props collector spends ~400 a run twice a day and the odds
+  collector 15 a run; the whole schedule projects to roughly 40–45k a
+  month against 100k, with 84.6k left on the 19th. Tight on a 20k plan,
+  fine on this one.
+* **BettingPros (5,000 calls a day).** Unchanged. `live-slate.yml` never
+  calls BettingPros: it reads the parquet the 3-hourly collector banked,
+  and the slate step is not given the key (only `collect-bettingpros.yml`
+  has it). The collector's ~45 calls a run, eight runs a day, is under 8%
+  of the cap.
+* **GitHub Actions.** This repository is **private**, so minutes and
+  artifact storage are metered: GitHub Free and Free for organizations
+  include 2,000 minutes and 500 MB a month, Pro and Team 3,000 minutes and
+  1–2 GB, and "if your account does not have a valid payment method on
+  file, usage is blocked once you use up your quota." The schedule as
+  written books ~280 minutes a day (five live-slate runs at ~20 minutes,
+  six DFS runs, the hourly collectors), ~190 at the rate GitHub actually
+  fires it — 5,700–8,400 a month either way, so past every plan's included
+  minutes by mid-month, exactly as the old two-window schedule already was
+  (~4,500–7,200). Retained artifacts are tens of gigabytes: the slate
+  artifact is ~51 MB a run kept 60 days (15 GB at five a day), the
+  exchange snapshot ~26 MB kept 90 days. Overage is $0.006 a minute and
+  $0.25 a GB-month, so the extra windows cost on the order of $10 a month.
+  It runs only on an account with a payment method and a spending limit
+  above zero; check Settings → Billing → Usage. Cut retention before
+  minutes: the grader reads the newest twelve slate runs (about two and a
+  half days) and the season chain and ledger live in R2, so 60 days of
+  slate artifacts is the easiest gigabytes to give back.
 
 > **Note (2026-09):** the MLB-specific workflows referenced below were folded
 > into `live-slate.yml` per [`docs/FOOTBALL_CUTOVER.md`](FOOTBALL_CUTOVER.md)
