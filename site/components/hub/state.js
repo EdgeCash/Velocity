@@ -20,7 +20,7 @@ import { writable } from 'svelte/store';
 // The model. The list stays flat here because the hash names one view.
 export const VIEWS = [
   'card', 'games', 'likely', 'players', 'dfs', 'positions', 'record',
-  'accuracy', 'ratings',
+  'accuracy', 'ratings', 'weather',
 ];
 
 const DEFAULTS = { view: 'card', league: 'all', game: '' };

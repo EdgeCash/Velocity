@@ -2425,6 +2425,76 @@ class WeatherAdjustedModel:
             for r in keyed.to_dict("records")
         } if "temp_mean" in keyed.columns else {}
 
+    def weather_note(self, home_team: str, kickoff: object) -> dict[str, float]:
+        """What this wrapper does to one game's total, and the forecast behind it.
+
+        The same computation :meth:`project` applies, exposed so a caller can
+        RECORD it. Deriving the number a second time somewhere else is how a
+        displayed adjustment comes to disagree with the applied one, so there
+        is one implementation and ``project`` calls this.
+
+        ``side_points`` is the per-team suppression (≤ 0, what the projection
+        adds to each side); ``total_points`` is twice it — what moves on the
+        total, which is the number a reader cares about. Forecast values are
+        echoed back as looked up, NaN where the stadium or day is not in the
+        frame, because "no forecast" and "calm" are different states.
+        """
+        from velocity.features.weather import (
+            cold_total_bonus,
+            precip_total_bonus,
+            wind_total_bonus,
+        )
+
+        blank = {
+            "wind_mph": float("nan"), "precip_in": float("nan"),
+            "temp_f": float("nan"), "wind_points": 0.0, "precip_points": 0.0,
+            "cold_points": 0.0, "side_points": 0.0, "total_points": 0.0,
+        }
+        if kickoff is None or pd.isna(kickoff):  # type: ignore[call-overload]
+            return blank
+        date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+        key = (home_team, date)
+        wind = self._wind.get(key)
+        precip = self._precip.get(key)
+        temp = self._temp.get(key)
+        wind_points = float(wind_total_bonus(
+            wind, threshold_mph=self.threshold_mph,
+            points_per_mph=self.points_per_mph,
+        ))
+        precip_pts = float(precip_total_bonus(
+            precip, threshold_in=self.precip_threshold_in,
+            points=self.precip_points)) if self.precip_points > 0 else 0.0
+        cold_pts = float(cold_total_bonus(
+            temp, threshold_f=self.cold_threshold_f,
+            points=self.cold_points)) if self.cold_points > 0 else 0.0
+        side = wind_points + precip_pts + cold_pts
+
+        def number(value: object) -> float:
+            if value is None:
+                return float("nan")
+            # pd.isna has no overload for `object`, and the values here come
+            # from dict lookups that are Any at runtime; float() first, then
+            # test the float, which needs no narrowing at all.
+            try:
+                out = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return float("nan")
+            return out
+
+        return {
+            "wind_mph": number(wind),
+            "precip_in": number(precip),
+            "temp_f": number(temp),
+            "wind_points": wind_points,
+            "precip_points": precip_pts,
+            "cold_points": cold_pts,
+            "side_points": side,
+            # Wind takes points off BOTH teams, so the total moves twice as
+            # far as either side does. Reporting the side number as "the wind
+            # adjustment" would halve it in the reader's head.
+            "total_points": 2.0 * side,
+        }
+
     def project(
         self,
         home_team: str,
@@ -2445,28 +2515,7 @@ class WeatherAdjustedModel:
         model would raise, and *not* passing it to a rest wrapper would
         silently zero every rest bonus.
         """
-        from velocity.features.weather import (
-            cold_total_bonus,
-            precip_total_bonus,
-            wind_total_bonus,
-        )
-
-        bonus = 0.0
-        if kickoff is not None and not pd.isna(kickoff):  # type: ignore[call-overload]
-            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
-            bonus = wind_total_bonus(
-                self._wind.get((home_team, date)),
-                threshold_mph=self.threshold_mph,
-                points_per_mph=self.points_per_mph,
-            )
-            if self.precip_points > 0:
-                bonus += precip_total_bonus(
-                    self._precip.get((home_team, date)),
-                    threshold_in=self.precip_threshold_in, points=self.precip_points)
-            if self.cold_points > 0:
-                bonus += cold_total_bonus(
-                    self._temp.get((home_team, date)),
-                    threshold_f=self.cold_threshold_f, points=self.cold_points)
+        bonus = self.weather_note(home_team, kickoff)["side_points"]
         if self._inner_takes_kickoff:
             return self.inner.project(
                 home_team, away_team, neutral_site=neutral_site,

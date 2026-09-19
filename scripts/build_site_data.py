@@ -684,7 +684,24 @@ def build_weather(slate_dir: Path) -> pd.DataFrame:
             if forecast is not None:
                 row.update(forecast)
         rows.append(row)
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+
+    # What the MODEL did with the weather, from the run that did it
+    # (run_live_slate.weather_frame). Its wind is Open-Meteo's DAILY MAX — the
+    # measure Round 5 was fitted on — while the columns above are the
+    # kickoff-hour forecast a reader wants for conditions. Two different
+    # measurements, so two different columns: folding them together would
+    # publish one number under the other's meaning.
+    applied = collect(slate_dir, "weather")
+    if applied.empty or frame.empty:
+        return frame
+    keep = ["game_id", "wind_mph", "precip_in", "wind_points", "precip_points",
+            "total_points"]
+    applied = applied[[c for c in keep if c in applied.columns]].rename(
+        columns={"wind_mph": "wind_model_mph"})
+    applied["game_id"] = applied["game_id"].astype(str)
+    frame["game_id"] = frame["game_id"].astype(str)
+    return frame.merge(applied, on="game_id", how="left")
 
 
 def _kickoff_forecast(lat: float, lon: float, kickoff: object) -> dict | None:
@@ -1040,7 +1057,10 @@ def main() -> None:
         "injuries": {"player_name": str, "team": str, "position": str,
                      "status": str, "is_out": bool, "league": str},
         "weather": {"game_id": str, "league": str, "covered": bool,
-                    "temp_f": float, "wind_mph": float, "precip_pct": float},
+                    "temp_f": float, "wind_mph": float, "precip_pct": float,
+                    "wind_model_mph": float, "precip_in": float,
+                    "wind_points": float, "precip_points": float,
+                    "total_points": float},
         "units": {"league": str, "slate_date": "datetime64[ns]",
                   "profit": float, "profit_sized": float, "bets": int,
                   "units": float, "units_sized": float},

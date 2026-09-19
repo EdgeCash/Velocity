@@ -22,7 +22,7 @@ import argparse
 import json
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -349,7 +349,7 @@ def _ratings_frame(league: str, model: object, scores_model: object) -> pd.DataF
 def _build_projection(
     args: argparse.Namespace,
     schedule: pd.DataFrame | None = None,
-) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame, str]:
+) -> tuple[Callable[[str, str], GameProjection], list[str], pd.DataFrame, str, object]:
     """Fit the league's promoted ratings from the committed data → ``(project, teams)``.
 
     NFL: the recency-weighted EPA fit (docs/MODEL_LAB.md — Brier 0.2234 vs
@@ -547,6 +547,11 @@ def _build_projection(
         # Wind on totals (Round 5 constants, live forecast): best-effort — a
         # failed forecast fetch just leaves totals unadjusted.
         model: object = rest_model
+        # Kept so the run can persist what the adjustment actually did to each
+        # total (velocity.backtest.lab.WeatherAdjustedModel.weather_note). The
+        # forecast was fetched, priced into every projection and then thrown
+        # away, so nothing downstream could say why a windy total was low.
+        weather_model: object = None
         try:
             if args.offline:  # a true no-network run (tests/CI)
                 raise RuntimeError("offline run")
@@ -563,6 +568,7 @@ def _build_projection(
                 model = WeatherAdjustedModel(rest_model, forecast,  # type: ignore[arg-type]
                                              points_per_mph=0.30,
                                              precip_points=precip_points)
+                weather_model = model
                 wet = int(pd.to_numeric(forecast["precip"], errors="coerce").ge(0.25).sum())
                 print(f"weather forecast: {len(forecast)} stadium-days fetched, {wet} wet "
                       f"(≥ 0.25 in), rain at {precip_points:g} pts a side")
@@ -583,7 +589,7 @@ def _build_projection(
         nfl_ratings["rank"] = nfl_ratings.index + 1
         for col in ("off", "def", "net"):
             nfl_ratings[col] = nfl_ratings[col].round(2)
-        return project_epa, list(ratings.teams), nfl_ratings, kind
+        return project_epa, list(ratings.teams), nfl_ratings, kind, weather_model
 
     games = load_games(_find_games(folder), league=args.league)
     # Per-league outcome-noise calibration. Football's constants are the
@@ -876,8 +882,11 @@ def _build_projection(
             home, away, rng=make_rng(), neutral_site=neutral_site
         )
 
+    # No weather wrapper outside the NFL: the lab measured wind on NFL totals
+    # (docs/MODEL_LAB.md Round 5) and velocity/report/venues.py has no college
+    # stadium coordinates, so there is nothing to record rather than a zero.
     return project, list(scores_model.ratings.teams), _ratings_frame(
-        args.league, model, scores_model), kind
+        args.league, model, scores_model), kind, None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1934,6 +1943,71 @@ def _window_events(
     return events[window].reset_index(drop=True)
 
 
+# What the weather record carries, per game on the board.
+WEATHER_COLUMNS = [
+    "game_id", "home_team", "away_team", "kickoff", "wind_mph", "precip_in",
+    "temp_f", "wind_points", "precip_points", "total_points",
+]
+
+
+def weather_frame(
+    weather_model: object,
+    events: pd.DataFrame,
+    known_teams: Iterable[str] = (),
+    aliases: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """One row per board game: the forecast the model used, and what it moved.
+
+    ``weather_model`` is the :class:`WeatherAdjustedModel` the fit built, or
+    ``None`` for a league with no weather wrapper — which is every league but
+    the NFL today, since the lab measured wind on NFL totals and there is no
+    college stadium coordinate table. A ``None`` model yields an empty frame
+    rather than a table of zeroes: "not adjusted" and "adjusted by nothing"
+    are different claims and only one of them is true.
+
+    Team names are resolved through :func:`resolve_team` — the same call
+    :func:`project_board` makes — because the board and the model do not spell
+    teams the same way. The forecast frame is keyed by nflverse abbreviation
+    ("GB") while The Odds API sends club names ("Green Bay Packers"), so
+    looking the raw board name up finds nothing, every row comes back NaN,
+    and the record is silently empty on every live run.
+
+    Numbers come from the wrapper's own ``weather_note``, never recomputed
+    here — a second implementation is how a shown adjustment drifts from the
+    applied one.
+    """
+    note = getattr(weather_model, "weather_note", None)
+    if note is None or events is None or events.empty:
+        return pd.DataFrame(columns=WEATHER_COLUMNS)
+    from velocity.wagering.live import resolve_team
+
+    known = list(known_teams)
+    rows = []
+    for event in events.to_dict("records"):
+        board_name = str(event.get("home_team", ""))
+        home = resolve_team(board_name, known, aliases) or board_name
+        kickoff = event.get("kickoff")
+        detail = note(home, kickoff)
+        rows.append({
+            "game_id": str(event.get("game_id", "")),
+            # The board's spelling, because every other persisted frame and
+            # the site join on it; the model's spelling did the lookup above.
+            "home_team": board_name,
+            "away_team": str(event.get("away_team", "")),
+            "kickoff": pd.Timestamp(kickoff) if kickoff is not None else pd.NaT,
+            "wind_mph": detail["wind_mph"],
+            "precip_in": detail["precip_in"],
+            "temp_f": detail["temp_f"],
+            "wind_points": detail["wind_points"],
+            "precip_points": detail["precip_points"],
+            "total_points": detail["total_points"],
+        })
+    frame = pd.DataFrame(rows, columns=WEATHER_COLUMNS)
+    # A game the forecast frame never covered carries no numbers at all; it
+    # is dropped rather than published as a calm day.
+    return frame[frame["wind_mph"].notna()].reset_index(drop=True)
+
+
 def _committed_teams(schedule: pd.DataFrame | None) -> list[str]:
     """Every team in the committed games frame: the fit's universe, without the fit."""
     if schedule is None or schedule.empty:
@@ -1986,8 +2060,10 @@ def main() -> None:
         known_teams = _committed_teams(schedule)
         ratings_frame = pd.DataFrame()
         fit_kind = "skipped (no games on the board)"
+        weather_model = None
     else:
-        project, known_teams, ratings_frame, fit_kind = _build_projection(args, schedule)
+        project, known_teams, ratings_frame, fit_kind, weather_model = _build_projection(
+            args, schedule)
     # Live football boards: team totals ride the per-event endpoint. Best-effort
     # — a failed fetch just leaves the three main markets on the board.
     if (args.team_totals and not args.snapshot_file
@@ -2078,6 +2154,10 @@ def main() -> None:
 
     frame = pd.DataFrame()
     projections: dict = {}
+    # Board-name → model-name, built below where there is a board to price.
+    # Initialized here because the weather record is written outside that
+    # branch and must not depend on having reached it.
+    aliases: dict[str, str] | None = None
     canonical = pd.DataFrame()
     game_log = None
     if events.empty:
@@ -2367,6 +2447,18 @@ def main() -> None:
                 out_dir / f"ratings_{args.league}_{stamp}.parquet", index=False
             )
             print(f"wrote {len(ratings_frame)} team ratings")
+        # What the weather did to each total, from the wrapper that did it.
+        # The forecast is bought, priced into every projection and was then
+        # discarded, so a windy total could not explain itself anywhere
+        # downstream (docs/FOOTBALL_PAL.md).
+        weather_rows = weather_frame(weather_model, events, known_teams, aliases)
+        if not weather_rows.empty:
+            weather_rows.assign(league=args.league, generated_at=generated_at).to_parquet(
+                out_dir / f"weather_{args.league}_{stamp}.parquet", index=False
+            )
+            moved = int((weather_rows["total_points"] != 0).sum())
+            print(f"wrote weather for {len(weather_rows)} game(s); "
+                  f"{moved} total(s) adjusted")
         # The "what's live" block, from the run itself rather than a table
         # someone has to remember to edit (the site's Methods page).
         config_rows = live_config_rows(args, fit_kind, cfg if not events.empty else None)

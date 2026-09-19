@@ -396,3 +396,43 @@ def test_the_dfs_pool_rides_into_the_site(tmp_path: Path) -> None:
     assert (table["league"] == "nfl").all()
     # The unrostered row is the whole reason the table exists.
     assert not table.set_index("player_name").loc["J. Addison", "rostered"]
+
+
+def test_the_applied_weather_adjustment_rides_onto_the_weather_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model's own numbers reach the site beside the kickoff forecast.
+
+    The two wind columns are different measurements — the runner banks the
+    daily max it priced from, the site fetches the kickoff hour — so the
+    merge must keep them apart rather than overwrite one with the other.
+    """
+    import scripts.build_site_data as bsd
+
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir()
+    pd.DataFrame([{
+        "game_id": "g1", "home_team": "Green Bay Packers",
+        "away_team": "Chicago Bears",
+        "kickoff": pd.Timestamp("2025-12-14 18:00"), "league": "nfl",
+    }]).to_parquet(slate_dir / "games_nfl_20251214T120000Z.parquet", index=False)
+    pd.DataFrame([{
+        "game_id": "g1", "home_team": "Green Bay Packers",
+        "away_team": "Chicago Bears",
+        "kickoff": pd.Timestamp("2025-12-14 18:00"), "wind_mph": 25.0,
+        "precip_in": 0.0, "temp_f": 20.0, "wind_points": -3.0,
+        "precip_points": 0.0, "total_points": -6.0,
+    }]).to_parquet(slate_dir / "weather_nfl_20251214T120000Z.parquet", index=False)
+
+    # The kickoff-hour fetch is network; pin it rather than reach for it.
+    monkeypatch.setattr(bsd, "_kickoff_forecast",
+                        lambda lat, lon, kickoff: {"temp_f": 24.0, "wind_mph": 18.0,
+                                                   "precip_pct": 10.0})
+    frame = bsd.build_weather(slate_dir)
+    row = frame.set_index("game_id").loc["g1"]
+    # The kickoff hour the reader sees...
+    assert row["wind_mph"] == 18.0
+    assert row["temp_f"] == 24.0
+    # ...and the daily max the model actually priced from, kept separate.
+    assert row["wind_model_mph"] == 25.0
+    assert row["total_points"] == -6.0

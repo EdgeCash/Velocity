@@ -272,6 +272,73 @@ def test_wind_total_bonus_and_weather_wrapper() -> None:
     assert captured == {"home_bonus": 0.0, "away_bonus": 0.0}
 
 
+def test_the_weather_note_decomposes_what_the_projection_applied() -> None:
+    """The recorded adjustment must come from the code that applies it.
+
+    A second implementation somewhere else is how a displayed number drifts
+    from the priced one, so ``project`` calls ``weather_note`` and this pins
+    that they agree — including the factor of two, since wind takes points
+    off BOTH sides and the total moves twice as far as either.
+    """
+    import pandas as pd
+    from velocity.backtest.lab import WeatherAdjustedModel
+
+    captured = {}
+
+    class _Inner:
+        def project(self, home, away, *, neutral_site=False, rng=None,
+                    home_bonus=0.0, away_bonus=0.0):
+            captured.update(home_bonus=home_bonus, away_bonus=away_bonus)
+            return "proj"
+
+    weather = pd.DataFrame({
+        "home_team": ["GB", "MIA"],
+        "kickoff": pd.to_datetime(["2025-12-14", "2025-10-05"]),
+        "roof": ["outdoors", "outdoors"],
+        "wind_max": [25.0, 8.0],
+        "temp_mean": [20.0, 85.0],
+        "precip": [0.4, 0.0],
+    })
+    model = WeatherAdjustedModel(_Inner(), weather, precip_points=1.0)
+
+    note = model.weather_note("GB", pd.Timestamp("2025-12-14"))
+    assert note["wind_mph"] == 25.0
+    assert note["precip_in"] == pytest.approx(0.4)
+    assert note["wind_points"] == pytest.approx(-1.5)   # (25-15)*0.15
+    assert note["precip_points"] == pytest.approx(-1.0)  # a point a side, wet
+    assert note["side_points"] == pytest.approx(-2.5)
+    assert note["total_points"] == pytest.approx(-5.0)   # both sides
+
+    # ...and that is exactly what the projection applied.
+    model.project("GB", "CHI", kickoff=pd.Timestamp("2025-12-14"))
+    assert captured["home_bonus"] == pytest.approx(note["side_points"])
+    assert captured["away_bonus"] == pytest.approx(note["side_points"])
+
+
+def test_a_game_with_no_forecast_reports_nothing_rather_than_calm() -> None:
+    """"No measurement" and "no wind" are different claims."""
+    import math
+
+    import pandas as pd
+    from velocity.backtest.lab import WeatherAdjustedModel
+
+    class _Inner:
+        def project(self, home, away, **kwargs):
+            return "proj"
+
+    weather = pd.DataFrame({
+        "home_team": ["GB"], "kickoff": pd.to_datetime(["2025-12-14"]),
+        "roof": ["outdoors"], "wind_max": [25.0], "temp_mean": [20.0],
+        "precip": [0.0],
+    })
+    model = WeatherAdjustedModel(_Inner(), weather)
+    # A stadium the frame never covered, and a game with no kickoff at all.
+    for note in (model.weather_note("MIA", pd.Timestamp("2025-12-14")),
+                 model.weather_note("GB", None)):
+        assert math.isnan(note["wind_mph"])
+        assert note["total_points"] == 0.0
+
+
 def test_join_weather_leaves_domes_unmeasured() -> None:
     import pandas as pd
     from velocity.features.weather import join_weather, stadium_coords
