@@ -48,6 +48,9 @@ import {
   realRows,
   splitCards,
   toTime,
+  weatherBoard,
+  weatherSummary,
+  WIND_THRESHOLD_MPH,
 } from '../components/hub/model.js';
 
 /* ---- team matching ------------------------------------------------- */
@@ -1144,4 +1147,81 @@ test('an empty accuracy chain is a typed empty summary, not a crash', () => {
   assert.equal(s.n, 0);
   assert.equal(s.total_bias, null);
   assert.equal(s.deciles.length, 10);
+});
+
+/* ---- Weather (docs/FOOTBALL_PAL.md) -------------------------------------- */
+
+const weatherGames = () => ([
+  {
+    game_id: 'w1', league: 'nfl', kickoff: null, away_team: 'CHI', home_team: 'GB',
+    proj: { fair_total: 38.4 },
+    markets: [{ market: 'total', side: 'under', point: 41.5 }],
+    weather: {
+      covered: false, temp_f: 21, wind_mph: 18, precip_pct: 10,
+      wind_model_mph: 25, precip_in: 0, wind_points: -3, precip_points: 0,
+      total_points: -6,
+    },
+  },
+  {
+    game_id: 'w2', league: 'nfl', kickoff: null, away_team: 'NYJ', home_team: 'MIA',
+    proj: { fair_total: 44.1 },
+    markets: [],
+    weather: {
+      covered: false, temp_f: 85, wind_mph: 6, precip_pct: 0,
+      wind_model_mph: 8, precip_in: 0, wind_points: 0, precip_points: 0,
+      total_points: 0,
+    },
+  },
+  {
+    game_id: 'w3', league: 'nfl', kickoff: null, away_team: 'DET', home_team: 'MIN',
+    proj: { fair_total: 47.0 }, markets: [],
+    weather: { covered: true },
+  },
+  // No weather row at all — a league or venue we do not map.
+  { game_id: 'w4', league: 'ncaaf', kickoff: null, away_team: 'A', home_team: 'B', markets: [] },
+]);
+
+test('the weather board reads outdoor games windiest first, domes last', () => {
+  const rows = weatherBoard(weatherGames());
+  assert.deepEqual(rows.map((r) => r.game_id), ['w1', 'w2', 'w3']);
+  // A game with no weather row is absent rather than shown as calm.
+  assert.ok(!rows.some((r) => r.game_id === 'w4'));
+  assert.equal(rows[2].covered, true);
+});
+
+test('the board keeps both wind numbers apart and carries the totals', () => {
+  const [windy] = weatherBoard(weatherGames());
+  // The kickoff-hour forecast and the daily max the model priced from are
+  // different measurements and must not be folded into one column.
+  assert.equal(windy.wind_mph, 18);
+  assert.equal(windy.wind_model_mph, 25);
+  assert.equal(windy.total_points, -6);
+  assert.equal(windy.model_total, 38.4);
+  assert.equal(windy.market_total, 41.5);
+});
+
+test('a game with no market total still appears, without one', () => {
+  const rows = weatherBoard(weatherGames());
+  const calm = rows.find((r) => r.game_id === 'w2');
+  assert.equal(calm.market_total, null);
+  assert.equal(calm.model_total, 44.1);
+});
+
+test('the weather summary counts the threshold, the adjusted and the points', () => {
+  const s = weatherSummary(weatherBoard(weatherGames()));
+  assert.equal(s.n, 3);
+  assert.equal(s.outdoor, 2);
+  assert.equal(s.covered, 1);
+  // The 25 mph daily max clears the bar even though the kickoff hour is 18.
+  assert.equal(WIND_THRESHOLD_MPH, 15);
+  assert.equal(s.windy, 1);
+  assert.equal(s.adjusted, 1);
+  assert.equal(s.points_moved, -6);
+});
+
+test('an empty weather board summarises to zeroes rather than throwing', () => {
+  const s = weatherSummary([]);
+  assert.equal(s.n, 0);
+  assert.equal(s.windy, 0);
+  assert.equal(s.points_moved, 0);
 });

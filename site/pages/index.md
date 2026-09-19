@@ -67,8 +67,12 @@ from velocity.teams
 where league != '__none__'
 ```
 
+<!-- Two wind numbers on purpose (docs/FOOTBALL_PAL.md): `wind_mph` is the
+     kickoff-hour forecast a reader wants for conditions, `wind_model_mph` the
+     daily max the Round-5 adjustment was fitted on and priced from. -->
 ```sql weather
-select game_id, league, covered, temp_f, wind_mph, precip_pct
+select game_id, league, covered, temp_f, wind_mph, precip_pct,
+  wind_model_mph, precip_in, wind_points, precip_points, total_points
 from velocity.weather
 where league != '__none__'
 ```

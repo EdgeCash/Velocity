@@ -22,7 +22,7 @@
   import {
     accuracySummary, buildCard, buildGames, buildLineups, buildParlays,
     flaggedMarkets, leagueCounts, mostLikely, playerBook, playerPool, realRows,
-    splitCards,
+    splitCards, weatherBoard, weatherSummary,
   } from './model.js';
   import { stampLabel, stampTime, teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
@@ -35,6 +35,7 @@
   import LikelyPanel from './LikelyPanel.svelte';
   import PlayersPanel from './PlayersPanel.svelte';
   import AccuracyPanel from './AccuracyPanel.svelte';
+  import WeatherPanel from './WeatherPanel.svelte';
   import Rail from './Rail.svelte';
   import Stamp from './Stamp.svelte';
 
@@ -141,6 +142,8 @@
   $: playerRows = playerBook(visibleGames);
   $: poolRows = playerPool(visibleGames);
   $: accuracyRows = accuracySummary(accuracy, activeLeague);
+  $: weatherRows = weatherBoard(visibleGames);
+  $: weatherTotals = weatherSummary(weatherRows);
 
   let detachState;
   onMount(() => {
@@ -165,7 +168,7 @@
   const VIEW_LABEL = {
     card: 'Card', games: 'Games', likely: 'Most likely', players: 'Players',
     dfs: 'DFS', positions: 'Positions', record: 'Record', accuracy: 'Accuracy',
-    ratings: 'Ratings',
+    ratings: 'Ratings', weather: 'Weather',
   };
   // Ballpark Pal's menu, for football (docs/FOOTBALL_PAL.md): the views stay
   // one surface, and the groups say which question each answers.
@@ -173,7 +176,7 @@
     { label: 'Outlook', views: ['games'] },
     { label: 'Odds', views: ['card', 'likely', 'positions'] },
     { label: 'Fantasy', views: ['dfs', 'players'] },
-    { label: 'Research', views: ['ratings'] },
+    { label: 'Research', views: ['ratings', 'weather'] },
     { label: 'Model', views: ['record', 'accuracy'] },
   ].map((g) => ({ ...g, views: g.views.filter((v) => VIEWS.includes(v)) }));
   $: viewCount = {
@@ -188,6 +191,7 @@
     likely: likelySections.reduce((sum, s) => sum + s.n, 0),
     players: playerRows.length + poolRows.length,
     accuracy: accuracyRows.n,
+    weather: weatherTotals.outdoor,
   };
 
   // The footer's absolute reading of the same thing the topbar chip shows as
@@ -271,6 +275,8 @@
         <PlayersPanel rows={playerRows} pool={poolRows} {isPrivate} />
       {:else if view === 'accuracy'}
         <AccuracyPanel summary={accuracyRows} />
+      {:else if view === 'weather'}
+        <WeatherPanel rows={weatherRows} summary={weatherTotals} />
       {:else if view === 'dfs'}
         <DfsPanel {lineups} league={activeLeague} />
       {:else if view === 'positions'}

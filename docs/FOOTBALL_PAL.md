@@ -23,7 +23,7 @@ open ledger rows settle.
 | Ballpark Pal | Football Pal view | State | Built from |
 |---|---|---|---|
 | **Today's Outlook** | | | |
-| Park Factors | the game sheet's weather and venue line | in the sheet | `weather`, `games` (roof/surface) |
+| Park Factors | **Weather** — conditions per outdoor game and what the model did about them | **shipped 2026-09-19** | `weather`, with the runner's applied adjustment |
 | Game Simulations | **Games** — projection, distributions, board, moves, injuries per game | shipped | `projections`, `distributions`, `board` |
 | Today's Pitchers | QB1 and the injury list on the sheet | in the sheet; a QB view is next | ESPN depth chart, injuries |
 | BvP Matchups · Matchup Machine | unit matchups (pass offense vs pass defense, rush, pace) | **next** | nflverse EPA splits, the ratings fit |
@@ -38,7 +38,7 @@ open ledger rows settle.
 | Stacks · Lineups · Ballpark DFS | **DFS** — classic, showdown, tiered, the GPP portfolio | shipped | `dfs_*` |
 | **Research Tools** | | | |
 | Player Ratings | player EPA / CPOE / success ratings | **next** | `datasets/nfl/plays.parquet`, nflverse weekly |
-| Year-Long Park Factors | venue and weather effects on totals | research | `docs/EDGE_RESEARCH.md` 2.1 (wind ≥ 15 mph) |
+| Year-Long Park Factors | the wind threshold and its measured effect, stated on **Weather** | partial | `docs/MODEL_LAB.md` Round 5 |
 | Cheat Sheets · Sim Outliers | the Card's held verdicts and Most likely together answer both | shipped | |
 | Export Center | every table is already a parquet under `/data/velocity/`; a links panel is next | partial | |
 | **The Model** | | | |
@@ -98,10 +98,42 @@ The chain carries forward through the previous-slates fetch (twelve runs);
 parking it in R2 beside the record chain is the follow-up that makes it
 survive a retention gap.
 
+**Weather** (`WeatherPanel.svelte`, `weatherBoard`, `weatherSummary`).
+Conditions per outdoor game, and — the part that did not exist before — what
+the model did about them. The forecast was bought, priced into every
+projection and then discarded, so a windy total could not explain itself
+anywhere downstream. `WeatherAdjustedModel.weather_note` now decomposes the
+adjustment it applies, `run_live_slate.weather_frame` records it per game as
+`weather_<league>_<stamp>.parquet`, and `build_site_data` joins it onto the
+kickoff-hour forecast it already fetched.
+
+Two things the view is careful about, both because getting them wrong is
+easy and quiet:
+
+* **Two wind numbers, never folded together.** `wind_mph` is the
+  kickoff-hour forecast, the condition a reader is picturing;
+  `wind_model_mph` is the Open-Meteo daily maximum the Round-5 adjustment was
+  fitted on and priced from. They routinely differ by several mph.
+* **The team name that does the lookup is the model's, not the board's.**
+  The forecast frame is keyed by nflverse abbreviation ("GB") while The Odds
+  API sends club names ("Green Bay Packers"), so the record resolves through
+  `resolve_team` exactly as `project_board` does. Without it every lookup
+  misses, every row is NaN and the record is silently empty on every run —
+  pinned by a test.
+
+The panel states the lab's verdict rather than implying a better one: Round 5
+promoted wind as a **bias correction, not an edge**. The unadjusted model
+went 46.3% against the close on windy games over 2014–2025 and the correction
+recovers about 1.8 points of that. It makes a windy total honest; it does not
+beat the close there, and nothing on the view is a play. Only NFL games carry
+an adjustment, because `velocity/report/venues.py` has no college stadium
+coordinates — the honest limit, and the obvious next data task.
+
 ## Next, in order
 
-1. **A Weather & venue view**, with the near-kickoff wind read
-   (`docs/EDGE_RESEARCH.md` 2.1) as its reason to exist.
+1. **College stadium coordinates**, so the Weather view covers the college
+   board at all. `velocity/report/venues.py` carries NFL and MLB only, which
+   is why college games show no conditions today.
 2. **Unit matchups** from the EPA splits the ratings fit already computes.
 3. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
 4. **An export panel** listing the parquets.

@@ -1093,3 +1093,84 @@ export function playerPool(games) {
     || a.player.localeCompare(b.player));
   return rows;
 }
+
+/* ---- Weather -------------------------------------------------------------
+   Conditions per outdoor game, and what the model did about them.
+
+   The honest framing matters here and is the reason the panel says it out
+   loud: the lab measured wind on NFL totals over 2014–2025 and promoted it
+   as a BIAS CORRECTION, not an edge (docs/MODEL_LAB.md Round 5). The bare
+   model over-projected windy totals — 46.3% O/U against the close on windy
+   games — and the adjustment recovers about 1.8 points of that. It makes a
+   windy total honest; it does not beat the close on windy games. A surface
+   that presented these rows as plays would be inventing an edge the lab
+   explicitly declined to claim.
+
+   Two wind numbers, never folded together: `wind_mph` is the kickoff-hour
+   forecast (conditions), `wind_model_mph` the daily max the adjustment was
+   fitted on and priced from. */
+
+/** The wind speed above which the lab found a measurable totals effect. */
+export const WIND_THRESHOLD_MPH = 15;
+
+export function weatherBoard(games) {
+  const rows = [];
+  for (const g of games ?? []) {
+    const wx = g.weather;
+    if (!wx) continue;
+    const num = (v) => (isNum(v) ? Number(v) : null);
+    const marketTotal = (g.markets ?? [])
+      .find((m) => String(m.market) === 'total');
+    rows.push({
+      game_id: g.game_id,
+      league: g.league,
+      kickoff: g.kickoff ?? null,
+      away_team: String(g.away_team ?? ''),
+      home_team: String(g.home_team ?? ''),
+      covered: wx.covered === true,
+      temp_f: num(wx.temp_f),
+      wind_mph: num(wx.wind_mph),
+      precip_pct: num(wx.precip_pct),
+      wind_model_mph: num(wx.wind_model_mph),
+      precip_in: num(wx.precip_in),
+      wind_points: num(wx.wind_points),
+      precip_points: num(wx.precip_points),
+      // What the adjustment moved on the total (≤ 0). Null means no weather
+      // model ran for this league, which is not the same as zero.
+      total_points: num(wx.total_points),
+      model_total: g.proj && isNum(g.proj.fair_total) ? Number(g.proj.fair_total) : null,
+      market_total: marketTotal && isNum(marketTotal.point) ? Number(marketTotal.point) : null,
+    });
+  }
+  // Windiest first among the outdoor games; covered venues sort last, since
+  // a dome has nothing to read.
+  rows.sort((a, b) => {
+    if (a.covered !== b.covered) return a.covered ? 1 : -1;
+    const aw = Math.max(a.wind_mph ?? -Infinity, a.wind_model_mph ?? -Infinity);
+    const bw = Math.max(b.wind_mph ?? -Infinity, b.wind_model_mph ?? -Infinity);
+    return bw - aw;
+  });
+  return rows;
+}
+
+/** The headline counts over a weather board. */
+export function weatherSummary(rows) {
+  const all = rows ?? [];
+  const outdoor = all.filter((r) => !r.covered);
+  const windy = outdoor.filter((r) => {
+    const w = Math.max(r.wind_mph ?? -Infinity, r.wind_model_mph ?? -Infinity);
+    return Number.isFinite(w) && w >= WIND_THRESHOLD_MPH;
+  });
+  const adjusted = outdoor.filter((r) => isNum(r.total_points) && r.total_points !== 0);
+  const moved = adjusted.reduce((sum, r) => sum + r.total_points, 0);
+  return {
+    n: all.length,
+    covered: all.length - outdoor.length,
+    outdoor: outdoor.length,
+    windy: windy.length,
+    adjusted: adjusted.length,
+    // Total points removed across the board, so "the weather is worth 4.2
+    // points today" is one number rather than a column to add up by eye.
+    points_moved: moved,
+  };
+}
