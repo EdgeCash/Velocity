@@ -8,7 +8,7 @@ DK points, join, and solve. Offline-testable end to end; the CLI wrapper
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -55,6 +55,13 @@ class LineupRun:
     n_games: int
     n_salaried: int  # players on the DK board for the group
     n_pool: int  # players surviving the projection join
+    # The priced board itself — every draftable the model has a number for,
+    # not only the nine the optimizer rostered. The solve throws this away by
+    # construction, and it is the more useful half for research: a lineup
+    # answers "what should I play", the pool answers "what is this player
+    # worth today", which is the question the site's Players view asks
+    # (docs/FOOTBALL_PAL.md). Defaulted so an unsolved run still constructs.
+    pool: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def is_season_long(fp: pd.DataFrame) -> bool:
@@ -206,6 +213,7 @@ def solve_showdown(
         n_games=int(board["competition"].nunique()) if not board.empty else 0,
         n_salaried=len(board),
         n_pool=len(pool),
+        pool=pool,
     )
 
 
@@ -419,7 +427,60 @@ def solve_slate(
         n_games=int(board["competition"].nunique()),
         n_salaried=len(board),
         n_pool=len(pool),
+        pool=pool,
     )
+
+
+# What the pool frame carries. Everything the DK board said about a player,
+# the model's number for them, and the one derived column a DFS reader
+# actually sorts on.
+POOL_COLUMNS = [
+    "player_name", "position", "team", "salary", "points", "value",
+    "rostered", "competition", "kickoff", "status", "probable",
+    "draft_group_id",
+]
+
+
+def pool_frame(run: LineupRun) -> pd.DataFrame:
+    """The slate's priced pool as a persistable frame (empty when there is none).
+
+    ``value`` is DK's own convention — projected points per $1,000 of salary —
+    computed here rather than in the browser so every surface reads the same
+    number. ``rostered`` marks the players the optimizer actually took, so the
+    lineup is readable as a subset of the pool rather than a separate list.
+    A salary of zero (DK's salary-free Tiers and Single Stat boards) has no
+    value per dollar, and says so with a null rather than an infinity.
+    """
+    pool = run.pool
+    if pool is None or pool.empty:
+        return pd.DataFrame(columns=POOL_COLUMNS)
+    frame = pool.copy()
+    # ``lineup_pool`` always returns both, but the column is guaranteed here
+    # rather than reached for with ``.get`` — a missing one becomes all-null
+    # instead of a KeyError, and ``to_numeric`` never sees a None.
+    for column in ("salary", "points"):
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    salary = pd.to_numeric(frame["salary"], errors="coerce")
+    points = pd.to_numeric(frame["points"], errors="coerce")
+    frame["salary"] = salary
+    frame["points"] = points
+    frame["value"] = (points / (salary / 1000.0)).where(salary > 0)
+    taken = {
+        (str(slot.player_name), str(slot.position))
+        for slot in (run.lineup.slots if run.lineup is not None else [])
+    }
+    frame["rostered"] = [
+        (str(name), str(position)) in taken
+        for name, position in zip(frame["player_name"], frame["position"], strict=True)
+    ]
+    frame["draft_group_id"] = run.draft_group_id
+    for column in POOL_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return (frame[POOL_COLUMNS]
+            .sort_values("points", ascending=False, kind="stable")
+            .reset_index(drop=True))
 
 
 def lineup_frame(run: LineupRun) -> pd.DataFrame:

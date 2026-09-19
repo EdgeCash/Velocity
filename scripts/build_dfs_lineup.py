@@ -423,6 +423,7 @@ def main() -> None:
         LEAGUE_SPECS,
         is_season_long,
         lineup_frame,
+        pool_frame,
         solve_slate,
     )
     from velocity.report.dfs_png import dfs_caption, render_dfs_card
@@ -502,11 +503,22 @@ def main() -> None:
         return
 
     frames: list[pd.DataFrame] = []
+    pools: list[pd.DataFrame] = []
     solved: list[tuple] = []
     for slate in slates:
         run = solve_slate(salaries, fp, draft_group=slate.draft_group_id,
                           spec=spec, scorer=scorer, points=points)
         label = slate_label_ct(slate)
+        # The priced pool is banked whether or not the slate solved. An
+        # infeasible board still knows what every player is worth, and that
+        # is the half the research surface reads; throwing it away because
+        # the optimizer could not fill a roster loses the more useful output
+        # to the less useful failure.
+        pool_rows = pool_frame(run)
+        if not pool_rows.empty:
+            pools.append(pool_rows.assign(
+                slate_start=slate.start, suffix=slate.suffix, slate=label,
+                game_time=pool_rows["kickoff"].map(game_time_ct)))
         if run.lineup is None:
             print(f"{label or slate.draft_group_id}: no solvable lineup "
                   f"({run.n_salaried} salaried, {run.n_pool} projected)")
@@ -535,6 +547,15 @@ def main() -> None:
     frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
     pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
     print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
+
+    # Every priced player, not only the rostered ones — the DFS player pool
+    # the site's Players view joins onto the prop board (docs/FOOTBALL_PAL.md).
+    if pools:
+        pool_dest = out / f"dfs_pool_{args.league}_{stamp}.parquet"
+        pool_all = pd.concat(pools, ignore_index=True)
+        pool_all.to_parquet(pool_dest, index=False)
+        print(f"wrote {len(pool_all)} priced player(s) across {len(pools)} "
+              f"slate(s) to {pool_dest}")
 
     if args.gpp > 0:
         # Best-effort like every surface past the cash lineup. Football stacks

@@ -1,104 +1,195 @@
 <script>
-  // Players: the prop board turned around, one row per player line with
-  // both sides on it, so a reader can look a PLAYER up rather than a game —
-  // Ballpark Pal's "PrizePicks & Underdog" grammar (line, over %, under %,
-  // odds), against the sportsbooks this repo actually prices
-  // (docs/FOOTBALL_PAL.md). The DFS salary and projection ride along when
-  // the player is on a built lineup; a full player pool is the next step.
+  // Players: everything the model knows about one football player today,
+  // in the two shapes a bettor actually asks for (docs/FOOTBALL_PAL.md).
+  //
+  // LINES is the prop board turned around — one row per (player, stat,
+  // line) with both sides on it, so a player can be looked up rather than a
+  // game. Ballpark Pal's "PrizePicks & Underdog" grammar, against the
+  // sportsbooks this repo prices.
+  //
+  // POOL is every priced draftable on the slate, which is the half the
+  // optimizer throws away: a lineup answers "what should I play", the pool
+  // answers "what is this player worth today". Value is DK's own convention,
+  // projected points per $1,000, computed in the builder so every surface
+  // reads the same number.
+  //
+  // One search box over both, because the question is about a PLAYER and
+  // which table holds the answer is not something a reader should have to
+  // decide first.
   import { american, isNum, kickoffLabel, marketLabel, num, pct } from '../format.js';
 
   /** From `playerBook`: one row per (player, market, line). */
   export let rows = [];
+  /** From `playerPool`: one row per priced draftable. */
+  export let pool = [];
   export let isPrivate = true;
 
   let query = '';
   let sureFirst = false;
+  let byValue = false;
+
   $: needle = query.trim().toLowerCase();
-  $: shown = (needle
-    ? rows.filter((r) => `${r.player} ${r.team} ${r.away_team} ${r.home_team}`.toLowerCase().includes(needle))
-    : rows
-  ).slice().sort((a, b) => (sureFirst ? b.sure - a.sure : 0));
+  const hay = (r) => `${r.player} ${r.team} ${r.away_team} ${r.home_team} ${r.position ?? ''}`
+    .toLowerCase();
+  $: shown = (needle ? rows.filter((r) => hay(r).includes(needle)) : rows)
+    .slice()
+    .sort((a, b) => (sureFirst ? b.sure - a.sure : 0));
+  $: shownPool = (needle ? pool.filter((r) => hay(r).includes(needle)) : pool)
+    .slice()
+    .sort((a, b) => (byValue
+      ? (b.value ?? -Infinity) - (a.value ?? -Infinity)
+      : 0));
+
   const rowKey = (r) => `${r.game_id}|${r.player}|${r.market}|${r.point}`;
+  const poolKey = (r) => `${r.game_id}|${r.player}|${r.position}|${r.slate}`;
   const price = (side) => (side && Number.isFinite(side.price) ? american(side.price) : '—');
 </script>
 
-{#if !rows.length}
+{#if !rows.length && !pool.length}
   <div class="none">
-    <h3>No player lines</h3>
+    <h3>No players priced</h3>
     <p>
-      Player rows come from the prop board the live run priced. Nothing here
-      means no league in this filter carried a priced prop board on its last
-      run — the college board prices from the committed player bank and the
-      NFL board from the FantasyPros-fed simulation.
+      Player rows come from the prop board and the DFS pool the last run
+      built. Nothing here means no league in this filter carried either — the
+      college board prices from the committed player bank, the NFL board from
+      the FantasyPros-fed simulation, and the pool from the DraftKings slate.
     </p>
   </div>
 {:else}
   <div class="bar">
     <input type="search" bind:value={query} placeholder="Find a player or team…" aria-label="find a player" />
-    <label class="toggle">
-      <input type="checkbox" bind:checked={sureFirst} />
-      surest first
-    </label>
-    <span class="found">{shown.length} of {rows.length} lines</span>
+    {#if needle}
+      <span class="found">{shown.length} line{shown.length === 1 ? '' : 's'} · {shownPool.length} priced</span>
+    {/if}
   </div>
 
-  <div class="scroller">
-    <table>
-      <thead>
-        <tr>
-          <th class="l">Player</th>
-          <th class="l">Game</th>
-          <th class="l">Stat</th>
-          <th>Line</th>
-          <th>Over</th>
-          <th>Under</th>
-          {#if isPrivate}
-            <th>Best O</th>
-            <th>Best U</th>
-            <th>DFS</th>
-          {/if}
-        </tr>
-      </thead>
-      <tbody>
-        {#each shown as r (rowKey(r))}
-          <tr>
-            <td class="l strong">
-              {r.player}
-              {#if r.team || r.position}
-                <span class="tag">{[r.team, r.position].filter(Boolean).join(' · ')}</span>
+  {#if rows.length}
+    <section>
+      <h3>
+        Lines
+        <span class="meta">{rows.length} player line{rows.length === 1 ? '' : 's'}</span>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={sureFirst} />
+          surest first
+        </label>
+      </h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr>
+              <th class="l">Player</th>
+              <th class="l">Game</th>
+              <th class="l">Stat</th>
+              <th>Line</th>
+              <th>Over</th>
+              <th>Under</th>
+              {#if isPrivate}
+                <th>Best O</th>
+                <th>Best U</th>
+                <th>DFS</th>
               {/if}
-            </td>
-            <td class="l game">
-              {r.away_team} @ {r.home_team}
-              {#if r.kickoff}<span class="when">{kickoffLabel(r.kickoff)}</span>{/if}
-            </td>
-            <td class="l">{marketLabel(r.market)}</td>
-            <td class="n">{isNum(r.point) ? num(r.point, 1) : '—'}</td>
-            <td class="n" class:lean={r.lean === 'over'}>{pct(r.p_over, 1)}</td>
-            <td class="n" class:lean={r.lean === 'under'}>{pct(r.p_under, 1)}</td>
-            {#if isPrivate}
-              <td class="n">{price(r.over)}{#if r.over?.venue}<span class="venue">{r.over.venue}</span>{/if}</td>
-              <td class="n">{price(r.under)}{#if r.under?.venue}<span class="venue">{r.under.venue}</span>{/if}</td>
-              <td class="n dfs">
-                {#if r.salary !== null || r.dfs_points !== null}
-                  {r.salary === null ? '—' : `$${num(r.salary, 0)}`} · {r.dfs_points === null ? '—' : num(r.dfs_points, 1)}
-                {:else}
-                  —
+            </tr>
+          </thead>
+          <tbody>
+            {#each shown as r (rowKey(r))}
+              <tr>
+                <td class="l strong">
+                  {r.player}
+                  {#if r.team || r.position}
+                    <span class="tag">{[r.team, r.position].filter(Boolean).join(' · ')}</span>
+                  {/if}
+                </td>
+                <td class="l game">
+                  {r.away_team} @ {r.home_team}
+                  {#if r.kickoff}<span class="when">{kickoffLabel(r.kickoff)}</span>{/if}
+                </td>
+                <td class="l">{marketLabel(r.market)}</td>
+                <td class="n">{isNum(r.point) ? num(r.point, 1) : '—'}</td>
+                <td class="n" class:lean={r.lean === 'over'}>{pct(r.p_over, 1)}</td>
+                <td class="n" class:lean={r.lean === 'under'}>{pct(r.p_under, 1)}</td>
+                {#if isPrivate}
+                  <td class="n">{price(r.over)}{#if r.over?.venue}<span class="venue">{r.over.venue}</span>{/if}</td>
+                  <td class="n">{price(r.under)}{#if r.under?.venue}<span class="venue">{r.under.venue}</span>{/if}</td>
+                  <td class="n dfs">
+                    {#if r.salary !== null || r.dfs_points !== null}
+                      {r.salary === null ? '—' : `$${num(r.salary, 0)}`} · {r.dfs_points === null ? '—' : num(r.dfs_points, 1)}
+                    {:else}
+                      —
+                    {/if}
+                  </td>
                 {/if}
-              </td>
-            {/if}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {/if}
+
+  {#if pool.length}
+    <section>
+      <h3>
+        Pool
+        <span class="meta">{pool.length} priced draftable{pool.length === 1 ? '' : 's'}</span>
+        {#if isPrivate}
+          <label class="toggle">
+            <input type="checkbox" bind:checked={byValue} />
+            best value first
+          </label>
+        {/if}
+      </h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr>
+              <th class="l">Player</th>
+              <th class="l">Game</th>
+              <th class="l">Slate</th>
+              <th>Proj</th>
+              {#if isPrivate}
+                <th>Salary</th>
+                <th>Value</th>
+              {/if}
+            </tr>
+          </thead>
+          <tbody>
+            {#each shownPool as r (poolKey(r))}
+              <tr class:rostered={r.rostered}>
+                <td class="l strong">
+                  {r.player}
+                  {#if r.team || r.position}
+                    <span class="tag">{[r.team, r.position].filter(Boolean).join(' · ')}</span>
+                  {/if}
+                  <!-- The optimizer's own picks, marked in place: the lineup
+                       is a subset of this table, not a separate list. -->
+                  {#if r.rostered}<span class="pick">lineup</span>{/if}
+                </td>
+                <td class="l game">
+                  {r.away_team} @ {r.home_team}
+                  {#if r.kickoff}<span class="when">{kickoffLabel(r.kickoff)}</span>{/if}
+                </td>
+                <td class="l slate">{r.slate || '—'}</td>
+                <td class="n strong">{r.points === null ? '—' : num(r.points, 1)}</td>
+                {#if isPrivate}
+                  <td class="n">{r.salary === null ? '—' : `$${num(r.salary, 0)}`}</td>
+                  <td class="n">{r.value === null ? '—' : num(r.value, 2)}</td>
+                {/if}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {/if}
 
   <p class="note">
     <strong>Over</strong> and <strong>Under</strong> are the simulation's
-    probabilities at the posted line; the leaning side is marked. <strong>Best
-    O / U</strong> are the best quotes across the books on the board. The
-    <strong>DFS</strong> column shows salary and projected points when the
-    player sits on a built lineup.
+    probabilities at the posted line; the leaning side is marked, and
+    <strong>Best O / U</strong> are the best quotes across the books on the
+    board. In the pool, <strong>Proj</strong> is the model's projected DK
+    points and <strong>Value</strong> is projected points per $1,000 of
+    salary — DraftKings' own convention. Rows marked <em>lineup</em> are the
+    ones the optimizer rostered.
   </p>
 {/if}
 
@@ -125,13 +216,35 @@
     align-items: center;
     gap: 0.35rem;
     font-family: var(--v-board);
-    font-size: 0.68rem;
+    font-size: 0.64rem;
+    font-weight: 600;
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--v-ink-2);
     cursor: pointer;
   }
   .found { font-family: var(--v-board); font-size: 0.68rem; letter-spacing: 0.1em; color: var(--v-ink-3); }
+  section { margin-bottom: 1.6rem; }
+  h3 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin: 0 0 0.5rem;
+    font-family: var(--v-board);
+    font-size: 0.86rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--v-ink);
+  }
+  .meta {
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--v-ink-3);
+    text-transform: none;
+  }
   .scroller { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
   th, td { padding: 0.38rem 0.55rem; border-bottom: 1px solid var(--v-line); white-space: nowrap; }
@@ -148,6 +261,7 @@
   td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .strong { font-weight: 600; color: var(--v-ink); }
   .game { color: var(--v-ink-2); }
+  .slate { color: var(--v-ink-3); }
   .lean { color: var(--v-brand); font-weight: 600; }
   .tag, .when, .venue {
     display: inline-block;
@@ -158,6 +272,20 @@
     text-transform: uppercase;
     color: var(--v-ink-3);
   }
+  .pick {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 999px;
+    font-family: var(--v-board);
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--v-brand);
+    background: var(--v-brand-deep);
+  }
+  tr.rostered td { background: rgba(61, 218, 208, 0.045); }
   .dfs { color: var(--v-ink-2); }
   .note, .none p { color: var(--v-ink-2); font-size: 0.8rem; line-height: 1.5; }
   .none h3 { margin-bottom: 0.3rem; }

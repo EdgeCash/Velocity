@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from velocity.dfs.pipeline import lineup_frame, main_slate_group, solve_slate
+import pytest
+from velocity.dfs.pipeline import (
+    POOL_COLUMNS,
+    lineup_frame,
+    main_slate_group,
+    pool_frame,
+    solve_slate,
+)
 
 # A two-group board: group 9 is a single-game showdown, group 1 the main slate.
 _POOL_ROWS = [
@@ -84,6 +92,67 @@ def test_solve_slate_handles_an_unsolvable_board() -> None:
     run = solve_slate(salaries[salaries["position"] != "TE"], _fp())
     assert run.lineup is None
     assert lineup_frame(run).empty
+
+
+# --- the priced pool (docs/FOOTBALL_PAL.md) -----------------------------------
+
+
+def test_the_pool_carries_every_priced_player_not_only_the_roster() -> None:
+    """The solve keeps what it chose from, not only what it chose.
+
+    A lineup answers "what should I play"; the pool answers "what is this
+    player worth today", which is the question the site's Players view asks —
+    and before this it was thrown away inside solve_slate every run.
+    """
+    run = solve_slate(_salaries(), _fp())
+    frame = pool_frame(run)
+    assert list(frame.columns) == POOL_COLUMNS
+    # Every draftable on the main slate, not the nine rostered.
+    assert len(frame) == len(_POOL_ROWS)
+    assert set(frame["player_name"]) == {name for name, *_ in _POOL_ROWS}
+    assert (frame["draft_group_id"] == "1").all()
+    # Sorted by the model's number, so the reader's first scan is the useful one.
+    assert frame["points"].is_monotonic_decreasing
+
+
+def test_the_pool_prices_value_per_thousand_and_marks_the_roster() -> None:
+    run = solve_slate(_salaries(), _fp())
+    frame = pool_frame(run).set_index("player_name")
+    # DK's convention: projected points per $1,000 of salary.
+    assert frame.loc["RB A", "value"] == pytest.approx(22.0 / 9.0)
+    assert frame.loc["TE B", "value"] == pytest.approx(6.5 / 3.0)
+    rostered = {str(slot.player_name) for slot in run.lineup.slots}
+    assert set(frame[frame["rostered"]].index) == rostered
+    assert len(rostered) == 9
+    # The unrostered are in the table too — that is the point of it.
+    assert (~frame["rostered"]).sum() == len(_POOL_ROWS) - 9
+
+
+def test_a_priceless_board_has_no_value_per_dollar_rather_than_an_infinity() -> None:
+    """DK's salary-free formats (Tiers, Single Stat) draft at salary 0."""
+    salaries = _salaries()
+    salaries.loc[salaries["player_name"] == "RB A", "salary"] = 0
+    run = solve_slate(salaries, _fp())
+    frame = pool_frame(run).set_index("player_name")
+    assert pd.isna(frame.loc["RB A", "value"])
+    assert np.isfinite(frame.loc["RB B", "value"])
+
+
+def test_an_unsolved_board_still_reports_what_it_priced() -> None:
+    """The pool survives a failed solve; the research half does not depend
+    on the optimizer finding a legal roster."""
+    salaries = _salaries()
+    run = solve_slate(salaries[salaries["position"] != "TE"], _fp())
+    assert run.lineup is None
+    frame = pool_frame(run)
+    assert not frame.empty
+    assert not frame["rostered"].any()
+
+
+def test_an_empty_run_gives_a_typed_empty_pool() -> None:
+    run = solve_slate(_salaries().iloc[0:0], _fp())
+    assert list(pool_frame(run).columns) == POOL_COLUMNS
+    assert pool_frame(run).empty
 
 
 def test_render_dfs_card_writes_a_png(tmp_path: Path) -> None:
