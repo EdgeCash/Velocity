@@ -187,6 +187,14 @@ from velocity.market_health
 where league != '__none__'
 ```
 
+<!-- The matchup splits (docs/FOOTBALL_PAL.md): descriptive, not priced. -->
+```sql unit_splits
+select league, season_from, season_to, games, team, side, phase, plays,
+  epa_per_play, epa_adjusted, success_rate
+from velocity.unit_splits
+where league != '__none__'
+```
+
 ```sql ratings
 select team, off, "def", net, pace, scale, rank, rank_prev, net_prev,
   league, stamp
@@ -248,6 +256,7 @@ where league != '__none__'
   modelConfig={model_config}
   health={health}
   ratings={ratings}
+  unitSplits={unit_splits}
   cards={cards}
   parlays={parlays}
   accuracy={accuracy}

@@ -26,7 +26,7 @@ open ledger rows settle.
 | Park Factors | **Weather** — conditions per outdoor game and what the model did about them | **shipped 2026-09-19** | `weather`, with the runner's applied adjustment |
 | Game Simulations | **Games** — projection, distributions, board, moves, injuries per game | shipped | `projections`, `distributions`, `board` |
 | Today's Pitchers | QB1 and the injury list on the sheet | in the sheet; a QB view is next | ESPN depth chart, injuries |
-| BvP Matchups · Matchup Machine | unit matchups (pass offense vs pass defense, rush, pace) | **next** | nflverse EPA splits, the ratings fit |
+| BvP Matchups · Matchup Machine | **Matchups** — each offense against the unit that has to stop it, by phase | **shipped 2026-09-19** | `unit_splits` over the committed play-by-play |
 | **Odds & Probability** | | | |
 | Most Likely | **Most likely** — the sim's surest outcomes by family, with the best price beside each | **shipped 2026-09-19** | `mostLikely(games)` over the collapsed board and the prop board |
 | Odds Screen | the board on every game sheet, best price first, books and exchanges | shipped | `board` |
@@ -146,16 +146,43 @@ College games show **conditions only**. The wind study was run on NFL totals,
 so no college total is adjusted for weather, and the moved column is blank
 there by design rather than by omission.
 
+**Matchups (2026-09-19)** (`MatchupsPanel.svelte`, `velocity/features/units.py`).
+The ratings view answers "how good is this team" in one number per side. That
+number is what prices a game, and it deliberately hides the *shape*: a defense
+stout against the run and porous against the pass rates the same as an evenly
+average one. Matchups is that shape, paired up — each offense against the unit
+that has to stop it, pass and rush, both directions.
+
+Both columns are EPA per play centered on the league average, so an offense's
+positive is good, a defense's negative is good, and the two **add**: net is
+what the pairing expects per play against an average one. Games sort by their
+sharpest pairing.
+
+Three things it is careful about:
+
+* **Descriptive, not priced.** The fitted ratings project games; nothing here
+  reaches a number anybody bets, and the panel says so.
+* **The opponent correction is one pass**, not a fit. Each unit is adjusted by
+  the season-long average of the units it actually faced, centered on the
+  league's per-phase mean. It reads the opponent's *season*, not their
+  performance in that one game — crediting a defense both for holding an
+  offense down and for that offense being bad is the same evidence counted
+  twice.
+* **The window widens when a season is too thin to read.** In week three a
+  team has played once, and one game is not a unit: its split IS its only
+  opponent's mirror, so the correction collapses it to exactly the league
+  average — correct arithmetic, no information. Below four games a side the
+  window reaches back a season, and every row carries the window it used.
+
 ## Next, in order
 
-1. **Unit matchups** from the EPA splits the ratings fit already computes.
-2. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
-3. **An export panel** listing the parquets.
-4. **The drive-level simulation** — the one structural gap against Ballpark
+1. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
+2. **An export panel** listing the parquets.
+3. **The drive-level simulation** — the one structural gap against Ballpark
    Pal's bottom-up sim: possessions and plays conditioned on unit strength,
    pace and situation, producing team scores and player stats from one
    draw. Unifies the game and prop sims, gives the model a per-game
    uncertainty it does not have today (`docs/EDGE_RESEARCH.md` 6.1), and is
    promoted only through the lab's walk-forward gate.
-5. **Delete the non-football code behind a tag** once the MLB ledger rows
+4. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

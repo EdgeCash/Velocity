@@ -436,3 +436,32 @@ def test_the_applied_weather_adjustment_rides_onto_the_weather_table(
     # ...and the daily max the model actually priced from, kept separate.
     assert row["wind_model_mph"] == 25.0
     assert row["total_points"] == -6.0
+
+
+def test_the_unit_splits_ride_into_the_site(tmp_path: Path) -> None:
+    """The matchup splits reach the site from the committed play-by-play."""
+    import scripts.build_site_data as bsd
+
+    datasets = tmp_path / "datasets" / "nfl"
+    datasets.mkdir(parents=True)
+    rows = []
+    for offense, defense, epa in (("A", "B", 0.4), ("B", "A", -0.2)):
+        rows.extend(
+            {"season": 2026, "game_id": f"g{i // 20}", "posteam": offense,
+             "defteam": defense, "play_type": "pass", "epa": epa,
+             "success": epa > 0}
+            for i in range(120)
+        )
+    pd.DataFrame(rows).to_parquet(datasets / "plays.parquet", index=False)
+
+    frame = bsd.build_unit_splits(tmp_path / "datasets")
+    assert not frame.empty
+    assert set(frame["side"]) == {"offense", "defense"}
+    assert (frame["league"] == "nfl").all()
+    a = frame.set_index(["team", "side", "phase"]).loc[("A", "offense", "pass")]
+    assert a["epa_per_play"] == pytest.approx(0.4)
+    assert a["plays"] == 120
+
+    # A missing league contributes nothing rather than failing the build.
+    assert bsd.build_unit_splits(tmp_path / "nope").empty
+    assert bsd.build_unit_splits(None).empty

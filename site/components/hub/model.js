@@ -130,10 +130,12 @@ export function buildGames({
   lineMoves = [],
   injuries = [],
   ratings = [],
+  units = [],
   cards = [],
   parlays = [],
 } = {}) {
   const rated = ratingsIndex(ratings);
+  const unitsBy = unitIndex(units);
   const cardsByGame = splitCards(cards).byGame;
   const inParlays = parlayCounts(parlays);
   const projByGame = new Map(realRows(projections).map((p) => [p.game_id, p]));
@@ -222,6 +224,10 @@ export function buildGames({
           home: rated.get(`${league}|${String(proj.home ?? '')}`) ?? null,
         }
         : { away: null, home: null },
+      // The unit splits for both teams, keyed the way the ratings are: off
+      // the PROJECTION's team strings, which are the model's own spelling.
+      units: proj ? matchupUnits(unitsBy, league, String(proj.away ?? ''),
+                                 String(proj.home ?? '')) : [],
       // The rendered graphic of this exact matchup — a thing about the game,
       // so it lives with the game rather than in a room of its own.
       cards: cardsByGame.get(id) ?? [],
@@ -1173,4 +1179,86 @@ export function weatherSummary(rows) {
     // points today" is one number rather than a column to add up by eye.
     points_moved: moved,
   };
+}
+
+/* ---- Unit matchups -------------------------------------------------------
+   The ratings say how good a team is in one number per side. That number
+   prices the game and deliberately hides the SHAPE: a defense stout against
+   the run and porous against the pass rates the same as an evenly average
+   one. This is that shape, paired up — the football read of a
+   batter-versus-pitcher page (docs/FOOTBALL_PAL.md).
+
+   Both numbers are EPA per play centered on the league average, so an
+   offense's positive is good, a defense's negative is good, and the two
+   ADD: `net = offense + defense` is what the pairing expects per play
+   relative to an average one. Nothing here is priced — the fitted model is
+   what projects games, and these rows exist to be read. */
+
+export const PHASES = ['pass', 'rush'];
+
+/** Splits keyed `league|team|side|phase`. */
+export function unitIndex(rows) {
+  const out = new Map();
+  for (const r of realRows(rows)) {
+    const key = `${String(r.league)}|${String(r.team)}|${String(r.side)}|${String(r.phase)}`;
+    out.set(key, r);
+  }
+  return out;
+}
+
+function unitCell(index, league, team, side, phase) {
+  const row = index.get(`${league}|${team}|${side}|${phase}`);
+  if (!row) return null;
+  return {
+    team,
+    plays: isNum(row.plays) ? Number(row.plays) : null,
+    games: isNum(row.games) ? Number(row.games) : null,
+    raw: isNum(row.epa_per_play) ? Number(row.epa_per_play) : null,
+    epa: isNum(row.epa_adjusted) ? Number(row.epa_adjusted) : null,
+    success: isNum(row.success_rate) ? Number(row.success_rate) : null,
+    season_from: row.season_from ?? null,
+    season_to: row.season_to ?? null,
+  };
+}
+
+/** The four pairings of one game: each team's pass and rush game against the
+ *  unit that has to stop it. */
+export function matchupUnits(index, league, away, home) {
+  const out = [];
+  for (const [offense, defense] of [[away, home], [home, away]]) {
+    for (const phase of PHASES) {
+      const off = unitCell(index, league, offense, 'offense', phase);
+      const def = unitCell(index, league, defense, 'defense', phase);
+      if (!off && !def) continue;
+      const net = off && def && off.epa !== null && def.epa !== null
+        ? off.epa + def.epa
+        : null;
+      out.push({ offense, defense, phase, off, def, net });
+    }
+  }
+  return out;
+}
+
+/** Every visible game that has any unit data, biggest mismatch first. */
+export function matchupBoard(games) {
+  const rows = (games ?? [])
+    .filter((g) => (g.units ?? []).length)
+    .map((g) => {
+      const nets = g.units.map((u) => u.net).filter((n) => Number.isFinite(n));
+      return {
+        game_id: g.game_id,
+        league: g.league,
+        kickoff: g.kickoff ?? null,
+        away_team: g.away_team,
+        home_team: g.home_team,
+        away: g.proj ? String(g.proj.away ?? '') : '',
+        home: g.proj ? String(g.proj.home ?? '') : '',
+        units: g.units,
+        // The single sharpest pairing on the game, which is what makes one
+        // matchup worth opening before another.
+        edge: nets.length ? Math.max(...nets.map(Math.abs)) : 0,
+      };
+    });
+  rows.sort((a, b) => b.edge - a.edge);
+  return rows;
 }

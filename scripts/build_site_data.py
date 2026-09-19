@@ -659,6 +659,53 @@ def build_injuries(fp_dir: Path | None) -> pd.DataFrame:
     return frame
 
 
+# The leagues whose committed play-by-play carries EPA per snap. The splits
+# are read from `datasets/` rather than from a run artifact on purpose: they
+# describe the season, not the slate, and the daily refresh job already keeps
+# that data current. Nothing here reaches a price.
+UNIT_LEAGUES = ("nfl", "ncaaf")
+# ``game_id`` rides along because the window widens on GAMES played, not
+# on rows (velocity.features.units.season_window).
+_UNIT_COLUMNS = ["season", "game_id", "posteam", "defteam", "play_type",
+                 "epa", "success"]
+
+
+def build_unit_splits(datasets_dir: Path | str | None) -> pd.DataFrame:
+    """Per-team pass and rush splits for the matchup view, both leagues.
+
+    Best-effort per league: a missing plays file, or one without the columns
+    the split needs, contributes nothing rather than failing the build — the
+    same posture every other optional table here takes.
+    """
+    from velocity.features.units import UNIT_COLUMNS, unit_splits
+
+    if datasets_dir is None:
+        return pd.DataFrame(columns=UNIT_COLUMNS)
+    frames = []
+    for league in UNIT_LEAGUES:
+        path = Path(datasets_dir) / league / "plays.parquet"
+        if not path.exists():
+            continue
+        try:
+            import pyarrow.parquet as pq  # noqa: PLC0415 - local, one caller
+
+            # Only the six columns the split reads: the college frame is
+            # 1.3M rows and pulling all twelve of them is needless.
+            available = set(pq.read_schema(path).names)
+            plays = pd.read_parquet(
+                path, columns=[c for c in _UNIT_COLUMNS if c in available])
+            split = unit_splits(plays, league)
+        except Exception as exc:  # noqa: BLE001 - a reference table never fails the build
+            print(f"unit splits skipped for {league}: {exc}")
+            continue
+        if not split.empty:
+            frames.append(split)
+            print(f"unit splits: {len(split)} rows for {league}")
+    if not frames:
+        return pd.DataFrame(columns=UNIT_COLUMNS)
+    return pd.concat(frames, ignore_index=True)
+
+
 def build_weather(slate_dir: Path) -> pd.DataFrame:
     """Kickoff-hour forecast for outdoor NFL/MLB games (Open-Meteo, free).
 
@@ -884,6 +931,8 @@ def main() -> None:
                         help="hourly odds snapshots (line movement)")
     parser.add_argument("--fp-dir", default="artifacts/fp",
                         help="FantasyPros artifacts (injuries panel)")
+    parser.add_argument("--datasets-dir", default="datasets",
+                        help="committed play-by-play, for the matchup splits")
     parser.add_argument("--no-weather", action="store_true",
                         help="skip the Open-Meteo forecast fetch")
     parser.add_argument("--ledger", default=None,
@@ -929,6 +978,7 @@ def main() -> None:
         "teams": build_teams(collect(slate_dir, "games"), slate_dir),
         "line_moves": build_line_moves(slate_dir, Path(args.odds_dir)),
         "injuries": build_injuries(Path(args.fp_dir)),
+        "unit_splits": build_unit_splits(args.datasets_dir),
         "weather": (pd.DataFrame() if args.no_weather
                     else build_weather(slate_dir)),
     }
@@ -1079,6 +1129,10 @@ def main() -> None:
                        "seen_now": "datetime64[ns]", "league": str},
         "injuries": {"player_name": str, "team": str, "position": str,
                      "status": str, "is_out": bool, "league": str},
+        "unit_splits": {"league": str, "season_from": int, "season_to": int,
+                        "games": int, "team": str, "side": str, "phase": str,
+                        "plays": int, "epa_per_play": float,
+                        "epa_adjusted": float, "success_rate": float},
         "weather": {"game_id": str, "league": str, "covered": bool,
                     "temp_f": float, "wind_mph": float, "precip_pct": float,
                     "wind_model_mph": float, "precip_in": float,
