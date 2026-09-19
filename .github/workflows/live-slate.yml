@@ -15,25 +15,31 @@ on:
     # Every three hours through the day (UTC). Two things set this, and the
     # kickoff times are only the first.
     #
-    # The windows: football's Saturday/Sunday slates kick at 16:00, 19:30,
-    # 23:00–23:30 and 00:15–02:30 UTC, the summer leagues (MLB/WNBA) play
-    # every night from 23:00, and the site's board is only worth reading if
-    # it was built before the window it is showing. Off nights find an empty
-    # board and succeed cheaply.
+    # Football's calendar (UTC; docs/LAUNCH.md "Football only"). Every
+    # window is set by two things: when the games kick, and how late GitHub
+    # actually starts a scheduled run.
     #
     # The delay: GitHub starts this schedule 1h48–3h00 after its cron (every
     # scheduled run of 2026-09-16..19, measured in docs/LAUNCH.md "What the
-    # schedule really does"), and the run itself is twenty to thirty
-    # minutes. So a window written here as H:53 publishes between H+2:10
-    # and H+3:30, and it is THAT time that has to land before a kickoff.
-    # The previous pair, 16:53 + 22:53, published at about 19:00–20:15 and
-    # 01:00–02:15 — after the noon-ET college slate, level with the 3:30
-    # window, and after every prime-time kick — and on 2026-09-19 one
-    # reclaimed runner left the site eighteen hours stale through the
-    # Saturday afternoon games. Five windows three hours apart give every
-    # kickoff window a run landing before it across the measured delay
-    # range, and a run GitHub drops (it does: the hourly odds collector
-    # fires about six times a day) is covered by its neighbour.
+    # schedule really does"), and the run itself is about twenty minutes.
+    # So a window written here as H:53 publishes between H+2:10 and H+3:30,
+    # and it is THAT time that has to land before a kickoff. The old pair,
+    # 16:53 + 22:53 daily, published after the noon-ET college slate, level
+    # with the 3:30 window and after every prime-time kick, and on
+    # 2026-09-19 one reclaimed runner left the site eighteen hours stale
+    # through the Saturday afternoon games.
+    #
+    # Saturday: college kicks at 16:00, 19:30, 23:00–23:30 and 02:30 UTC;
+    # five windows three hours apart put a run inside the hours before each
+    # across the measured delay range, and a run GitHub drops (it does) is
+    # covered by its neighbour. Sunday: the NFL's 17:00, 20:05/20:25 and
+    # 00:20 windows. Monday and Thursday evenings: MNF/TNF at 00:15 and the
+    # weeknight college games. Friday: the college Friday card. Tuesday and
+    # Wednesday: one run, to grade Monday night, settle the ledger and put
+    # the week's opening board on the site — the college openers post
+    # Sunday night and the softest numbers are early in the week
+    # (docs/EDGE_RESEARCH.md 2.2), so the board is worth a look before
+    # Saturday. Seventeen runs a week, against thirty-five daily.
     #
     # :53 rather than :00, and it is the LAST minute in the map
     # (docs/LAUNCH.md) on purpose. This job is the one that consumes every
@@ -43,11 +49,18 @@ on:
     # is then :23's, thirty minutes old and comfortably inside
     # `board_max_age_min` (75), so the board still comes from banked data
     # rather than a paid pull.
-    - cron: "53 11,14,17,20,23 * * *"
+    - cron: "53 11,14,17,20,23 * * 6"   # Saturday: the college slate
+    - cron: "53 11,14,17,20 * * 0"      # Sunday: the NFL slate
+    - cron: "53 17,20 * * 1,4,5"        # Mon/Thu/Fri: prime time and the weeknight card
+    - cron: "53 17 * * 2,3"             # Tue/Wed: grade, settle, the week's opening board
   workflow_dispatch:
     inputs:
       leagues:
-        description: "Leagues to run (space-separated)"
+        description: "Leagues to price a slate for (space-separated). Football only by default (docs/LAUNCH.md 'Football only'); the other leagues are still graded, see grade_leagues."
+        required: false
+        default: "nfl ncaaf"
+      grade_leagues:
+        description: "Leagues whose previous slates are graded and whose season chain is parked. Wider than `leagues` on purpose: the ledger's open rows in a league that is no longer priced (MLB, 249 open bets on 2026-09-19) still have to settle, or the open-exposure cap holds every football stake at zero for good."
         required: false
         default: "nfl ncaaf mlb wnba ncaab nhl"
       min_edge:
@@ -136,7 +149,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p artifacts/previous
-          # Twelve runs, not six: the schedule fires five times a day now, so
+          # Twelve runs, not six: the schedule fires up to five times a day now, so
           # six reached only the newest of yesterday's cards, and the grader
           # settles every card from before today (grade_yesterday.prior_stamps).
           # Twelve reaches two full days of them.
@@ -181,7 +194,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           mkdir -p artifacts/previous/r2
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+          for league in ${{ github.event.inputs.grade_leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             dest="artifacts/previous/r2/cumulative_record_${league}_00000000T000000Z.parquet"
             npx --yes wrangler@4 r2 object get \
               "velocity-wasm/records/cumulative_record_${league}.parquet" \
@@ -237,7 +250,7 @@ jobs:
           # record for weeks. Failures are collected and the step ends red
           # (continue-on-error keeps the run itself green).
           failed=""
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+          for league in ${{ github.event.inputs.grade_leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             echo "::group::grade ${league}"
             if ! python scripts/grade_yesterday.py \
               --prev-dir artifacts/previous --out-dir artifacts/slate \
@@ -260,7 +273,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+          for league in ${{ github.event.inputs.grade_leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
             newest=$(ls -t artifacts/slate/cumulative_record_${league}_*.parquet 2>/dev/null | head -1 || true)
             if [ -n "$newest" ]; then
               npx --yes wrangler@4 r2 object put \
@@ -361,7 +374,7 @@ jobs:
           BP_LINES=$(ls -t artifacts/bp/**/bp_lines_*.parquet 2>/dev/null | head -1 || true)
           BP_EVENTS=$(ls -t artifacts/bp/**/bp_events_*.parquet 2>/dev/null | head -1 || true)
           BP_BOOKS=$(ls -t artifacts/bp/**/bp_books_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
             echo "::group::${league} slate"
             EXTRA=""
             # Build the board from a banked /odds payload rather than a fresh
@@ -496,6 +509,7 @@ jobs:
       # exists to beat. dfs-slate.yml had it right the whole time; the flag
       # appears in this directory, which is why a repo-wide grep said "passed".
       - name: Build the MLB home-run board
+        if: contains(github.event.inputs.leagues || 'nfl ncaaf', 'mlb')
         continue-on-error: true
         run: |
           python scripts/collect_mlb_statcast.py --out artifacts/statcast || true
@@ -515,9 +529,12 @@ jobs:
           FP_FILE=$(ls -t artifacts/fp/**/fp_projections_*.parquet 2>/dev/null | head -1 || true)
           # MLB projections come from the free statsapi season stats (the FP
           # public tier serves no MLB players), fetched fresh each run.
-          python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
-          MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
-          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}; do
+          MLB_STATS=""
+          if [[ " ${{ github.event.inputs.leagues || 'nfl ncaaf' }} " == *" mlb "* ]]; then
+            python scripts/collect_mlb_player_stats.py --out artifacts/mlbstats || true
+            MLB_STATS=$(ls -t artifacts/mlbstats/mlb_player_stats_*.parquet 2>/dev/null | head -1 || true)
+          fi
+          for league in ${{ github.event.inputs.leagues || 'nfl ncaaf' }}; do
             DK_FILE=$(ls -t artifacts/dk/**/dk_salaries_${league}_*.parquet 2>/dev/null | head -1 || true)
             PROJ_FILE="$FP_FILE"
             if [ "${league}" = "mlb" ]; then PROJ_FILE="$MLB_STATS"; fi

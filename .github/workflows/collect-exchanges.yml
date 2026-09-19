@@ -11,15 +11,18 @@ name: Collect exchange boards (Kalshi + Polymarket)
 
 on:
   schedule:
-    # Hourly at :07 (see the minute map in docs/LAUNCH.md), offset from
-    # collect-odds.yml's :23.
-    - cron: "7 * * * *"
+    # Every three hours at :07 (see the minute map in docs/LAUNCH.md), offset
+    # from collect-odds.yml's :23. It was hourly; GitHub fired about six of
+    # the twenty-four slots anyway, and each run is four billed minutes and a
+    # 26 MB artifact kept ninety days (docs/LAUNCH.md "What the schedule
+    # costs"), so the schedule now says what actually happens.
+    - cron: "7 */3 * * *"
   workflow_dispatch:
     inputs:
       leagues:
         description: "Kalshi leagues to snapshot (space-separated)"
         required: false
-        default: "nfl ncaaf mlb wnba"
+        default: "nfl ncaaf"
 
 concurrency:
   group: collect-exchanges
@@ -51,7 +54,7 @@ jobs:
         run: |
           python scripts/collect_kalshi.py \
             --out artifacts/exchanges \
-            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba' }}
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }}
 
       - name: Snapshot Polymarket board (raw + normalized)
         run: python scripts/collect_polymarket.py --out artifacts/exchanges

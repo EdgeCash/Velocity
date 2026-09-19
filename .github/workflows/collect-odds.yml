@@ -12,10 +12,14 @@ name: Collect The Odds API lines
 
 on:
   schedule:
-    # Hourly. Live /odds for 5 leagues × 3 markets ≈ 15 credits/run →
-    # ~11k/month, well under the 100k budget. All five slate leagues are
-    # snapshotted so every league's plays can be graded against a real
-    # close (the CLV loop in grade_yesterday.py).
+    # Hourly. Live /odds for 3 leagues × 3 markets ≈ 9 credits/run →
+    # ~6.5k/month as written, and GitHub fires about a quarter of the hourly
+    # slots (docs/LAUNCH.md "What the schedule really does"). The two
+    # football leagues are the slate. MLB stays in the list ONLY until the
+    # ledger's open MLB rows settle (the regular season ends 2026-09-27): a
+    # play graded without its close is a play with no CLV, and the receipt
+    # is the point (grade_yesterday.py). Drop it once the last MLB row
+    # closes — docs/LAUNCH.md "Football only".
     # :23 past the hour — see the minute map in docs/LAUNCH.md.
     - cron: "23 * * * *"
   workflow_dispatch:
@@ -23,7 +27,7 @@ on:
       leagues:
         description: "Leagues to snapshot (space-separated), e.g. 'nfl ncaaf'"
         required: false
-        default: "nfl ncaaf mlb wnba ncaab nhl"
+        default: "nfl ncaaf mlb"
       regions:
         description: "The Odds API regions: 'us', or 'us,eu' to add Pinnacle (doubles the credits per pull)"
         required: false
@@ -62,7 +66,7 @@ jobs:
           python scripts/collect_theoddsapi.py \
             --out artifacts/odds \
             --regions "${{ github.event.inputs.regions || 'us' }}" \
-            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb wnba ncaab nhl' }}
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf mlb' }}
 
       - name: Upload snapshot (Actions artifact)
         uses: actions/upload-artifact@v4

@@ -141,6 +141,8 @@ def test_live_slate_windows_are_never_more_than_three_hours_apart():
     stale through a Saturday afternoon; windows three hours apart give every
     kickoff a run landing before it and a neighbour to cover a dropped one.
     """
+    # The union across game days: Saturday carries all five windows, and the
+    # other days a subset of the same hours, so the minute map stays one row.
     hours = sorted(starts_by_hour("live-slate.yml"))
     assert hours, "live-slate.yml has no schedule to check"
     assert hours[0] <= 11, (
@@ -152,3 +154,19 @@ def test_live_slate_windows_are_never_more_than_three_hours_apart():
     )
     gaps = [b - a for a, b in pairwise(hours)]
     assert max(gaps) <= 3, f"live-slate windows more than three hours apart: {hours}"
+
+
+
+@pytest.mark.parametrize("name", ["live-slate.yml", "dfs-slate.yml"])
+def test_the_slate_workflows_run_on_football_days(name):
+    """Football only: every slate cron names its days of the week.
+
+    A ``*`` day-of-week is the summer cadence coming back by copy-paste — the
+    summer leagues played every night, football does not, and a daily run on
+    a Tuesday prices an empty board for twenty minutes of billed runner time.
+    """
+    crons = [cron for other, cron in schedules() if other == name]
+    assert crons, f"{name} has no schedule"
+    for cron in crons:
+        dow = cron.split()[4]
+        assert dow != "*", f"{name}: {cron!r} runs every day of the week"

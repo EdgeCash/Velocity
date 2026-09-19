@@ -28,9 +28,9 @@ on:
         description: "Season year (default: inferred from today)"
         required: false
       league:
-        description: "League to refresh (nfl, ncaaf, mlb, wnba, both = football, all)"
+        description: "League to refresh (nfl, ncaaf, mlb, wnba, both = football, all). Football only by default — docs/LAUNCH.md 'Football only'."
         required: false
-        default: "all"
+        default: "both"
       mlb_pitching:
         description: "One-off: backfill the MLB starters dataset from statsapi box scores"
         required: false
@@ -81,7 +81,7 @@ jobs:
         env:
           CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
         run: |
-          ARGS="--league ${{ github.event.inputs.league || 'all' }}"
+          ARGS="--league ${{ github.event.inputs.league || 'both' }}"
           if [ -n "${{ github.event.inputs.season }}" ]; then
             ARGS="$ARGS --season ${{ github.event.inputs.season }}"
           fi
