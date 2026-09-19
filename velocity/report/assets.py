@@ -20,6 +20,8 @@ from pathlib import Path
 
 from matplotlib import font_manager
 
+from velocity.report.venues import Venue
+
 # ESPN's public team-logo CDN, addressed by their lowercase NFL slug.
 _LOGO_CDN = "https://a.espncdn.com/i/teamlogos/nfl/500"
 _FETCH_TIMEOUT = 8
@@ -288,20 +290,28 @@ def parse_ncaaf_teams(payload: list[dict]) -> dict[str, SchoolMeta]:
     return out
 
 
-def ncaaf_team_index(
+def ncaaf_teams_payload(
     api_key: str | None, cache_dir: Path | str | None
-) -> dict[str, SchoolMeta]:  # pragma: no cover - network + cache orchestration
-    """The FBS identity table, fetched once and cached; ``{}`` on any failure."""
+) -> list[dict]:  # pragma: no cover - network + cache orchestration
+    """The raw CFBD ``/teams/fbs`` payload, fetched once and cached; ``[]`` on failure.
+
+    Factored out because the payload answers two questions — who a school is
+    (colors, abbreviation, mascot) and where it plays (its venue's
+    coordinates and dome flag) — and fetching it twice for those would be
+    two calls for one download. Both readers share this cache file.
+    """
     import json
 
     cache = None if cache_dir is None else Path(cache_dir) / "ncaaf_teams.json"
     if cache is not None and cache.exists():
         try:
-            return parse_ncaaf_teams(json.loads(cache.read_text()))
+            payload = json.loads(cache.read_text())
+            if isinstance(payload, list):
+                return payload
         except Exception:  # noqa: BLE001 - a corrupt cache entry just refetches
             pass
     if not api_key:
-        return {}
+        return []
     try:
         request = urllib.request.Request(  # noqa: S310 - fixed https host
             _CFBD_TEAMS_URL, headers={"Authorization": f"Bearer {api_key}"}
@@ -309,14 +319,36 @@ def ncaaf_team_index(
         with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
             payload = json.loads(resp.read())
     except Exception:  # noqa: BLE001 - identity is a nicety, never fatal
-        return {}
+        return []
+    if not isinstance(payload, list):
+        return []
     if cache is not None:
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(payload))
         except Exception:  # noqa: BLE001 - caching is best-effort
             pass
-    return parse_ncaaf_teams(payload)
+    return payload
+
+
+def ncaaf_team_index(
+    api_key: str | None, cache_dir: Path | str | None
+) -> dict[str, SchoolMeta]:  # pragma: no cover - network + cache orchestration
+    """The FBS identity table, fetched once and cached; ``{}`` on any failure."""
+    return parse_ncaaf_teams(ncaaf_teams_payload(api_key, cache_dir))
+
+
+def ncaaf_venue_index(
+    api_key: str | None, cache_dir: Path | str | None
+) -> dict[str, Venue]:  # pragma: no cover - network + cache orchestration
+    """Every FBS school's home venue, from the same payload and cache.
+
+    A warm cache — which is the normal case, since the slate step fetches the
+    identity table before the site build runs — makes this free.
+    """
+    from velocity.report.venues import parse_ncaaf_venues
+
+    return parse_ncaaf_venues(ncaaf_teams_payload(api_key, cache_dir))
 
 
 # --- identity for a rendering surface ----------------------------------------

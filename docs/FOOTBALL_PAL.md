@@ -125,23 +125,37 @@ The panel states the lab's verdict rather than implying a better one: Round 5
 promoted wind as a **bias correction, not an edge**. The unadjusted model
 went 46.3% against the close on windy games over 2014–2025 and the correction
 recovers about 1.8 points of that. It makes a windy total honest; it does not
-beat the close there, and nothing on the view is a play. Only NFL games carry
-an adjustment, because `velocity/report/venues.py` has no college stadium
-coordinates — the honest limit, and the obvious next data task.
+beat the close there, and nothing on the view is a play.
+
+**College venues (2026-09-19).** The view covers the college board too. NFL
+and MLB venues are literals in `velocity/report/venues.py` — 32 and 30 of
+them, and they move about once a decade — but 134 FBS stadiums is too many
+to hand-type and far too many to keep right, and a wrong coordinate does not
+fail: it returns a confident forecast for the wrong place. So
+`parse_ncaaf_venues` reads them out of the CFBD `/teams/fbs` payload, whose
+`location` block carries each school's latitude, longitude and dome flag.
+That payload is the one the identity fetch already makes and caches, so this
+costs no second network call; `ncaaf_teams_payload` is the shared reader.
+Rows without a school or usable coordinates are dropped rather than
+defaulted, including a transposed latitude/longitude pair, which is the one
+mistake that still parses as a number. The board's nickname bridges onto the
+CFBD school through `nickname_aliases`, exactly as the slate prices through
+it.
+
+College games show **conditions only**. The wind study was run on NFL totals,
+so no college total is adjusted for weather, and the moved column is blank
+there by design rather than by omission.
 
 ## Next, in order
 
-1. **College stadium coordinates**, so the Weather view covers the college
-   board at all. `velocity/report/venues.py` carries NFL and MLB only, which
-   is why college games show no conditions today.
-2. **Unit matchups** from the EPA splits the ratings fit already computes.
-3. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
-4. **An export panel** listing the parquets.
-5. **The drive-level simulation** — the one structural gap against Ballpark
+1. **Unit matchups** from the EPA splits the ratings fit already computes.
+2. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
+3. **An export panel** listing the parquets.
+4. **The drive-level simulation** — the one structural gap against Ballpark
    Pal's bottom-up sim: possessions and plays conditioned on unit strength,
    pace and situation, producing team scores and player stats from one
    draw. Unifies the game and prop sims, gives the model a per-game
    uncertainty it does not have today (`docs/EDGE_RESEARCH.md` 6.1), and is
    promoted only through the lab's walk-forward gate.
-6. **Delete the non-football code behind a tag** once the MLB ledger rows
+5. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

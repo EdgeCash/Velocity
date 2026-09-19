@@ -671,12 +671,35 @@ def build_weather(slate_dir: Path) -> pd.DataFrame:
     games = collect(slate_dir, "games")
     if games.empty:
         return pd.DataFrame()
+
+    # College venues, from the CFBD payload the slate step already fetched
+    # and cached — 134 stadiums nobody had to type, and no second call when
+    # the cache is warm. The board names schools with their nickname
+    # ("Georgia Bulldogs") where CFBD keys them by school ("Georgia"), so the
+    # same prefix bridge the slate prices through resolves them here.
+    ncaaf_venues: dict = {}
+    college_alias: dict[str, str] = {}
+    college = games[games["league"].astype(str) == "ncaaf"]
+    if not college.empty:
+        from velocity.report.assets import ncaaf_venue_index
+        from velocity.wagering.live import nickname_aliases
+
+        ncaaf_venues = ncaaf_venue_index(
+            os.environ.get("CFBD_API_KEY"), Path(slate_dir) / ".assets")
+        if ncaaf_venues:
+            college_alias = nickname_aliases(
+                set(college["home_team"].astype(str)), ncaaf_venues.keys())
+
     rows = []
     for rec in games.to_dict("records"):
-        venue = venue_for(str(rec["league"]), str(rec["home_team"]))
+        league = str(rec["league"])
+        name = str(rec["home_team"])
+        if league == "ncaaf":
+            name = college_alias.get(name, name)
+        venue = venue_for(league, name, ncaaf=ncaaf_venues)
         if venue is None:
             continue
-        row = {"game_id": str(rec["game_id"]), "league": rec["league"],
+        row = {"game_id": str(rec["game_id"]), "league": league,
                "covered": venue.covered, "temp_f": float("nan"),
                "wind_mph": float("nan"), "precip_pct": float("nan")}
         if not venue.covered:
