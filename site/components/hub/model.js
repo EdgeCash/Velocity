@@ -1262,3 +1262,57 @@ export function matchupBoard(games) {
   rows.sort((a, b) => b.edge - a.edge);
   return rows;
 }
+
+/* ---- Player ratings ------------------------------------------------------
+   The team ratings say who is good; this says who on those teams is doing
+   the work. Season-wide rather than board-scoped, so it sits with the team
+   ratings rather than with the day's player lines.
+
+   Every rate arrives already nulled below its conventional volume floor
+   (velocity/features/players.py), so a two-carry quarterback has no yards
+   per carry rather than a spectacular one. Nothing here is re-derived in
+   the browser. */
+
+export const PLAYER_SORTS = [
+  { key: 'dk_points_per_game', label: 'Fantasy/gm', dp: 1 },
+  { key: 'epa_per_dropback', label: 'EPA/dropback', dp: 3 },
+  { key: 'cpoe', label: 'CPOE', dp: 1 },
+  { key: 'yards_per_carry', label: 'Yds/carry', dp: 2 },
+  { key: 'yards_per_target', label: 'Yds/target', dp: 2 },
+];
+
+export function playerRatingRows(rows, { league = 'all', query = '',
+  sort = 'dk_points_per_game' } = {}) {
+  const needle = String(query).trim().toLowerCase();
+  const out = realRows(rows)
+    .filter((r) => league === 'all' || String(r.league) === league)
+    .filter((r) => !needle
+      || `${r.player ?? ''} ${r.team ?? ''} ${r.position ?? ''}`
+        .toLowerCase().includes(needle))
+    .map((r) => ({
+      ...r,
+      player: String(r.player ?? ''),
+      team: String(r.team ?? ''),
+      position: String(r.position ?? ''),
+    }));
+  // A player with no value for the sorted column sorts last rather than
+  // above everyone, which is where NaN lands if you let it.
+  out.sort((a, b) => {
+    const x = isNum(a[sort]) ? Number(a[sort]) : -Infinity;
+    const y = isNum(b[sort]) ? Number(b[sort]) : -Infinity;
+    return y - x || a.player.localeCompare(b.player);
+  });
+  return out;
+}
+
+/** The window the ratings were measured over, for the panel's one-line note. */
+export function playerRatingWindow(rows) {
+  for (const row of realRows(rows)) {
+    if (row.season_from) {
+      return row.season_from === row.season_to
+        ? `${row.season_from}`
+        : `${row.season_from}–${row.season_to}`;
+    }
+  }
+  return '';
+}

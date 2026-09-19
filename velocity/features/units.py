@@ -81,7 +81,8 @@ def _side_means(
 
 
 def season_window(
-    plays: pd.DataFrame, min_games: int = DEFAULT_MIN_GAMES
+    plays: pd.DataFrame, min_games: int = DEFAULT_MIN_GAMES,
+    team_columns: tuple[str, ...] = ("posteam", "defteam"),
 ) -> list[int]:
     """The newest seasons that together give teams ``min_games`` apiece.
 
@@ -94,29 +95,34 @@ def season_window(
     if "season" not in plays.columns:
         return []
     seasons = sorted({int(s) for s in plays["season"].dropna().unique()}, reverse=True)
-    if "game_id" not in plays.columns or "posteam" not in plays.columns:
+    if "game_id" not in plays.columns or not set(team_columns) <= set(plays.columns):
         return seasons[:1]
     chosen: list[int] = []
     for season in seasons:
         chosen.append(season)
-        per_team = games_played(plays[plays["season"].isin(chosen)])
+        per_team = games_played(plays[plays["season"].isin(chosen)], team_columns)
         if not per_team.empty and float(per_team.median()) >= min_games:
             break
     return chosen
 
 
-def games_played(plays: pd.DataFrame) -> pd.Series:
-    """Distinct games each team appears in, on **either** side of the ball.
+def games_played(
+    plays: pd.DataFrame, team_columns: tuple[str, ...] = ("posteam", "defteam"),
+) -> pd.Series:
+    """Distinct games each team appears in, across every column that names one.
 
     Counting only the snaps a team ran would credit it with no games at all
     in a frame where it never had the ball, which is how a defense came back
-    showing zero games played.
+    showing zero games played. ``team_columns`` is a tuple because a
+    play-by-play frame names the team twice (offense and defense) while a
+    box-score frame names it once.
     """
-    if not {"game_id", "posteam", "defteam"} <= set(plays.columns):
+    present = [c for c in team_columns if c in plays.columns]
+    if "game_id" not in plays.columns or not present:
         return pd.Series(dtype="int64")
     sides = [
         plays[[column, "game_id"]].rename(columns={column: "team"})
-        for column in ("posteam", "defteam")
+        for column in present
     ]
     appearances = pd.concat(sides, ignore_index=True).dropna(subset=["team"])
     return appearances.groupby("team", observed=True)["game_id"].nunique()

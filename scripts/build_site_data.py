@@ -706,6 +706,51 @@ def build_unit_splits(datasets_dir: Path | str | None) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+# Where each league banks its weekly player box scores. The NFL also has
+# per-passer EPA and CPOE in the play-by-play; college does not, so its
+# players carry usage and efficiency only.
+_PLAYER_WEEKS = {"nfl": "player_weeks.parquet", "ncaaf": "player_games.parquet"}
+_QB_PLAY_COLUMNS = ["season", "passer_player_id", "qb_epa", "cpoe"]
+
+
+def build_player_ratings(datasets_dir: Path | str | None) -> pd.DataFrame:
+    """Per-player usage, efficiency and — for NFL passers — process.
+
+    Best-effort per league, like every other reference table here: a missing
+    file contributes nothing rather than failing the build.
+    """
+    from velocity.features.players import PLAYER_COLUMNS, player_ratings
+
+    if datasets_dir is None:
+        return pd.DataFrame(columns=PLAYER_COLUMNS)
+    frames = []
+    for league, filename in _PLAYER_WEEKS.items():
+        weeks_path = Path(datasets_dir) / league / filename
+        if not weeks_path.exists():
+            continue
+        try:
+            weeks = pd.read_parquet(weeks_path)
+            plays = None
+            plays_path = Path(datasets_dir) / league / "plays.parquet"
+            if league == "nfl" and plays_path.exists():
+                import pyarrow.parquet as pq  # noqa: PLC0415 - local, one caller
+
+                available = set(pq.read_schema(plays_path).names)
+                plays = pd.read_parquet(
+                    plays_path,
+                    columns=[c for c in _QB_PLAY_COLUMNS if c in available])
+            rated = player_ratings(weeks, league, plays=plays)
+        except Exception as exc:  # noqa: BLE001 - a reference table never fails the build
+            print(f"player ratings skipped for {league}: {exc}")
+            continue
+        if not rated.empty:
+            frames.append(rated)
+            print(f"player ratings: {len(rated)} rows for {league}")
+    if not frames:
+        return pd.DataFrame(columns=PLAYER_COLUMNS)
+    return pd.concat(frames, ignore_index=True)
+
+
 def build_weather(slate_dir: Path) -> pd.DataFrame:
     """Kickoff-hour forecast for outdoor NFL/MLB games (Open-Meteo, free).
 
@@ -979,6 +1024,7 @@ def main() -> None:
         "line_moves": build_line_moves(slate_dir, Path(args.odds_dir)),
         "injuries": build_injuries(Path(args.fp_dir)),
         "unit_splits": build_unit_splits(args.datasets_dir),
+        "player_ratings": build_player_ratings(args.datasets_dir),
         "weather": (pd.DataFrame() if args.no_weather
                     else build_weather(slate_dir)),
     }
@@ -1129,6 +1175,15 @@ def main() -> None:
                        "seen_now": "datetime64[ns]", "league": str},
         "injuries": {"player_name": str, "team": str, "position": str,
                      "status": str, "is_out": bool, "league": str},
+        "player_ratings": {"league": str, "season_from": int, "season_to": int,
+                           "player_id": str, "player": str, "team": str,
+                           "position": str, "games": int, "dropbacks": float,
+                           "epa_per_dropback": float, "cpoe": float,
+                           "carries": float, "rush_yards": float,
+                           "yards_per_carry": float, "targets": float,
+                           "receptions": float, "rec_yards": float,
+                           "yards_per_target": float,
+                           "dk_points_per_game": float},
         "unit_splits": {"league": str, "season_from": int, "season_to": int,
                         "games": int, "team": str, "side": str, "phase": str,
                         "plays": int, "epa_per_play": float,

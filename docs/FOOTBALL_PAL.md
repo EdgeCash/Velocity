@@ -37,7 +37,7 @@ open ledger rows settle.
 | Daily Fantasy Projections | **Players → Pool** — every priced draftable with salary, projection and value | **shipped 2026-09-19** | `dfs_pool`, the builder's persisted pool |
 | Stacks · Lineups · Ballpark DFS | **DFS** — classic, showdown, tiered, the GPP portfolio | shipped | `dfs_*` |
 | **Research Tools** | | | |
-| Player Ratings | player EPA / CPOE / success ratings | **next** | `datasets/nfl/plays.parquet`, nflverse weekly |
+| Player Ratings | **Ratings → Players** — usage, efficiency, and passer process | **shipped 2026-09-19** | `player_ratings` over the weekly box scores and the play-by-play |
 | Year-Long Park Factors | the wind threshold and its measured effect, stated on **Weather** | partial | `docs/MODEL_LAB.md` Round 5 |
 | Cheat Sheets · Sim Outliers | the Card's held verdicts and Most likely together answer both | shipped | |
 | Export Center | every table is already a parquet under `/data/velocity/`; a links panel is next | partial | |
@@ -174,15 +174,38 @@ Three things it is careful about:
   average — correct arithmetic, no information. Below four games a side the
   window reaches back a season, and every row carries the window it used.
 
+**Player ratings (2026-09-19)** (`velocity/features/players.py`, the Players
+section of the Ratings view). The team ratings say who is good; this says who
+on those teams is doing the work, which is what a prop or a DFS lineup is
+really about. It sits under the team table rather than in a tenth tab,
+because "who is good" does not stop at the team.
+
+Two families, because the data supports two:
+
+* **Process, for quarterbacks.** EPA per dropback and CPOE come from the
+  play-by-play and are the closest thing football has to an expected-outcome
+  rating: CPOE asks what a throw of that difficulty completes at, not whether
+  this one happened to be caught. NFL only — the college frame carries no
+  per-player EPA, and the column reads blank there rather than zero.
+* **Usage and efficiency, for everyone.** Carries, targets, receptions and
+  yards per game, with yards per carry and per target, from the weekly box
+  scores both leagues bank.
+
+**Every rate carries its volume, and a rate below the conventional floor is
+null rather than noisy** — 50 dropbacks, 20 carries, 15 targets. Two carries
+for thirty yards is not a fifteen-yard-per-carry back, and printing it as one
+is how a table invents a breakout. The window is the same one the unit splits
+use, so a season too thin to read reaches back a season and every row says
+which window it used.
+
 ## Next, in order
 
-1. **Player ratings** from the play-by-play bank (EPA, CPOE, success).
-2. **An export panel** listing the parquets.
-3. **The drive-level simulation** — the one structural gap against Ballpark
+1. **An export panel** listing the parquets.
+2. **The drive-level simulation** — the one structural gap against Ballpark
    Pal's bottom-up sim: possessions and plays conditioned on unit strength,
    pace and situation, producing team scores and player stats from one
    draw. Unifies the game and prop sims, gives the model a per-game
    uncertainty it does not have today (`docs/EDGE_RESEARCH.md` 6.1), and is
    promoted only through the lab's walk-forward gate.
-4. **Delete the non-football code behind a tag** once the MLB ledger rows
+3. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

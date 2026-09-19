@@ -195,6 +195,16 @@ from velocity.unit_splits
 where league != '__none__'
 ```
 
+<!-- Player ratings (docs/FOOTBALL_PAL.md): season-wide, not board-scoped. -->
+```sql player_ratings
+select league, season_from, season_to, player_id, player, team, position,
+  games, dropbacks, epa_per_dropback, cpoe, carries, rush_yards,
+  yards_per_carry, targets, receptions, rec_yards, yards_per_target,
+  dk_points_per_game
+from velocity.player_ratings
+where league != '__none__'
+```
+
 ```sql ratings
 select team, off, "def", net, pace, scale, rank, rank_prev, net_prev,
   league, stamp
@@ -257,6 +267,7 @@ where league != '__none__'
   health={health}
   ratings={ratings}
   unitSplits={unit_splits}
+  playerRatings={player_ratings}
   cards={cards}
   parlays={parlays}
   accuracy={accuracy}

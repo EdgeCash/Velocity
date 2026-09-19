@@ -11,12 +11,34 @@
   // It carries leagues the board does not. The model rates college basketball
   // and hockey without pricing them today, and showing that is honest: it
   // says what the model knows, not only what it is betting.
+  //
+  // It carries PLAYERS too, below the teams. "Who is good" does not stop at
+  // the team, and a prop or a DFS lineup is really a question about one
+  // player; putting them on the same view keeps that one question in one
+  // place rather than splitting it across a tenth tab.
   import { isNum, num, signed } from '../format.js';
-  import { ratingAliases, realRows } from './model.js';
+  import {
+    PLAYER_SORTS, playerRatingRows, playerRatingWindow, ratingAliases, realRows,
+  } from './model.js';
 
   export let ratings = [];
   export let teams = [];
   export let league = 'all';
+  /** Season-wide per-player usage, efficiency and passer process. */
+  export let players = [];
+
+  let playerQuery = '';
+  let playerSort = 'dk_points_per_game';
+  /** Start collapsed: the team table is the headline, players are the detail. */
+  const PLAYER_TOP = 30;
+  let playersOpen = false;
+
+  $: playerRows = playerRatingRows(players, {
+    league, query: playerQuery, sort: playerSort,
+  });
+  $: playerWindow = playerRatingWindow(players);
+  $: shownPlayers = playersOpen || playerQuery.trim()
+    ? playerRows : playerRows.slice(0, PLAYER_TOP);
 
   /** Start collapsed at this many per league; college runs to 1,653 teams. */
   const TOP = 25;
@@ -161,6 +183,93 @@
     </section>
   {/each}
 
+  <section class="players">
+    <h3>
+      Players
+      <span class="meta">
+        {playerRows.length} rated{playerWindow ? ` · ${playerWindow}` : ''}
+      </span>
+    </h3>
+    <div class="bar">
+      <input
+        type="search"
+        bind:value={playerQuery}
+        placeholder="Find a player…"
+        aria-label="find a player"
+      />
+      <div class="sorts" aria-label="sort players by">
+        {#each PLAYER_SORTS as s (s.key)}
+          <button class:on={playerSort === s.key} on:click={() => (playerSort = s.key)}>
+            {s.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    {#if !playerRows.length}
+      <p class="nohit">
+        No player has a rated season in this filter yet.
+      </p>
+    {:else}
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr>
+              <th class="l">Player</th>
+              <th class="l">Team</th>
+              <th>G</th>
+              <th>Fantasy/gm</th>
+              <th>Drop</th>
+              <th>EPA/db</th>
+              <th>CPOE</th>
+              <th>Car</th>
+              <th>Y/car</th>
+              <th>Tgt</th>
+              <th>Y/tgt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each shownPlayers as p (p.player_id)}
+              <tr>
+                <td class="l team">
+                  {p.player}
+                  {#if p.position}<span class="fit">{p.position}</span>{/if}
+                </td>
+                <td class="l">{p.team}</td>
+                <td class="n">{num(p.games, 0)}</td>
+                <td class="n strong">{isNum(p.dk_points_per_game) ? num(p.dk_points_per_game, 1) : '—'}</td>
+                <td class="n">{isNum(p.dropbacks) ? num(p.dropbacks, 0) : '—'}</td>
+                <td class="n" class:pos={p.epa_per_dropback > 0} class:neg={p.epa_per_dropback < 0}>
+                  {isNum(p.epa_per_dropback) ? signed(p.epa_per_dropback, 3) : '—'}
+                </td>
+                <td class="n" class:pos={p.cpoe > 0} class:neg={p.cpoe < 0}>
+                  {isNum(p.cpoe) ? signed(p.cpoe, 1) : '—'}
+                </td>
+                <td class="n">{isNum(p.carries) ? num(p.carries, 0) : '—'}</td>
+                <td class="n">{isNum(p.yards_per_carry) ? num(p.yards_per_carry, 2) : '—'}</td>
+                <td class="n">{isNum(p.targets) ? num(p.targets, 0) : '—'}</td>
+                <td class="n">{isNum(p.yards_per_target) ? num(p.yards_per_target, 2) : '—'}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if !playerQuery.trim() && playerRows.length > PLAYER_TOP}
+        <button class="more" on:click={() => (playersOpen = !playersOpen)}>
+          {playersOpen ? `Show the top ${PLAYER_TOP}` : `Show all ${playerRows.length}`}
+        </button>
+      {/if}
+      <p class="note">
+        <strong>EPA/db</strong> and <strong>CPOE</strong> are passer process —
+        what a throw of that difficulty is expected to do, rather than whether
+        this one happened to be caught — and are NFL only, because the college
+        frame carries no per-player EPA. A rate below its conventional volume
+        (50 dropbacks, 20 carries, 15 targets) reads <strong>—</strong> rather
+        than a number: two carries for thirty yards is not a fifteen-yard back.
+      </p>
+    {/if}
+  </section>
+
   <p class="note">
     Straight from each league's promoted fit — never hand-tuned. <strong>Off</strong>
     and <strong>Def</strong> are deviations from league average, so a negative
@@ -173,6 +282,38 @@
 {/if}
 
 <style>
+  .players { margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--v-line); }
+  .players h3 { display: flex; align-items: baseline; gap: 0.6rem; }
+  .sorts {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--v-lvl-1);
+    border: 1px solid var(--v-line);
+    border-radius: 999px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sorts button {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.22rem 0.6rem;
+    background: transparent;
+    color: var(--v-ink-2);
+    font-family: var(--v-board);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sorts button:hover { color: var(--v-ink); background: var(--v-lvl-2); }
+  .sorts button.on {
+    background: var(--v-brand-deep);
+    color: var(--v-brand);
+    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.3);
+  }
   .bar {
     display: flex;
     align-items: center;
