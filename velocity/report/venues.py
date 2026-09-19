@@ -4,11 +4,22 @@ Coordinates are stadium/city-level (Open-Meteo's forecast grid is coarser
 than any stadium footprint) and ``covered`` marks fixed or retractable
 roofs — for a covered venue the site shows "indoors" instead of a
 forecast. Only the outdoor-weather leagues are mapped: NFL and MLB.
-College football's venue list is large enough to be its own project, and
-the basketball leagues play indoors.
+The basketball leagues play indoors and are not mapped.
 
-Keys are the full home-team names as they appear in the games frames
-(The Odds API naming).
+NFL and MLB are literals here because there are 32 and 30 of them and they
+move about once a decade. College is not: 134 FBS venues is too many to
+hand-type and far too many to keep right, and a wrong coordinate does not
+fail — it returns a confident forecast for the wrong place. So the college
+table is PARSED from the CFBD ``/teams/fbs`` payload the identity fetch
+already makes and caches (:func:`parse_ncaaf_venues`), which carries each
+school's venue with its latitude, longitude and dome flag. No second
+network call, and no coordinate anybody typed from memory.
+
+Keys are the full home-team names as they appear in the games frames (The
+Odds API naming) for the literal tables, and the CFBD **school** for the
+college table — the board writes "Georgia Bulldogs" where CFBD writes
+"Georgia", so a caller bridges with
+:func:`velocity.wagering.live.nickname_aliases` exactly as the slate does.
 """
 
 from __future__ import annotations
@@ -94,6 +105,48 @@ _MLB: dict[str, Venue] = {
 VENUES: dict[str, dict[str, Venue]] = {"nfl": _NFL, "mlb": _MLB}
 
 
-def venue_for(league: str, home_team: str) -> Venue | None:
-    """The home venue, or None for unmapped teams/leagues (indoor sports)."""
+def parse_ncaaf_venues(payload: list[dict]) -> dict[str, Venue]:
+    """CFBD ``/teams/fbs`` payload → ``{school: Venue}``.
+
+    Every row carries a ``location`` block with the school's home venue; the
+    two numbers this needs are its latitude and longitude, and ``dome`` is
+    the covered flag. A row with no school, no location, or a location
+    missing either coordinate is **dropped** rather than defaulted: a venue
+    at (0, 0) is in the Atlantic, and a forecast for it would look like a
+    forecast rather than a mistake.
+
+    Coordinates outside the plausible range for a North American venue are
+    dropped for the same reason — a swapped latitude/longitude pair is the
+    one transposition that still parses as a number.
+    """
+    out: dict[str, Venue] = {}
+    for row in payload:
+        school = row.get("school")
+        location = row.get("location") or {}
+        if not school or not isinstance(location, dict):
+            continue
+        lat = location.get("latitude", location.get("lat"))
+        lon = location.get("longitude", location.get("lon"))
+        try:
+            lat_f, lon_f = float(lat), float(lon)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        # The continental range, generously drawn to hold Hawaii and Alaska.
+        if not (15.0 <= lat_f <= 72.0 and -180.0 <= lon_f <= -60.0):
+            continue
+        out[str(school)] = Venue(lat_f, lon_f, bool(location.get("dome")))
+    return out
+
+
+def venue_for(
+    league: str, home_team: str, ncaaf: dict[str, Venue] | None = None
+) -> Venue | None:
+    """The home venue, or None for unmapped teams/leagues (indoor sports).
+
+    ``ncaaf`` supplies the college table, which is parsed at call time rather
+    than committed (see the module docstring); without it, college resolves
+    to None exactly as it did before there was one.
+    """
+    if league == "ncaaf":
+        return (ncaaf or {}).get(home_team)
     return VENUES.get(league, {}).get(home_team)

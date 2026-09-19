@@ -39,9 +39,9 @@
     <p>
       Conditions are read per venue from Open-Meteo for the games on the
       board. Nothing here means no league in this filter has a game at a
-      mapped stadium — <code>velocity/report/venues.py</code> carries NFL and
-      MLB coordinates, and no college ones yet, so a college-only slate shows
-      an empty board rather than a guess.
+      mapped stadium: NFL and MLB venues are carried in the repo, and college
+      venues are read from the CFBD teams payload, which needs a key and a
+      college game on the board to resolve.
     </p>
   </div>
 {:else}
@@ -138,8 +138,10 @@
     (docs/MODEL_LAB.md Round 5): over 2014–2025 the unadjusted model went 46.3%
     against the close on windy games, and the correction recovers about 1.8
     points of that. It makes a windy total honest — it does not beat the close
-    on windy games, and nothing here is a play. Only NFL games carry an
-    adjustment; there is no college stadium coordinate table yet.
+    on windy games, and nothing here is a play. College games show
+    <strong>conditions only</strong>: the wind study was run on NFL totals, so
+    no college total is adjusted for weather and the moved column is blank
+    there by design, not by omission.
   </p>
 {/if}
 
