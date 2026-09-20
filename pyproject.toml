@@ -22,6 +22,11 @@ dev = [
     "mypy>=1.11",
     "pre-commit>=3.8",
     "pandas-stubs>=2.1",
+    # The workflow tests read .github/workflows/*.yml as YAML rather than by
+    # regex: a step's ORDER inside a job decides whether the export runs
+    # before the upload, and a regex over the file cannot see order.
+    "pyyaml>=6.0",
+    "types-PyYAML>=6.0",
 ]
 # Live data providers (network). Not needed for the offline test suite.
 # NFL data is fetched directly from nflverse's public files (no extra deps);

@@ -26,6 +26,24 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the full system design,
 [`docs/WAGERING.md`](docs/WAGERING.md) for the wagering system's current state
 and build plan.
 
+## The Excel front end
+
+Velocity is the engine; Excel is a front end over it. `velocity/export` writes
+six stable-named, stable-shaped CSVs into `datasets/exports/` — games, props,
+DFS pool, DFS optimizer, curated plays and a dashboard — which Power Query
+reads with no transformation step:
+
+```bash
+python -m velocity.run_weekly --slate-dir artifacts/slate   # full week
+python -m velocity.run_weekly --steps export                # re-export only, seconds
+```
+
+The export layer re-simulates nothing: it is a read-only projection of the
+frames the pipeline already banks, so the same numbers reach the workbook, the
+site and the cards. Setup and the recommended workbook structure are in
+[`docs/EXCEL_SETUP.md`](docs/EXCEL_SETUP.md); the architecture and its gaps in
+[`docs/HYBRID_MIGRATION_PLAN.md`](docs/HYBRID_MIGRATION_PLAN.md).
+
 ## Layout
 
 ```
@@ -35,6 +53,8 @@ velocity/
   models/     game models (NFL/NCAAF), props, shared Monte Carlo sim
   wagering/   de-vig, edge/EV, Kelly staking, portfolio
   intel/      intelligence layer — matchup/form/rest/injury signals → tiered picks
+  dfs/        DK salary ingest, scoring, exact optimizer, GPP portfolios
+  export/     read-only projection of the banked frames → Excel-ready CSV
   backtest/   walk-forward engine + metrics
   eval/       calibration + reports
 ```
