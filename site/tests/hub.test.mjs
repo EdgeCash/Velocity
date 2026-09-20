@@ -5,10 +5,15 @@
 // looks fine, and a box-score parser that guesses column names mislabels a row
 // of numbers rather than erroring. Both are worth a test each.
 //
-// Run: node --test site/tests/   (no dependencies — node's own runner)
+// Run: node --test "site/tests/**/*.test.mjs"   (no deps — node's own runner)
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 import {
   espnDate,
@@ -18,6 +23,14 @@ import {
   parseScoringPlays,
   scoreboardPlan,
 } from '../components/hub/live.js';
+import {
+  GROUPS,
+  VIEWS,
+  VIEW_BLURB,
+  VIEW_LABEL,
+  parseHash,
+  toHash,
+} from '../components/hub/nav.js';
 import {
   accuracySummary,
   buildCard,
@@ -1417,4 +1430,98 @@ test('the export list carries a count and a note for every table', () => {
 test('the sentinel row is not counted as data to export', () => {
   const tables = exportTables({ games: [{ league: '__none__' }] });
   assert.equal(tables.find((t) => t.key === 'games').n, 0);
+});
+
+/* ---- navigation ------------------------------------------------------ */
+
+test('the landing offers every view there is, exactly once', () => {
+  // The silent failure this pins: a view added to VIEWS and wired into the
+  // Shell's {#if} chain but forgotten in GROUPS is reachable only by typing
+  // its hash. It renders fine, the tests pass, and nobody ever finds it —
+  // because the landing IS the menu now, and it is built from GROUPS.
+  const tiled = GROUPS.flatMap((g) => g.views);
+  assert.deepEqual(
+    [...tiled].sort(),
+    VIEWS.filter((v) => v !== 'home').sort(),
+    'every view is a tile, and home is not one of them',
+  );
+  assert.equal(new Set(tiled).size, tiled.length, 'and no view is tiled twice');
+});
+
+test('every tile has a name and a line saying what it is for', () => {
+  // A tile with a blank blurb is a grid cell with a hole in it, and Svelte
+  // renders `undefined` happily.
+  for (const view of GROUPS.flatMap((g) => g.views)) {
+    assert.ok(VIEW_LABEL[view], `${view} has no label`);
+    assert.ok(VIEW_BLURB[view]?.length > 20, `${view} has no blurb`);
+  }
+});
+
+test('the landing is where an unadorned link lands', () => {
+  // `#` — no hash at all — is the front page, the way it is on a site with
+  // pages. It used to be the card, which is a view you arrive at by choosing.
+  assert.equal(parseHash('').view, 'home');
+  assert.equal(parseHash('#').view, 'home');
+  assert.equal(parseHash('#league=nfl').view, 'home');
+  // ...and the landing is the default, so it is never spelled into the hash.
+  assert.equal(toHash({ view: 'home', league: 'all', game: '' }), '');
+  assert.equal(toHash({ view: 'home', league: 'nfl', game: '' }), '#league=nfl');
+});
+
+test('a view that no longer exists falls back to the landing, not to nothing', () => {
+  // Old links are real: `#view=board` was a view for three weeks.
+  assert.equal(parseHash('#view=board').view, 'home');
+  assert.equal(parseHash('#view=card').view, 'card');
+});
+
+test('a shared link still round-trips through the hash', () => {
+  const state = { view: 'games', league: 'nfl', game: 'mialv' };
+  assert.deepEqual(parseHash(toHash(state)), state);
+});
+
+/* ---- the suite's own dependencies ------------------------------------ */
+
+test('nothing this suite imports reaches for a package', () => {
+  // CI runs `node --test` against these source files directly — no `npm ci`,
+  // no node_modules, so the whole suite costs seconds. That only holds while
+  // every module reachable from a test file imports nothing but node builtins
+  // and its own neighbours, and a module that quietly grows a `svelte/store`
+  // import has broken it twice.
+  //
+  // What this catches is the asymmetry, which is the whole problem: LOCALLY
+  // node_modules exists, so the bad import resolves, every test passes and
+  // you push. In CI it does not resolve, and the failure is not one red test
+  // — it is ERR_MODULE_NOT_FOUND before a single test in this file runs, so
+  // the entire hub suite stops existing. This test reads the import graph off
+  // disk rather than following it, so it fails on the machine where the
+  // import still works. (In CI it dies with the file it lives in, same as
+  // everything else here; by then the point is moot.)
+  //
+  // The fix when this fails is never to add the package — it is to split the
+  // pure half out, the way `live.js`/`liveStore.js` and `nav.js`/`state.js`
+  // already are, and import the pure half here.
+  const bare = [];
+  const seen = new Set();
+
+  const walk = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const src = readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/^\s*(?:import|export)\s[^'"]*from\s+['"]([^'"]+)['"]/gm)) {
+      const spec = m[1];
+      if (spec.startsWith('node:')) continue;
+      if (!spec.startsWith('.')) {
+        bare.push(`${relative(HERE, file)} imports ${spec}`);
+        continue;
+      }
+      walk(resolve(dirname(file), spec));
+    }
+  };
+  walk(resolve(HERE, 'hub.test.mjs'));
+  walk(resolve(HERE, 'format.test.mjs'));
+
+  assert.deepEqual(bare, [], 'these imports would take the suite out of CI');
+  // And a guard on the guard: a walk that resolved nothing would pass here
+  // while checking nothing at all.
+  assert.ok(seen.size >= 5, `the walk only reached ${seen.size} files`);
 });

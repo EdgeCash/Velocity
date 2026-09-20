@@ -269,7 +269,7 @@ from the dark board:
   purple and a Packers green all clear 3:1 **untouched**, where every one of
   them had to be lifted before. Only the pale crests move, and they darken.
 
-### The masthead, and the tile bar
+### The masthead, the landing, and the tile bar
 
 The topbar is Ballpark Pal's dirt masthead now, full-bleed. It holds the
 ticker and the stamp — eight colour rules across two other components — and
@@ -279,13 +279,42 @@ so every child adapts by sitting inside it. Those band inks are solved with
 the same `readable_on` the crests use, against `#6b5442`, and the contrast
 gate checks them as their own ground.
 
-The command bar is their landing shape — a section header over a grid of
-rounded tiles, one group per heading — with one deliberate difference: it
-stays **sticky** rather than sitting down the page. Theirs is a home page you
-leave; this is one surface you never leave, so a tile grid you had to scroll
-back up to reach would be their look bought at the cost of the thing the hub
-exists for. The selected tile wears `--v-grass` with `--v-ink` on it, which
-is the one place the bright green is allowed.
+Their landing shape — a section header over a grid of rounded tiles, one
+group per heading — exists here **twice**, and the two are not the same
+object.
+
+`HomeLanding.svelte` is the literal one: the view at `#`, tiles down the
+page, sections you scroll through, a page you leave to get anywhere. It runs
+full width of its own 72rem measure with no rail and no command bar, because
+a landing that still carries the switcher is a menu with a header on it.
+
+It does carry the **league filter**, beside the day. That is not a softening
+of the rule — it is that the landing is already applying it: five of the
+twelve tile counts (Most likely, Players, Accuracy, Weather, Matchups) are
+built from the filtered games. `#league=nfl` is a shareable link and the
+wordmark keeps it, so hiding the chips meant reading NFL-only numbers with
+nothing saying so and no way to clear it without first entering a view. A
+filter you cannot see is worse than one you cannot change, so both places
+render the same `LeagueChips.svelte`. Each
+tile carries a name, the count the build gave it and one line saying what the
+view answers — a tile reading `0` is telling you not to bother, which is
+worth a glance rather than a click. A section holding a single view (Outlook,
+Data) gets a full-width banner instead of one card stranded in an empty row;
+that is keyed on the count, not on which group it is.
+
+The **command bar** is the same shape sticky, on every view but home. Once
+you are inside the data the argument for one surface reasserts itself: a tile
+grid you had to scroll back up to reach would be their look bought at the
+cost of the thing the hub exists for. So home is a page and everything else
+is a surface, and the wordmark is the way back — the way their logo is. The
+selected tile wears `--v-grass` with `--v-ink` on it, which is the one place
+the bright green is allowed.
+
+Both read `GROUPS`, `VIEW_LABEL` and `VIEW_BLURB` out of `state.js`. A view
+added to `VIEWS` and wired into the Shell's `{#if}` chain but forgotten in
+`GROUPS` would be reachable only by typing its hash — it renders fine and
+nobody ever finds it — so `site/tests/hub.test.mjs` pins that every view but
+`home` is a tile exactly once.
 
 ### The slate strip
 
@@ -835,7 +864,7 @@ cards**, and both are below.
 
 ## The card
 
-The publish gate's own verdicts, and the **default landing**. It earns a view
+The publish gate's own verdicts. It earns a view
 for the one reason that justifies a view on this surface: the plays are
 scattered across games *by definition*, and gathering them is the product.
 

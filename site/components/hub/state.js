@@ -7,48 +7,15 @@
 // back button" — so the three pieces of state live in the hash and the browser
 // keeps doing its job.
 //
-// The hash, not the query string: Evidence prerenders to static files and the
-// Worker serves them, so a query string would be a cache key for a page whose
-// content never varies by it. A hash never reaches the server at all.
+// The vocabulary and the hash codec live in `nav.js`, which has no
+// dependencies. This module is only the store, and importing `svelte/store`
+// is the whole reason for that split: CI runs the hub's tests against these
+// source files with no node_modules, so anything a test reads has to stay on
+// the other side of this import. Take the names from `nav.js`, not from here.
 
 import { writable } from 'svelte/store';
 
-// The card leads and is the default: it is the primary output of the
-// system, and the plays are scattered across games by definition.
-// Grouped on the command bar the way Ballpark Pal groups its menu
-// (docs/FOOTBALL_PAL.md): Outlook, Odds & probability, Fantasy, Research,
-// The model. The list stays flat here because the hash names one view.
-export const VIEWS = [
-  'card', 'games', 'likely', 'players', 'dfs', 'positions', 'record',
-  'accuracy', 'ratings', 'weather', 'matchups', 'export',
-];
-
-const DEFAULTS = { view: 'card', league: 'all', game: '' };
-
-/** `#view=dfs&league=mlb&game=abc` → the state it names, defaults filled in. */
-export function parseHash(hash) {
-  const raw = String(hash ?? '').replace(/^#/, '');
-  const params = new URLSearchParams(raw);
-  const view = params.get('view');
-  return {
-    view: VIEWS.includes(view) ? view : DEFAULTS.view,
-    league: params.get('league') || DEFAULTS.league,
-    game: params.get('game') || DEFAULTS.game,
-  };
-}
-
-/** The state → the shortest hash that round-trips it. */
-export function toHash(state) {
-  const params = new URLSearchParams();
-  for (const key of ['view', 'league', 'game']) {
-    const value = state?.[key];
-    // A default is left out rather than spelled: `#` beats
-    // `#view=games&league=all&game=` for a surface people paste to each other.
-    if (value && value !== DEFAULTS[key]) params.set(key, value);
-  }
-  const text = params.toString();
-  return text ? `#${text}` : '';
-}
+import { DEFAULTS, parseHash, toHash } from './nav.js';
 
 function createHubState() {
   const { subscribe, set, update } = writable({ ...DEFAULTS });
