@@ -2,55 +2,63 @@
 
 An exchange lists a whole ladder per game: ~25 spread rungs and ~25 total
 rungs, each its own binary contract. The sim can price every one of them
-(``model_probability`` accepts any point), but *can* is not *should*: the sim
-draws a rounded bivariate normal, and a real football residual is not normal.
+(``model_probability`` accepts any point), but *can* is not *should*, so this
+measures how far the sim's own tail probabilities sit from the games' and
+refuses the rungs where the gap swamps the edge being claimed.
 
-Measured on the committed datasets — actual outcome minus the market's own
-closing number, which is the sharpest per-game expectation available, so this
-isolates the shape of game outcomes rather than the model's aim — the residual
-is **leptokurtic**: more mass near zero, thinner shoulders. A normal fitted to
-the same standard deviation therefore *overstates* the chance of landing past
-any threshold, on both sides at once. For NFL spreads that overstatement is
-2.0–3.7 points of probability from half a point out to thirteen.
+**The reference is the sim itself.** That sounds obvious and was not true
+until the derivative re-check (docs/MODEL_LAB.md): the table used to compare
+the games against a CONTINUOUS NORMAL fitted to the residuals, as a stand-in
+for the sim. The stand-in was wrong in the expensive direction. The real sim
+rounds, and so does football — 52% of NFL closing spreads are whole numbers,
+which makes those games' residuals integers, so the empirical tail past a
+half-point offset is discrete and a rounded sim reproduces what a continuous
+one cannot. The stand-in charged the sim about 0.008 of probability it never
+spent, half the default tolerance, and that closed **fourteen ladder sides**
+across the two leagues: NFL spreads went from 41 of 58 open to 50, NCAAF
+totals from 48 to 53. :func:`simulated_tails` now asks the sim directly.
 
-That is the dangerous direction near the line. The sim thinks a rung in the
-shoulders is likelier than it is, so it wants to buy it — and an error of
-three points swamps the two-point edge the slate bets on. What the plan
-expected (trouble concentrated at the key numbers 3 and 7) is not what the
-data shows: the bias is broad, worst in the shoulders.
+Measured that way, against the market's own closing number — the sharpest
+per-game expectation available, so this isolates the shape of outcomes rather
+than the model's aim — two different things are wrong, one per market.
 
-It does **not** stay one-signed, and it does not fade away. Past roughly
-fifteen points the sign flips — the real tail is *fatter* than the fitted
-normal, not thinner — and the absolute error then plateaus rather than
-shrinking: NFL totals sit at 1.0-1.3 points from 20.5 out to 28.5, and NCAAF
-totals climb from 0.8 at 15.5 to 1.5 at 25.5. An earlier version of this
-module stopped measuring at 20.5 and let anything past it through on the
-argument that the error out there "was already small and shrinking". The
-measurement above says otherwise, and the first live exchange board bet
-straight into that unexamined region — every qualifying rung on it was 15 to
-22 points out, because the gate had blocked everything nearer the line. So
-the tables now run to 28.5 and a rung past their end is refused rather than
-assumed innocent.
+**Spreads: the sim is too fat in the shoulders.** Real spread residuals are
+leptokurtic (more mass near zero, thinner shoulders) and close to symmetric
+— skew +0.10 in the NFL, +0.01 in college. A sim matched on dispersion
+therefore overstates both tails at once, worst in the shoulders: NFL spreads
+peak at 2.9 points of probability around 4.5 out, which still swamps the
+two-point edge the slate bets on, so they are still refused near the line.
+NCAAF spreads peak at 1.7 and pass throughout.
 
-So the gate is empirical rather than a key-number rule. :data:`OFFSET_ERROR`
-records, per league and market, the worst probability error a normal makes at
-each half-point offset from the fair line; :func:`offset_is_honest` answers
-whether a rung is inside tolerance. NCAAF spreads pass comfortably (max ~1.9
-points); NFL spreads and both totals do not, near the line.
+**Totals: the sim is symmetric and football is not.** Total residuals are
+right-skewed in both leagues — +0.33 in the NFL, +0.34 in college — because a
+game can run away upward and cannot run away downward. The sim is symmetric,
+so near the line it puts too much in the OVER tail and too little in the
+under: at 4.5 out, NFL totals are +0.028 over and −0.008 under, NCAAF +0.020
+and −0.020. This is a different defect from the spreads' and wants a
+different fix; a fatter-tailed draw would not touch it.
 
-**The two tails do not move together, and the gate now reads them apart.**
-:data:`OFFSET_BIAS` keeps the error *signed* per tail — positive where the
-normal overstates that tail — because only one sign is dangerous. A rung whose
-own side the sim **overstates** is one the sim wants to buy for a reason that
-is not there; a rung whose side it **understates** cannot have its edge
-invented by this bias, only hidden. Splitting them says which is which, and
-the split is large: on NFL spreads the over tail flips negative past 16.5
-while the under tail stays positive out to 24.5, and on both leagues' totals
-the *under* tail is the overstated one from 9.5 out (NFL +0.013 to +0.016 at
-16.5–21.5) while the over tail has already gone negative. The old symmetric
+**The two tails do not move together, and the gate reads them apart.**
+:data:`OFFSET_BIAS` keeps the error *signed* per tail — positive where the sim
+overstates that tail — because only one sign is dangerous. A rung whose own
+side the sim **overstates** is one the sim wants to buy for a reason that is
+not there; a rung whose side it **understates** cannot have its edge invented
+by this bias, only hidden. The split is large and it is where the skew shows:
+on NFL spreads the favourite's tail turns negative past 15.5 while the dog's
+stays positive out to 22.5, and on NFL totals the under tail is the overstated
+one from 9.5 out — the only one needing a gate there. The old symmetric
 ``max(|over|, |under|)`` charged every rung the worse tail's error, which both
 blocked near-the-line rungs the bias could only help and said nothing about
 which deep rung was the trap.
+
+**The deep tail is measured, not assumed innocent.** An earlier version stopped
+at 20.5 and let anything past it through on the argument that the error out
+there "was already small and shrinking", and the first live exchange board bet
+straight into that unexamined region — every qualifying rung on it was 15 to 22
+points out, because the gate had blocked everything nearer the line. NFL totals
+still carry 1.3 points of probability at 20.5, two-thirds of the tolerance,
+declining to 0.6 by 28.5. So the tables run to 28.5 and a rung past their end is
+refused rather than assumed innocent.
 
 **And the absolute bar is in the wrong units for the deep tail.** It compares a
 probability error against a tolerance in ``min_edge``'s units, which is right
@@ -58,23 +66,23 @@ for the qualifying test — a shape error as large as the edge threshold makes
 that edge meaningless. But a rung's *EV per unit staked* moves by the error
 divided by its price, so the same 0.6-point miss that is negligible at even
 money is a tenth of stake on a 6-cent contract. Measured on the committed
-datasets that ratio does not shrink with distance, it **grows**: NFL totals run
-from 0.06 of stake at half a point to 0.46 at 28.5, NFL spreads 0.06 to 0.34,
-NCAAF totals 0.06 to 0.31. So the absolute bar admitted precisely the rungs
-where a shape error costs the most, which is why the first live exchange board
-came back all deep tail. :func:`rung_is_honest` therefore charges the bar
+datasets that ratio does not shrink with distance, it **grows**. So the absolute
+bar admitted precisely the rungs where a shape error costs the most, which is
+why the first live exchange board came back all deep tail.
+:func:`rung_is_honest` therefore charges the bar
 ``min(tolerance, relative_tolerance × price)`` — the same EV budget the
 absolute bar already accepts at even money, held constant across the price
 range, which is why the two tests agree exactly at 0.5 instead of being two
-independent knobs. What survives it in the deep tail is the *safe* half of each
-ladder — the side the sim understates — plus NCAAF spreads, whose bias is small
-and symmetric enough to pass on both.
+independent knobs.
 
-Residuals here are measured against the market's close,
-so they describe outcome shape given a sharp expectation. The sim's own
-residual is around *its* projection, which is at best as sharp; if it is less
-sharp its residuals are wider and this leptokurtosis is diluted. That makes
-the gate conservative, not permissive — the right way to be wrong.
+Residuals here are measured against the market's close, so they describe
+outcome shape given a sharp expectation. The sim's own residual is around
+*its* projection, which is at best as sharp; if it is less sharp its residuals
+are wider and this shape error is diluted. That makes the gate conservative,
+not permissive — the right way to be wrong. The level is removed before
+measuring (:func:`simulated_tails` shifts the sim by the empirical residual's
+mean, as the fitted normal did by taking it), so this is a statement about
+shape and never about the close being a tenth of a point off.
 
 The fix at the source was tried (docs/MODEL_LAB.md, the sim-shape round): the
 sim can draw from the model's own banked residual pairs instead of a normal
@@ -83,30 +91,19 @@ the spread shoulder error by a tenth and costs moneyline calibration, so it
 is not the default and this gate stays. What that round did remove was a
 level bias worth two-thirds of the totals error — which no shape gate could
 have seen.
-
-**A known over-statement, not yet fixed** (docs/MODEL_LAB.md, the derivative
-re-check). Everything above compares the empirical tail against a CONTINUOUS
-normal fitted to the residuals, as a stand-in for the sim. The real sim
-rounds, and so does football: 52% of NFL closing spreads are whole numbers,
-which makes those games' residuals integers, so the empirical tail past a
-half-point offset is discrete and a rounded sim reproduces what a continuous
-one cannot. Measured against the sim itself rather than the stand-in, the
-bias is about 0.010 smaller at every offset on both tails — half the default
-tolerance — and the gate opens 51 of 58 NFL spread sides instead of 41, and
-58 of 58 NCAAF total sides instead of 48. Twenty sides across the two
-leagues are being refused for an error the sim does not make. The table has
-not been regenerated against the sim yet because doing so PERMITS bets,
-which is the direction that wants its own change and its own watch on the
-live ledger. Until then this gate is conservative by about a cent of
-probability, and knowingly so.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from velocity.models.simulate import SimConfig
 
 # Signed probability error at each half-point offset from the fair line, as
 # ``(over_bias, under_bias)`` per (league, market): the normal's tail
@@ -128,55 +125,55 @@ import pandas as pd
 OFFSET_BIAS: Mapping[tuple[str, str], Mapping[float, tuple[float, float]]] = {
     # n=4113 completed games, residual sd 12.98
     ("nfl", "spread"): {
-        0.5: (+0.0299, +0.0089), 1.5: (+0.0314, +0.0116), 2.5: (+0.0299, +0.0126),
-        3.5: (+0.0320, +0.0139), 4.5: (+0.0367, +0.0163), 5.5: (+0.0333, +0.0151),
-        6.5: (+0.0324, +0.0217), 7.5: (+0.0309, +0.0227), 8.5: (+0.0241, +0.0203),
-        9.5: (+0.0214, +0.0187), 10.5: (+0.0230, +0.0215), 11.5: (+0.0237, +0.0241),
-        12.5: (+0.0154, +0.0198), 13.5: (+0.0124, +0.0196), 14.5: (+0.0094, +0.0157),
-        15.5: (+0.0029, +0.0115), 16.5: (+0.0003, +0.0092), 17.5: (-0.0017, +0.0056),
-        18.5: (-0.0037, +0.0062), 19.5: (-0.0066, +0.0053), 20.5: (-0.0057, +0.0060),
-        21.5: (-0.0066, +0.0063), 22.5: (-0.0079, +0.0033), 23.5: (-0.0074, +0.0016),
-        24.5: (-0.0062, +0.0007), 25.5: (-0.0048, -0.0008), 26.5: (-0.0054, -0.0025),
-        27.5: (-0.0051, -0.0020), 28.5: (-0.0045, -0.0023),
+        0.5: (+0.0223, +0.0016), 1.5: (+0.0237, +0.0043), 2.5: (+0.0223, +0.0054),
+        3.5: (+0.0245, +0.0068), 4.5: (+0.0292, +0.0093), 5.5: (+0.0260, +0.0083),
+        6.5: (+0.0252, +0.0151), 7.5: (+0.0240, +0.0163), 8.5: (+0.0173, +0.0142),
+        9.5: (+0.0148, +0.0128), 10.5: (+0.0165, +0.0159), 11.5: (+0.0175, +0.0188),
+        12.5: (+0.0094, +0.0147), 13.5: (+0.0067, +0.0148), 14.5: (+0.0038, +0.0112),
+        15.5: (-0.0024, +0.0073), 16.5: (-0.0048, +0.0052), 17.5: (-0.0066, +0.0019),
+        18.5: (-0.0083, +0.0027), 19.5: (-0.0109, +0.0020), 20.5: (-0.0097, +0.0029),
+        21.5: (-0.0104, +0.0035), 22.5: (-0.0115, +0.0006), 23.5: (-0.0107, -0.0008),
+        24.5: (-0.0093, -0.0015), 25.5: (-0.0077, -0.0028), 26.5: (-0.0080, -0.0043),
+        27.5: (-0.0075, -0.0037), 28.5: (-0.0067, -0.0038),
     },
     # n=4113 completed games, residual sd 13.21
     ("nfl", "total"): {
-        0.5: (+0.0302, -0.0174), 1.5: (+0.0300, -0.0170), 2.5: (+0.0292, -0.0131),
-        3.5: (+0.0340, -0.0094), 4.5: (+0.0321, -0.0046), 5.5: (+0.0306, -0.0044),
-        6.5: (+0.0305, -0.0056), 7.5: (+0.0268, -0.0022), 8.5: (+0.0206, -0.0017),
-        9.5: (+0.0167, +0.0046), 10.5: (+0.0110, +0.0049), 11.5: (+0.0089, +0.0049),
-        12.5: (+0.0094, +0.0094), 13.5: (+0.0084, +0.0111), 14.5: (+0.0066, +0.0150),
-        15.5: (+0.0030, +0.0148), 16.5: (+0.0010, +0.0165), 17.5: (-0.0022, +0.0163),
-        18.5: (-0.0035, +0.0152), 19.5: (-0.0058, +0.0147), 20.5: (-0.0050, +0.0134),
-        21.5: (-0.0060, +0.0131), 22.5: (-0.0070, +0.0111), 23.5: (-0.0077, +0.0107),
-        24.5: (-0.0100, +0.0099), 25.5: (-0.0093, +0.0101), 26.5: (-0.0091, +0.0089),
-        27.5: (-0.0083, +0.0079), 28.5: (-0.0052, +0.0066),
+        0.5: (+0.0228, -0.0245), 1.5: (+0.0235, -0.0233), 2.5: (+0.0236, -0.0185),
+        3.5: (+0.0293, -0.0140), 4.5: (+0.0283, -0.0084), 5.5: (+0.0277, -0.0074),
+        6.5: (+0.0284, -0.0080), 7.5: (+0.0256, -0.0038), 8.5: (+0.0201, -0.0028),
+        9.5: (+0.0170, +0.0040), 10.5: (+0.0119, +0.0047), 11.5: (+0.0104, +0.0049),
+        12.5: (+0.0114, +0.0096), 13.5: (+0.0108, +0.0115), 14.5: (+0.0093, +0.0154),
+        15.5: (+0.0059, +0.0153), 16.5: (+0.0040, +0.0169), 17.5: (+0.0010, +0.0166),
+        18.5: (-0.0003, +0.0154), 19.5: (-0.0026, +0.0147), 20.5: (-0.0019, +0.0133),
+        21.5: (-0.0030, +0.0128), 22.5: (-0.0041, +0.0107), 23.5: (-0.0049, +0.0101),
+        24.5: (-0.0074, +0.0092), 25.5: (-0.0069, +0.0092), 26.5: (-0.0069, +0.0080),
+        27.5: (-0.0063, +0.0069), 28.5: (-0.0033, +0.0055),
     },
-    # n=11990 completed games, residual sd 15.53
+    # n=11701 completed games, residual sd 15.51
     ("ncaaf", "spread"): {
-        0.5: (+0.0190, +0.0055), 1.5: (+0.0184, +0.0104), 2.5: (+0.0151, +0.0101),
-        3.5: (+0.0141, +0.0128), 4.5: (+0.0150, +0.0159), 5.5: (+0.0136, +0.0133),
-        6.5: (+0.0118, +0.0145), 7.5: (+0.0129, +0.0130), 8.5: (+0.0099, +0.0109),
-        9.5: (+0.0088, +0.0103), 10.5: (+0.0100, +0.0131), 11.5: (+0.0101, +0.0112),
-        12.5: (+0.0083, +0.0090), 13.5: (+0.0069, +0.0077), 14.5: (+0.0099, +0.0087),
-        15.5: (+0.0059, +0.0078), 16.5: (+0.0061, +0.0064), 17.5: (+0.0068, +0.0055),
-        18.5: (+0.0053, +0.0052), 19.5: (+0.0028, +0.0030), 20.5: (+0.0032, +0.0028),
-        21.5: (+0.0023, +0.0032), 22.5: (+0.0017, +0.0026), 23.5: (+0.0011, +0.0026),
-        24.5: (+0.0008, +0.0033), 25.5: (-0.0002, +0.0031), 26.5: (-0.0008, +0.0027),
-        27.5: (+0.0003, +0.0015), 28.5: (-0.0005, +0.0013),
+        0.5: (+0.0101, +0.0018), 1.5: (+0.0104, +0.0074), 2.5: (+0.0080, +0.0082),
+        3.5: (+0.0073, +0.0113), 4.5: (+0.0091, +0.0153), 5.5: (+0.0085, +0.0137),
+        6.5: (+0.0076, +0.0156), 7.5: (+0.0092, +0.0147), 8.5: (+0.0065, +0.0135),
+        9.5: (+0.0061, +0.0136), 10.5: (+0.0077, +0.0168), 11.5: (+0.0081, +0.0151),
+        12.5: (+0.0066, +0.0132), 13.5: (+0.0056, +0.0123), 14.5: (+0.0086, +0.0134),
+        15.5: (+0.0049, +0.0126), 16.5: (+0.0052, +0.0107), 17.5: (+0.0059, +0.0099),
+        18.5: (+0.0047, +0.0097), 19.5: (+0.0020, +0.0075), 20.5: (+0.0026, +0.0072),
+        21.5: (+0.0019, +0.0075), 22.5: (+0.0013, +0.0066), 23.5: (+0.0008, +0.0064),
+        24.5: (+0.0002, +0.0068), 25.5: (-0.0007, +0.0065), 26.5: (-0.0013, +0.0059),
+        27.5: (-0.0002, +0.0044), 28.5: (-0.0011, +0.0040),
     },
-    # n=11702 completed games, residual sd 16.22
+    # n=11701 completed games, residual sd 16.21
     ("ncaaf", "total"): {
-        0.5: (+0.0278, -0.0136), 1.5: (+0.0255, -0.0144), 2.5: (+0.0240, -0.0127),
-        3.5: (+0.0239, -0.0081), 4.5: (+0.0247, -0.0074), 5.5: (+0.0267, -0.0073),
-        6.5: (+0.0250, -0.0046), 7.5: (+0.0239, -0.0014), 8.5: (+0.0241, -0.0019),
-        9.5: (+0.0223, -0.0020), 10.5: (+0.0184, -0.0015), 11.5: (+0.0153, +0.0011),
-        12.5: (+0.0108, +0.0015), 13.5: (+0.0089, +0.0038), 14.5: (+0.0075, +0.0043),
-        15.5: (+0.0080, +0.0059), 16.5: (+0.0081, +0.0070), 17.5: (+0.0048, +0.0075),
-        18.5: (+0.0026, +0.0093), 19.5: (+0.0010, +0.0100), 20.5: (+0.0008, +0.0105),
-        21.5: (+0.0008, +0.0114), 22.5: (-0.0007, +0.0114), 23.5: (-0.0005, +0.0127),
-        24.5: (-0.0022, +0.0138), 25.5: (-0.0040, +0.0142), 26.5: (-0.0044, +0.0138),
-        27.5: (-0.0043, +0.0124), 28.5: (-0.0041, +0.0114),
+        0.5: (+0.0242, -0.0243), 1.5: (+0.0215, -0.0255), 2.5: (+0.0198, -0.0241),
+        3.5: (+0.0194, -0.0199), 4.5: (+0.0200, -0.0195), 5.5: (+0.0219, -0.0196),
+        6.5: (+0.0200, -0.0172), 7.5: (+0.0189, -0.0142), 8.5: (+0.0190, -0.0149),
+        9.5: (+0.0173, -0.0151), 10.5: (+0.0134, -0.0147), 11.5: (+0.0104, -0.0122),
+        12.5: (+0.0060, -0.0119), 13.5: (+0.0043, -0.0096), 14.5: (+0.0030, -0.0090),
+        15.5: (+0.0037, -0.0073), 16.5: (+0.0041, -0.0061), 17.5: (+0.0009, -0.0054),
+        18.5: (-0.0011, -0.0033), 19.5: (-0.0024, -0.0023), 20.5: (-0.0024, -0.0015),
+        21.5: (-0.0022, -0.0002), 22.5: (-0.0035, +0.0002), 23.5: (-0.0030, +0.0019),
+        24.5: (-0.0046, +0.0035), 25.5: (-0.0062, +0.0045), 26.5: (-0.0064, +0.0045),
+        27.5: (-0.0062, +0.0036), 28.5: (-0.0058, +0.0032),
     },
 }
 
@@ -207,28 +204,80 @@ def _normal_sf(x: float, mu: float, sd: float) -> float:
     return 0.5 * math.erfc((x - mu) / (sd * math.sqrt(2.0)))
 
 
+def simulated_tails(
+    games: pd.DataFrame, market: str, config: SimConfig, offsets: list[float],
+    *, level: float = 0.0, seed: int = 20260920,
+) -> tuple[list[float], list[float]]:
+    """How often the SIM lands past each offset, averaged over these games.
+
+    The reference the gate should have been using all along. Every game is
+    simulated at the market's own numbers — the sharpest per-game expectation
+    available, and the same choice the empirical side makes — and its draws
+    counted past each offset.
+
+    ``level`` shifts the simulated expectation by the empirical residual's
+    mean, which keeps this a **shape** measurement rather than a level one.
+    The fitted normal it replaces did the same thing by taking the residual's
+    own mean; without it the gate would charge the sim for the market close
+    being a tenth of a point off, which is not what it is for.
+
+    Deterministic under ``seed``: a banked constant that moved between runs
+    would fail its own freshness test for no reason.
+    """
+    from velocity.models.simulate import simulate_game
+    from velocity.util.seed import make_rng
+
+    column = "spread_line" if market == "spread" else "total_line"
+    spreads = games["spread_line"].astype(float).to_numpy()
+    totals = games["total_line"].astype(float).to_numpy()
+    lines = games[column].astype(float).to_numpy()
+    grid = np.asarray(offsets, dtype=float)
+    over = np.zeros(grid.size)
+    under = np.zeros(grid.size)
+    for i, (spread, total, line) in enumerate(
+            zip(spreads, totals, lines, strict=True)):
+        mu_margin = float(spread) + (level if market == "spread" else 0.0)
+        mu_total = float(total) + (level if market == "total" else 0.0)
+        sim = simulate_game(mu_margin, mu_total, make_rng(seed + i), config)
+        draw = np.sort(sim.margin if market == "spread" else sim.total)
+        n = float(sim.n_sims)
+        # One sort, then every offset's tail by bisection.
+        over += 1.0 - np.searchsorted(draw, line + grid, side="right") / n
+        under += np.searchsorted(draw, line - grid, side="left") / n
+    return list(over / len(games)), list(under / len(games))
+
+
 def residual_calibration(
     games: pd.DataFrame,
     market: str,
     *,
     max_offset: float = 20.5,
+    reference: SimConfig | None = None,
 ) -> pd.DataFrame:
-    """Measure how far a normal misses at each half-point offset from the line.
+    """Measure how far the model misses at each half-point offset from the line.
 
     ``games`` needs final scores plus the market's closing number
     (``spread_line`` / ``total_line``). Returns one row per offset with the
-    empirical and normal tail probabilities on each side, the **signed** error
-    per tail (``over_bias`` / ``under_bias``, positive where the normal
+    empirical and modelled tail probabilities on each side, the **signed**
+    error per tail (``over_bias`` / ``under_bias``, positive where the model
     overstates that tail), the worst of the two as ``error``, and each tail's
     error as a fraction of the probability quoted there. :data:`OFFSET_BIAS` is
     generated from the signed columns; the relative ones are what
     :func:`rung_is_honest` scales its bar by, since a rung's EV moves by its
     error divided by its price.
+
+    ``reference`` is **the model being gated**, and passing one is the point:
+    with a :class:`~velocity.models.simulate.SimConfig` this simulates the
+    real sim, rounding and all. Without one it falls back to a continuous
+    normal fitted to the residuals, which is what the table used to be built
+    from and is kept only so the two can be compared — see the module
+    docstring on why that stand-in was costing twenty ladder sides.
     """
     column = "spread_line" if market == "spread" else "total_line"
-    frame = games.dropna(subset=["home_score", "away_score", column])
+    frame = games.dropna(
+        subset=["home_score", "away_score", "spread_line", "total_line"])
     if frame.empty:
-        return pd.DataFrame(columns=["offset", "empirical_over", "normal_over", "error"])
+        return pd.DataFrame(columns=["offset", "empirical_over", "model_over", "error"])
 
     if market == "spread":
         outcome = frame["home_score"] - frame["away_score"]
@@ -237,22 +286,32 @@ def residual_calibration(
     residual = (outcome - frame[column]).astype(float).to_numpy()
     mu, sd = float(residual.mean()), float(residual.std(ddof=1))
 
-    rows = []
+    offsets = []
     offset = 0.5
     while offset <= max_offset:
-        over_emp = float((residual > offset).mean())
-        over_nor = _normal_sf(offset, mu, sd)
-        under_emp = float((residual < -offset).mean())
-        under_nor = 1.0 - _normal_sf(-offset, mu, sd)
+        offsets.append(offset)
+        offset += 1.0
+    if reference is None:
+        over_mod = [_normal_sf(o, mu, sd) for o in offsets]
+        under_mod = [1.0 - _normal_sf(-o, mu, sd) for o in offsets]
+    else:
+        over_mod, under_mod = simulated_tails(
+            frame, market, reference, offsets, level=mu)
+
+    rows = []
+    for i, off in enumerate(offsets):
+        over_emp = float((residual > off).mean())
+        under_emp = float((residual < -off).mean())
+        over_nor, under_nor = over_mod[i], under_mod[i]
         rows.append(
             {
-                "offset": offset,
+                "offset": off,
                 "empirical_over": over_emp,
-                "normal_over": over_nor,
+                "model_over": over_nor,
                 "empirical_under": under_emp,
-                "normal_under": under_nor,
+                "model_under": under_nor,
                 # Signed, and in the dangerous direction when positive: the
-                # normal claims more mass past this threshold than the games
+                # model claims more mass past this threshold than the games
                 # actually put there, so the sim wants to buy that tail.
                 "over_bias": over_nor - over_emp,
                 "under_bias": under_nor - under_emp,
@@ -269,7 +328,6 @@ def residual_calibration(
                 ),
             }
         )
-        offset += 1.0
     return pd.DataFrame(rows)
 
 

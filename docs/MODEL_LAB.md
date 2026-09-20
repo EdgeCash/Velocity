@@ -1972,11 +1972,94 @@ on that evidence**, and the remaining objection is no longer technical.
 
 **Next, in order of expected value:**
 
-1. **Fix the ladder gate's reference** — measure the sim rather than a
-   continuous normal fitted to residuals. Worth ~20 ladder sides across the
-   two leagues, and worth more than the overlay. Needs its own change: it
-   opens rungs, so it wants the live ledger watched after it lands, not just
-   a gate table regenerated.
+1. ~~**Fix the ladder gate's reference**~~ — **done**, see "the
+   gate-reference round" below. The ~20 sides quoted here was measured
+   without removing the level; matching it, as the old fitted normal did,
+   gives 14 on the absolute bar. And it is not a pure loosening: on the
+   gate's real price-scaled bar it opens 26 rungs and **closes 11** that the
+   old stand-in was passing.
 2. **Promote `normal+keys`**, now that the surface is measured.
 3. **Clock compression** (from the drive round), still the one mechanism that
    would explain the three-point spike rather than measure it.
+
+## The gate-reference round (2026-09-20) — measuring the sim instead of a stand-in
+
+The derivative re-check found that `velocity/eval/ladders.py` gates the sim
+against **a continuous normal fitted to the residuals**, not against the sim.
+This fixes that: `residual_calibration` now takes the `SimConfig` being gated
+and asks it directly, and `scripts/calibrate_ladders.py` regenerates the
+banked `OFFSET_BIAS` literal from it.
+
+**The level is removed before measuring**, as the fitted normal did by taking
+the residual's own mean — `simulated_tails` shifts the sim by that mean. That
+keeps this a shape gate and never a statement about the market close being a
+tenth of a point off. It also means the honest headline is smaller than the
+re-check's: that pass did not level-match and reported twenty sides, this one
+reports fourteen on the absolute bar.
+
+### It is not a loosening, which is the part worth reading
+
+Under the gate's real bar — `min(tolerance, relative_tolerance × price)` —
+the change moves **37 sides, 26 open and 11 closed**, for a net +15 of 232.
+
+| league / market | old | new |
+|---|---|---|
+| nfl spread | 23/58 | **31/58** |
+| nfl total | 26/58 | 25/58 |
+| ncaaf spread | 36/58 | 32/58 |
+| ncaaf total | 29/58 | **41/58** |
+| **total** | 114/232 | **129/232** |
+
+The eleven closures are almost all NCAAF spread under-tail rungs, and they
+have a cause: the college sim's margin sd is 16.2 against a market-close
+residual of 15.51, so it genuinely overstates the dog's deep tail by more
+than the fitted stand-in suggested. **Those rungs were being passed on a
+flattering proxy.** A fix that only ever opened rungs would have been a fix
+to distrust.
+
+### What the corrected measurement says about football
+
+Two different defects, one per market, and the old reference had them
+blurred together as "leptokurtosis":
+
+1. **Spreads: the sim is too fat in the shoulders.** Real spread residuals
+   are leptokurtic and close to symmetric (skew +0.10 NFL, +0.01 college), so
+   a dispersion-matched sim overstates both tails at once. NFL spreads peak
+   at 2.9 points of probability around 4.5 out — down from the stand-in's 3.7,
+   and still past the two-point edge the slate bets on, so they stay refused
+   near the line. NCAAF spreads peak at 1.7 and pass throughout.
+2. **Totals: the sim is symmetric and football is not.** Total residuals are
+   right-skewed in *both* leagues — **+0.33 NFL, +0.34 college** — because a
+   game can run away upward and cannot run away downward. The sim is
+   symmetric, so near the line it overstates the OVER tail and understates
+   the under: at 4.5 out, NFL is (+0.028, −0.008) and NCAAF (+0.020, −0.020).
+
+That second one is new, and it is a better description than what it replaces.
+The old table said the *under* tail was the overstated one deep in both
+leagues (+0.0105 at 20.5 in college). Measured against the sim, college's
+deep tails are both inside a cent and the defect is a near-the-line skew
+instead. The old NCAAF-totals deep-tail blow-up — error rising from 0.0080 at
+15.5 to 0.0142 at 25.5 — was the stand-in's, not the sim's: it now falls,
+0.0073 to 0.0062.
+
+**A fatter-tailed draw would not fix the totals.** Skew is not kurtosis. That
+is worth knowing before anyone reaches for the empirical residual pool again.
+
+### Cost and hygiene
+
+Regeneration is 21s and deterministic (a fixed seed inside `simulated_tails`,
+8,000 draws a game, Monte Carlo error under 1e-4 against a 5e-4 freshness
+tolerance), so `--write` is a no-op on a second run and the refresh workflow
+keeps working. The freshness test now pulls its `SimConfig` from the
+generator rather than restating one, so a league whose promoted sd moves
+fails that test until the table is regenerated — which is the point, since
+the table is a statement about a particular sim.
+
+**Next, in order of expected value:**
+
+1. **Promote `normal+keys`** — cleared by the derivative re-check, and now
+   sitting behind a gate that measures the sim it will change.
+2. **A skew-aware draw for totals.** The defect is now named and measured and
+   nothing in the sim can express it; the count sim and the drive sim both
+   can, which makes this the first concrete use for either on totals.
+3. **Clock compression** (from the drive round).
