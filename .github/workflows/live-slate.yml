@@ -556,6 +556,27 @@ jobs:
             fi
           done
 
+      # ---- the Excel front end ------------------------------------------------
+      # The six CSVs Power Query reads (docs/EXCEL_SETUP.md). This is the
+      # export step ALONE: everything it reads was banked by the steps above,
+      # so it re-simulates nothing and costs seconds rather than the run's
+      # thirty minutes. It sits here, inside the run that made the numbers,
+      # because a separate scheduled workflow would inherit GitHub's
+      # 1h48-3h00 schedule-queue delay and hand the operator a board that is
+      # older than the one already sitting in this run's artifact
+      # (docs/HYBRID_MIGRATION_PLAN.md section 5).
+      - name: Export the Excel datasets
+        run: |
+          set -euo pipefail
+          python -m velocity.run_weekly \
+            --steps export \
+            --slate-dir artifacts/slate \
+            --out artifacts/exports \
+            --data-dir datasets \
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }} \
+            --bankroll "${{ github.event.inputs.bankroll || '100' }}"
+          ls -la artifacts/exports
+
       - name: Upload slates (Actions artifact)
         uses: actions/upload-artifact@v4
         with:
@@ -565,6 +586,7 @@ jobs:
             artifacts/slate/*.xlsx
             artifacts/slate/*.png
             artifacts/slate/*.md
+            artifacts/exports/*.csv
           if-no-files-found: warn
           retention-days: 60
 

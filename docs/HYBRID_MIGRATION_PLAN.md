@@ -290,18 +290,54 @@ What *can* be done, and is done in Phase 7:
 
 ## 6. Migration order
 
-| Phase | Change | Gate |
-|---|---|---|
-| 1 | this document | — |
-| 2 | read-only review of `models`/`wagering`/`backtest`/`eval`; **no edits** | — |
-| 3 | `velocity/export/` + `datasets/exports/` + `.gitignore` rule | unit tests per exporter |
-| 4 | `velocity/wagering/plays.py` curated engine | unit tests on tiering + explanations |
-| 5 | DFS pool + `dfs_optimizer.csv` (cash/single/GPP/ceiling columns) | unit tests |
-| 6 | Excel compatibility contract (stable headers, metadata columns) | contract tests |
-| 7 | workflow/latency audit + documented schedule changes | `tests/test_workflow_schedules.py` |
-| 8 | `velocity/run_weekly.py` | integration test, offline |
-| 9 | `docs/EXCEL_SETUP.md` | — |
-| 10 | full gate: `pytest`, `ruff`, `mypy` | green before every merge |
+| Phase | Change | Gate | State |
+|---|---|---|---|
+| 1 | this document | — | done |
+| 2 | read-only review of `models`/`wagering`/`backtest`/`eval` | no edits made | done |
+| 3 | `velocity/export/` + `datasets/exports/` + `.gitignore` rule | `tests/test_export_*.py` | done |
+| 4 | `velocity/wagering/plays.py` curated engine | `tests/test_curated_plays.py` | done |
+| 5 | DFS pool + `dfs_optimizer.csv` (cash/single/GPP/ceiling) | `tests/test_export_dfs.py` | done |
+| 6 | Excel compatibility contract | `tests/test_export_contract.py` | done |
+| 7 | latency audit + workflow changes | `tests/test_export_workflow.py` | done |
+| 8 | `velocity/run_weekly.py` | `tests/test_run_weekly.py` | done |
+| 9 | `docs/EXCEL_SETUP.md` | — | done |
+| 10 | full gate: `pytest`, `ruff`, `mypy` | green before every merge | enforced |
 
 Each phase is one commit on `claude/epic-euler-fjzehn`, so any single step can
 be reverted without unwinding the rest.
+
+## 7. What Phase 2 found, and why nothing moved
+
+The brief's instruction for the simulation engine was to review it and not
+rewrite it. The review is §1.3 above. **No file under `velocity/models/`,
+`velocity/backtest/` or `velocity/eval/` was modified by this migration**, and
+the two edits made to `velocity/wagering/` are additive:
+`tiers.rule_named()` (a lookup from a banked tier letter back to the rule's
+measured numbers, so no downstream reader has to parse a record string) and
+the new `wagering/plays.py`.
+
+Two runner scripts gained one persistence step each, and both bank a frame
+the run had already computed and was discarding:
+
+* `scripts/run_live_slate.py` → `prop_dist_{league}_{stamp}.parquet`, the prop
+  sim's own quantiles per player and market.
+* `scripts/build_dfs_lineup.py` → `dfs_dist_{league}_{stamp}.parquet`, the
+  per-sim DK-point arrays the GPP tail scorer already builds.
+
+Both are wrapped best-effort and cannot fail their runner. Neither changes a
+price, a probability or a stake.
+
+## 8. What is deliberately still empty
+
+Three export columns have no honest source in this repository today, and are
+written blank rather than filled:
+
+| Column | Why | What would fill it |
+|---|---|---|
+| `dfs.ownership` | DraftKings does not publish pre-lock ownership and nothing here models it | pass a projection into `export_dfs(..., ownership=...)` |
+| `dfs.leverage_score` | leverage against an unknown field is not a quantity | the same projection |
+| `props.*_percentile` (when absent) | a run that banked no `prop_dist_*` frame has no distribution to quote | re-run the slate with `--out` set |
+
+The alternative — a fitted curve through a mean, or a flat mid-scale default —
+would produce a column that always has a number and never has a source. Four
+columns nobody can source beat four columns nobody can trust.

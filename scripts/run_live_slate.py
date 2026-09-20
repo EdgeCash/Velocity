@@ -3425,6 +3425,7 @@ def _prop_slate(
                 print(frame.to_string(index=False))
         if unresolved:
             print(f"{len(unresolved)} prop player(s) unresolved (skipped, never guessed)")
+        roster = roster_from_projections(fp)
         if args.out:
             stamp = now.strftime("%Y%m%dT%H%M%SZ")
             dest = Path(args.out) / f"slate_{args.league}_props_{stamp}.parquet"
@@ -3432,8 +3433,27 @@ def _prop_slate(
                 dest, index=False
             )
             print(f"wrote {len(frame)} prop rows to {dest}")
-        return (frame, props_by_game, key_to_name, prop_lines,
-                roster_from_projections(fp))
+            # The SHAPE behind each of those prices. The sim draws a full
+            # distribution per player and market and the slate reads one
+            # number off it — the probability at the book's line — after
+            # which the draws go out of scope. A prop is a bet on a
+            # distribution, so the board that hides it cannot say whether a
+            # 70-yard line sits under a floor or a ceiling
+            # (velocity/export/props.py). Best-effort: a prop board is worth
+            # more than its footnote.
+            try:
+                from velocity.export.props import prop_distribution_frame
+
+                dist = prop_distribution_frame(props_by_game, roster)
+                if not dist.empty:
+                    dist_dest = Path(args.out) / f"prop_dist_{args.league}_{stamp}.parquet"
+                    dist.assign(league=args.league, generated_at=generated_at).to_parquet(
+                        dist_dest, index=False
+                    )
+                    print(f"wrote {len(dist)} prop distribution row(s) to {dist_dest}")
+            except Exception as exc:  # noqa: BLE001 - never breaks the prop slate
+                print(f"prop distributions skipped: {exc}")
+        return (frame, props_by_game, key_to_name, prop_lines, roster)
     except Exception as exc:  # noqa: BLE001 - the prop slate never breaks the game slate
         print(f"prop slate skipped: {exc}")
         return None, {}, {}, None, None

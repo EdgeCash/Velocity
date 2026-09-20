@@ -1,0 +1,117 @@
+name: Refresh Excel exports
+
+# The Excel front end's fast path (docs/EXCEL_SETUP.md).
+#
+# live-slate.yml already exports inside the run that produced the numbers, so
+# this workflow is not how the CSVs are normally made. It is how they are
+# remade WITHOUT re-running the engine: rebuild the six files from the newest
+# banked slate artifact, at a different bankroll, after a later DFS run, or
+# because the export step failed while the rest of the slate succeeded.
+#
+# It deliberately has NO `schedule`. GitHub starts a scheduled run 1h48-3h00
+# after its cron (measured over seven consecutive runs, docs/LAUNCH.md "What
+# the schedule really does"), and `workflow_dispatch` starts within a minute.
+# A cron here would advertise a fifteen-minute refresh the platform does not
+# deliver, and would hand the operator a board older than the one already
+# sitting in the last slate run's artifact. The honest fast path is the
+# button, and `workflow_run` for the one case a machine can see coming: a DFS
+# build finishing after the slate window it belongs to.
+on:
+  workflow_dispatch:
+    inputs:
+      leagues:
+        description: "Leagues to export (space-separated)"
+        required: false
+        default: "nfl ncaaf"
+      bankroll:
+        description: "Bankroll the stakes and kelly_fraction are sized against"
+        required: false
+        default: "100"
+      run_id:
+        description: "Pin a specific live-slate run id to export (default: newest successful)"
+        required: false
+        default: ""
+  workflow_run:
+    workflows: ["DFS slate"]
+    types: [completed]
+
+concurrency:
+  group: refresh-exports
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read  # download the slate artifacts this run exports
+
+jobs:
+  export:
+    name: rebuild the Excel CSVs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Runtime only. The export layer reads parquet and writes CSV; it needs
+      # none of the ingest extras, which is most of why this job is minutes
+      # rather than half an hour.
+      - name: Install (runtime only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      # The newest successful slate run, or the one the operator pinned. Paid
+      # -odds-derived frames live only in run artifacts, never in git, so this
+      # is the only place to get them.
+      - name: Fetch the newest slate artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/slate
+          id="${{ github.event.inputs.run_id }}"
+          if [ -z "$id" ]; then
+            id=$(gh run list --workflow live-slate.yml --status success \
+                 --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          if [ -z "$id" ]; then
+            echo "no successful live-slate run to export from"
+            exit 1
+          fi
+          echo "exporting from live-slate run $id"
+          gh run download "$id" --dir artifacts/slate
+          # Also take the newest DFS build, which may be more recent than the
+          # slate run above — that is the case this workflow exists for.
+          dfs=$(gh run list --workflow dfs-slate.yml --status success \
+                --limit 1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -n "$dfs" ]; then
+            gh run download "$dfs" --dir artifacts/slate/dfs || true
+          fi
+
+      - name: Export
+        run: |
+          set -euo pipefail
+          python -m velocity.run_weekly \
+            --steps export \
+            --slate-dir artifacts/slate \
+            --out artifacts/exports \
+            --data-dir datasets \
+            --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }} \
+            --bankroll "${{ github.event.inputs.bankroll || '100' }}"
+          ls -la artifacts/exports
+
+      - name: Upload the exports
+        uses: actions/upload-artifact@v4
+        with:
+          name: exports-${{ github.run_id }}
+          path: artifacts/exports/*.csv
+          if-no-files-found: error
+          # Short on purpose: these are a projection of a slate artifact that
+          # is itself kept 60 days, so a long retention here buys nothing and
+          # bills for it (docs/LAUNCH.md "What the schedule costs").
+          retention-days: 14

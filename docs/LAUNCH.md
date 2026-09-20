@@ -16,6 +16,7 @@ turning it on, verifying it, and running it week to week.
 | `refresh-datasets.yml` | daily 09:29 UTC | `CFBD_API_KEY` (NCAAF) | current-season rows committed into `datasets/` — **self-verifying, see below** |
 | `collect-football-props.yml` | daily 15:19/22:19 UTC | `THE_ODDS_API` | NFL/NCAAF prop snapshots → Actions artifact |
 | `collect-dk-salaries.yml` | daily 15:31 UTC | — | DK salary snapshots → Actions artifact |
+| `refresh-exports.yml` | **on demand** + after a DFS build | — | the six Excel CSVs → Actions artifact ([`docs/EXCEL_SETUP.md`](EXCEL_SETUP.md)) |
 
 ### The one job that writes to main (2026-09)
 
@@ -86,6 +87,11 @@ Every scheduled workflow gets its **own odd minute**, and none of them sit on
 `tests/test_workflow_schedules.py` pins all of it: no crowded minutes, no two
 workflows on the same slot, and nothing `live-slate.yml` reads starting at or
 after it. Adding a schedule means picking a free minute from this table.
+
+`refresh-exports.yml` is not in the map and has no minute, on purpose: it has
+no `schedule` at all. It is the Excel front end's fast path, and the fast
+path is `workflow_dispatch` (under a minute) rather than a cron (1h48–3h00).
+The reasoning is in [`docs/LATENCY_AUDIT.md`](LATENCY_AUDIT.md) §3.2.
 
 > Cron is *best effort* on GitHub's side no matter which minute you pick — a
 > run can still start late, and a busy hour can drop one entirely. The odd

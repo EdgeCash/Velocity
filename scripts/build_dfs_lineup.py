@@ -557,6 +557,23 @@ def main() -> None:
         print(f"wrote {len(pool_all)} priced player(s) across {len(pools)} "
               f"slate(s) to {pool_dest}")
 
+    # The per-sim DK-point arrays the GPP tail scorer already builds, kept as
+    # quantiles rather than discarded. Cash pays for the median and a
+    # tournament is won in the tail, so a pool that carries only the mean
+    # prices all four contest types as if they were one
+    # (velocity/export/dfs.py).
+    if samples:
+        try:
+            from velocity.export.dfs import dfs_distribution_frame
+
+            dist = dfs_distribution_frame(samples)
+            if not dist.empty:
+                dist_dest = out / f"dfs_dist_{args.league}_{stamp}.parquet"
+                dist.assign(league=args.league).to_parquet(dist_dest, index=False)
+                print(f"wrote {len(dist)} DFS distribution row(s) to {dist_dest}")
+        except Exception as exc:  # noqa: BLE001 - never breaks the lineup
+            print(f"DFS distributions skipped: {exc}")
+
     if args.gpp > 0:
         # Best-effort like every surface past the cash lineup. Football stacks
         # on a QB; baseball stacks on a batting order (velocity/dfs/gpp.py).
