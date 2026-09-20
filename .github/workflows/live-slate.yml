@@ -592,6 +592,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 60
 
+      # A run that FINISHED is not the same claim as a board you can bet
+      # before kickoff. This step is the second claim, and it runs AFTER the
+      # upload so a red gate never costs the artifact it is complaining
+      # about. NOT READY (a required surface missing) fails the job, which
+      # is what puts a notification on the operator's phone; DEGRADED (no
+      # props tonight, no DFS pool) stays green and says so in the log and
+      # on the workbook's first tab.
+      - name: Board readiness gate
+        run: python -m velocity.export.readiness --check artifacts/exports/readiness.csv
+
       # ---- email delivery (optional) ------------------------------------------
       # Sends the day's plays to MAIL_TO after the artifact is safely uploaded.
       # Skipped entirely until the mail secrets are configured — see

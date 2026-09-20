@@ -207,3 +207,74 @@ def test_the_workbook_opens_after_a_round_trip_through_csv(tmp_path: Path) -> No
     assert ws.cell(row=5, column=headers.index("Away") + 1).value == "Atlanta"
     assert ws.cell(row=5, column=headers.index("Proj Total") + 1) \
         .value == pytest.approx(44.2)
+
+
+# ---------------------------------------------------------------------------
+# Run status — the first thing an operator asks before kickoff.
+# ---------------------------------------------------------------------------
+
+def _readiness(verdict: str = "DEGRADED"):  # type: ignore[no-untyped-def]
+    from velocity.export.readiness import assess
+
+    one = pd.DataFrame([{"x": 1}])
+    frames = {"games": pd.DataFrame([{"game_id": "g1",
+                                      "kickoff": "2026-09-20T23:30:00Z"}]),
+              "projections": one, "market": one, "plays": one,
+              "props": None if verdict != "READY" else one,
+              "dfs_pool": None if verdict != "READY" else one,
+              "weather": one, "record": one}
+    if verdict == "NOT READY":
+        frames["market"] = None
+    return assess(frames, now=pd.Timestamp("2026-09-20T22:51:00Z"),
+                  generated_at=pd.Timestamp("2026-09-20T22:51:00Z"))
+
+
+def test_run_status_leads_the_dashboard(tmp_path: Path) -> None:
+    """Before "how is the model doing", answer "can I use this at all"."""
+    path = build_workbook(tmp_path / WORKBOOK_NAME, META,
+                          dashboard=_dashboard(), readiness=_readiness())
+    ws = load_workbook(path)["Dashboard"]
+    col_a = [str(r[0].value or "") for r in ws.iter_rows(min_col=1, max_col=1)]
+    assert col_a.index("Run status") < col_a.index("How the model is doing")
+
+
+def test_run_status_names_each_missing_surface(tmp_path: Path) -> None:
+    path = build_workbook(tmp_path / WORKBOOK_NAME, META,
+                          dashboard=_dashboard(), readiness=_readiness())
+    ws = load_workbook(path)["Dashboard"]
+    text = {str(r[0].value or ""): str(r[1].value or "")
+            for r in ws.iter_rows(min_col=1, max_col=2)}
+    assert text.get("Player props") == "missing"
+    assert text.get("DFS pool") == "missing"
+    assert text.get("Board (games)") == "ok"
+
+
+def test_the_verdict_is_colour_coded(tmp_path: Path) -> None:
+    fills = {}
+    for verdict in ("READY", "DEGRADED", "NOT READY"):
+        path = build_workbook(tmp_path / f"{verdict}.xlsx", META,
+                              dashboard=_dashboard(), readiness=_readiness(verdict))
+        ws = load_workbook(path)["Dashboard"]
+        cell = next(r[0] for r in ws.iter_rows(min_col=1, max_col=1)
+                    if str(r[0].value or "") == verdict)
+        fills[verdict] = cell.fill.fgColor.rgb
+    assert len(set(fills.values())) == 3, f"verdicts share a colour: {fills}"
+
+
+def test_read_me_carries_the_verdict_too(tmp_path: Path) -> None:
+    """Read Me is the tab that opens first."""
+    path = build_workbook(tmp_path / WORKBOOK_NAME, META, readiness=_readiness())
+    ws = load_workbook(path)["Read Me"]
+    blob = " ".join(str(c.value or "") for r in ws.iter_rows(min_col=1, max_col=2)
+                    for c in r)
+    assert "Run status" in blob
+    assert "DEGRADED" in blob
+
+
+def test_a_workbook_without_readiness_still_builds(tmp_path: Path) -> None:
+    """Readiness is additive: an older caller passing nothing must still work."""
+    path = build_workbook(tmp_path / WORKBOOK_NAME, META, dashboard=_dashboard())
+    ws = load_workbook(path)["Dashboard"]
+    col_a = [str(r[0].value or "") for r in ws.iter_rows(min_col=1, max_col=1)]
+    assert "Run status" not in col_a
+    assert "How the model is doing" in col_a

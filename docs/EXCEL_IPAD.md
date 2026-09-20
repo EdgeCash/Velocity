@@ -112,6 +112,15 @@ takes 20–30 minutes and spends Odds API credits.
 
 ---
 
+## 3a. Before kickoff
+
+Open the workbook's **Dashboard** and read **Run status** at the top. It says
+READY, DEGRADED or NOT READY, and names any surface that is missing or stale.
+A green run is not the same claim as a usable board —
+[`docs/GAME_DAY.md`](GAME_DAY.md) is the routine, and the short version is:
+dispatch **Live slate** by hand about three hours before the first kickoff,
+because a scheduled run starts 1h48–3h00 late.
+
 ## 4. Using it on the iPad
 
 You need the **Excel app** (free from the App Store; a Microsoft 365
