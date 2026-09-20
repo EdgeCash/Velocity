@@ -2586,3 +2586,56 @@ test does not:
 **Not promoted.** `blend_team_components` and `epa_per_success` stay in
 `velocity/features/team.py`, the variants in the lab. The audit's first
 item is answered rather than adopted.
+
+### Part two — the shrunk window, measured (promoted)
+
+Three variants over the promoted chain, same walk-forward, 3,045 games.
+`k` is the shrink in games: the window's level counts for its own games,
+the two-season level for `k` more.
+
+| variant | rmse_total | info_w_total | O/U (flat) · units | mean \|level\| by season | weeks 1–3 | Δ sq. total error vs promoted | seasons better |
+|---|---|---|---|---|---|---|---|
+| promoted (two seasons) | 13.552 | −0.018 | 49.9% · −0.034 | 1.44 | +0.37 | — | — |
+| lvlw8 (bare) | 13.521 | +0.011 | 49.8% | 1.01 | +0.89 | −0.91 ± 0.78 | 5/12 |
+| lvlw8s-k64 (within season) | **13.513** | −0.021 | 50.0% · −0.032 | 1.02 | +0.57 | −1.15 ± 0.51 | 6/12 |
+| lvlw8s-k128 (within season) | 13.518 | −0.021 | 50.2% · −0.029 | 1.12 | +0.52 | −0.99 ± 0.39 | 6/12 |
+| **lvlw8-k128** (crossing, shrunk) | 13.517 | −0.009 | 50.3% · −0.026 | 1.16 | +0.56 | **−1.10 ± 0.38** | **8/12** |
+
+Margins and the moneyline columns are identical across the row (the level
+shifts both teams alike). The totals record at the slate's own 4-point bar:
+53.3% · +0.034 per unit (523 bets) on the two-season level, **53.8% ·
++0.043 (457 bets)** on the shrunk window.
+
+**Readings:**
+
+1. **The shrink does what it was for.** September's over-projection under
+   the bare window (+0.89) comes back to +0.56, and the window keeps its
+   gains where the drift is: 2018 from +2.0 to +1.3, 2020 from +3.3 to
+   +2.3, 2021 from −1.6 to −0.7, 2022 from −0.6 to −0.2. Three of the four
+   variants improve the squared total error by more than two standard
+   errors; the bare window is the only one whose paired difference is
+   inside one.
+2. **Crossing the boundary, shrunk, beats stopping at it.** The
+   within-season windows are empty at week 1 and one week deep at week 2,
+   so through October they are mostly the two-season level with the
+   window's noise on top; the crossing window always holds 128 games and
+   the shrink halves December's pull rather than deferring it. Eight
+   seasons of twelve better, the most consistent of the four, and the
+   best `info_w_total` of the shrunk rows.
+3. **2026 is sixteen games and stays a level problem** (+3.9 either way):
+   nothing fitted on 2025 knows what September 2026 is scoring, and the
+   window will know by week 9.
+
+### Promotion decision
+
+**Promoted: `lvlw8-k128`** — the trailing eight on-field weeks across the
+season boundary, blended toward the trailing two seasons by 128 games.
+`NFL_LEVEL_WEEKS = 8`, `NFL_LEVEL_SHRINK_GAMES = 128.0` in the live runner
+beside `NFL_LEVEL_SEASONS = 2`; `promoted()` in the lab defaults to the
+same, with `live-nfl-promoted-level2s` keeping the previous chain for the
+record. The residual bank and the promoted ledger are rebuilt from the new
+chain (the scale reads the bank), and the skew re-test the skew round
+deferred runs on it below.
+
+College is unchanged: its level is drifting with the game, not within the
+season, and no window followed it (part one).

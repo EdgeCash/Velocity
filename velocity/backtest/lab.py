@@ -605,7 +605,12 @@ def nfl_variants(
                 ``level_weeks`` fits the level on that many trailing on-field
                 weeks in place of the trailing two seasons, stopped at the
                 season boundary by ``level_within_season`` and shrunk back
-                toward the two-season level by ``level_shrink`` games."""
+                toward the two-season level by ``level_shrink`` games. The
+                defaults are the promoted level since the level round: eight
+                weeks across the boundary, shrunk by 128 games; ``level_weeks=0``
+                is the two-season fit the chain ran before it."""
+                if level_weeks is None:
+                    level_weeks, level_shrink = 8, 128.0
                 level = (levelled(core, 2, weeks=level_weeks,
                                   within_season=level_within_season,
                                   shrink_games=level_shrink) if level_weeks
@@ -749,6 +754,9 @@ def nfl_variants(
                                       level_shrink=128.0)),
                 "live-nfl-promoted-lvlw8-k128": (
                     "plays", promoted(gap8_core, level_weeks=8, level_shrink=128.0)),
+                # The chain as it ran before the level round — the two-season
+                # level — kept so the next round can read the step it took.
+                "live-nfl-promoted-level2s": ("plays", promoted(gap8_core, level_weeks=0)),
                 # The situational round, part two (docs/MODEL_LAB.md): two
                 # of nfelo's home-field findings the schedule columns can
                 # price. Surface: the away side a point worse on a surface

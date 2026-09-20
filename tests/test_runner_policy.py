@@ -213,6 +213,8 @@ def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
     assert args.nfl_level is None and args.sim_shape is None and args.sim_dispersion is None
     assert runner.resolve_nfl_level(None) == runner.DEFAULT_NFL_LEVEL == "fit"
     assert runner.NFL_LEVEL_SEASONS == 2
+    # The level round: the window and its shrink toward the two seasons.
+    assert runner.NFL_LEVEL_WEEKS == 8 and runner.NFL_LEVEL_SHRINK_GAMES == 128.0
     assert runner.resolve_ncaaf_level(None) == runner.DEFAULT_NCAAF_LEVEL == "fit"
     assert runner.resolve_ncaaf_level("constant") == "constant"
     assert args.ncaaf_level is None

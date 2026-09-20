@@ -474,13 +474,20 @@ def _build_projection(
         if resolve_nfl_level(args.nfl_level) == "fit":
             from velocity.models.level import calibrate_level, level_shift
 
-            # The trailing two seasons (docs/MODEL_LAB.md, the sim-shape
-            # round): the whole four-season window lagged the era by +0.7.
-            shift = level_shift(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
-            nfl_model = calibrate_level(nfl_model, window, seasons=NFL_LEVEL_SEASONS)
+            # The trailing eight on-field weeks, shrunk toward the trailing
+            # two seasons by 128 games (docs/MODEL_LAB.md, the level round):
+            # the two-season level lagged the era by +0.7 and wandered ±3
+            # within it; the window follows the drift and the shrink keeps
+            # December's scoring out of September.
+            shift = level_shift(nfl_model, window, seasons=NFL_LEVEL_SEASONS,
+                                weeks=NFL_LEVEL_WEEKS, shrink_games=NFL_LEVEL_SHRINK_GAMES)
+            nfl_model = calibrate_level(nfl_model, window, seasons=NFL_LEVEL_SEASONS,
+                                        weeks=NFL_LEVEL_WEEKS,
+                                        shrink_games=NFL_LEVEL_SHRINK_GAMES)
             kind += f", level {nfl_model.config.base_points:.2f} ({shift:+.2f} vs 22.5)"
             print(f"NFL level: base {nfl_model.config.base_points:.2f} pts/team "
-                  f"(the fit ran {shift:+.2f} vs the constant on {len(window)} games)")
+                  f"(the fit ran {shift:+.2f} vs the constant on the trailing "
+                  f"{NFL_LEVEL_WEEKS} weeks, shrunk toward {len(window)} games)")
 
         # The scale (velocity.models.level): the level fixed the intercept;
         # the residual bank says the deviations run wide — the total's by
@@ -1476,6 +1483,12 @@ FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
 # always assumed. Moves to "fit" only with the lab table (docs/MODEL_LAB.md).
 DEFAULT_NFL_LEVEL = "fit"
 NFL_LEVEL_SEASONS = 2
+# The level round (docs/MODEL_LAB.md): the trailing eight on-field weeks,
+# across the season boundary, blended toward the two-season level by 128
+# games — 0.035 of totals RMSE over the two-season fit, better in eight
+# seasons of twelve, the season-to-season wander cut from 1.44 to 1.16.
+NFL_LEVEL_WEEKS = 8
+NFL_LEVEL_SHRINK_GAMES = 128.0
 
 
 def resolve_nfl_level(explicit: str | None) -> str:
