@@ -1353,3 +1353,48 @@ def test_records_settle_at_the_sides_own_closing_price() -> None:
     bare = ats_ou_vs_close(projections, games.drop(columns=[
         "home_spread_odds", "away_spread_odds", "over_odds", "under_odds"]))
     assert bare["ats_win_rate"] == pytest.approx(2 / 3) and np.isnan(bare["ats_units"])
+
+
+def test_select_by_margin_chooses_on_the_last_complete_season() -> None:
+    """The wepa round's selector: fit on the earlier seasons, score on the last complete one."""
+    from velocity.backtest.lab import margin_rmse_on, select_by_margin
+
+    class _Flat:
+        def __init__(self, edge: float) -> None:
+            self.edge = edge
+
+        def expected_points(self, home: str, away: str, *, neutral_site: bool = False):
+            return 21.0 + self.edge, 21.0
+
+    seen: dict[str, pd.DataFrame] = {}
+
+    def candidate(edge: float):
+        def factory(train: pd.DataFrame) -> _Flat:
+            seen[str(edge)] = train
+            return _Flat(edge)
+        return factory
+
+    # Three seasons on the schedule: 2022 and 2023 complete (200 games each),
+    # 2024 in progress (16 games). Home wins by 3 on average everywhere.
+    rows = []
+    for season, n in ((2022, 200), (2023, 200), (2024, 16)):
+        for i in range(n):
+            rows.append({"season": season, "week": i // 16 + 1, "game_id": f"{season}-{i}",
+                         "home_team": "H", "away_team": "A", "neutral_site": False,
+                         "home_score": 24.0 + (i % 3), "away_score": 21.0 + (i % 3)})
+    schedule = pd.DataFrame(rows)
+    plays = pd.DataFrame({"season": schedule["season"], "game_id": schedule["game_id"]})
+    candidates = {"edge0": candidate(0.0), "edge3": candidate(3.0), "edge6": candidate(6.0)}
+    best, check = select_by_margin(candidates, plays, schedule)
+    assert (best, check) == ("edge3", 2023)
+    # Every candidate was fitted on the seasons BEFORE the check season only.
+    for train in seen.values():
+        assert set(train["season"]) == {2022}
+    # The in-progress season never becomes the check set, and a window with
+    # one complete season has nothing earlier to fit on.
+    short = plays[plays["season"] >= 2023]
+    assert select_by_margin(candidates, short, schedule) == (None, None)
+    assert select_by_margin({"edge3": candidate(3.0)}, plays, schedule) == (None, None)
+    # The scorer itself: a 3-point edge on a 3-point result is exact.
+    assert margin_rmse_on(_Flat(3.0), schedule[schedule["season"] == 2023]) == pytest.approx(0.0)
+    assert margin_rmse_on(_Flat(0.0), schedule[schedule["season"] == 2023]) == pytest.approx(3.0)

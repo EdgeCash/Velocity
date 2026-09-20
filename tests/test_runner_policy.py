@@ -52,14 +52,16 @@ def test_cli_default_leaves_weight_to_league_policy() -> None:
     # The 2025 extension left ≥4 pts of totals disagreement at break-even
     # (52.3% on 5,657) while ≥6 still clears (53.0%) — the default moved.
     # The totals filters resolve per league from the wager lab's cuts
-    # (docs/OUTPUT_AUDIT.md §2.2): 4 points either side in the NFL, 4 on the
-    # under alone in college; the flags override.
+    # (docs/OUTPUT_AUDIT.md §2.2): 4 points on the under alone in both
+    # leagues; the flags override.
     assert args.ncaaf_total_edge is None and args.nfl_total_edge is None
     runner = _runner()
     assert runner.resolve_total_edge(args, "ncaaf") == 4.0
     assert runner.resolve_total_edge(args, "nfl") == 4.0
     assert runner.resolve_total_sides(args, "ncaaf") == frozenset({"under"})
-    assert runner.resolve_total_sides(args, "nfl") == frozenset({"over", "under"})
+    # Unders only in the NFL too since the level round's wager lab: overs at
+    # 4+ read 49.8% on the new ledger against 56.2% for the unders.
+    assert runner.resolve_total_sides(args, "nfl") == frozenset({"under"})
     custom = runner.build_parser().parse_args(
         ["--league", "ncaaf", "--ncaaf-total-edge", "6", "--ncaaf-total-sides", "over,under"])
     assert runner.resolve_total_edge(custom, "ncaaf") == 6.0
@@ -213,6 +215,8 @@ def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
     assert args.nfl_level is None and args.sim_shape is None and args.sim_dispersion is None
     assert runner.resolve_nfl_level(None) == runner.DEFAULT_NFL_LEVEL == "fit"
     assert runner.NFL_LEVEL_SEASONS == 2
+    # The level round: the window and its shrink toward the two seasons.
+    assert runner.NFL_LEVEL_WEEKS == 8 and runner.NFL_LEVEL_SHRINK_GAMES == 128.0
     assert runner.resolve_ncaaf_level(None) == runner.DEFAULT_NCAAF_LEVEL == "fit"
     assert runner.resolve_ncaaf_level("constant") == "constant"
     assert args.ncaaf_level is None
@@ -231,6 +235,12 @@ def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
         assert runner.resolve_sim_keys(None, league) == "lattice"
     assert runner.resolve_sim_keys("none", "nfl") == "none"
     assert runner.resolve_sim_keys(None, "mlb") == "none"
+    # The skew switch exists in both leagues; its default is the re-test's.
+    assert args.sim_skew is None
+    for league in ("nfl", "ncaaf"):
+        assert runner.resolve_sim_skew(None, league) == runner.DEFAULT_SIM_SKEW_BY_LEAGUE[league]
+    assert runner.resolve_sim_skew("fit", "nfl") == "fit"
+    assert runner.resolve_sim_skew(None, "mlb") == "none"
     # The Methods row says what the sim did, in the run's own words.
     rows = dict(runner.live_config_rows(args, "QB-adjusted recency EPA", None))
     assert "Simulation" in rows and "sims" in rows["Simulation"]
@@ -253,6 +263,38 @@ def test_the_default_football_sim_carries_the_banked_lattice() -> None:
         # The switch still switches.
         off = runner.build_parser().parse_args(["--league", league, "--sim-keys", "none"])
         assert runner.football_sim_config(league, off).lattice is None
+
+
+def test_the_totals_skew_is_fitted_on_the_bank_and_switches() -> None:
+    from velocity.models.residuals import load_residual_frame
+    from velocity.models.skew import fit_epsilon
+
+    bank = load_residual_frame("nfl")
+    if bank is None:
+        pytest.skip("no NFL residual bank committed")
+    runner = _runner()
+    on = runner.build_parser().parse_args(["--league", "nfl", "--sim-skew", "fit"])
+    cfg = runner.football_sim_config("nfl", on)
+    assert cfg.total_skew == pytest.approx(fit_epsilon(bank["resid_total"].to_numpy()))
+    assert 0.05 < cfg.total_skew < 0.4  # right-skewed, and by less than the close's +0.33
+    assert "totals skew" in runner.describe_sim(cfg, "nfl")
+    off = runner.build_parser().parse_args(["--league", "nfl", "--sim-skew", "none"])
+    assert runner.football_sim_config("nfl", off).total_skew == 0.0
+    # The pool carries its own skew, so the empirical path never stacks it.
+    both = runner.build_parser().parse_args(
+        ["--league", "nfl", "--sim-shape", "empirical", "--sim-skew", "fit"])
+    assert runner.football_sim_config("nfl", both).total_skew == 0.0
+
+
+def test_a_skew_without_a_bank_simulates_without_it(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    from velocity.models import residuals
+
+    monkeypatch.setattr(residuals, "DATASETS", tmp_path)
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl", "--sim-skew", "fit"])
+    cfg = runner.football_sim_config("nfl", args)
+    assert cfg.total_skew == 0.0
+    assert "no residual bank" in capsys.readouterr().out
 
 
 def test_a_lattice_without_a_bank_simulates_without_it(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]

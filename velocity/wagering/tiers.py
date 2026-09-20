@@ -54,13 +54,17 @@ class RuleTier:
         return f"{sides} {self.min_points:g}+"
 
 
-# The wager lab's records on the promoted chains (2026-09-17). Tier A is the
-# side of the rule with the stronger record; tier B the promoted rule's
-# other side. A play that matches no row has no tier and is not posted.
+# The wager lab's records on the promoted chains (NFL 2026-09-20, on the
+# level round's ledger; college 2026-09-17). Tier A is the side of the rule
+# with the stronger record; tier B the promoted rule's other side. A play
+# that matches no row has no tier and is not posted. The NFL over side has
+# no row: on the new level's ledger overs at 4+ read 49.8% over 291 bets
+# (−3.3% at the juice; 49.4% on 2015+), where they read 52.8% before — a
+# coin flip either way, and the slate now takes NFL totals on the under
+# side only, as it has taken college's.
 RULE_TIERS: Mapping[str, tuple[RuleTier, ...]] = {
     "nfl": (
-        RuleTier("A", "total", frozenset({"under"}), 4.0, 0.556, 340, 9, 15),
-        RuleTier("B", "total", frozenset({"over"}), 4.0, 0.528, 301, 9, 14),
+        RuleTier("A", "total", frozenset({"under"}), 4.0, 0.562, 299, 11, 15),
     ),
     "ncaaf": (
         RuleTier("A", "total", frozenset({"under"}), 8.0, 0.572, 297, 8, 11),

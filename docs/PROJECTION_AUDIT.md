@@ -826,7 +826,11 @@ through `model_lab.py` on the standard walk-forward, as the rule requires.
    moves a season's totals by ±3 points with no stable sign? Pace, era
    scoring, kickoff-hour weather and crews are the candidates §6 named,
    and items 3, 5 and 7 are the cheap ones. *Effort M, and it gates the
-   skew draw.*
+   skew draw.* **Partly answered** (docs/MODEL_LAB.md, the level round):
+   a third of the wander is within-season drift a trailing-eight-week
+   level follows (promoted, shrunk toward the two seasons by 128 games;
+   rmse_total 13.552 → 13.517, better in eight seasons of twelve). The
+   covariate question stands for the rest.
 10. ~~Housekeeping: delete `pbp-2025.zip`; add the NFL plays-coverage
     assertion.~~ **Done**: the zip is gone (the build reads `pbp-*.csv`
     from `--src`, never the zip) and `tests/test_dataset_keys.py` refuses a

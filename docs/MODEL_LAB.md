@@ -2529,3 +2529,237 @@ correct is a fiftieth of a point.
 
 Both wrappers stay in `velocity/backtest/lab.py` as variants and are
 applied nowhere; the live slate is unchanged.
+
+## The SP+ blend round (2026-09-20) — success rate and explosiveness beside EPA
+
+SP+ decomposes a team into efficiency (success rate) and explosiveness (EPA
+on successful plays), and the audit's first item was that the plays frame
+has carried a `success` column since Round 1 without a variant reading it.
+`blend_team_components` blends the QB fit's team sides toward a
+success-rate ridge (converted to EPA units by the plays' own EPA-per-success
+gap, 1.96) and toward a ridge on successful plays only; the QB term, the
+starters and the pass rate are untouched. Over the full promoted chain,
+3,045 games, 2015–2026, 4,000 sims.
+
+| variant | Brier | log loss | calib. | rmse_margin | info_w_margin | rmse_total | info_w_total | ATS (flat) |
+|---|---|---|---|---|---|---|---|---|
+| promoted | 0.2197 | 0.6290 | 0.0170 | 13.008 | 0.034 | 13.552 | −0.018 | 48.5% |
+| succ0.25 | **0.2193** | **0.6281** | **0.0148** | **13.005** | 0.049 | 13.552 | −0.024 | 49.0% |
+| succ0.5 | 0.2194 | 0.6283 | 0.0152 | 13.025 | 0.060 | 13.559 | −0.029 | 49.6% |
+| expl0.25 | 0.2213 | 0.6325 | 0.0187 | 13.064 | −0.016 | **13.529** | **+0.015** | 49.5% |
+| succ0.25-expl0.25 | 0.2209 | 0.6316 | 0.0207 | 13.061 | −0.003 | 13.528 | +0.011 | 50.2% |
+
+The table reads like a small win for a quarter of success rate. The paired
+test does not:
+
+| vs promoted | ΔBrier per game | seasons better (of 12) | Δ squared margin error | seasons better | spread ≥4: record · units |
+|---|---|---|---|---|---|
+| succ0.25 | −0.00040 ± 0.00026 (t −1.5) | 6 | −0.06 ± 0.25 | 6 | 50.8% · −0.020 (vs 47.2% · −0.087) |
+| succ0.5 | −0.00032 ± 0.00052 (t −0.6) | 6 | +0.45 ± 0.50 | 6 | 52.5% · +0.015 |
+| expl0.25 | **+0.00157 ± 0.00052 (t +3.0)** | 4 | **+1.46 ± 0.53** | **2** | — |
+
+**Readings:**
+
+1. **Success rate is a coin flip beside EPA.** A quarter of it moves the
+   projected margin by 0.43 points a game on average and improves the
+   Brier in six seasons of twelve, the margin error in six of twelve, with
+   the paired difference a standard error and a half from zero. The
+   spread record at ≥4 points of disagreement improves (47.2% → 50.8%,
+   465 bets) and at ≥6 worsens (54.4% → 52.7%, 131 bets); both are inside
+   the noise of a hundred-odd bets. Nothing here is the consistent
+   per-season sign the promoted rounds had.
+2. **Explosiveness hurts the margin, clearly.** Three standard errors on
+   the Brier, worse margin error in ten seasons of twelve. A ridge on
+   successful plays only rates the offense that had its big plays go
+   in, and big plays are the least repeatable part of EPA — the same
+   reason the turnover shrink won. Its one gain is on totals (rmse_total
+   −0.024, `info_w_total` from −0.018 to +0.015), which says a team's
+   explosiveness carries information about how many points a game will
+   have that its margin rating does not; that is a totals question and
+   the level rounds are where it belongs.
+3. **Why EPA already has it.** Success rate is a coarsening of EPA — a
+   play succeeds when its EPA is positive-enough — and a ridge on EPA over
+   four seasons of plays is not short of information about which teams
+   sustain drives. SP+ needs the decomposition because it is built on
+   drive-level and game-level inputs; a play-level ridge does not.
+
+**Not promoted.** `blend_team_components` and `epa_per_success` stay in
+`velocity/features/team.py`, the variants in the lab. The audit's first
+item is answered rather than adopted.
+
+### Part two — the shrunk window, measured (promoted)
+
+Three variants over the promoted chain, same walk-forward, 3,045 games.
+`k` is the shrink in games: the window's level counts for its own games,
+the two-season level for `k` more.
+
+| variant | rmse_total | info_w_total | O/U (flat) · units | mean \|level\| by season | weeks 1–3 | Δ sq. total error vs promoted | seasons better |
+|---|---|---|---|---|---|---|---|
+| promoted (two seasons) | 13.552 | −0.018 | 49.9% · −0.034 | 1.44 | +0.37 | — | — |
+| lvlw8 (bare) | 13.521 | +0.011 | 49.8% | 1.01 | +0.89 | −0.91 ± 0.78 | 5/12 |
+| lvlw8s-k64 (within season) | **13.513** | −0.021 | 50.0% · −0.032 | 1.02 | +0.57 | −1.15 ± 0.51 | 6/12 |
+| lvlw8s-k128 (within season) | 13.518 | −0.021 | 50.2% · −0.029 | 1.12 | +0.52 | −0.99 ± 0.39 | 6/12 |
+| **lvlw8-k128** (crossing, shrunk) | 13.517 | −0.009 | 50.3% · −0.026 | 1.16 | +0.56 | **−1.10 ± 0.38** | **8/12** |
+
+Margins and the moneyline columns are identical across the row (the level
+shifts both teams alike). The totals record at the slate's own 4-point bar:
+53.3% · +0.034 per unit (523 bets) on the two-season level, **53.8% ·
++0.043 (457 bets)** on the shrunk window.
+
+**Readings:**
+
+1. **The shrink does what it was for.** September's over-projection under
+   the bare window (+0.89) comes back to +0.56, and the window keeps its
+   gains where the drift is: 2018 from +2.0 to +1.3, 2020 from +3.3 to
+   +2.3, 2021 from −1.6 to −0.7, 2022 from −0.6 to −0.2. Three of the four
+   variants improve the squared total error by more than two standard
+   errors; the bare window is the only one whose paired difference is
+   inside one.
+2. **Crossing the boundary, shrunk, beats stopping at it.** The
+   within-season windows are empty at week 1 and one week deep at week 2,
+   so through October they are mostly the two-season level with the
+   window's noise on top; the crossing window always holds 128 games and
+   the shrink halves December's pull rather than deferring it. Eight
+   seasons of twelve better, the most consistent of the four, and the
+   best `info_w_total` of the shrunk rows.
+3. **2026 is sixteen games and stays a level problem** (+3.9 either way):
+   nothing fitted on 2025 knows what September 2026 is scoring, and the
+   window will know by week 9.
+
+### Promotion decision
+
+**Promoted: `lvlw8-k128`** — the trailing eight on-field weeks across the
+season boundary, blended toward the trailing two seasons by 128 games.
+`NFL_LEVEL_WEEKS = 8`, `NFL_LEVEL_SHRINK_GAMES = 128.0` in the live runner
+beside `NFL_LEVEL_SEASONS = 2`; `promoted()` in the lab defaults to the
+same, with `live-nfl-promoted-level2s` keeping the previous chain for the
+record. The residual bank and the promoted ledger are rebuilt from the new
+chain (the scale reads the bank), and the skew re-test the skew round
+deferred runs on it below.
+
+College is unchanged: its level is drifting with the game, not within the
+season, and no window followed it (part one).
+
+### The wager lab on the new ledger — NFL totals go under-only
+
+The promoted ledger was rebuilt from the new chain (4,081 games), and the
+curated list's rule tiers (`velocity/wagering/tiers.py`) are pinned to it,
+so the wager lab (`scripts/wager_lab.py`) re-scored every rule:
+
+| rule | all seasons: bets · win · ROI · seasons above | 2015+: bets · win · ROI |
+|---|---|---|
+| NFL totals, unders 4+ | 299 · **56.2%** · **+9.4%** · 11 of 15 | 213 · 56.8% · +10.2% |
+| NFL totals, overs 4+ | 291 · 49.8% · −3.3% · 7 of 15 | 164 · 49.4% · −4.5% |
+| NFL totals, either 4+ | 590 · 53.1% · +3.2% · 7 of 16 | 377 · 53.6% · +3.8% |
+| NFL totals, either 6+ | 165 · 55.2% · +7.3% · 5 of 11 | 90 · 62.2% · +20.8% |
+
+Unders at 4+ improve under the new level (55.6% → 56.2%, 9 → 11 seasons
+above break-even); overs at 4+ fall from 52.8% to 49.8% — the level lifts
+the projected total in the seasons that were scoring more, so the
+disagreements that read "over" are now the ones the market already priced.
+52.8% was a coin flip against a 52.4% break-even and 49.8% is one too. The
+slate takes NFL totals on the under side only from here, as it has taken
+college's (`DEFAULT_TOTAL_SIDES_BY_LEAGUE`), and the NFL tier table has one
+row: A = unders at 4+, 56.2% over 299, 11 of 15.
+
+## The skew re-test (2026-09-20) — the shape is right, the centre is the level's
+
+The skew round deferred the totals skew to after the level; the level round
+landed a third of it. This re-runs both gates on the new promoted ledger
+and adds the measurement the two gates were missing between them.
+
+**The ladder gate, at the market's numbers, with the promoted lattice**
+(`residual_calibration`, NFL totals, 4,000 sims):
+
+| sim | sides open | worst | 4.5 over / under bias |
+|---|---|---|---|
+| shipped (lattice) | 50/58 | 0.0295 | +0.028 / −0.009 |
+| + skew at the bank's own ε (+0.18) | **58/58** | **0.0129** | +0.008 / +0.012 |
+| + skew ε = 0.25 | 58/58 | 0.0191 | +0.002 / +0.019 |
+| + skew ε = 0.33 (the close's skew) | 52/58 | 0.0278 | −0.006 / +0.028 |
+
+**The sim-shape gate, at the model's μ** (`sim_lab`, 2015+, 10k sims × 3
+seeds): `normal+skew` improves the totals tail (0.0327 → 0.0295) and the
+totals mean error (0.0266 → 0.0261) and worsens the totals shoulder (0.0524
+→ 0.0555); ECE 0.0575 → 0.0571; every margin column unchanged. The same
+disagreement as the skew round, smaller.
+
+**Why they disagree, exactly.** On the 2015+ bank at the model's μ the
+totals residual has **mean +0.58 and median 0.00**. The level calibration
+centres the *mean* projected total on the mean actual one; the slate and
+the market price the *median* (`fair_total` is the sim's median); and
+football's right skew puts those two about 0.6 points apart. So the
+symmetric sim's median sits on reality's median today — by that
+cancellation — and a mean-preserving skew moves the sim's median a point
+below it (at μ 45: median 45 → 44, P(total > 45.5) 0.486 → 0.459). Graded
+on every totals rung μ_t ± 0.5 … 14.5 across the 3,045 games:
+
+| sim | rung Brier | rung calibration | under-tail calib. | over-tail calib. | mean (quoted − happened) |
+|---|---|---|---|---|---|
+| shipped (lattice) | 0.19582 | 0.00811 | 0.00971 | 0.00671 | −0.003 |
+| + skew, mean kept | 0.19607 | 0.01526 | 0.02299 | 0.00925 | **−0.015** |
+| + skew, median kept | **0.19578** | **0.00759** | **0.00340** | 0.01126 | +0.006 |
+
+The mean-kept skew doubles the rung calibration error where the slate bets;
+the ladder gate could not see that because it level-matches on the
+empirical *mean*, which is the same convention. Re-centred on the median
+(the standardized transform's median is −0.064 sd, 0.87 points at σ 13.6),
+the skew is a small net gain — the under tail's calibration cut by two
+thirds, the over tail's worse by half, Brier flat — which is what a shape
+correction with the centre right looks like: real, and small.
+
+### Verdict
+
+**Not promoted, and closed as a shape question.** The skew is right about
+the tails and cannot ship as a mean-preserving draw while the level is a
+mean; the pair that would work — a level that centres the *median* and a
+skew that keeps it — is one design, not two switches, and its gain at the
+rungs is half a point of calibration on top of what the lattice already
+did. It goes behind the level's remaining question (the +0.58 out-of-sample
+mean: scoring rising year over year faster than a trailing window
+follows), which is worth more and would move the same rungs.
+
+`--sim-skew fit` stays on the live slate as a switch, off in both leagues;
+`fit_epsilon` on the bank reads +0.18 for the NFL.
+
+## The wepa round (2026-09-20) — play-context knobs chosen inside the window
+
+nfelo's wepa fits its play-context weights to predictiveness rather than
+setting them. The lab's version (`select_by_margin`, `context_fitted`):
+inside each training window, every candidate on a seven-entry grid — the
+turnover shrink at 0.25 / 0.5 / 0.75, garbage time, the money downs
+(third and fourth) at ×1.5 and ×0.75, and combinations — is fitted on the
+window's earlier seasons and scored by margin RMSE on its last complete
+season; the argmin is refitted on the whole window, chosen once per
+season. Beside it, the new money-downs knob alone at a fixed weight. Over
+the promoted chain, 3,045 games, 2015–2026.
+
+| variant | Brier | calib. | rmse_margin | info_w_margin | ATS (flat) | ΔBrier vs promoted | seasons | Δ sq. margin error | seasons |
+|---|---|---|---|---|---|---|---|---|---|
+| promoted | 0.2197 | 0.0170 | 13.008 | 0.034 | 48.5% | — | — | — | — |
+| late1.5 | 0.2210 | 0.0171 | 13.097 | −0.004 | 48.1% | +0.00130 ± 0.00042 | 2/12 | +2.33 ± 0.44 | 1/12 |
+| late0.75 | 0.2196 | 0.0176 | **12.987** | 0.063 | 48.2% | −0.00018 ± 0.00025 | 6/12 | **−0.54 ± 0.26** | **9/12** |
+| wepa (chosen per window) | 0.2197 | 0.0178 | 12.999 | 0.049 | 48.2% | −0.00001 ± 0.00025 | 3/12 | −0.23 ± 0.25 | 7/12 |
+
+**Readings:**
+
+1. **Choosing per window adds nothing.** One check season is ~270 games,
+   and a margin RMSE on 270 games cannot tell 0.25 from 0.5 on the
+   turnover shrink or ×0.75 from ×1 on the money downs; the selector's
+   choice moves season to season and its result is the grid's average —
+   the paired difference against the promoted chain is zero to the
+   fourth decimal. The mechanism works (tested, cached, walk-forward
+   honest) and is the wrong size for this data.
+2. **Up-weighting the money downs is clearly wrong** (margin error worse in
+   eleven seasons of twelve, three standard errors on the Brier): third
+   and fourth downs are the highest-leverage and least repeatable plays,
+   which is the turnover shrink's argument again.
+3. **Down-weighting them is a small, consistent margin gain** — 0.02 of
+   margin RMSE, better in nine seasons of twelve, two standard errors —
+   and nothing the slate stakes sees it: the moneyline Brier is flat, the
+   totals untouched, the flat ATS record 48.5% → 48.2% (a loser either
+   way, and unstaked). A finer sweep (×0.5–×0.9) belongs to a round where
+   the margin is a staked market.
+
+**Not promoted.** `select_by_margin` and the `late_down` knob stay in the
+lab; the live chain is unchanged.

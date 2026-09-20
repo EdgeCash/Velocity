@@ -70,6 +70,8 @@ seasons with five or more bets that cleared 52.4%.
 | **NFL totals, 4+ points, either side** | 641 | 54.3% | +5.7% | 9 of 15 | 36% |
 | NFL totals, unders 4+ | 340 | 55.6% | +8.4% | 9 of 15 | 41% |
 | NFL totals, overs 4+ | 301 | 52.8% | +2.6% | 9 of 14 | 33% |
+| *…on the level round's ledger (2026-09-20):* unders 4+ | 299 | 56.2% | +9.4% | 11 of 15 | 0% |
+| *…on the level round's ledger:* overs 4+ | 291 | 49.8% | −3.3% | 7 of 15 | 0% |
 | NFL totals, 6+ either | 182 | 58.8% | +14.3% | 5 of 11 | 20% |
 | NFL spreads, 6+ either | 121 | 55.4% | +7.6% | 8 of 12 | 0% |
 | NFL spreads, away 4+ | 214 | 55.1% | +7.5% | 9 of 15 | 0% |
@@ -194,7 +196,10 @@ the weights and the rules only make sense as a pair:
   disagreement — and the tier carries the lab's record. NFL: A = unders at
   4+ (55.6% over 340 bets, 9 of 15 seasons), B = overs at 4+ (52.8%, 301,
   9 of 14). College: A = unders at 8+ (57.2%, 297, 8 of 11), B = unders at
-  4–8 (53.6%, 1,263, 7 of 12). The table is pinned in code and a test
+  4–8 (53.6%, 1,263, 7 of 12). *2026-09-20, on the level round's ledger:*
+  NFL A = unders at 4+ (56.2% over 299, 11 of 15); the over row is gone —
+  overs at 4+ read 49.8% over 291 (−3.3% at the juice) and the NFL slate
+  takes totals on the under side only. The table is pinned in code and a test
   recomputes it from the committed projections, so it cannot drift from
   the evidence silently. The slate row carries ``rule_tier`` and
   ``rule_record``; the card's POST line prints them.

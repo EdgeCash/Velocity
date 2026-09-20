@@ -325,7 +325,7 @@ restored from a pre-backfill checkout and the script now merges by season.
 - **Neutral flag** (3.2): join at slate time; pass through every closure.
   Test: a neutral fixture game projects with zero HFA.
 
-### M1 — The sim (lab-gated, one PR) — **measured 2026-09; the level promoted, the shape once**
+### M1 — The sim (lab-gated, one PR) — **measured 2026-09; the level promoted (twice), the shape once**
 Both mechanisms shipped as switches (`SimConfig.residuals`, the slope
 fields; `--sim-shape`, `--sim-dispersion`), with the residual banks and the
 gate (`scripts/sim_lab.py`). Neither cleared the bar on the markets each

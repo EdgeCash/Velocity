@@ -275,8 +275,8 @@ def test_model_why_leads_with_the_play_and_its_record() -> None:
     # still show it, and the projection detail after.
     assert why.startswith(
         f"UNDER 47.5: model {dive.card.fair_total:.1f}, under by "
-        f"{47.5 - dive.card.fair_total:.1f}; unders 4+ ran 55.6% over 340 bets, "
-        "9 of 15 seasons. VETO — QB out: KC P. Mahomes. Model projects")
+        f"{47.5 - dive.card.fair_total:.1f}; unders 4+ ran 56.2% over 299 bets, "
+        "11 of 15 seasons. VETO — QB out: KC P. Mahomes. Model projects")
     # A play without a rule adds no lead line.
     bare = model_why(dive.card, dive.rows, dive.p_home_cover, dive.p_over,
                      plays=(PlayCall("spread", "home", -6.5, -110, "bookA", 2.0),))

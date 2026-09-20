@@ -39,7 +39,8 @@ def _bet(game_id: str, market: str, side: str, point: float | None, p_model: flo
 
 def test_slate_rows_carry_the_tier_the_play_earned() -> None:
     # g1: the model's total sits 6 under the number (tier A in the NFL);
-    # g2: 5 over (tier B); g3: a spread — no rule.
+    # g2: 5 over — no rule since the level round's ledger read overs 4+ at
+    # 49.8%; g3: a spread — no rule.
     projections = {"g1": _projection(20.0, 20.0), "g2": _projection(25.0, 25.0),
                    "g3": _projection(30.0, 20.0)}
     log = BetLog()
@@ -48,13 +49,14 @@ def test_slate_rows_carry_the_tier_the_play_earned() -> None:
     log.add(_bet("g3", "spread", "home", -3.0, 0.55))
     tiers = rule_tiers_for(log, projections, "nfl")
     assert tiers[("g1", "total", "under")].tier == "A"
-    assert tiers[("g2", "total", "over")].tier == "B"
+    assert ("g2", "total", "over") not in tiers
     assert ("g3", "spread", "home") not in tiers
     frame = slate_to_frame(log, tiers)
-    assert frame["rule_tier"].tolist()[:2] == ["A", "B"] and pd.isna(frame["rule_tier"].iloc[2])
+    assert frame["rule_tier"].tolist()[0] == "A" and frame["rule_tier"].iloc[1:].isna().all()
     assert frame["rule_record"].iloc[0] == tiers[("g1", "total", "under")].record
-    # College admits the under alone.
+    # Both leagues admit the under alone.
     assert set(rule_tiers_for(log, projections, "ncaaf")) == {("g1", "total", "under")}
+    assert set(tiers) == {("g1", "total", "under")}
     # Without a map the frame's tier columns are null, the old shape plus two.
     assert slate_to_frame(log)["rule_tier"].isna().all()
 

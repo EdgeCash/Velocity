@@ -30,6 +30,7 @@ import functools
 import math
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -175,6 +176,7 @@ def nfl_variants(
         epa_col: str = "epa", home: bool = False, offseason_weeks: float = 0.0,
         phase_lambda: float | None = None,
         success_weight: float = 0.0, explosive_weight: float = 0.0,
+        late_down: float | None = None,
     ) -> VariantFactory:
         """The QB-decomposed recency fit, optionally conditioned on the play
         context the rebuilt plays carry (velocity.features.team):
@@ -186,7 +188,9 @@ def nfl_variants(
         the team sides toward a success-rate ridge (SP+'s efficiency
         component, converted to EPA units by the plays' own EPA-per-success
         gap); ``explosive_weight`` toward a ridge fitted on successful plays
-        only (SP+'s explosiveness)."""
+        only (SP+'s explosiveness). ``late_down`` multiplies the weight of
+        third- and fourth-down plays (the money downs, where a drive lives
+        or dies)."""
         from velocity.features.team import (
             DEFAULT_QB_LAMBDA,
             attach_home_flag,
@@ -209,6 +213,9 @@ def nfl_variants(
                 col, factor, band = garbage
                 weights = weights * garbage_time_weights(
                     frame, factor=factor, band=band, wp_col=col)
+            if late_down is not None and "down" in frame.columns:
+                late = (pd.to_numeric(frame["down"], errors="coerce") >= 3).to_numpy()
+                weights = weights * np.where(late, float(late_down), 1.0)
             home_col: str | None = None
             if home and schedule is not None:
                 frame = attach_home_flag(frame, schedule)
@@ -598,7 +605,12 @@ def nfl_variants(
                 ``level_weeks`` fits the level on that many trailing on-field
                 weeks in place of the trailing two seasons, stopped at the
                 season boundary by ``level_within_season`` and shrunk back
-                toward the two-season level by ``level_shrink`` games."""
+                toward the two-season level by ``level_shrink`` games. The
+                defaults are the promoted level since the level round: eight
+                weeks across the boundary, shrunk by 128 games; ``level_weeks=0``
+                is the two-season fit the chain ran before it."""
+                if level_weeks is None:
+                    level_weeks, level_shrink = 8, 128.0
                 level = (levelled(core, 2, weeks=level_weeks,
                                   within_season=level_within_season,
                                   shrink_games=level_shrink) if level_weeks
@@ -625,6 +637,49 @@ def nfl_variants(
             # The promoted core after the recency round — what the live runner
             # fits — bound once so the situational rows read as what they are.
             gap8_core = qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0)
+
+            def context_fitted(grid: Mapping[str, dict[str, Any]]) -> VariantFactory:
+                """The promoted core with its play-context knobs chosen inside
+                each training window (select_by_margin): every candidate in
+                ``grid`` fitted on the window's earlier seasons and scored on
+                its last complete one, the argmin refitted on the whole
+                window. Chosen once per check season and cached, so the
+                choice is stable across the weeks of a season. The first
+                entry is the fallback while the window is too short to
+                choose."""
+                candidates = {name: qb_recency(17.0, 300.0, offseason_weeks=8.0, **kw)
+                              for name, kw in grid.items()}
+                default = next(iter(grid))
+                chosen: dict[int, str] = {}
+
+                def factory(train: pd.DataFrame) -> object:
+                    name = default
+                    if schedule is not None:
+                        latest = int(train["season"].max())
+                        if latest not in chosen:
+                            best, check = select_by_margin(candidates, train, schedule)
+                            chosen[latest] = best if best is not None else default
+                            if check is not None:
+                                print(f"    context weights for windows ending {latest}: "
+                                      f"{chosen[latest]} (checked on {check})")
+                        name = chosen[latest]
+                    return candidates[name](train)
+
+                return factory
+
+            # The wepa round (docs/PROJECTION_AUDIT.md §7 #6): the context
+            # knobs the lab swept once — the turnover shrink, garbage time
+            # and now the money downs — chosen per window instead.
+            CONTEXT_GRID: dict[str, dict[str, Any]] = {
+                "turnover0.5": {"turnover": 0.5},
+                "turnover0.25": {"turnover": 0.25},
+                "turnover0.75": {"turnover": 0.75},
+                "turnover0.5-garbage": {"turnover": 0.5, "garbage": ("wp", 0.5, 0.05)},
+                "turnover0.5-late1.5": {"turnover": 0.5, "late_down": 1.5},
+                "turnover0.5-late0.75": {"turnover": 0.5, "late_down": 0.75},
+                "turnover0.5-garbage-late1.5": {
+                    "turnover": 0.5, "garbage": ("wp", 0.5, 0.05), "late_down": 1.5},
+            }
 
             variants.update({
                 # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
@@ -699,6 +754,9 @@ def nfl_variants(
                                       level_shrink=128.0)),
                 "live-nfl-promoted-lvlw8-k128": (
                     "plays", promoted(gap8_core, level_weeks=8, level_shrink=128.0)),
+                # The chain as it ran before the level round — the two-season
+                # level — kept so the next round can read the step it took.
+                "live-nfl-promoted-level2s": ("plays", promoted(gap8_core, level_weeks=0)),
                 # The situational round, part two (docs/MODEL_LAB.md): two
                 # of nfelo's home-field findings the schedule columns can
                 # price. Surface: the away side a point worse on a surface
@@ -710,6 +768,15 @@ def nfl_variants(
                 "live-nfl-promoted-clock2.0": ("plays", clocked(promoted(gap8_core), 2.0)),
                 "live-nfl-promoted-surf1.0-clock2.0": (
                     "plays", clocked(surfaced(promoted(gap8_core), 1.0), 2.0)),
+                # The wepa round: the money downs alone, at a fixed weight,
+                # and the whole grid chosen per window.
+                "live-nfl-promoted-late1.5": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 late_down=1.5))),
+                "live-nfl-promoted-late0.75": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 late_down=0.75))),
+                "live-nfl-promoted-wepa": ("plays", promoted(context_fitted(CONTEXT_GRID))),
                 # SP+'s decomposition (docs/PROJECTION_AUDIT.md §7): the team
                 # sides blended toward a success-rate ridge (efficiency) and
                 # toward a ridge on successful plays only (explosiveness),
@@ -769,6 +836,64 @@ def nfl_variants(
                     "plays", promoted(qb_recency(25.0, 300.0, turnover=0.5, offseason_weeks=16.0))),
             })
     return variants
+
+
+def margin_rmse_on(model: object, games: pd.DataFrame) -> float:
+    """RMSE of the model's expected margin over ``games`` (played rows only)."""
+    played = games.dropna(subset=["home_score", "away_score"])
+    if played.empty:
+        return float("nan")
+    neutral = (played["neutral_site"].astype(bool).to_numpy()
+               if "neutral_site" in played.columns else np.zeros(len(played), dtype=bool))
+    errors = []
+    for home, away, flag, hs, as_ in zip(
+            played["home_team"], played["away_team"], neutral,
+            played["home_score"], played["away_score"], strict=True):
+        mu_home, mu_away = model.expected_points(  # type: ignore[attr-defined]
+            str(home), str(away), neutral_site=bool(flag))
+        errors.append(float(hs - as_) - (mu_home - mu_away))
+    return float(np.sqrt(np.mean(np.square(errors))))
+
+
+def select_by_margin(
+    candidates: Mapping[str, VariantFactory], plays: pd.DataFrame, schedule: pd.DataFrame,
+    *, min_games: int = 200,
+) -> tuple[str | None, int | None]:
+    """The candidate whose fit on the earlier seasons best predicts the last complete one.
+
+    The wepa idea (docs/PROJECTION_AUDIT.md §7): rather than sweep a
+    play-context knob once across the whole walk-forward and freeze the
+    winner, choose it inside each training window on the window's own
+    evidence, so the choice is as walk-forward as the ratings. ``plays`` is
+    the window; the check season is its latest season with at least
+    ``min_games`` played games on ``schedule`` (a season in progress is never
+    the check set — a two-week sample would choose on noise), every
+    candidate is fitted on the seasons before it and scored by
+    :func:`margin_rmse_on` on its games, and the argmin's name comes back
+    with the check season. ``(None, None)`` when no season qualifies or only
+    one candidate is offered: the caller keeps its default.
+    """
+    if len(candidates) < 2 or plays.empty or "season" not in plays.columns:
+        return None, None
+    window_ids = set(plays["game_id"].astype(str)) if "game_id" in plays.columns else None
+    played = schedule.dropna(subset=["home_score", "away_score"])
+    if window_ids is not None:
+        played = played[played["game_id"].astype(str).isin(window_ids)]
+    counts = played.groupby("season").size()
+    complete = counts[counts >= min_games]
+    seasons = sorted(int(s) for s in plays["season"].unique())
+    eligible = [s for s in seasons if s in complete.index and s > seasons[0]]
+    if not eligible:
+        return None, None
+    check = eligible[-1]
+    fit_part = plays[plays["season"] < check]
+    check_games = played[played["season"] == check]
+    if fit_part.empty or check_games.empty:
+        return None, None
+    scores = {name: margin_rmse_on(factory(fit_part), check_games)
+              for name, factory in candidates.items()}
+    best = min(scores, key=lambda k: (scores[k], list(candidates).index(k)))
+    return best, check
 
 
 def compress_plays(

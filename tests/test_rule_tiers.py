@@ -18,11 +18,13 @@ REPO = Path(__file__).parent.parent
 
 
 def test_tier_for_picks_the_highest_tier_whose_rule_admits_the_play() -> None:
-    # NFL: an under 4+ is tier A, an over 4+ tier B, anything under 4 or on
-    # another market nothing.
+    # NFL: an under 4+ is tier A; an over — any size, since the level round's
+    # ledger read overs 4+ at 49.8% — anything under 4, or another market,
+    # nothing.
     assert tier_for("nfl", "total", "under", 5.0).tier == "A"
-    assert tier_for("nfl", "total", "over", 4.0).tier == "B"
-    assert tier_for("nfl", "total", "over", 3.9) is None
+    assert tier_for("nfl", "total", "over", 4.0) is None
+    assert tier_for("nfl", "total", "over", 9.0) is None
+    assert tier_for("nfl", "total", "under", 3.9) is None
     assert tier_for("nfl", "spread", "home", 12.0) is None
     assert tier_for("nfl", "total", "under", None) is None
     # College: unders only — 8+ is tier A, 4–8 tier B, overs nothing.
