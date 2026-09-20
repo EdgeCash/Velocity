@@ -2698,19 +2698,32 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
             book = str(row.get("book", "")).strip().lower()
             return "exchange" if book in LADDER_BOOKS else None
 
-        candidates = [
-            BetCandidate(
-                key=str(i),
-                stake_fraction=float(row["stake"]) / args.bankroll,
-                group=str(row["game_id"]),
-                # One model assumption per class: a market for game bets, the
-                # prop market for props. Capped at half the slate.
-                market_class=(f"prop:{row['market']}" if row.get("kind") == "prop"
-                              else str(row["market"])),
-                venue=_venue_class(row),
-            )
-            for i, row in enumerate(card.to_dict("records"))
-        ]
+        def _candidates(rows: list[dict], skip: set[int] | None = None) -> list:
+            """The card's rows as portfolio candidates, minus the ones held.
+
+            A row already on the books cannot be placed again, so giving it a
+            share of the slate spends budget nothing can use and crowds out
+            the rows that can. ``skip`` is empty until the ledger has said
+            which rows it already holds.
+            """
+            skip = skip or set()
+            return [
+                BetCandidate(
+                    key=str(i),
+                    stake_fraction=float(row["stake"]) / args.bankroll,
+                    group=str(row["game_id"]),
+                    # One model assumption per class: a market for game bets,
+                    # the prop market for props. Capped at half the slate.
+                    market_class=(f"prop:{row['market']}" if row.get("kind") == "prop"
+                                  else str(row["market"])),
+                    venue=_venue_class(row),
+                )
+                for i, row in enumerate(rows)
+                if i not in skip
+            ]
+
+        rows = card.to_dict("records")
+        candidates = _candidates(rows)
         # The exchanges' first live exposure, bounded as a share of the slate
         # cap. A share of 1 removes the cap rather than setting it to the whole
         # slate — the same arithmetic, but it says so.
@@ -2728,8 +2741,6 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
         current = peak = None
         card["held"] = False
         if ledger is not None:
-            from velocity.wagering.ledger import bet_id
-
             state = ledger.state()
             current, peak = state.current, state.peak
             # Is this view already on the books? The ledger owns that question
@@ -2741,10 +2752,9 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                                r.get("player"), price=_clean_term(r.get("price")))
                 for r in card.to_dict("records")
             ]
-            ids = [bet_id(args.league, r["game_id"], r["market"], r["side"], r.get("player"),
-                          r.get("point"))
-                   for r in card.to_dict("records")]
             card["held"] = [h is not None for h in holds]
+            # Re-cut the candidates now the ledger has named what it holds.
+            candidates = _candidates(rows, {i for i, h in enumerate(holds) if h is not None})
             # Name the contract already on the books next to the one today's
             # card wanted, so a crowded-out venue is visible rather than a
             # count. This is how an inert exchange go-live was found.
@@ -2768,17 +2778,32 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                     print(f"    {line}")
                 if len(crowded) > 8:
                     print(f"    … and {len(crowded) - 8} more")
+            # EVERY open position counts against the cap, including the ones
+            # whose contract is also on today's card. An earlier version
+            # subtracted those, reasoning that a bet already on the books is
+            # held rather than doubled — true of SIZING and false of RISK.
+            # The money is on the table either way, so excluding it let the
+            # cap be exceeded by exactly that amount, every run: measured over
+            # 27 live runs the cap under-counted real exposure in 10 of them,
+            # by up to 3.59 of a ~105 bankroll (3.4%, a seventh of the whole
+            # 25% cap), and open exposure sat at 27–31% for eight days
+            # straight against a cap that is supposed to bind at 25%.
+            #
+            # Held rows are instead dropped from the CANDIDATES below, which
+            # is where "held, not doubled" actually belongs: they cannot be
+            # placed again, so spending the slate's budget on them crowds out
+            # bets that could be.
             on_card = ledger.open_bets()
-            elsewhere = float(on_card.loc[~on_card["bet_id"].isin(ids), "stake"].sum())
+            committed = float(on_card["stake"].sum())
             if should_halt(current, peak, config.max_drawdown_fraction):
                 halted = (f"drawdown {state.drawdown:.0%} ≥ "
                           f"{config.max_drawdown_fraction:.0%} (bankroll {current:.2f} "
                           f"from a peak of {peak:.2f})")
-            elif elsewhere > 0:
-                room = args.max_slate_fraction - elsewhere / args.bankroll
+            elif committed > 0:
+                room = args.max_slate_fraction - committed / args.bankroll
                 if room <= 0:
-                    halted = (f"open exposure {elsewhere:.2f} on other games already "
-                              f"fills the {args.max_slate_fraction:.0%} slate cap")
+                    halted = (f"open exposure {committed:.2f} already fills the "
+                              f"{args.max_slate_fraction:.0%} slate cap")
                 else:
                     # Rebuilt for the smaller slate cap — and it has to carry
                     # the venue caps with it. Constructing a bare config here
@@ -2786,8 +2811,8 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
                     # money was already on the table, which is when it matters.
                     config = PortfolioConfig(max_portfolio_fraction=room,
                                              venue_caps=config.venue_caps)
-                    print(f"open exposure {elsewhere:.2f} on games off today's card "
-                          f"leaves {room:.1%} of bankroll under the slate cap")
+                    print(f"open exposure {committed:.2f} leaves {room:.1%} of "
+                          f"bankroll under the slate cap")
         if halted is not None:
             sized = {c.key: 0.0 for c in candidates}
             print(f"\n=== KILL-SWITCH — halted: {halted}; every stake zeroed ===")
@@ -2796,7 +2821,9 @@ def _portfolio_card(  # noqa: PLR0913, PLR0915 - the sizing seam takes the card'
             sized = size_portfolio(candidates, args.bankroll, config,
                                    current_bankroll=current, peak_bankroll=peak)
         card["stake_solo"] = card["stake"]
-        card["stake"] = [round(sized[str(i)], 4) for i in range(len(card))]
+        # A held row is not in ``sized`` at all, and stakes at zero: the
+        # position it names is already on the books at its own terms.
+        card["stake"] = [round(sized.get(str(i), 0.0), 4) for i in range(len(card))]
         card["halted"] = halted is not None
         if halted is not None:
             card["note"] = f"halted: {halted}"

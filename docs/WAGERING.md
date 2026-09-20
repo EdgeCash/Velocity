@@ -318,6 +318,23 @@ edge research (docs/EDGE_RESEARCH.md):
   per-slate parquets keep solo-Kelly stakes for backtest comparability; the
   portfolio card is the number to bet. The kill-switch remains unreachable
   until W1 supplies bankroll state, exactly as §1.2 said.
+
+  **The cap counts every open position, which it did not always do.** A bet
+  already on the books whose contract also appeared on the day's card used to
+  be subtracted from the exposure the cap measures — "held, not doubled",
+  which is true of sizing and false of risk, because the money is on the
+  table either way. The leak was worth the held stake on every run: measured
+  over 27 live runs the cap under-counted real exposure in 10 of them, by up
+  to 3.59 of a ~105 bankroll, and open exposure sat at **27–31% for eight
+  days against a cap that binds at 25%**. Held rows are now dropped from the
+  *candidates* instead, which is where "held, not doubled" belongs — they
+  cannot be placed again, so a share of the slate spent on them is a share
+  nothing can use.
+
+  Net of both halves the old overshoot was `held stake − budget wasted on
+  held rows`; in the live ledger the first dominated. Expect the corrected
+  cap to place nothing new until open exposure falls back under 25%, which is
+  what it was always supposed to do.
 - **Per-market CLV trust (a W3 monitor building block).**
   `eval.metrics.clv_by_market` reports per-market CLV with a `clv_trusted`
   flag: CLV is the yardstick only where the close is efficient

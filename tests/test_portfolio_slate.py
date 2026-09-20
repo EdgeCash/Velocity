@@ -102,7 +102,7 @@ def test_ledger_seeds_stakes_and_books_the_card_end_to_end(tmp_path: Path) -> No
     assert "placed (auto)" in result.stdout
 
 
-def test_portfolio_card_holds_open_bets_and_counts_exposure_elsewhere(tmp_path: Path) -> None:
+def test_portfolio_card_counts_every_open_bet_against_the_slate_cap(tmp_path: Path) -> None:
     from datetime import UTC, datetime
 
     from velocity.wagering.ledger import Ledger
@@ -111,8 +111,17 @@ def test_portfolio_card_holds_open_bets_and_counts_exposure_elsewhere(tmp_path: 
     book = Ledger(path=tmp_path / "ledger.parquet")
     at = pd.Timestamp("2026-09-10 12:00")
     book.seed(100.0, at=at)
-    # g1's under is already on the books from Wednesday's card; a third bet
-    # on a game off today's card holds 20 units of the 25-unit slate cap.
+    # g1's under is already on the books from Wednesday's card (2 units); a
+    # third bet on a game off today's card holds 20 more. Twenty-two of the
+    # 25-unit cap is therefore already at risk.
+    #
+    # An earlier version subtracted the held 2 before computing the room,
+    # reasoning that a bet already on the books is "held, not doubled". That
+    # is true of sizing and false of risk — the money is on the table either
+    # way — so the cap leaked by exactly the held stake on every run. In the
+    # live ledger it under-counted real exposure in 10 of 27 runs, by up to
+    # 3.59 of a ~105 bankroll, and open exposure sat at 27-31% for eight days
+    # against a cap that binds at 25%.
     book.recommend(_card_frame().head(1), league="nfl", stamp="20260909T120000Z", at=at)
     book.place("nfl|g1|total|under|", 2.0, at=at)
     book.place(None, 20.0, price=-110.0, at=at,
@@ -123,9 +132,13 @@ def test_portfolio_card_holds_open_bets_and_counts_exposure_elsewhere(tmp_path: 
                            pd.Timestamp(now).tz_localize(None), ledger=book)
     card = pd.read_parquet(next(iter(tmp_path.glob("portfolio_nfl_*.parquet"))))
     assert card.set_index("game_id")["held"].to_dict() == {"g1": True, "g2": False}
-    # Room under the cap is 25 − 20 = 5 units: the sized total fits inside it.
-    assert card["stake"].sum() <= 5.0 + 1e-6
+    # Room is 25 − 22 = 3 units, not 25 − 20 = 5.
+    assert card["stake"].sum() <= 3.0 + 1e-6
     assert not card["halted"].any()
+    # The assertion that actually matters, and the one the old bound was too
+    # loose to make: once this card is booked, TOTAL money at risk is still
+    # inside the cap.
+    assert book.open_exposure() <= 25.0 + 1e-6
     # Auto mode placed only the bet that was not already open.
     placed = book.frame[book.frame["record_type"] == "placed"]
     # g1 was placed against the short, view-only id an operator might type;
@@ -134,6 +147,11 @@ def test_portfolio_card_holds_open_bets_and_counts_exposure_elsewhere(tmp_path: 
     assert placed["bet_id"].tolist() == ["nfl|g1|total|under||44.5", "nfl|g0|total|over||",
                                          "nfl|g2|spread|home||-3"]
     assert len(book.open_bets()) == 3
+    # And the held row takes no share of the slate. It cannot be placed
+    # again, so any budget given to it is budget nothing can use — which
+    # crowds out the rows that can.
+    assert card.set_index("game_id").loc["g1", "stake"] == 0.0
+    assert card.set_index("game_id").loc["g2", "stake"] > 0.0
 
 
 def test_portfolio_card_halts_past_the_drawdown_threshold(tmp_path: Path) -> None:
