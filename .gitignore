@@ -34,3 +34,14 @@ archive/
 # These are the real NFL/NCAAF inputs the local harness reads.
 !datasets/
 !datasets/**
+
+# ...but NOT the Excel export layer's output (velocity/export,
+# docs/HYBRID_MIGRATION_PLAN.md). Those CSVs are built from The Odds API
+# prices, BettingPros lines and DraftKings salaries — the exact paid-feed data
+# the artifacts/ rule above quarantines — so the opt-in must not sweep them
+# into a commit. This sits AFTER the opt-in because gitignore takes the last
+# matching pattern, and it is written `exports/*` rather than `exports/`:
+# excluding the DIRECTORY stops git descending into it, and the .gitkeep
+# below could never be re-included.
+datasets/exports/*
+!datasets/exports/.gitkeep

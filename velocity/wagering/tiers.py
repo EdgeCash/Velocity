@@ -106,3 +106,22 @@ def tier_for(
 
 def tier_rank(tier: RuleTier | None) -> int:
     return TIER_ORDER.get(tier.tier, 99) if tier is not None else 99
+
+
+def rule_named(
+    league: str, market: str, tier: str,
+    tiers: Mapping[str, Iterable[RuleTier]] | None = None,
+) -> RuleTier | None:
+    """The rule behind a tier letter already recorded on a slate row.
+
+    The slate banks ``rule_tier`` as a letter and ``rule_record`` as prose,
+    which is enough to print and not enough to score. This is the way back to
+    the numbers, so a downstream reader never has to parse the record string
+    — the one way a tier's win rate could come back different from the one
+    the lab measured.
+    """
+    table = (tiers or RULE_TIERS).get(league, ())
+    for candidate in table:
+        if candidate.market == market and candidate.tier == tier:
+            return candidate
+    return None
