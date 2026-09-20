@@ -587,6 +587,7 @@ jobs:
             artifacts/slate/*.png
             artifacts/slate/*.md
             artifacts/exports/*.csv
+            artifacts/exports/*.xlsx
           if-no-files-found: warn
           retention-days: 60
 
@@ -617,7 +618,12 @@ jobs:
           to: ${{ secrets.MAIL_TO }}
           subject: ${{ steps.email.outputs.subject }}
           html_body: file://artifacts/email/slate_email.html
-          attachments: artifacts/slate/*.xlsx
+          # The per-league slate workbook AND the whole-board one
+          # (velocity/export/workbook.py). The second is the only artifact
+          # usable on a tablet — Excel for iPad has no Power Query, so the
+          # CSVs beside it have no path there (docs/EXCEL_IPAD.md) — and mail
+          # is the shortest route onto one: open the message, tap the file.
+          attachments: artifacts/slate/*.xlsx,artifacts/exports/*.xlsx
 
       # The DFS surfaces run on their OWN clock (dfs-slate.yml), close to
       # lineup lock, because building before statsapi posts the batting

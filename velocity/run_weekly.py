@@ -45,6 +45,7 @@ from velocity.export.games import export_games
 from velocity.export.meta import EXPORT_DIR, ExportMeta
 from velocity.export.plays import export_plays
 from velocity.export.props import export_props
+from velocity.export.workbook import WORKBOOK_NAME, build_workbook
 
 STEPS: tuple[str, ...] = ("refresh", "slate", "dfs", "export")
 DEFAULT_LEAGUES: tuple[str, ...] = ("nfl", "ncaaf")
@@ -244,13 +245,29 @@ def export_step(args: argparse.Namespace) -> StepResult:
         # summary and the boards can never disagree about what the top play
         # was.
         plays_frame = pd.read_csv(out_dir / "plays.csv")
+        props_frame = pd.read_csv(out_dir / "props.csv")
+        dfs_frame = pd.read_csv(out_dir / "dfs.csv")
         paths.append(export_dashboard(
             meta,
             frames["record"] if not frames["record"].empty else None,
             plays=plays_frame,
-            props=pd.read_csv(out_dir / "props.csv"),
-            dfs=pd.read_csv(out_dir / "dfs.csv"),
+            props=props_frame,
+            dfs=dfs_frame,
             out_dir=out_dir,
+        ))
+
+        # ...and the same six tables as one finished workbook, read back from
+        # the CSVs rather than rebuilt, so the file and the files cannot
+        # disagree. This is the only artifact usable on a tablet: Excel for
+        # iPad has no Power Query (docs/EXCEL_IPAD.md).
+        paths.append(build_workbook(
+            out_dir / WORKBOOK_NAME, meta,
+            games=pd.read_csv(out_dir / "games.csv"),
+            props=props_frame,
+            dfs=dfs_frame,
+            dfs_optimizer=pd.read_csv(out_dir / "dfs_optimizer.csv"),
+            plays=plays_frame,
+            dashboard=pd.read_csv(out_dir / "dashboard.csv"),
         ))
     except Exception as exc:  # noqa: BLE001 - the orchestrator reports, never raises
         return StepResult("export", "failed", time.monotonic() - started, repr(exc))

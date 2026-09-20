@@ -1,5 +1,14 @@
 # Excel front end — setup, refresh, and workbook structure
 
+> **On an iPad, iPhone or Android tablet, read
+> [`docs/EXCEL_IPAD.md`](EXCEL_IPAD.md) instead.** Those versions of Excel
+> have no Power Query at all, so nothing on this page can be assembled there.
+> They get `velocity.xlsx` — one file, every tab already filled in — which
+> the same pipeline run produces alongside these CSVs.
+
+This page is the **desktop** route: Excel on Windows, or Mac with Power Query
+limitations.
+
 Velocity is the engine; Excel is the front end. The seam is six CSVs in
 `datasets/exports/`, written by `velocity/export` and refreshed by
 `python -m velocity.run_weekly`. Power Query reads them directly — no
@@ -21,6 +30,7 @@ python -m velocity.run_weekly   →   datasets/exports/*.csv   →   Refresh All
 | `dfs_optimizer.csv` | player, with one column per contest type | DFS Optimizer |
 | `plays.csv` | curated play, tiered A+/A/B/Watch | Curated Plays |
 | `dashboard.csv` | one metric (long format) | Dashboard, Historical Performance |
+| `velocity.xlsx` | — | **all of the above, prebuilt**: the tablet route, and a desktop shortcut |
 
 Every file carries `generated_at`, `season` and `week` on **every row**, as
 the last three columns. `generated_at` is when the *numbers* were made — the

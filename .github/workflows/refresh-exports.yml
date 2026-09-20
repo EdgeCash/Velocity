@@ -109,7 +109,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: exports-${{ github.run_id }}
-          path: artifacts/exports/*.csv
+          path: |
+            artifacts/exports/*.csv
+            artifacts/exports/*.xlsx
           if-no-files-found: error
           # Short on purpose: these are a projection of a slate artifact that
           # is itself kept 60 days, so a long retention here buys nothing and
