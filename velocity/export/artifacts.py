@@ -95,3 +95,70 @@ def stamp_to_timestamp(stamp: str) -> pd.Timestamp | None:
     if ts is pd.NaT:
         return None
     return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def load_board(
+    odds_dir: Path | str | None,
+    games: pd.DataFrame | None,
+    *,
+    max_snapshots: int = 24,
+) -> pd.DataFrame:
+    """The current market board for ``games``, from the hourly odds archive.
+
+    The staked slate carries a price only for the bets that cleared the gate,
+    so using it as the market side leaves every unbet game with no number at
+    all — a betting card of projections with nothing to compare them to. The
+    archive (``odds_lines_{stamp}.parquet``, written by
+    ``scripts/collect_theoddsapi.py``) is the whole board, which is what the
+    card actually wants.
+
+    Rows are reduced to the freshest quote per ``(game_id, market, side,
+    book)`` across the snapshots read, then canonicalized to
+    ``home``/``away``/``over``/``under`` against the run's own games frame —
+    the same exact per-event lookup
+    :func:`velocity.wagering.live.canonicalize_sides` does for the slate, so
+    a side that cannot be resolved is dropped rather than guessed.
+
+    Empty whenever there is no archive, no games, or no overlap — the export
+    then falls back to the slate and says so in its log.
+    """
+    if odds_dir is None or games is None or games.empty or "game_id" not in games.columns:
+        return pd.DataFrame()
+    folder = Path(odds_dir)
+    if not folder.exists():
+        return pd.DataFrame()
+    snapshots = sorted(folder.rglob("odds_lines_*.parquet"))[-max_snapshots:]
+    if not snapshots:
+        return pd.DataFrame()
+
+    wanted = set(games["game_id"].astype(str))
+    frames: list[pd.DataFrame] = []
+    for path in snapshots:
+        try:
+            snap = pd.read_parquet(path)
+        except Exception:  # noqa: BLE001 - a corrupt snapshot is skipped, not fatal
+            continue
+        if "game_id" not in snap.columns:
+            continue
+        snap = snap[snap["game_id"].astype(str).isin(wanted)]
+        if not snap.empty:
+            frames.append(snap)
+    if not frames:
+        return pd.DataFrame()
+
+    board = pd.concat(frames, ignore_index=True)
+    stamp = "timestamp" if "timestamp" in board.columns else None
+    if stamp is not None:
+        board[stamp] = pd.to_datetime(board[stamp], errors="coerce", utc=True)
+        board = board.sort_values(stamp)
+    keys = [k for k in ("game_id", "market", "side", "book") if k in board.columns]
+    if keys:
+        board = board.drop_duplicates(subset=keys, keep="last")
+
+    from velocity.wagering.live import canonicalize_sides
+
+    events = games.drop_duplicates(subset=["game_id"])
+    needed = {"game_id", "home_team", "away_team"}
+    if not needed <= set(events.columns):
+        return pd.DataFrame()
+    return canonicalize_sides(board.reset_index(drop=True), events)

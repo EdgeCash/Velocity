@@ -92,6 +92,14 @@ jobs:
           if [ -n "$dfs" ]; then
             gh run download "$dfs" --dir artifacts/slate/dfs || true
           fi
+          # The hourly odds archive — the MARKET side of the betting card.
+          # Without it games.csv carries a spread and total only for the games
+          # that earned a bet, which on a real run was 4 of 51.
+          mkdir -p artifacts/odds
+          for id in $(gh run list --workflow collect-odds.yml --status success \
+              --limit 6 --json databaseId --jq '.[].databaseId'); do
+            gh run download "$id" --dir "artifacts/odds/$id" || true
+          done
 
       - name: Export
         run: |
@@ -102,7 +110,8 @@ jobs:
             --out artifacts/exports \
             --data-dir datasets \
             --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }} \
-            --bankroll "${{ github.event.inputs.bankroll || '100' }}"
+            --bankroll "${{ github.event.inputs.bankroll || '100' }}" \
+            --odds-dir artifacts/odds
           ls -la artifacts/exports
 
       - name: Upload the exports

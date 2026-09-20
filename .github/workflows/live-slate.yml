@@ -574,7 +574,8 @@ jobs:
             --out artifacts/exports \
             --data-dir datasets \
             --leagues ${{ github.event.inputs.leagues || 'nfl ncaaf' }} \
-            --bankroll "${{ github.event.inputs.bankroll || '100' }}"
+            --bankroll "${{ github.event.inputs.bankroll || '100' }}" \
+            --odds-dir artifacts/odds
           ls -la artifacts/exports
 
       - name: Upload slates (Actions artifact)

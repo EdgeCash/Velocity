@@ -228,3 +228,161 @@ def test_strict_stops_at_the_first_failure(tmp_path: Path,
         assert code == 1
     else:  # pragma: no cover - the refresh reached the network and worked
         pytest.skip("refresh unexpectedly succeeded in this environment")
+
+
+# ---------------------------------------------------------------------------
+# The market side of the betting card.
+#
+# Regression: the first real run of this export produced a card with a market
+# total on 4 of 51 games and a spread on none. export_step never passed a
+# board, so build_games fell back to the staked slate — which carries a price
+# only for bets that cleared the gate.
+# ---------------------------------------------------------------------------
+
+def _odds_snapshot(folder: Path, stamp: str, rows: list[dict]) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_parquet(folder / f"odds_lines_{stamp}.parquet", index=False)
+
+
+def _board_rows(price: int = -110, point: float = 44.5) -> list[dict]:
+    """Provider-shaped rows: sides named by TEAM, not home/away."""
+    return [
+        {"game_id": "g1", "book": "dk", "market": "spread", "side": "Carolina",
+         "price": price, "point": -3.0, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g1", "book": "dk", "market": "spread", "side": "Atlanta",
+         "price": price, "point": 3.0, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g1", "book": "dk", "market": "total", "side": "Over",
+         "price": price, "point": point, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g1", "book": "dk", "market": "total", "side": "Under",
+         "price": price, "point": point, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g1", "book": "dk", "market": "moneyline", "side": "Carolina",
+         "price": -160, "point": None, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g1", "book": "dk", "market": "moneyline", "side": "Atlanta",
+         "price": 140, "point": None, "timestamp": "2026-09-20T17:00:00Z"},
+    ]
+
+
+def _board_games() -> pd.DataFrame:
+    return pd.DataFrame([{"game_id": "g1", "home_team": "Carolina",
+                          "away_team": "Atlanta", "league": "nfl"}])
+
+
+def test_load_board_canonicalizes_team_named_sides(tmp_path: Path) -> None:
+    from velocity.export.artifacts import load_board
+
+    _odds_snapshot(tmp_path, "20260920T170000Z", _board_rows())
+    board = load_board(tmp_path, _board_games())
+    assert not board.empty
+    assert set(board["side"]) <= {"home", "away", "over", "under"}
+    home_spread = board[(board["market"] == "spread") & (board["side"] == "home")]
+    assert float(home_spread.iloc[0]["point"]) == pytest.approx(-3.0)
+
+
+def test_load_board_takes_the_freshest_quote_per_book(tmp_path: Path) -> None:
+    from velocity.export.artifacts import load_board
+
+    _odds_snapshot(tmp_path, "20260920T150000Z", _board_rows(point=47.5))
+    _odds_snapshot(tmp_path, "20260920T170000Z", _board_rows(point=44.5))
+    board = load_board(tmp_path, _board_games())
+    totals = board[board["market"] == "total"]
+    # The stale 47.5 must not survive beside the current 44.5.
+    assert set(totals["point"]) == {44.5}
+
+
+def test_load_board_ignores_games_not_on_this_card(tmp_path: Path) -> None:
+    from velocity.export.artifacts import load_board
+
+    rows = _board_rows() + [
+        {"game_id": "other", "book": "dk", "market": "total", "side": "Over",
+         "price": -110, "point": 99.5, "timestamp": "2026-09-20T17:00:00Z"},
+    ]
+    _odds_snapshot(tmp_path, "20260920T170000Z", rows)
+    board = load_board(tmp_path, _board_games())
+    assert set(board["game_id"]) == {"g1"}
+
+
+def test_load_board_is_empty_rather_than_raising(tmp_path: Path) -> None:
+    from velocity.export.artifacts import load_board
+
+    assert load_board(None, _board_games()).empty
+    assert load_board(tmp_path / "missing", _board_games()).empty
+    assert load_board(tmp_path, None).empty
+    _odds_snapshot(tmp_path, "20260920T170000Z", _board_rows())
+    assert load_board(tmp_path, pd.DataFrame()).empty
+
+
+def test_the_card_prices_games_that_earned_no_bet(tmp_path: Path) -> None:
+    """The regression itself, end to end.
+
+    Two games, one staked bet. Without the archive only the bet game carries
+    a market number; with it, both do — and the unbet game gets the spread and
+    moneyline no slate row would ever have supplied.
+    """
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir(parents=True)
+    games = pd.DataFrame([
+        {"game_id": "g1", "home_team": "Carolina", "away_team": "Atlanta",
+         "kickoff": "2026-09-21T17:00:00Z"},
+        {"game_id": "g2", "home_team": "Denver", "away_team": "Kansas City",
+         "kickoff": "2026-09-21T20:00:00Z"},
+    ])
+    games.to_parquet(slate_dir / "games_nfl_20260920T175300Z.parquet", index=False)
+    pd.DataFrame([
+        {"game_id": "g1", "market": "total", "side": "under", "point": 44.5,
+         "book": "dk", "price": -110, "p_model": 0.58, "p_fair": 0.52,
+         "edge": 0.06, "stake": 2.4, "note": None, "rule_tier": "A"},
+    ]).to_parquet(slate_dir / "slate_nfl_20260920T175300Z.parquet", index=False)
+
+    odds = tmp_path / "odds"
+    rows = _board_rows() + [
+        {"game_id": "g2", "book": "dk", "market": "spread", "side": "Denver",
+         "price": -110, "point": 7.5, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g2", "book": "dk", "market": "spread", "side": "Kansas City",
+         "price": -110, "point": -7.5, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g2", "book": "dk", "market": "total", "side": "Over",
+         "price": -110, "point": 48.5, "timestamp": "2026-09-20T17:00:00Z"},
+        {"game_id": "g2", "book": "dk", "market": "moneyline", "side": "Denver",
+         "price": 260, "point": None, "timestamp": "2026-09-20T17:00:00Z"},
+    ]
+    _odds_snapshot(odds, "20260920T170000Z", rows)
+
+    def card(odds_dir: str | None) -> pd.DataFrame:
+        out = tmp_path / f"out-{odds_dir is not None}"
+        result = export_step(_args(slate_dir=str(slate_dir), out=str(out),
+                                   leagues=["nfl"], data_dir=str(tmp_path / "d"),
+                                   odds_dir=odds_dir))
+        assert result.status == "ok", result.detail
+        return pd.read_csv(out / "games.csv").set_index("game_id")
+
+    without = card(None)
+    # g1 earned a bet so its total survives; g2 earned nothing.
+    assert pd.isna(without.loc["g2", "market_total"])
+    assert without["market_spread"].isna().all()   # no spread was ever staked
+    assert without["moneyline"].isna().all()
+
+    with_board = card(str(odds))
+    assert with_board.loc["g2", "market_total"] == pytest.approx(48.5)
+    assert with_board.loc["g2", "market_spread"] == pytest.approx(7.5)
+    assert with_board.loc["g2", "moneyline"] == pytest.approx(260)
+    assert with_board.loc["g1", "market_spread"] == pytest.approx(-3.0)
+    # ...and the cover probability that depends on having a spread at all.
+    assert with_board["market_spread"].notna().all()
+
+
+def test_the_log_says_which_market_source_the_card_got(tmp_path: Path) -> None:
+    """Blank market cells look identical either way; the log must not."""
+    slate_dir = tmp_path / "slate"
+    slate_dir.mkdir(parents=True)
+    _board_games().to_parquet(
+        slate_dir / "games_nfl_20260920T175300Z.parquet", index=False)
+    odds = tmp_path / "odds"
+    _odds_snapshot(odds, "20260920T170000Z", _board_rows())
+
+    quiet = export_step(_args(slate_dir=str(slate_dir), out=str(tmp_path / "a"),
+                              leagues=["nfl"], data_dir=str(tmp_path / "d")))
+    assert "NO odds archive" in quiet.detail
+
+    loud = export_step(_args(slate_dir=str(slate_dir), out=str(tmp_path / "b"),
+                             leagues=["nfl"], data_dir=str(tmp_path / "d"),
+                             odds_dir=str(odds)))
+    assert "from the odds archive" in loud.detail
