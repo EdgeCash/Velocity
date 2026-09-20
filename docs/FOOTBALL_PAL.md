@@ -239,5 +239,16 @@ schema drops it without saying so.
    §6.1 recorded as missing — that section declined to calibrate per-game
    confidence because "the model does not produce a per-game uncertainty
    estimate at all, so there is nothing to calibrate", and now there is.
+
+   **The follow-up landed better than the sim did.**
+   `velocity/models/keynumbers.py` measures football's margin lattice off
+   the training seasons and reapplies it to whichever sim it is given, by
+   resampling that sim's own draws. It halves the NFL key-number error and
+   cuts college's by 69%, improves the spread profile in 10 of the NFL's 11
+   complete seasons, and costs nothing on Brier. On a 3-point favourite it
+   takes the push probability on exactly 3 from 3.1% to 7.7% — the shipped
+   sim was pricing the key numbers at about 40% of their real size. See
+   `docs/MODEL_LAB.md`, "the lattice round". Also not promoted: the
+   derivative re-check comes first.
 2. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

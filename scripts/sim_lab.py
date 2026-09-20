@@ -1,4 +1,4 @@
-"""The sim-shape gate: normal vs empirical draw, constant vs sloped sd, vs drives.
+"""The sim-shape gate: normal vs empirical draw, constant vs sloped sd, vs drives, vs lattice.
 
     python scripts/sim_lab.py --league ncaaf \\
         --projections /tmp/lab_ncaaf/projections_blend-epa50.parquet --eval-from 2022
@@ -10,6 +10,13 @@ error and Brier on the moneyline, plus E8's yardstick — the probability
 error at every half-point offset from the fair line, on both spreads and
 totals, which is the shape a ladder rung is priced from
 (docs/SYSTEM_REVIEW.md §2, M1's definition of done).
+
+``normal+keys`` is the shipped normal with football's own margin lattice
+measured off the training seasons and reapplied by resampling
+(:mod:`velocity.models.keynumbers`). It exists because the drive round left
+the two sims failing in opposite directions — the normal has the dispersion
+and no key numbers, the possession sampler the reverse — and this is the
+third option: take the lattice from the data and leave the dispersion alone.
 
 The last two variants are the possession sampler
 (:mod:`velocity.models.drive`). They are the only ones whose dispersion is
@@ -28,17 +35,25 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 from velocity.eval.metrics import brier_score, expected_calibration_error
 from velocity.models.drive import DriveConfig, fit_drive_config, simulate_drives
+from velocity.models.keynumbers import (
+    LatticeWeights,
+    fit_lattice_weights,
+    rounded_normal_mass,
+    simulated_margin_mass,
+)
 from velocity.models.residuals import ResidualPool, fit_sd_slope, residuals_from_projections
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
     DEFAULT_SD_TOTAL,
     NCAAF_SD_MARGIN,
     NCAAF_SD_TOTAL,
+    GameSim,
     SimConfig,
     simulate_game,
 )
@@ -56,6 +71,31 @@ DRIVE_CONFIGS = {
     "nfl": DriveConfig(drives=11.0, fg_to_td=0.65),
     "ncaaf": DriveConfig(drives=12.0, fg_to_td=0.50),
 }
+
+
+class Overlay(NamedTuple):
+    """A base sim plus the lattice correction applied to its draws.
+
+    A NamedTuple rather than a dataclass on purpose: this module is loaded
+    by path in ``tests/test_sim_lab.py``, and a dataclass under
+    ``from __future__ import annotations`` cannot resolve its own field
+    types when the module was never registered in ``sys.modules``.
+    """
+
+    base: SimConfig | DriveConfig
+    weights: LatticeWeights
+
+
+def draw(
+    config: SimConfig | DriveConfig, mu_margin: float, mu_total: float,
+    rng: np.random.Generator,
+) -> GameSim:
+    """One game from whichever sampler the config names."""
+    if isinstance(config, DriveConfig):
+        return simulate_drives(mu_margin, mu_total, rng, config)
+    return simulate_game(mu_margin, mu_total, rng, config)
+
+
 OFFSETS = np.arange(0.5, 29.0, 1.0)
 SHOULDER = OFFSETS <= 13.5
 # The integers a football margin piles up on, plus one that it does not. A
@@ -74,7 +114,7 @@ MARGIN_GRID = np.arange(0, 29)
 
 def season_configs(
     train: pd.DataFrame, base: SimConfig, drive: DriveConfig
-) -> dict[str, SimConfig | DriveConfig]:
+) -> dict[str, SimConfig | DriveConfig | Overlay]:
     """The six variants for one test season, fitted on ``train`` only.
 
     ``drive`` is the same for every season by construction: its dispersion
@@ -91,20 +131,36 @@ def season_configs(
     _, slope_m, _ = fit_sd_slope(train["mu_total"], train["resid_margin"])
     hetero = {"sd_total_slope": slope_t, "sd_margin_slope": slope_m,
               "sd_anchor_total": anchor}
+    actual = (train["mu_margin"] + train["resid_margin"]).to_numpy()
+    drive_fitted = fit_drive_config(
+        train["resid_margin"].to_numpy(), train["resid_total"].to_numpy(),
+        train["mu_total"].to_numpy(), drive)
+    # Measuring a 22-bin histogram does not need the scoring run's sim count.
+    drive_reference = replace(drive_fitted, n_sims=2000)
     return {
         "normal": base,
         "normal-hetero": replace(base, **hetero),
         "empirical": replace(base, residuals=pool),
         "empirical-hetero": replace(base, residuals=pool, **hetero),
+        "normal+keys": Overlay(base, fit_lattice_weights(
+            actual, rounded_normal_mass(
+                train["mu_margin"].to_numpy(), base.sd_margin))),
         "drive": drive,
-        "drive-fit": fit_drive_config(
-            train["resid_margin"].to_numpy(), train["resid_total"].to_numpy(),
-            train["mu_total"].to_numpy(), drive),
+        "drive-fit": drive_fitted,
+        # The synthesis: the possession sampler's dispersion and totals, with
+        # whatever lattice it still misses measured off the training seasons
+        # and put back. Its reference mass has no closed form, so it is
+        # simulated — under a fixed generator, so the fit is reproducible.
+        "drive-fit+keys": Overlay(drive_fitted, fit_lattice_weights(
+            actual, simulated_margin_mass(
+                train["mu_margin"].to_numpy(), train["mu_total"].to_numpy(),
+                lambda m, t, r: simulate_drives(m, t, r, drive_reference),
+                make_rng(20260920)))),
     }
 
 
 def score_variant(
-    test: pd.DataFrame, config: SimConfig | DriveConfig, seed: int
+    test: pd.DataFrame, config: SimConfig | DriveConfig | Overlay, seed: int
 ) -> dict[str, float]:
     """ECE / Brier on the moneyline, the offset profile, and key-number mass."""
     p_home: list[float] = []
@@ -117,9 +173,12 @@ def score_variant(
     for row in test.itertuples(index=False):
         rng = make_rng(seed + int(row.week))
         mu_m, mu_t = float(row.mu_margin), float(row.mu_total)
-        sim = (simulate_drives(mu_m, mu_t, rng, config)
-               if isinstance(config, DriveConfig)
-               else simulate_game(mu_m, mu_t, rng, config))
+        if isinstance(config, Overlay):
+            # Same generator for the draw and the resample, so the corrected
+            # variant is as deterministic as the one it corrects.
+            sim = config.weights.apply(draw(config.base, mu_m, mu_t, rng), rng)
+        else:
+            sim = draw(config, mu_m, mu_t, rng)
         p_home.append(sim.p_home_win())
         actual_m = mu_m + float(row.resid_margin)
         actual_t = mu_t + float(row.resid_total)
@@ -190,6 +249,9 @@ def main() -> None:
     parser.add_argument("--seeds", default="7,101,2027")
     parser.add_argument("--variants", default="")
     parser.add_argument("--out", default=None, help="optional parquet for the table")
+    parser.add_argument("--by-season", action="store_true",
+                        help="also print each variant season by season — a "
+                             "mean that one season carries is not a result")
     args = parser.parse_args()
 
     games = pd.read_parquet(args.games or f"datasets/{args.league}/games.parquet")
@@ -204,6 +266,7 @@ def main() -> None:
     print(f"{args.league}: {len(residuals)} walk-forward games; testing "
           f"{test_seasons[0]}–{test_seasons[-1]} at {args.n_sims} sims × seeds {seeds}")
     rows = []
+    seasonal: list[pd.DataFrame] = []
     for seed in seeds:
         per_variant: dict[str, list[pd.DataFrame]] = {}
         # Score season by season so each pool is point-in-time, then pool
@@ -219,6 +282,7 @@ def main() -> None:
                 scored = score_variant(test, cfg, seed)
                 scored.update(variant=name, seed=seed, season=season, n=len(test))
                 per_variant.setdefault(name, []).append(pd.DataFrame([scored]))
+                seasonal.append(pd.DataFrame([scored]))
         for name, parts in per_variant.items():
             frame = pd.concat(parts, ignore_index=True)
             w = frame["n"] / frame["n"].sum()
@@ -233,7 +297,7 @@ def main() -> None:
     summary = (table.drop(columns=["seed"]).groupby("variant", sort=False)
                .mean(numeric_only=True))
     order = ["normal", "normal-hetero", "empirical", "empirical-hetero",
-             "drive", "drive-fit"]
+             "normal+keys", "drive", "drive-fit", "drive-fit+keys"]
     summary = summary.reindex([v for v in order if v in summary.index])
     with pd.option_context("display.width", 200, "display.max_columns", None):
         print("\n=== Sim-shape gate (out-of-sample, mean over seeds; "
@@ -243,6 +307,15 @@ def main() -> None:
         print(summary.round(4).to_string())
         print("\nper seed:")
         print(table.round(4).to_string(index=False))
+        if args.by_season and seasonal:
+            by_season = (pd.concat(seasonal, ignore_index=True)
+                         .groupby(["season", "variant"], sort=True)
+                         .mean(numeric_only=True)
+                         .reset_index()
+                         .pivot(index="season", columns="variant",
+                                values=["key_mean", "spread_mean", "ece"]))
+            print("\n=== season by season (mean over seeds) ===")
+            print(by_season.round(4).to_string())
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         table.to_parquet(args.out, index=False)

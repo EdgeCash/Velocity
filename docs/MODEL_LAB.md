@@ -1774,3 +1774,112 @@ prices most.
    let the NFL lattice narrow, and it would move P(3) as well, since the
    endgame is where the three-point spike is made.
 3. **The NCAAF promotion**, with the full derivative re-check.
+
+## The lattice round (2026-09-20) — football's key numbers, measured and put back
+
+The drive round left the two sims failing in opposite directions. The shipped
+normal has the right dispersion and no key numbers: it puts 5.4% of NFL
+margins on 3 where football puts 14.8%. The possession sampler has the key
+numbers and, in the NFL, more dispersion than football has. This is the third
+option — take the lattice from the data, leave the dispersion alone.
+
+**The candidate** (`velocity/models/keynumbers.py`): one weight per absolute
+margin, measured as how much more often football lands there than the sim
+being corrected does, applied by resampling that sim's own draws. Fitted on
+the training seasons and scored on the held-out ones, like every other
+variant here. Two variants: `normal+keys` corrects the shipped sim,
+`drive-fit+keys` corrects the possession sampler.
+
+**Why the correction had to be global, which is the design decision worth
+recording.** The obvious build is a local pull — margins landing near 3 get
+snapped onto 3. One line of data rules it out. Against the shipped sim over
+3,044 NFL games a margin of 3 is short by **9.4 points of probability**,
+while 2 and 4 together are long by only **1.6**. The three-point spike is not
+borrowed from its neighbours; it is drawn from the whole distribution,
+including the margins football half-avoids — 9, 11, 12 and 15 all come in
+near half the rate a normal gives them. A local kernel would have been
+simpler, more explicable, and wrong.
+
+**What it is, and what it is not.** A correction, not a model. The drive sim
+explains where the mass at 7 comes from; this measures that football lands
+there and puts it back. That matters for how a win here should be read, and
+it matters more if the lattice ever moves — a correction fitted to a rule set
+goes stale silently where a structural model adapts.
+
+### NFL — 3,044 games, 2015–2026, 20k sims × 5 seeds
+
+| variant | ECE | Brier | key_mean ↓ | grid_mean ↓ | P(3) | P(7) | spread_mean ↓ | total_mean ↓ |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0596 | 0.2199 | 0.0325 | 0.0164 | 0.0541 | 0.0493 | 0.0246 | 0.0317 |
+| normal+keys | 0.0578 | 0.2199 | 0.0169 | 0.0101 | 0.1207 | 0.0807 | **0.0233** | 0.0315 |
+| drive-fit | 0.0582 | 0.2199 | 0.0257 | 0.0128 | 0.0821 | 0.0884 | 0.0285 | 0.0301 |
+| drive-fit+keys | 0.0576 | 0.2199 | **0.0162** | **0.0096** | 0.1299 | 0.0893 | 0.0244 | **0.0303** |
+
+*(actual: P(3) = 0.1478, P(7) = 0.0867)*
+
+### NCAAF — 3,270 games, 2022–2026, 20k sims × 5 seeds
+
+| variant | ECE | Brier | key_mean ↓ | grid_mean ↓ | P(3) | P(7) | spread_mean ↓ | total_mean ↓ |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0435 | 0.1901 | 0.0256 | 0.0139 | 0.0380 | 0.0363 | 0.0162 | 0.0221 |
+| normal+keys | 0.0428 | 0.1901 | 0.0080 | 0.0070 | 0.0908 | 0.0807 | **0.0159** | 0.0225 |
+| drive-fit | 0.0417 | 0.1900 | 0.0162 | 0.0094 | 0.0556 | 0.0643 | 0.0176 | 0.0200 |
+| drive-fit+keys | 0.0421 | 0.1900 | **0.0078** | **0.0065** | 0.0953 | 0.0866 | 0.0170 | **0.0197** |
+
+*(actual: P(3) = 0.1061, P(7) = 0.0865)*
+
+**Readings, honestly:**
+
+1. **The key-number win is large, and it is the metric the overlay
+   optimizes.** `key_mean` halves in the NFL and drops 69% in college. That
+   is what the thing was built to do, fitted on other seasons, so it is a
+   real out-of-sample result and not an impressive one on its own — it says
+   the lattice is stable season to season, which the weight tables confirm
+   directly (NFL `w(3)` sits between 2.29 and 2.46 across every training cut
+   from 2019 on).
+2. **The independent evidence is the spread offset profile, and it agrees.**
+   That metric is measured at half-point offsets from each game's own μ and
+   has nothing to do with the lattice fit, so it is free to disagree. It does
+   not: `spread_mean` improves in both leagues, and season by season it
+   improves in **10 of the NFL's 11 complete seasons** and 4 of college's 5.
+3. **Do not claim the calibration or Brier numbers.** ECE moves by 0.002 and
+   Brier not at all. Season by season the ECE difference is 6 of 12 in the
+   NFL — noise, and the per-season table is why it is being called noise
+   rather than a third win.
+4. **The overlay is not cosmetic; it moves the rungs that matter.** On a
+   3-point home favourite the push probability on exactly 3 goes from 3.1% to
+   7.7%, and covering −7.5 drops 4.6 points. That is the key-number effect
+   bettors buy half-points for, and the shipped sim was pricing it at about
+   40% of its real size.
+5. **The leagues have genuinely different lattices, which is a good sign the
+   fit is measuring football rather than noise.** Six is a key number in the
+   NFL (`w(6)` ≈ 1.29) and is not in college (`w(6)` ≈ 0.95), where 7 leans
+   much harder instead (2.26 against the NFL's 1.68). Nobody told it that.
+6. **`drive-fit+keys` is the best sim in the table, and the most expensive.**
+   It is best on key numbers and totals in both leagues, and adding the
+   lattice fixes the NFL spread deficit the drive round flagged (0.0285 →
+   0.0244, now better than the shipped 0.0246). But it carries the whole
+   possession sampler to get there, where `normal+keys` is a post-processing
+   step on the sim already running.
+
+### Promotion decision
+
+**Still nothing is promoted, and the live slate is unchanged** — but
+`normal+keys` is the strongest candidate the sim-shape work has produced, and
+the remaining bar is explicit rather than vague. It changes no μ, no
+dispersion and no model fit; it is a resample of draws the slate already
+makes. What promotion needs before it happens is the derivative re-check the
+drive round named: props, ladders, DFS and the correlation model all price
+off these samples, and a change that moves the push probability on 3 by 4.6
+points moves all of them. Eight gate columns are not that check.
+
+**Next, in order of expected value:**
+
+1. **Promote `normal+keys`**, with the full derivative re-check — the
+   ladders and props repriced and compared, not just the game markets.
+2. **Clock compression** (from the drive round), still the one mechanism that
+   would let the NFL possession lattice narrow, and the one that would
+   explain the three-point spike rather than measure it. The overlay closes
+   the NFL gap at 3 from 0.094 to 0.027 and does not explain a point of it.
+3. **A per-league `max_abs` and prior.** Both are currently one number for
+   both leagues, chosen on the NFL and never swept.
