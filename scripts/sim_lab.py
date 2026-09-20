@@ -1,4 +1,4 @@
-"""The sim-shape gate: normal vs empirical draw, constant vs sloped sd.
+"""The sim-shape gate: normal vs empirical draw, constant vs sloped sd, vs drives.
 
     python scripts/sim_lab.py --league ncaaf \\
         --projections /tmp/lab_ncaaf/projections_blend-epa50.parquet --eval-from 2022
@@ -10,6 +10,12 @@ error and Brier on the moneyline, plus E8's yardstick — the probability
 error at every half-point offset from the fair line, on both spreads and
 totals, which is the shape a ladder rung is priced from
 (docs/SYSTEM_REVIEW.md §2, M1's definition of done).
+
+The last two variants are the possession sampler
+(:mod:`velocity.models.drive`). They are the only ones whose dispersion is
+not set from the league constants at all — it falls out of the scoring rates
+— so they are the ones that can be *structurally* wrong rather than merely
+mis-tuned, and the ``key_*`` columns exist to catch exactly that.
 
 Honest by construction: each test season's residual pool and dispersion
 slopes are fitted on the seasons before it, so the empirical draw never sees
@@ -26,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from velocity.eval.metrics import brier_score, expected_calibration_error
+from velocity.models.drive import DriveConfig, fit_drive_config, simulate_drives
 from velocity.models.residuals import ResidualPool, fit_sd_slope, residuals_from_projections
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
@@ -41,14 +48,44 @@ LEAGUE_SDS = {
     "nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
     "ncaaf": (NCAAF_SD_MARGIN, NCAAF_SD_TOTAL),
 }
+# Per-team possessions and field-goal-to-touchdown ratio by league, from each
+# sport's own box scores rather than fitted here — college plays slightly more
+# possessions than the NFL and converts more of them into touchdowns rather
+# than field goals, which is a coarser scoring lattice.
+DRIVE_CONFIGS = {
+    "nfl": DriveConfig(drives=11.0, fg_to_td=0.65),
+    "ncaaf": DriveConfig(drives=12.0, fg_to_td=0.50),
+}
 OFFSETS = np.arange(0.5, 29.0, 1.0)
 SHOULDER = OFFSETS <= 13.5
+# The integers a football margin piles up on, plus one that it does not. A
+# half-point offset profile cannot see any of them: its offsets are measured
+# from each game's own μ, which is not an integer, so no offset ever isolates
+# "the margin was exactly three". These are absolute margins, which is what a
+# half-point through 3 is bought and sold on.
+#
+# 4 is in the list deliberately and is NOT a key number — the NFL lands on it
+# in 4.6% of games against 14.8% on 3. A sim that earns its key numbers by
+# smearing mass over every small margin would improve on 3 and 7 and get 4
+# wrong by the same amount, and scoring only the spikes would call that a win.
+KEY_NUMBERS = np.array([3, 7, 10, 14, 6, 4])
+MARGIN_GRID = np.arange(0, 29)
 
 
 def season_configs(
-    train: pd.DataFrame, base: SimConfig
-) -> dict[str, SimConfig]:
-    """The four variants for one test season, fitted on ``train`` only."""
+    train: pd.DataFrame, base: SimConfig, drive: DriveConfig
+) -> dict[str, SimConfig | DriveConfig]:
+    """The six variants for one test season, fitted on ``train`` only.
+
+    ``drive`` is the same for every season by construction: its dispersion
+    falls out of football's own drive count and scoring mix, with nothing in
+    it to fit. ``drive-fit`` is the same lattice — the drive count and the
+    scoring mix are NOT fitted, deliberately — with the two mechanisms
+    sitting outside it solved against the training seasons' residual
+    moments: the model's own projection error and the shared scoring
+    environment. The pair separates "the possession structure is right" from
+    "the possession structure is right once what it omits is accounted for".
+    """
     pool = ResidualPool.from_frame(train)
     _, slope_t, anchor = fit_sd_slope(train["mu_total"], train["resid_total"])
     _, slope_m, _ = fit_sd_slope(train["mu_total"], train["resid_margin"])
@@ -59,22 +96,30 @@ def season_configs(
         "normal-hetero": replace(base, **hetero),
         "empirical": replace(base, residuals=pool),
         "empirical-hetero": replace(base, residuals=pool, **hetero),
+        "drive": drive,
+        "drive-fit": fit_drive_config(
+            train["resid_margin"].to_numpy(), train["resid_total"].to_numpy(),
+            train["mu_total"].to_numpy(), drive),
     }
 
 
 def score_variant(
-    test: pd.DataFrame, config: SimConfig, seed: int
+    test: pd.DataFrame, config: SimConfig | DriveConfig, seed: int
 ) -> dict[str, float]:
-    """ECE / Brier on the moneyline and the offset-error profile, one seed."""
+    """ECE / Brier on the moneyline, the offset profile, and key-number mass."""
     p_home: list[float] = []
     y: list[float] = []
     k = len(OFFSETS)
     sim_tail = np.zeros((4, k))  # over/under margin, over/under total — sim
     real_tail = np.zeros((4, k))  # the same four, what actually happened
+    sim_grid = np.zeros(MARGIN_GRID.size)  # P(|margin| == m), summed over games
+    real_grid = np.zeros(MARGIN_GRID.size)
     for row in test.itertuples(index=False):
         rng = make_rng(seed + int(row.week))
         mu_m, mu_t = float(row.mu_margin), float(row.mu_total)
-        sim = simulate_game(mu_m, mu_t, rng, config)
+        sim = (simulate_drives(mu_m, mu_t, rng, config)
+               if isinstance(config, DriveConfig)
+               else simulate_game(mu_m, mu_t, rng, config))
         p_home.append(sim.p_home_win())
         actual_m = mu_m + float(row.resid_margin)
         actual_t = mu_t + float(row.resid_total)
@@ -92,15 +137,40 @@ def score_variant(
         real_tail[1] += actual_m < mu_m - OFFSETS
         real_tail[2] += actual_t > mu_t + OFFSETS
         real_tail[3] += actual_t < mu_t - OFFSETS
+        # Absolute-margin mass, which is where the key numbers live. The
+        # normal path is rounded so its margins are integers too; bincount
+        # over the grid is exact for both.
+        abs_margin = np.abs(sim.margin).astype(np.int64)
+        sim_grid += np.bincount(
+            np.clip(abs_margin, 0, MARGIN_GRID.size - 1),
+            minlength=MARGIN_GRID.size) / n
+        # Rounded, not truncated: ``actual_m`` is μ plus a residual that was
+        # computed by subtracting that same μ, so it is an integer in exact
+        # arithmetic and need not be one in floating point. A truncation there
+        # silently moves a three-point game onto 2.
+        real_grid[min(int(round(abs(actual_m))), MARGIN_GRID.size - 1)] += 1.0
     games = float(len(test))
     err = np.abs(sim_tail - real_tail) / games
     err_m = np.maximum(err[0], err[1])
     err_t = np.maximum(err[2], err[3])
+    grid_err = np.abs(sim_grid - real_grid) / games
     p = np.array(p_home)
     yy = np.array(y)
     return {
         "ece": expected_calibration_error(p, yy),
         "brier": brier_score(p, yy),
+        # How far the sim's mass at each absolute margin is from how often
+        # that margin actually happened: over the key integers, and over the
+        # whole 0–28 grid (which also catches mass invented elsewhere).
+        "key_max": float(grid_err[KEY_NUMBERS].max()),
+        "key_mean": float(grid_err[KEY_NUMBERS].mean()),
+        "grid_mean": float(grid_err.mean()),
+        "p3": float(sim_grid[3] / games),
+        "p7": float(sim_grid[7] / games),
+        # The yardstick, identical across variants within a season: how often
+        # these games really landed on 3 and on 7.
+        "real_p3": float(real_grid[3] / games),
+        "real_p7": float(real_grid[7] / games),
         "spread_shoulder_max": float(err_m[SHOULDER].max()),
         "spread_tail_max": float(err_m[~SHOULDER].max()),
         "spread_mean": float(err_m.mean()),
@@ -126,6 +196,7 @@ def main() -> None:
     residuals = residuals_from_projections(pd.read_parquet(args.projections), games)
     sd_m, sd_t = LEAGUE_SDS[args.league]
     base = SimConfig(n_sims=args.n_sims, sd_margin=sd_m, sd_total=sd_t)
+    drive = replace(DRIVE_CONFIGS[args.league], n_sims=args.n_sims)
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
     wanted = [v.strip() for v in args.variants.split(",") if v.strip()]
 
@@ -142,7 +213,7 @@ def main() -> None:
             test = residuals[residuals["season"] == season]
             if len(train) < 200 or test.empty:
                 continue
-            for name, cfg in season_configs(train, base).items():
+            for name, cfg in season_configs(train, base, drive).items():
                 if wanted and name not in wanted:
                     continue
                 scored = score_variant(test, cfg, seed)
@@ -152,19 +223,23 @@ def main() -> None:
             frame = pd.concat(parts, ignore_index=True)
             w = frame["n"] / frame["n"].sum()
             row = {"variant": name, "seed": seed, "n": int(frame["n"].sum())}
-            for col in ("ece", "brier", "spread_shoulder_max", "spread_tail_max",
+            for col in ("ece", "brier", "key_max", "key_mean", "grid_mean",
+                        "p3", "p7", "real_p3", "real_p7",
+                        "spread_shoulder_max", "spread_tail_max",
                         "spread_mean", "total_shoulder_max", "total_tail_max", "total_mean"):
                 row[col] = float((frame[col] * w).sum())
             rows.append(row)
     table = pd.DataFrame(rows)
     summary = (table.drop(columns=["seed"]).groupby("variant", sort=False)
                .mean(numeric_only=True))
-    order = ["normal", "normal-hetero", "empirical", "empirical-hetero"]
+    order = ["normal", "normal-hetero", "empirical", "empirical-hetero",
+             "drive", "drive-fit"]
     summary = summary.reindex([v for v in order if v in summary.index])
     with pd.option_context("display.width", 200, "display.max_columns", None):
         print("\n=== Sim-shape gate (out-of-sample, mean over seeds; "
               "offset errors are worst |sim − real| probability at any half-point "
-              "offset, shoulder ≤ 13.5 / tail 14.5–28.5) ===")
+              "offset, shoulder ≤ 13.5 / tail 14.5–28.5; key_* are absolute-margin "
+              "mass errors, p3/p7 against real_p3/real_p7) ===")
         print(summary.round(4).to_string())
         print("\nper seed:")
         print(table.round(4).to_string(index=False))
