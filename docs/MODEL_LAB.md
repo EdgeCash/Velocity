@@ -2639,3 +2639,63 @@ deferred runs on it below.
 
 College is unchanged: its level is drifting with the game, not within the
 season, and no window followed it (part one).
+
+## The skew re-test (2026-09-20) — the shape is right, the centre is the level's
+
+The skew round deferred the totals skew to after the level; the level round
+landed a third of it. This re-runs both gates on the new promoted ledger
+and adds the measurement the two gates were missing between them.
+
+**The ladder gate, at the market's numbers, with the promoted lattice**
+(`residual_calibration`, NFL totals, 4,000 sims):
+
+| sim | sides open | worst | 4.5 over / under bias |
+|---|---|---|---|
+| shipped (lattice) | 50/58 | 0.0295 | +0.028 / −0.009 |
+| + skew at the bank's own ε (+0.18) | **58/58** | **0.0129** | +0.008 / +0.012 |
+| + skew ε = 0.25 | 58/58 | 0.0191 | +0.002 / +0.019 |
+| + skew ε = 0.33 (the close's skew) | 52/58 | 0.0278 | −0.006 / +0.028 |
+
+**The sim-shape gate, at the model's μ** (`sim_lab`, 2015+, 10k sims × 3
+seeds): `normal+skew` improves the totals tail (0.0327 → 0.0295) and the
+totals mean error (0.0266 → 0.0261) and worsens the totals shoulder (0.0524
+→ 0.0555); ECE 0.0575 → 0.0571; every margin column unchanged. The same
+disagreement as the skew round, smaller.
+
+**Why they disagree, exactly.** On the 2015+ bank at the model's μ the
+totals residual has **mean +0.58 and median 0.00**. The level calibration
+centres the *mean* projected total on the mean actual one; the slate and
+the market price the *median* (`fair_total` is the sim's median); and
+football's right skew puts those two about 0.6 points apart. So the
+symmetric sim's median sits on reality's median today — by that
+cancellation — and a mean-preserving skew moves the sim's median a point
+below it (at μ 45: median 45 → 44, P(total > 45.5) 0.486 → 0.459). Graded
+on every totals rung μ_t ± 0.5 … 14.5 across the 3,045 games:
+
+| sim | rung Brier | rung calibration | under-tail calib. | over-tail calib. | mean (quoted − happened) |
+|---|---|---|---|---|---|
+| shipped (lattice) | 0.19582 | 0.00811 | 0.00971 | 0.00671 | −0.003 |
+| + skew, mean kept | 0.19607 | 0.01526 | 0.02299 | 0.00925 | **−0.015** |
+| + skew, median kept | **0.19578** | **0.00759** | **0.00340** | 0.01126 | +0.006 |
+
+The mean-kept skew doubles the rung calibration error where the slate bets;
+the ladder gate could not see that because it level-matches on the
+empirical *mean*, which is the same convention. Re-centred on the median
+(the standardized transform's median is −0.064 sd, 0.87 points at σ 13.6),
+the skew is a small net gain — the under tail's calibration cut by two
+thirds, the over tail's worse by half, Brier flat — which is what a shape
+correction with the centre right looks like: real, and small.
+
+### Verdict
+
+**Not promoted, and closed as a shape question.** The skew is right about
+the tails and cannot ship as a mean-preserving draw while the level is a
+mean; the pair that would work — a level that centres the *median* and a
+skew that keeps it — is one design, not two switches, and its gain at the
+rungs is half a point of calibration on top of what the lattice already
+did. It goes behind the level's remaining question (the +0.58 out-of-sample
+mean: scoring rising year over year faster than a trailing window
+follows), which is worth more and would move the same rungs.
+
+`--sim-skew fit` stays on the live slate as a switch, off in both leagues;
+`fit_epsilon` on the bank reads +0.18 for the NFL.
