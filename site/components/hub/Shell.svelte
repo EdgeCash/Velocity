@@ -55,6 +55,7 @@
   export let dfsTiered = [];
   export let dfsPool = [];
   export let unitSplits = [];
+  export let playerRatings = [];
   export let ledgerOpen = [];
   export let bankroll = [];
   export let record = [];
@@ -299,7 +300,7 @@
           league={activeLeague} {isPrivate}
         />
       {:else}
-        <RatingsPanel {ratings} {teams} league={activeLeague} />
+        <RatingsPanel {ratings} {teams} league={activeLeague} players={playerRatings} />
       {/if}
     </main>
 

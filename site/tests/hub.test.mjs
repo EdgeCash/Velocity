@@ -43,6 +43,8 @@ import {
   leagueCounts,
   matchupBoard,
   matchupUnits,
+  playerRatingRows,
+  playerRatingWindow,
   parlayCounts,
   ratingAliases,
   ratingRows,
@@ -1313,4 +1315,53 @@ test('a game with no projection has nothing to key units on', () => {
   });
   assert.deepEqual(game.units, []);
   assert.equal(matchupBoard([game]).length, 0);
+});
+
+/* ---- Player ratings (docs/FOOTBALL_PAL.md) ------------------------------- */
+
+const RATED = [
+  { league: 'nfl', player_id: 'qb1', player: 'Jordan Love', team: 'GB',
+    position: 'QB', games: 18, dropbacks: 555, epa_per_dropback: 0.227,
+    cpoe: 4.05, carries: 40, yards_per_carry: 4.2, targets: 0,
+    yards_per_target: null, dk_points_per_game: 18.2,
+    season_from: 2025, season_to: 2026 },
+  { league: 'nfl', player_id: 'rb1', player: 'Josh Jacobs', team: 'GB',
+    position: 'RB', games: 18, dropbacks: null, epa_per_dropback: null,
+    cpoe: null, carries: 300, yards_per_carry: 4.6, targets: 40,
+    yards_per_target: 6.1, dk_points_per_game: 16.4,
+    season_from: 2025, season_to: 2026 },
+  { league: 'ncaaf', player_id: 'c1', player: 'A Back', team: 'Georgia',
+    position: 'RB', games: 12, dropbacks: null, epa_per_dropback: null,
+    cpoe: null, carries: 150, yards_per_carry: 5.5, targets: 10,
+    yards_per_target: null, dk_points_per_game: 14.0,
+    season_from: 2025, season_to: 2026 },
+  { league: '__none__', player_id: '', player: '' },
+];
+
+test('player ratings filter by league and never show the sentinel', () => {
+  assert.equal(playerRatingRows(RATED).length, 3);
+  assert.equal(playerRatingRows(RATED, { league: 'nfl' }).length, 2);
+  assert.ok(!playerRatingRows(RATED).some((r) => r.league === '__none__'));
+});
+
+test('a search matches the player, the team or the position', () => {
+  assert.equal(playerRatingRows(RATED, { query: 'jacobs' }).length, 1);
+  assert.equal(playerRatingRows(RATED, { query: 'GB' }).length, 2);
+  assert.equal(playerRatingRows(RATED, { query: 'QB' }).length, 1);
+});
+
+test('sorting puts the unrated last rather than on top', () => {
+  // Only the quarterback has EPA per dropback; the others must not sort
+  // above him on it, which is where NaN lands if it is not handled.
+  const byEpa = playerRatingRows(RATED, { sort: 'epa_per_dropback' });
+  assert.equal(byEpa[0].player, 'Jordan Love');
+  assert.equal(byEpa[1].epa_per_dropback, null);
+  const byCarry = playerRatingRows(RATED, { sort: 'yards_per_carry' });
+  assert.equal(byCarry[0].player, 'A Back');
+});
+
+test('the window is read off the rows for the panel to state once', () => {
+  assert.equal(playerRatingWindow(RATED), '2025–2026');
+  assert.equal(playerRatingWindow([{ league: 'nfl', season_from: 2026, season_to: 2026 }]), '2026');
+  assert.equal(playerRatingWindow([]), '');
 });
