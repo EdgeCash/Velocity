@@ -129,8 +129,8 @@ def test_a_very_wide_gap_is_flagged_rather_than_amplified() -> None:
 # --- the total lean --------------------------------------------------------
 
 @pytest.mark.parametrize(("fair", "market", "label", "detail"), [
-    (52.0, 48.0, "OVER 48", "rule B · 52.8% on 301"),
-    (44.0, 48.0, "UNDER 48", "rule A · 55.6% on 340"),
+    (44.0, 48.0, "UNDER 48", "rule A · 56.2% on 299"),
+    (40.5, 48.0, "UNDER 48", "rule A · 56.2% on 299"),
 ])
 def test_total_lean_names_the_side_at_the_posted_number(
         fair: float, market: float, label: str, detail: str) -> None:
@@ -141,9 +141,13 @@ def test_total_lean_names_the_side_at_the_posted_number(
 
 
 def test_total_lean_holds_inside_the_bar() -> None:
-    lean = _card(fair_total=48.0 + 3.9, total=48.0).total_lean()
+    lean = _card(fair_total=48.0 - 3.9, total=48.0).total_lean()
     assert not lean.fired
-    assert lean.detail == "over by 3.9 · below the 4 bar"
+    assert lean.detail == "under by 3.9 · below the 4 bar"
+    # The NFL over side has no rule since the level round's ledger, so an
+    # over gap of any size says why it is blank, as college's does.
+    over = _card(fair_total=48.0 + 6.0, total=48.0).total_lean()
+    assert not over.fired and over.detail == "no rule for overs"
 
 
 def test_college_total_lean_takes_unders_only() -> None:

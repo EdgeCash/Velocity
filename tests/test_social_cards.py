@@ -169,19 +169,21 @@ def test_edges_fire_only_where_a_rule_with_a_record_admits_the_number() -> None:
     assert not edges["total"].fired
     assert edges["total"].detail == "under by 1.5 · below the 4 bar"
 
-    # Totals lean where the rule admits the gap, and carry its record.
+    # Totals lean where the rule admits the gap, and carry its record. The
+    # NFL over side has no row since the level round's ledger (overs 4+ read
+    # 49.8%), so an over gap says why it is blank, as college's always has.
     hot = _card(fair_total=52.0, p_home_win=0.75, market_view=view).edges()
-    assert hot["total"].fired and hot["total"].label == "OVER 47.5"
-    assert hot["total"].detail == "over by 4.5 · rule B · 52.8% on 301"
-    assert hot["total"].rule is not None and hot["total"].rule.tier == "B"
+    assert not hot["total"].fired and hot["total"].detail == "no rule for overs"
+    assert hot["total"].rule is None and hot["total"].points == 4.5
     assert not hot["win"].fired  # 75% vs a ~58% implied: still no rule
     cold = _card(fair_total=40.0, p_home_win=0.40, market_view=view).edges()
-    assert cold["total"].label == "UNDER 47.5"
-    assert cold["total"].detail == "under by 7.5 · rule A · 55.6% on 340"
+    assert cold["total"].fired and cold["total"].label == "UNDER 47.5"
+    assert cold["total"].detail == "under by 7.5 · rule A · 56.2% on 299"
+    assert cold["total"].rule is not None and cold["total"].rule.tier == "A"
     # The caption carries the rule's full record beside the lean.
     text = caption(_card(fair_total=40.0, p_home_win=0.40, market_view=view))
     assert ("Model lean: UNDER 47.5 (by 7.5 · rule A: "
-            "unders 4+ 55.6% over 340 bets, 9 of 15 seasons).") in text
+            "unders 4+ 56.2% over 299 bets, 11 of 15 seasons).") in text
 
 
 def test_college_edges_take_unders_only_and_tier_the_widest() -> None:
@@ -396,8 +398,8 @@ def test_cards_carry_play_calls_and_caption_states_them() -> None:
     ruled = PlayCall("total", "under", 47.5, 105, "fd", 0.5, tier="A",
                      rule=RULE_TIERS["nfl"][0])
     assert ruled.label("BUF", "KC") == (
-        "UNDER 47.5 · +105 (fd) · 0.5u · tier A · unders 4+ 55.6% over 340 bets, "
-        "9 of 15 seasons")
+        "UNDER 47.5 · +105 (fd) · 0.5u · tier A · unders 4+ 56.2% over 299 bets, "
+        "11 of 15 seasons")
     assert ruled.label("BUF", "KC", record=False) == "UNDER 47.5 · +105 (fd) · 0.5u · tier A"
     # A card with no staked plays keeps the plain lean grammar.
     bare = build_social_cards({"g1": _projection()}, EVENTS)[0]
