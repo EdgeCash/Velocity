@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -38,8 +39,9 @@ def test_season_configs_fit_on_train_only_and_span_the_grid() -> None:
     drive = DriveConfig(n_sims=2000)
     configs = _MOD.season_configs(train, base, drive)
     assert list(configs) == ["normal", "normal-hetero", "empirical",
-                             "empirical-hetero", "normal+keys", "drive",
-                             "drive-fit", "drive-fit+keys"]
+                             "empirical-hetero", "normal+keys", "normal+skew",
+                             "normal+skew+keys", "drive", "drive-fit",
+                             "drive-fit+keys"]
     assert configs["normal"] == base
     assert configs["normal-hetero"].sd_anchor_total > 0
     assert configs["empirical"].residuals is not None
@@ -58,6 +60,11 @@ def test_season_configs_fit_on_train_only_and_span_the_grid() -> None:
     assert configs["normal+keys"].base == base
     assert configs["normal+keys"].weights.weights.size > 1
     assert configs["drive-fit+keys"].base == fitted
+    # The skew re-shapes the total and touches nothing else about the sim.
+    skewed = configs["normal+skew"]
+    assert skewed.total_skew != 0.0
+    assert replace(skewed, total_skew=0.0) == base
+    assert configs["normal+skew+keys"].base == skewed
 
 
 def test_score_variant_returns_the_gate_columns_in_range() -> None:

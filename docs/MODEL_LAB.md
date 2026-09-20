@@ -2063,3 +2063,107 @@ the table is a statement about a particular sim.
    nothing in the sim can express it; the count sim and the drive sim both
    can, which makes this the first concrete use for either on totals.
 3. **Clock compression** (from the drive round).
+
+## The skew round (2026-09-20) — the shape is right, the level is louder
+
+The gate-reference round named a defect the old ladder table had blurred into
+"leptokurtosis": **total residuals are right-skewed and the sim is
+symmetric.** A game can run away upward and cannot run away downward, and
+both leagues say so — skew +0.33 (NFL) and +0.34 (college) against the market
+close, where the spreads are +0.10 and +0.01. This builds the draw that can
+express it and measures what it is worth.
+
+**The candidate** (`velocity/models/skew.py`): a sinh-arcsinh transform at
+δ=1, where it collapses to `Y = Z·cosh(ε) + √(1+Z²)·sinh(ε)` — no special
+functions, monotone in the draw it was given (so a jointly-drawn margin and
+total stay paired), and with closed-form first three moments, so it is
+standardized exactly rather than by the sample. `total_skew` on `SimConfig`
+re-shapes the total's draw and nothing else; the margin is untouched, and a
+residual pool is not skewed twice because it already carries the league's own
+shape.
+
+**The skew itself is solid.** It is stable across every training cut in both
+leagues and around both reference points: +0.27 to +0.33 in the NFL and +0.33
+to +0.36 in college, measured around the model's own μ, against a sampling
+error of ±0.04. This is a real property of football, not a fitted wobble.
+
+### Measured with the level removed, it is a large win
+
+The ladder gate (`velocity/eval/ladders.py`) shifts the sim by the empirical
+residual's mean before measuring, so it is a statement about shape alone.
+There the skew roughly halves the totals error and opens every remaining
+totals rung in both leagues:
+
+| league | reference | worst | mean | sides open |
+|---|---|---|---|---|
+| nfl total | symmetric (shipped) | 0.0293 | 0.0163 | 49/58 |
+| nfl total | **skew-aware** | **0.0133** | **0.0078** | **58/58** |
+| ncaaf total | symmetric (shipped) | 0.0255 | 0.0115 | 53/58 |
+| ncaaf total | **skew-aware** | **0.0141** | **0.0083** | **58/58** |
+
+At 4.5 points out the NFL's `(over, under)` bias goes from `(+0.028, −0.008)`
+to `(+0.007, +0.013)` and college's from `(+0.020, −0.020)` to
+`(−0.004, +0.004)`. The sign of the miss the gate-reference round identified
+is gone.
+
+### Measured around the model's own μ, the answer flips with the league
+
+`scripts/sim_lab.py` does **not** remove the level, and there the same
+parameter gives opposite verdicts:
+
+| | NFL | NCAAF |
+|---|---|---|
+| total_shoulder_max, symmetric | 0.0618 | 0.0406 |
+| total_shoulder_max, **+skew** | **0.0655** (worse) | **0.0286** (better) |
+| total_mean, symmetric | 0.0318 | 0.0221 |
+| total_mean, **+skew** | 0.0314 | **0.0189** |
+
+That is not the skew disagreeing with itself. **It is each league's totals
+level wandering, and the wander is bigger than the shape.** The model's
+`resid_total` mean is +0.57 in the NFL and **−0.53 in college — opposite
+signs** — and per season the NFL's runs from −1.6 to +3.3. Right skew moves a
+distribution's median left at fixed mean, so it compounds a positive level
+error and offsets a negative one, which is exactly the pattern above.
+
+Correcting the level with the training seasons' own mean does not rescue it,
+because the level is not stably estimable: fitted at +0.279 on NFL training,
+the test window came in at +0.674. Level-plus-skew improves the NFL's mean
+error 0.0143 → 0.0100 and its deep tail 0.0234 → 0.0104 while still costing
+the shoulder, 0.0205 → 0.0230.
+
+**Readings, honestly:**
+
+1. **The shape claim is established and the live claim is not.** The skew is
+   the right description of football totals and, with the level held equal,
+   it halves the error the ladder gate measures. Around the model's actual
+   projections its effect is dominated by a level that moves ±1–3 points a
+   season with no stable sign.
+2. **Two gates disagreeing was the finding.** The ladder gate alone would
+   have read as an unambiguous win and been promoted on that evidence. The
+   only reason it did not is that `sim_lab` measures around a different
+   centre, and the contradiction is what exposed the level.
+3. **A fatter-tailed draw still would not fix this**, and now neither does a
+   correctly-skewed one, for a reason that has nothing to do with either: on
+   totals the model's aim wanders more than its shape is wrong.
+
+### Promotion decision
+
+**Not promoted.** Shipping it would open 14 totals ladder sides — the gate
+blocks them for a shape error this genuinely fixes — at the cost of the
+shoulder in whichever league's level happens to wander positive. That is a
+real trade rather than a win, and it is not one to take silently.
+
+`velocity/models/skew.py` is imported by `velocity/models/simulate.py` behind
+a `total_skew` that defaults to zero, so the shipped sim is bit-identical
+to what it was.
+
+**Next, in order of expected value:**
+
+1. **The totals level.** It is now the largest single error on totals and
+   nothing in the lab has aimed at it. Per-season means of −1.6 to +3.3 in
+   the NFL are not noise around a fixed number the way a shape error is —
+   they look like a missing covariate (pace? weather? era scoring?), and
+   that is a modelling question rather than a sim question.
+2. **Promote `normal+keys`**, still cleared and still unpromoted.
+3. **Re-test the skew once the level is addressed.** With the level right,
+   the ladder-gate result says it is worth 14 rungs.
