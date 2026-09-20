@@ -5,6 +5,9 @@ The pipeline can finish successfully and still hand you half a board. On
 DFS pool and no weather** — with nothing anywhere saying so. This page is
 what to do about that.
 
+The system end to end is [`docs/WORKFLOW.md`](WORKFLOW.md); this page is the
+game-day subset of it.
+
 ---
 
 ## 1. Why a green run is not the same as a good board

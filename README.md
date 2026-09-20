@@ -38,6 +38,9 @@ python -m velocity.run_weekly --slate-dir artifacts/slate   # full week
 python -m velocity.run_weekly --steps export                # re-export only, seconds
 ```
 
+[`docs/WORKFLOW.md`](docs/WORKFLOW.md) is the operating manual — how the
+system runs end to end, on whose clock, and what to do about it.
+
 Every run also states whether the board is actually usable — `readiness.csv`,
 a colour-coded **Run status** block on the workbook's first tab, and a CI gate
 that fails the job when a surface the card needs is missing
