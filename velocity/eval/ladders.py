@@ -38,6 +38,16 @@ under: at 4.5 out, NFL totals are +0.028 over and −0.008 under, NCAAF +0.020
 and −0.020. This is a different defect from the spreads' and wants a
 different fix; a fatter-tailed draw would not touch it.
 
+A draw that CAN express it exists — :mod:`velocity.models.skew`, reachable
+from ``SimConfig.total_skew`` — and measured here it roughly halves the
+totals error and opens every totals rung in both leagues (49/58 → 58/58 for
+the NFL, 53/58 → 58/58 for college). It is not shipped, and the reason is
+recorded in ``docs/MODEL_LAB.md`` under "the skew round": measured around the
+model's own μ rather than around a level-matched close, the same parameter
+helps college and hurts the NFL, because each league's totals level wanders
+by more than the shape is wrong. Until that level is addressed these nine and
+five sides stay shut.
+
 **The two tails do not move together, and the gate reads them apart.**
 :data:`OFFSET_BIAS` keeps the error *signed* per tail — positive where the sim
 overstates that tail — because only one sign is dangerous. A rung whose own

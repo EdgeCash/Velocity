@@ -11,6 +11,11 @@ error at every half-point offset from the fair line, on both spreads and
 totals, which is the shape a ladder rung is priced from
 (docs/SYSTEM_REVIEW.md §2, M1's definition of done).
 
+``normal+skew`` re-shapes the TOTAL's draw to carry the right skew football
+actually has (:mod:`velocity.models.skew`); ``normal+keys`` does the same job
+for the MARGIN's lattice. The two are orthogonal and the combination is the
+row worth reading.
+
 ``normal+keys`` is the shipped normal with football's own margin lattice
 measured off the training seasons and reapplied by resampling
 (:mod:`velocity.models.keynumbers`). It exists because the drive round left
@@ -57,6 +62,7 @@ from velocity.models.simulate import (
     SimConfig,
     simulate_game,
 )
+from velocity.models.skew import fit_epsilon
 from velocity.util.seed import make_rng
 
 LEAGUE_SDS = {
@@ -132,6 +138,7 @@ def season_configs(
     hetero = {"sd_total_slope": slope_t, "sd_margin_slope": slope_m,
               "sd_anchor_total": anchor}
     actual = (train["mu_margin"] + train["resid_margin"]).to_numpy()
+    skewed = replace(base, total_skew=fit_epsilon(train["resid_total"].to_numpy()))
     drive_fitted = fit_drive_config(
         train["resid_margin"].to_numpy(), train["resid_total"].to_numpy(),
         train["mu_total"].to_numpy(), drive)
@@ -143,6 +150,13 @@ def season_configs(
         "empirical": replace(base, residuals=pool),
         "empirical-hetero": replace(base, residuals=pool, **hetero),
         "normal+keys": Overlay(base, fit_lattice_weights(
+            actual, rounded_normal_mass(
+                train["mu_margin"].to_numpy(), base.sd_margin))),
+        # The other asymmetry: total residuals are right-skewed and the sim
+        # is symmetric. Orthogonal to the lattice — one re-shapes the total,
+        # the other the margin — so the pair is the interesting row.
+        "normal+skew": skewed,
+        "normal+skew+keys": Overlay(skewed, fit_lattice_weights(
             actual, rounded_normal_mass(
                 train["mu_margin"].to_numpy(), base.sd_margin))),
         "drive": drive,
@@ -297,7 +311,8 @@ def main() -> None:
     summary = (table.drop(columns=["seed"]).groupby("variant", sort=False)
                .mean(numeric_only=True))
     order = ["normal", "normal-hetero", "empirical", "empirical-hetero",
-             "normal+keys", "drive", "drive-fit", "drive-fit+keys"]
+             "normal+keys", "normal+skew", "normal+skew+keys",
+             "drive", "drive-fit", "drive-fit+keys"]
     summary = summary.reindex([v for v in order if v in summary.index])
     with pd.option_context("display.width", 200, "display.max_columns", None):
         print("\n=== Sim-shape gate (out-of-sample, mean over seeds; "

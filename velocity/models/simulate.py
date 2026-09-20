@@ -102,6 +102,19 @@ class SimConfig:
     # two configs with the same numbers are the same config; the pool is
     # data, not a knob.
     residuals: ResidualPool | None = field(default=None, compare=False)
+    # The one asymmetry football actually has (velocity/models/skew.py). A
+    # game can run away upward and cannot run away downward, so total
+    # residuals are right-skewed — +0.33 in the NFL and +0.34 in college
+    # against the market close, where the spreads are +0.10 and +0.01. This
+    # re-shapes the TOTAL's draw to carry that skew, exactly and only: the
+    # transform is standardized in closed form, so the mean and sd stay put
+    # and ``sd_total`` keeps meaning what it says, and the margin is not
+    # touched at all. Zero is the symmetric draw exactly.
+    #
+    # Applied on the normal path only. A residual pool already carries the
+    # league's own shape, skew included, so skewing it again would count the
+    # same asymmetry twice.
+    total_skew: float = 0.0
     # The discrete path (velocity/models/counts.py). When set, the game is
     # sampled as two run/goal COUNTS rather than a rounded normal on the
     # margin, and the sds, slopes, correlation and residual pool above are all
@@ -238,6 +251,15 @@ def simulate_game(
         draws = rng.multivariate_normal([mu_margin, mu_total], cov, size=config.n_sims)
         margin = draws[:, 0]
         total = draws[:, 1]
+        if config.total_skew:
+            # Re-shape the total's own draw. Monotone in the draw it was
+            # given, so a shootout stays a shootout and the pairing with the
+            # margin survives; with a non-zero margin/total correlation the
+            # linear one moves a little, which football's ≈0 does not care
+            # about and a league that did would need to fit around.
+            from velocity.models.skew import skew_draw
+            total = mu_total + sd_total * skew_draw(
+                (total - mu_total) / sd_total, config.total_skew)
     else:
         # The empirical shape: standardized residual pairs from the banked
         # walk-forward pool, drawn jointly (so margin/total dependence is the
