@@ -661,3 +661,176 @@ college round then moved the college margin 0.85 points and the total
 measured and small, the EPA-half prior lost) but through recency on the
 EPA half, which is roster knowledge by another route: in the portal era,
 last season's snaps describe a different team.
+
+---
+
+## 7. Second audit (2026-09-20) — is the projection using everything now?
+
+Three days and fourteen lab rounds after §0. The question is the same and
+so is the method: every column in every football frame, every module under
+`velocity/features/`, and every source in §5 — read by the projection, read
+by a wrapper, read only by the site, or read by nothing.
+
+### 7.0 The answer
+
+**No — but the unused set is now mostly things the lab tested and rejected,
+and the list of things never tested is short, specific, and almost entirely
+data already on disk.** Of the nineteen items in §3, thirteen are promoted
+or rejected on evidence, five are open, and one (the college QB term) is
+built, measured and deliberately parked. Nothing from §5 has an ingest yet.
+
+The one structural finding this pass adds: **the model's aim on totals
+wanders more than its shape is wrong.** The per-season mean of the NFL
+totals residual runs from −1.6 to +3.3 with no stable sign, and college's
+sits at −0.5 against the NFL's +0.6 (`docs/MODEL_LAB.md`, the skew round).
+That is the signature §6 predicted — "accuracy has to come from
+information, not fit" — and it is where the never-tested items below point.
+
+### 7.1 What the projection reads today
+
+**NFL** (`_build_projection`, the promoted chain):
+
+| input | frame · columns | how it enters |
+|---|---|---|
+| efficiency | `plays`: `epa`, `posteam`, `defteam`, `season`, `week`, `passer_player_id` | `fit_qb_ratings`, trailing four seasons |
+| turnover luck | `plays`: `interception`, `fumble_lost` | EPA ×0.5 before the fit |
+| recency | `plays`: `season`, `week` | half-life 17 wks, 8-wk offseason gap |
+| play population | `plays`: `play_type` | `all` — the scrimmage filter was rejected |
+| starter | `player_weeks` + FantasyPros/ESPN depth + `injuries` | `starter_map` overrides the fit's detection |
+| injury burden | `injuries` × `player_weeks` (targets, carries) | 4 pts per whole team out |
+| level, scale | the residual bank | `base_points` shift; margin/total slopes |
+| rest | `games`: `kickoff` (re-derived) | bye +1.0, short week −1.0 |
+| weather | Open-Meteo forecast; `games`: `roof` | wind ≥15 mph ×0.30 on the total; rain ≥0.25 in, 1.0 a side |
+| home field | constant | 2.0 pts (the fitted edge lost) |
+| market | The Odds API board | anchor `belief = market + 0.2·(model − market)` |
+
+**NCAAF** (the blend): scores fit with the SP+ prior at K=12 including
+special teams, scores recency half-life 34; EPA half on `plays` (`epa`,
+`posteam`, `defteam`, `season`, `week`) at half-life 6 with a 6-week gap,
+weighted 0.4 through week 4; `matchup_pace` from the plays; phase scale with
+the home-margin intercept; level fit; anchor 0.13. The QB term is fitted
+behind `--ncaaf-qb-lambda` and off by default.
+
+### 7.2 The §3 list, closed out
+
+| # | item | status |
+|---|---|---|
+| 1 | scrimmage-only fit | **rejected** — kicks carry field position the ratings want |
+| 2 | 2025 college re-key | promoted |
+| 3 | SP+ prior in the lab | promoted (K=12) |
+| 4 | FCS population | promoted (FBS eval; FBS-vs-FCS papered) |
+| 5 | scale calibration | promoted both leagues; phase-specific in college |
+| 6 | nflverse schedule columns | ingested; starter backtest promoted; **(c) real-ML anchor and (d) real-juice records never run** |
+| 7 | plays rebuild + context | ingested; turnover shrink promoted; garbage time, winsor, `qb_epa`, fitted home edge **rejected** |
+| 8 | college QB term | built and measured (0.26 off the margin flat, 0.05 beside recency, total pays); **parked** at λ=0 |
+| 9 | NFL injury burden | promoted at 4 |
+| 10 | weather | NFL rain promoted, cold rejected; **NFL wind-on-margin never run; NCAAF weather not in the projection** |
+| 11 | pace | college EPA half wired; **NFL rejected** |
+| 12 | college rest | **rejected** (bye bonus) |
+| 13 | college preseason prior into the EPA half | **rejected** at K=6/12 — but see 7.3: the prior it was fed was the SP+ rating, not `preseason_prior` |
+| 14 | special teams | SP+ ST in the prior promoted; **a rated ST unit never built** |
+| 15 | venue/conference fields | **open** (venues parsed this session for the site only) |
+| 16 | joint phase ridge; success-rate blends | phase ridge **rejected** at every λ; **success-rate / early-down never run** |
+| 17 | week-dependent blend weight | promoted at 0.4 through week 4 |
+| 18 | divisional / team HFA | divisional **rejected**; **team-specific never run** |
+| 19 | early-season NFL shrinkage / offseason discount | offseason gap promoted (8 wks) |
+
+Housekeeping: `pbp-2025.zip` is **still in the repo root** (20 MB,
+unreferenced). The per-season coverage assertion exists for the college
+passer attach; the NFL plays frame has none.
+
+### 7.3 Banked, and read by nothing in the projection
+
+Split the way it has to be split. The first list is not a gap.
+
+**Tested and rejected (stays in the lab as a variant):** `wp`, `vegas_wp`,
+`qtr`, `game_seconds_remaining`, `score_differential` (garbage time, both
+columns, both bands); `qb_epa`; EPA winsorisation; the home edge fitted in
+the ridge; `div_game`; `temp_mean` as a cold step; NFL `team_pace`; the NFL
+phase ridge and phase scale; the college K=24 prior, bye bonus and EPA-half
+prior; the scrimmage filter. Each of these has a table in `MODEL_LAB.md`.
+
+**Never tested — the real gaps, all with data already on disk:**
+
+| data | where it sits | what has never been run |
+|---|---|---|
+| `success`, `down` | `nfl/plays` | success-rate and early-down EPA blends — lab backlog #5 since Round 1, listed again as #16, never once scored |
+| `cpoe` | `nfl/plays` | a passer *skill* term. The QB decomposition prices the passer on raw EPA; `cpoe` is read only by `features/players.py` for the site's ratings view |
+| `home_moneyline`, `away_moneyline` | `nfl/games` | the anchoring weight (0.2) was swept against a spread-probit "market" that the MLB sweep called invalid; the real close is on the frame and grades the model (0.2102) but never anchors it |
+| `home_spread_odds`, `over_odds`, `under_odds` | `nfl/games` | every ATS/O-U record still assumes −110 |
+| `referee`, `home_coach`, `away_coach`, `gametime`, `weekday` | `nfl/games` | read by no model code at all — crew pace, coaching change, primetime and body-clock are one `assign` each |
+| `temp_mean`, `wind_max` (on the margin) | `nfl/weather` | wind by each side's pass rate on the *margin*; only a symmetric totals shift and a rejected cold step exist |
+| `home_ml`, `away_ml` | `ncaaf/games_lines` | college moneylines have never been backtested; staking is off by default |
+| all twelve context columns | `ncaaf/plays` has **none** of `wp`, `vegas_wp`, `qtr`, clock, score, `interception`, `fumble_lost`, `fumble`, `qb_epa`, `cpoe`, `penalty`, `aborted_play` | the college ingest never kept them, so the turnover shrink — the NFL's one play-context win — has never been *possible* in college |
+| `roof`, `surface` | `ncaaf/games` (100% null) | college weather in the projection. `parse_ncaaf_venues` now exists (this session, the college-stadium-coordinates work) and reaches only the site's weather panel; `WeatherAdjustedModel` is NFL-only |
+| `preseason_prior` | `features/priors.py` | **the mechanism is wired** (`shrink_to_prior` in `game_ncaaf.py`) **and has never been given its inputs** — no ingest exists for CFBD `/player/returning`, `/recruiting/teams`, `/talent` or `/player/portal`. §3 #13's rejection tested the SP+ rating as the prior, not this |
+| `units.py`, `players.py` | `features/` (built this session) | unit splits and player ratings feed the site's Matchups and Ratings views and no model; consistent with the phase rejection, but the pass-rate they compute is exactly what the wind-on-margin variant needs |
+| `boxscores_2002_2025` | `ncaaf/` | deep history, unread by a trailing-four-season fit; fine as it is |
+
+**Not ingested at all:** §5 stands in full. As of this pass no source in
+§5.1–5.3 has an ingest — not Pinnacle, not opening lines, not officials,
+not snap counts, not FTN, not the CFBD prior endpoints. The venue parse is
+the one exception, and it is site-only.
+
+### 7.4 The scoreboard, unchanged
+
+The projection's μ is bit-identical to §6.1's "now" rows: nothing merged
+between 2026-09-17 and this audit touched `features/`, the game models or
+the level. What moved was **how the μ is priced and how the bets are
+bounded**, and each of those has its own round in `MODEL_LAB.md`:
+
+- the ladder gate now measures the sim it gates rather than a fitted normal
+  (26 sides open, 11 closed, net +15);
+- the slate cap counts every open position (it had been leaking by the
+  held-on-card stake; exposure sat at 27–31% against a 25% cap for eight
+  days);
+- the drive sim, the key-number lattice and the skew draw are built,
+  measured on the walk-forward, and **not promoted** — the lattice cleared
+  every check and awaits promotion; the skew is right about the shape and
+  dominated by the totals level.
+
+### 7.5 What to run next
+
+Ordered by (data already banked) × (never tested) ÷ effort. Every one goes
+through `model_lab.py` on the standard walk-forward, as the rule requires.
+
+1. **Success-rate / early-down EPA blend** (NFL). Two columns, on the file
+   since Round 1, never scored. *Effort S.*
+2. **The real moneyline close as the anchor**, and the records at the real
+   juice. The probit leg is the one part of the anchoring sweep the lab
+   already knows is wrong. *Effort S.*
+3. **Wind on the margin by pass rate**, from the pass rate `units.py`
+   already computes. *Effort S.*
+4. **`cpoe` as a passer skill term** beside the raw-EPA QB effect. *Effort S.*
+5. **Coaches, crew, kickoff window, weekday** as flags on the games frame.
+   Four columns read by nothing; the officials *table* (§5.1 #3) is the
+   ingest that would make the crew flag mean something. *Effort S.*
+6. **College play context**: keep the twelve columns the cfbfastR frame
+   already carries, then re-run the turnover shrink and the QB term with
+   `cpoe` in college. *Effort M.* This is the NFL's one play-context win,
+   never possible in the league where the margin gap is three points.
+7. **College weather** through the venue parse that now exists and the
+   Open-Meteo path the NFL uses. *Effort S–M.*
+8. **Feed `preseason_prior`**: ingest `/player/returning`, `/recruiting/teams`,
+   `/talent`, `/portal`. The mechanism has been wired and starving since
+   the prior was written. September is where college is weakest (§6:
+   19.38 vs 15.58). *Effort M.*
+9. **The totals level** — not a variant but a question: which covariate
+   moves a season's totals by ±3 points with no stable sign? Pace, era
+   scoring, kickoff-hour weather and crews are the candidates §6 named,
+   and items 3, 5 and 7 are the cheap ones. *Effort M, and it gates the
+   skew draw.*
+10. Housekeeping: delete `pbp-2025.zip`; add the NFL plays-coverage assertion.
+
+### 7.6 What was checked and found sound this pass
+
+- The turnover shrink, the injury burden, rain, rest, the SP+ prior with
+  special teams, the recency keys with their offseason gaps, the scale with
+  its college intercept, the early-season blend weight — each promoted on a
+  table, each still the default, none silently drifted.
+- `matchup_pace` is genuinely wired into the college EPA half
+  (`game_ncaaf.py`), not just built.
+- The QB decomposition prices the *announced* starter, not the latest-game
+  passer, wherever a depth source is passed.
+- `overtime` on the games frame is a sim concern (the drive sim models it
+  structurally) and correctly not a rating feature.
