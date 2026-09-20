@@ -2529,3 +2529,60 @@ correct is a fiftieth of a point.
 
 Both wrappers stay in `velocity/backtest/lab.py` as variants and are
 applied nowhere; the live slate is unchanged.
+
+## The SP+ blend round (2026-09-20) — success rate and explosiveness beside EPA
+
+SP+ decomposes a team into efficiency (success rate) and explosiveness (EPA
+on successful plays), and the audit's first item was that the plays frame
+has carried a `success` column since Round 1 without a variant reading it.
+`blend_team_components` blends the QB fit's team sides toward a
+success-rate ridge (converted to EPA units by the plays' own EPA-per-success
+gap, 1.96) and toward a ridge on successful plays only; the QB term, the
+starters and the pass rate are untouched. Over the full promoted chain,
+3,045 games, 2015–2026, 4,000 sims.
+
+| variant | Brier | log loss | calib. | rmse_margin | info_w_margin | rmse_total | info_w_total | ATS (flat) |
+|---|---|---|---|---|---|---|---|---|
+| promoted | 0.2197 | 0.6290 | 0.0170 | 13.008 | 0.034 | 13.552 | −0.018 | 48.5% |
+| succ0.25 | **0.2193** | **0.6281** | **0.0148** | **13.005** | 0.049 | 13.552 | −0.024 | 49.0% |
+| succ0.5 | 0.2194 | 0.6283 | 0.0152 | 13.025 | 0.060 | 13.559 | −0.029 | 49.6% |
+| expl0.25 | 0.2213 | 0.6325 | 0.0187 | 13.064 | −0.016 | **13.529** | **+0.015** | 49.5% |
+| succ0.25-expl0.25 | 0.2209 | 0.6316 | 0.0207 | 13.061 | −0.003 | 13.528 | +0.011 | 50.2% |
+
+The table reads like a small win for a quarter of success rate. The paired
+test does not:
+
+| vs promoted | ΔBrier per game | seasons better (of 12) | Δ squared margin error | seasons better | spread ≥4: record · units |
+|---|---|---|---|---|---|
+| succ0.25 | −0.00040 ± 0.00026 (t −1.5) | 6 | −0.06 ± 0.25 | 6 | 50.8% · −0.020 (vs 47.2% · −0.087) |
+| succ0.5 | −0.00032 ± 0.00052 (t −0.6) | 6 | +0.45 ± 0.50 | 6 | 52.5% · +0.015 |
+| expl0.25 | **+0.00157 ± 0.00052 (t +3.0)** | 4 | **+1.46 ± 0.53** | **2** | — |
+
+**Readings:**
+
+1. **Success rate is a coin flip beside EPA.** A quarter of it moves the
+   projected margin by 0.43 points a game on average and improves the
+   Brier in six seasons of twelve, the margin error in six of twelve, with
+   the paired difference a standard error and a half from zero. The
+   spread record at ≥4 points of disagreement improves (47.2% → 50.8%,
+   465 bets) and at ≥6 worsens (54.4% → 52.7%, 131 bets); both are inside
+   the noise of a hundred-odd bets. Nothing here is the consistent
+   per-season sign the promoted rounds had.
+2. **Explosiveness hurts the margin, clearly.** Three standard errors on
+   the Brier, worse margin error in ten seasons of twelve. A ridge on
+   successful plays only rates the offense that had its big plays go
+   in, and big plays are the least repeatable part of EPA — the same
+   reason the turnover shrink won. Its one gain is on totals (rmse_total
+   −0.024, `info_w_total` from −0.018 to +0.015), which says a team's
+   explosiveness carries information about how many points a game will
+   have that its margin rating does not; that is a totals question and
+   the level rounds are where it belongs.
+3. **Why EPA already has it.** Success rate is a coarsening of EPA — a
+   play succeeds when its EPA is positive-enough — and a ridge on EPA over
+   four seasons of plays is not short of information about which teams
+   sustain drives. SP+ needs the decomposition because it is built on
+   drive-level and game-level inputs; a play-level ridge does not.
+
+**Not promoted.** `blend_team_components` and `epa_per_success` stay in
+`velocity/features/team.py`, the variants in the lab. The audit's first
+item is answered rather than adopted.
