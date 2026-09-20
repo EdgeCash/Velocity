@@ -38,6 +38,12 @@ SURFACES = (("page", "v-bg"), ("card", "v-lvl-1"), ("raised", "v-lvl-2"),
 FILLS = (("v-grass", "v-ink"), ("v-band", "v-band-ink"), ("v-brand-deep", "v-brand"))
 # Foregrounds worn on a pill of their own tint.
 TINTED = ("v-pos", "v-neg", "v-warn", "v-info", "v-brand", "v-thin")
+# The dirt band is a second ground: `.topbar` re-points --v-ink and friends at
+# these, so the ticker and the stamp render on dirt without either component
+# knowing. Which means every one of them is type on #6b5442 and belongs here —
+# the page-surface table above would never look at them.
+BAND_INKS = ("v-band-ink", "v-band-ink-2", "v-band-ink-3", "v-band-brand",
+             "v-band-warn", "v-band-alert", "v-band-pos")
 
 
 def _srgb(channel: float) -> float:
@@ -102,6 +108,10 @@ def failures(tokens: dict[str, str], floor: float = FLOOR) -> list[str]:
         ratio = contrast(tokens[ink], pill)
         if ratio < floor:
             bad.append(f"{ink} on its own tint = {ratio:.2f}:1")
+    for ink in BAND_INKS:
+        ratio = contrast(tokens[ink], tokens["v-band"])
+        if ratio < floor:
+            bad.append(f"{ink} on the dirt band = {ratio:.2f}:1")
     return bad
 
 
@@ -121,6 +131,9 @@ def main() -> None:
     for ink in TINTED:
         pill = composite(tokens[ink], tint_alpha(tokens.get(f"{ink}-tint", "")), tokens["v-bg"])
         print(f"    {contrast(tokens[ink], pill):5.2f}  {ink} on {ink}-tint")
+    print("\n  the dirt band's own ground:")
+    for ink in BAND_INKS:
+        print(f"    {contrast(tokens[ink], tokens['v-band']):5.2f}  {ink} on v-band")
 
     bad = failures(tokens)
     if bad:

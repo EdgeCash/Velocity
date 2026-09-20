@@ -493,8 +493,12 @@ def game_directory(*folders: Path | None) -> pd.DataFrame:
 
 
 # The panel every team colour is measured against: --v-lvl-0 in the site's
-# layout, the surface a matchup sheet and a play card actually sit on.
-PANEL = "#0b1017"
+# layout, the surface a matchup sheet and a play card actually sit on. The
+# park re-skin (docs/SITE.md) moved that surface from near-black to bone, so
+# the lift runs the other way now — `readable_on` takes its direction from the
+# background, and most crests come through at their true brand colour because
+# a club navy already contrasts with cream.
+PANEL = "#ece8dc"
 
 
 def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFrame:
@@ -507,7 +511,7 @@ def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFr
     renderers — :func:`~velocity.report.assets.team_identity` is that resolution
     shared rather than copied.
 
-    ``color_dark`` is the brand colour raised until it measurably contrasts with
+    ``color_ui`` is the brand colour moved until it measurably contrasts with
     the site's panel — hue and saturation held, so a navy club still reads as
     navy and a purple one as purple. It is a *measured* lift
     (:func:`~velocity.report.assets.readable_on`) rather than a lightness floor
@@ -533,7 +537,7 @@ def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFr
     from velocity.report.assets import readable_on, team_identity
 
     if games.empty or "league" not in games.columns:
-        return pd.DataFrame(columns=["league", "team", "code", "color", "color_dark", "logo"])
+        return pd.DataFrame(columns=["league", "team", "code", "color", "color_ui", "logo"])
     rows: list[dict[str, object]] = []
     for league, block in games.groupby("league"):
         names = sorted(
@@ -553,7 +557,7 @@ def build_teams(games: pd.DataFrame, slate_dir: Path | None = None) -> pd.DataFr
                 "team": ident.team,
                 "code": ident.code,
                 "color": ident.color or "",
-                "color_dark": readable_on(ident.color, PANEL) if ident.color else "",
+                "color_ui": readable_on(ident.color, PANEL) if ident.color else "",
                 "logo": ident.logo or "",
             })
     return pd.DataFrame(rows)
@@ -1056,7 +1060,7 @@ def main() -> None:
         "games": {"game_id": str, "home_team": str, "away_team": str,
                   "kickoff": "datetime64[ns]", "league": str, "stamp": str},
         "teams": {"league": str, "team": str, "code": str, "color": str,
-                  "color_dark": str, "logo": str},
+                  "color_ui": str, "logo": str},
         "projections": {"game_id": str, "away": str, "home": str, "n_sims": int,
                         "mu_away": float, "mu_home": float, "p_home_win": float,
                         "fair_spread": float, "fair_total": float,

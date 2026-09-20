@@ -129,6 +129,18 @@
     --v-grass: #4caf50;
     --v-band: #6b5442;
     --v-band-ink: #f3f0e7;
+    /* The band is a ground of its own, so it carries a ground's worth of ink.
+       `.topbar` re-points --v-ink and friends at these, which means every
+       component inside it adapts without knowing the band exists — the
+       alternative was editing eight components' colour rules by hand. Solved
+       with the same `readable_on` the crests use, against #6b5442. */
+    --v-band-ink-2: #d9d3c8;
+    --v-band-ink-3: #d3cec3;
+    --v-band-brand: #abdbad;
+    --v-band-warn: #f8c772;
+    --v-band-alert: #f6c2c3;
+    --v-band-pos: #80e2af;
+    --v-band-line: rgba(243, 240, 231, 0.18);
 
     /* the money axis */
     --v-pos: #187034;
@@ -145,12 +157,26 @@
     --v-thin: #686055;
     --v-thin-tint: rgba(104, 96, 85, 0.1);
 
-    --v-radius: 12px;
-    --v-radius-sm: 8px;
+    /* Flatter than the dark board's, toward Ballpark Pal's 4-5px. A 12px
+       radius on a white card over bone reads as a widget; theirs reads as a
+       sheet of paper. */
+    --v-radius: 9px;
+    --v-radius-sm: 5px;
     --v-glow: 0 0 0 3px rgba(76, 175, 80, 0.3);
 
     --v-board: "Saira Condensed", "Inter", ui-sans-serif, system-ui, sans-serif;
     --v-num: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /* Ballpark Pal runs a much larger type scale than a betting board does —
+     75px headers, 20-28px body. Matching it literally would be absurd on a
+     surface this dense, and the sizes in the components were measured against
+     real reference boards (see "Legibility beats density"). So the scale is
+     nudged at the root instead: every rem in the hub grows by the same 6%,
+     the measured relationships between them are preserved exactly, and it is
+     one number to turn if it goes too far. */
+  :global(html) {
+    font-size: 17px;
   }
 
   :global(body),

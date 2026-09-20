@@ -322,7 +322,7 @@ export function distThreshold(market, side, point) {
  * Identity is a join away from every surface that shows a team, and the join
  * key is the team string the data already carries — nflverse codes for the
  * NFL, school names for college. Colours arrive pre-lifted for the dark
- * surface (`color_dark`), because the lightness maths lives in Python where it
+ * surface (`color_ui`), because the lightness maths lives in Python where it
  * is tested; `color` is the unadjusted brand primary and only stands in when
  * the lift produced nothing.
  */
@@ -333,7 +333,7 @@ export function teamIndex(rows) {
     if (!team) continue;
     const identity = {
       code: String(row.code ?? '') || team.slice(0, 3).toUpperCase(),
-      color: String(row.color_dark ?? '') || String(row.color ?? ''),
+      color: String(row.color_ui ?? '') || String(row.color ?? ''),
       logo: String(row.logo ?? ''),
     };
     // Keyed both ways. A surface that spans leagues — the card does — must not

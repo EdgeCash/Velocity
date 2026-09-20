@@ -39,6 +39,7 @@
   import MatchupsPanel from './MatchupsPanel.svelte';
   import ExportPanel from './ExportPanel.svelte';
   import Rail from './Rail.svelte';
+  import SlateStrip from './SlateStrip.svelte';
   import Stamp from './Stamp.svelte';
 
   export let games = [];
@@ -247,17 +248,19 @@
       {#each GROUPS as g (g.label)}
         <div class="group">
           <span class="glabel">{g.label}</span>
-          {#each g.views as v}
-            <button
-              role="tab"
-              aria-selected={view === v}
-              class:on={view === v}
-              on:click={() => setView(v)}
-            >
-              {VIEW_LABEL[v]}
-              <span class="count">{viewCount[v] ?? 0}</span>
-            </button>
-          {/each}
+          <div class="tiles">
+            {#each g.views as v}
+              <button
+                role="tab"
+                aria-selected={view === v}
+                class:on={view === v}
+                on:click={() => setView(v)}
+              >
+                {VIEW_LABEL[v]}
+                <span class="count">{viewCount[v] ?? 0}</span>
+              </button>
+            {/each}
+          </div>
         </div>
       {/each}
     </div>
@@ -273,6 +276,18 @@
       </div>
     {/if}
   </nav>
+
+  <!-- The slate, before the views (docs/SITE.md, the park re-skin). Ballpark
+       Pal opens on the day rather than on a menu, and the command bar above
+       is a menu: it asks what you want to look at before showing you that
+       there is anything to look at. Clicking a card lands in Games with that
+       game open, which is the one place the detail lives. -->
+  <SlateStrip
+    games={scored}
+    {identity}
+    openId={openGame}
+    onOpen={(id) => hubState.set({ view: 'games', game: id })}
+  />
 
   <div class="body">
     <main class="main">
@@ -355,10 +370,33 @@
     align-items: center;
     gap: 1rem;
     min-width: 0;
-    padding: 0.5rem 0 0.45rem;
-    background: linear-gradient(var(--v-bg) 78%, rgba(236, 232, 220, 0.88));
-    backdrop-filter: saturate(140%) blur(10px);
-    border-bottom: 1px solid var(--v-line);
+    /* Full-bleed: Ballpark Pal's masthead runs edge to edge, and a dirt band
+       inset inside the page gutter reads as a widget rather than as the top
+       of the site. The negative margin undoes `.hub`'s gutter and the padding
+       puts the content back where it was. */
+    margin: 0 calc(-1 * var(--gutter));
+    padding: 0.5rem var(--gutter) 0.45rem;
+    background: var(--v-band);
+    border-bottom: 1px solid var(--v-band-line);
+
+    /* The band is its own ground. Re-pointing the ink tokens here means the
+       ticker and the stamp — eight colour rules between them, in two other
+       components — come out right without either of them knowing they are
+       sitting on dirt. Every value clears 4.5:1 on #6b5442; the gate in
+       scripts/check_site_contrast.py holds them there. */
+    --v-ink: var(--v-band-ink);
+    --v-ink-2: var(--v-band-ink-2);
+    --v-ink-3: var(--v-band-ink-3);
+    --v-brand: var(--v-band-brand);
+    --v-brand-dim: var(--v-band-brand);
+    --v-warn: var(--v-band-warn);
+    --v-alert: var(--v-band-alert);
+    --v-pos: var(--v-band-pos);
+    --v-line: var(--v-band-line);
+    --v-line-2: rgba(243, 240, 231, 0.3);
+    --v-chip: rgba(243, 240, 231, 0.14);
+    --v-lvl-1: rgba(243, 240, 231, 0.1);
+    --v-lvl-2: rgba(243, 240, 231, 0.16);
   }
   .brand {
     display: flex;
@@ -370,8 +408,8 @@
     font-family: var(--v-board);
     font-weight: 700;
     letter-spacing: 0.22em;
-    font-size: 0.95rem;
-    color: var(--v-brand);
+    font-size: 1.15rem;
+    color: var(--v-band-ink);
   }
   .tierpill {
     font-family: var(--v-board);
@@ -386,9 +424,9 @@
     box-shadow: inset 0 0 0 1px var(--v-line);
   }
   .tierpill.pub {
-    color: var(--v-brand);
-    background: var(--v-brand-deep);
-    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.3);
+    color: var(--v-band);
+    background: var(--v-grass);
+    box-shadow: none;
   }
 
   /* ---- command bar --------------------------------------------------- */
@@ -405,7 +443,19 @@
     background: var(--v-bg);
     border-bottom: 1px solid var(--v-line);
   }
-  .views,
+  /* Ballpark Pal's landing shape: a section header over a grid of tiles, per
+     group. Theirs sits down the page and navigates; this one stays sticky and
+     switches in place, because the whole argument for one page is that the
+     switcher is always there — a tile grid you have to scroll back up to
+     reach would be their look bought with the thing the hub exists for. */
+  .views {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.35rem 1.15rem;
+    max-width: 100%;
+    min-width: 0;
+  }
   .leagues {
     display: inline-flex;
     gap: 2px;
@@ -417,25 +467,43 @@
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .views::-webkit-scrollbar,
   .leagues::-webkit-scrollbar { display: none; }
   .group {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding-left: 0.55rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.26rem;
+    min-width: 0;
   }
-  .group + .group { margin-left: 0.2rem; border-left: 1px solid var(--v-line); }
+  .tiles { display: flex; gap: 0.3rem; }
+  /* The section header. Dirt brown, because on their page these are the one
+     thing that is neither a surface nor an action. */
   .glabel {
-    margin-right: 0.3rem;
+    padding-left: 0.2rem;
     font-family: var(--v-board);
-    font-size: 0.56rem;
+    font-size: 0.62rem;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--v-ink-3);
+    color: var(--v-band);
   }
-  .views button,
+  .views button {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35em;
+    flex: 0 0 auto;
+    border: 1px solid var(--v-line);
+    border-radius: var(--v-radius-sm);
+    padding: 0.42rem 0.8rem;
+    background: var(--v-lvl-1);
+    color: var(--v-ink-2);
+    font-family: var(--v-board);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+  }
   .leagues button {
     display: inline-flex;
     align-items: baseline;
@@ -453,9 +521,20 @@
     cursor: pointer;
     transition: background 130ms ease, color 130ms ease;
   }
-  .views button:hover,
+  .views button:hover {
+    color: var(--v-ink);
+    background: var(--v-lvl-2);
+    border-color: var(--v-line-2);
+  }
   .leagues button:hover { color: var(--v-ink); background: var(--v-lvl-2); }
-  .views button.on,
+  /* The selected tile wears the park's own grass, with dark ink on it — the
+     one place --v-grass is allowed, and the pair is gated at 6.2:1. */
+  .views button.on {
+    background: var(--v-grass);
+    border-color: var(--v-grass);
+    color: var(--v-ink);
+    font-weight: 700;
+  }
   .leagues button.on {
     background: var(--v-brand-deep);
     color: var(--v-brand);
@@ -467,7 +546,9 @@
     color: var(--v-ink-3);
     font-variant-numeric: tabular-nums;
   }
-  .views button.on .count { color: var(--v-brand-dim); }
+  /* On the grass fill the count is ink at reduced weight, not a second green:
+     --v-brand-dim on --v-grass is 1.6:1 and simply disappears. */
+  .views button.on .count { color: var(--v-ink); opacity: 0.72; }
 
   /* ---- body ----------------------------------------------------------
      The rail is a real column on a desktop and stacks under the panel on a

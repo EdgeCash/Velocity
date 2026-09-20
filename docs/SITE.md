@@ -261,6 +261,47 @@ from the dark board:
   on near-black and invisible on bone. Every one of them flipped, and the
   test asserts they stay flipped — this is the rule most likely to be undone
   by pasting a rule in from the dark board's history.
+- **The team-colour lift reversed.** `readable_on` searched lightness
+  *upward* — the only way out of a near-black panel. On bone the only way out
+  is down, so it takes its direction from the background's luminance now, and
+  the column it feeds is `color_ui` rather than `color_dark`. The result is
+  better than the dark board's: measured against bone, a club navy, a Ravens
+  purple and a Packers green all clear 3:1 **untouched**, where every one of
+  them had to be lifted before. Only the pale crests move, and they darken.
+
+### The masthead, and the tile bar
+
+The topbar is Ballpark Pal's dirt masthead now, full-bleed. It holds the
+ticker and the stamp — eight colour rules across two other components — and
+none of them were edited: `.topbar` re-points `--v-ink`, `--v-brand`,
+`--v-warn` and the rest at a band-scoped set, and custom properties cascade,
+so every child adapts by sitting inside it. Those band inks are solved with
+the same `readable_on` the crests use, against `#6b5442`, and the contrast
+gate checks them as their own ground.
+
+The command bar is their landing shape — a section header over a grid of
+rounded tiles, one group per heading — with one deliberate difference: it
+stays **sticky** rather than sitting down the page. Theirs is a home page you
+leave; this is one surface you never leave, so a tile grid you had to scroll
+back up to reach would be their look bought at the cost of the thing the hub
+exists for. The selected tile wears `--v-grass` with `--v-ink` on it, which
+is the one place the bright green is allowed.
+
+### The slate strip
+
+Ballpark Pal opens on the day: a row of game cards above everything, each
+with both crests, the sim's number under each and the time between them. The
+hub opened on its command bar, which is a menu — it asks what you want to
+look at before showing you there is anything to look at. `SlateStrip.svelte`
+is their answer on football's numbers, and clicking a card lands in Games
+with that game open.
+
+It is deliberately not a second game list. Four facts per card and no more;
+the Games view owns the detail. The one rule with teeth is that a **score
+beats a projection** once there is one — the live feed's `state` is
+`pre | in | post` and a `pre` game carries zeros, so reading the score
+without checking the state would put 0–0 under every crest on the morning
+slate.
 
 ### The board face
 
@@ -511,7 +552,7 @@ Negating it puts the favourite on the wrong side.
 Every surface that names a team can also show its mark and wear its colour:
 the matchup sheet's two team blocks, and both ends of a play card's matchup
 line. `velocity.teams` carries one row per team on the slate —
-`code`, `color`, `color_dark`, `logo` — built by `build_teams` in
+`code`, `color`, `color_ui`, `logo` — built by `build_teams` in
 `scripts/build_site_data.py` and resolved through
 `velocity.report.assets.team_identity`, which is the card renderers' own
 resolution shared rather than copied a fourth time.
