@@ -1648,3 +1648,129 @@ The NFL chain, then, closes the day where the recency round left it:
 Brier 0.2176, margin RMSE 13.23 (the close 12.97), total RMSE 13.51 (the
 close 13.23).
 
+
+## The drive round (2026-09-20) — points arriving in sevens and threes
+
+The shipped sim draws a game's margin and total from a bivariate normal and
+rounds them. Its own docstring has always named the weakness: that is "a
+first-order treatment of the well-known mass at key numbers 3 and 7, [and] a
+drive-level scoring sim is a later refinement". This is that refinement,
+built and measured.
+
+**The candidate** (`velocity/models/drive.py`): a team gets possessions, each
+ends in a touchdown, a field goal or nothing, and the score is what that adds
+up to. The extra point is its own coin, so scores land on the integer lattice
+with nothing to round. Three things sit around the lattice, each earning its
+place by an observable the structure alone gets wrong:
+
+| mechanism | without it | the observable |
+|---|---|---|
+| overtime, 3 paired possessions | 4.3% of games end tied | the NFL's own rate is 0.33% |
+| `pace_sd` — a shared scoring environment | margin and total equally dispersed | NFL residual sd is 13.01 / 13.54 |
+| `strength_sd` — projection error | possessions must explain all uncertainty | NCAAF's 16.2 is wider than any lattice |
+
+**Harness:** `scripts/sim_lab.py`, the same gate that promoted the dispersion
+constants, with two variants and five columns added. `drive` is football's own
+numbers with nothing fitted; `drive-fit` solves the two spread parameters on
+the training seasons' residual moments. `key_*` are the errors in the mass at
+each absolute margin — the half-point offset profile cannot see these, because
+its offsets are measured from each game's own μ and never land on an integer.
+
+### NFL — 3,044 games, 2015–2026, 8k sims × 3 seeds
+
+| variant | ECE ↓ | Brier ↓ | key_mean ↓ | grid_mean ↓ | P(3) | P(7) | spread_mean ↓ | total_mean ↓ |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0576 | 0.2199 | 0.0325 | 0.0164 | 0.0542 | 0.0493 | **0.0246** | 0.0318 |
+| empirical-hetero | 0.0629 | 0.2202 | 0.0321 | 0.0161 | 0.0577 | 0.0504 | 0.0237 | 0.0308 |
+| drive | 0.0585 | 0.2199 | **0.0257** | **0.0128** | 0.0823 | 0.0885 | 0.0280 | **0.0300** |
+| drive-fit | 0.0583 | 0.2199 | 0.0257 | 0.0128 | 0.0821 | 0.0884 | 0.0284 | 0.0300 |
+
+*(actual: P(3) = 0.1478, P(7) = 0.0867)*
+
+### NCAAF — 3,270 games, 2022–2026, 20k sims × 5 seeds
+
+| variant | ECE ↓ | Brier ↓ | key_mean ↓ | grid_mean ↓ | P(3) | P(7) | spread_mean ↓ | total_mean ↓ |
+|---|---|---|---|---|---|---|---|---|
+| normal (shipped) | 0.0435 | 0.1901 | 0.0256 | 0.0139 | 0.0380 | 0.0363 | **0.0162** | 0.0221 |
+| normal-hetero | 0.0429 | 0.1901 | 0.0255 | 0.0139 | 0.0382 | 0.0365 | 0.0165 | 0.0256 |
+| drive | 0.0488 | 0.1910 | **0.0158** | 0.0101 | 0.0593 | 0.0680 | 0.0303 | 0.0361 |
+| drive-fit | **0.0417** | **0.1900** | 0.0162 | **0.0094** | 0.0556 | 0.0643 | 0.0176 | **0.0200** |
+
+*(actual: P(3) = 0.1061, P(7) = 0.0865)*
+
+**Readings, honestly:**
+
+1. **The structure is right, and it is not a fit.** Told only how many points
+   each side expects, eleven possessions and a 0.65 field-goal mix imply an
+   NFL margin sd of 13.5 against a measured 13.0 — half a point, with nothing
+   tuned. The key-number mass comes out of the same structure: `grid_mean`,
+   the error in the mass at every absolute margin, drops 22% in the NFL and
+   32% in college. P(7) lands at 0.0885 against an actual 0.0867 where the
+   normal manages 0.0493.
+
+2. **Three is still badly short — 0.082 against 0.148 — and that is a
+   finding, not a shortfall to tune away.** Independent possessions cannot
+   produce football's three-point spike, because the spike is not made of
+   independent possessions: it is made of a team down four kicking, a team up
+   two playing for a field goal, an offense taking a knee on the 20. The
+   lattice puts mass at 3 for structural reasons and real football puts
+   *more* there for strategic ones. Halving the gap without modelling the
+   endgame is the honest ceiling here, and this reaches it.
+
+3. **NCAAF `drive-fit` beats the shipped sim on the gate.** Better ECE
+   (0.0417 vs 0.0435), better Brier to the fourth decimal, 37% better key
+   numbers, and a clean sweep of the totals profile (`total_mean` 0.0200 vs
+   0.0221, `total_tail_max` 0.0247 vs 0.0279). It replicates at 20k sims over
+   five seeds. It loses one column, `spread_mean`, by 0.0014.
+
+4. **NFL `drive-fit` does not, and the reason is structural.** The NFL lattice
+   is *already* wider than NFL football: 13.5 implied against a 13.0 residual
+   sd, which leaves the fit no room — `strength_sd` can only widen, never
+   narrow, so the fitted sim stays over-dispersed and the spread profile pays
+   for it (0.0284 vs 0.0246). Read the sign: a model that certainly has
+   projection error is nonetheless *less* uncertain than independent
+   possessions would be. Real football compresses — clock management,
+   score-aware play calling, teams that stop scoring once the game is
+   decided — and eleven independent drives are worth about two possessions
+   more variance than eleven real ones. College, with four points of genuine
+   projection error to absorb, never hits that wall.
+
+5. **The one that got caught.** An earlier `drive-fit` used the field-goal mix
+   as its dispersion control — a coarser lattice is a wider team score, so
+   solving it against the margin residuals is tempting and in the NFL it
+   returned football-plausible ratios near 0.8. Against college, whose
+   residual sd is wider than any lattice can reach, it ran to the bound and
+   returned **a lattice with no field goals in it**: 24% of the mass on a
+   margin of exactly 7 and 0.02% on a margin of 3. It matched the dispersion
+   and destroyed the only thing the drive sim exists for. That is what forced
+   the split into `strength_sd` and `pace_sd`, which is a better model for
+   the reason it is a better model: each mechanism has its own signature
+   (projection error widens the margin and leaves the total; the scoring
+   environment does the reverse), so the two are separately identifiable from
+   final scores alone, and neither touches the lattice.
+
+### Promotion decision
+
+**Neither is promoted, and nothing in the live slate changes.** NCAAF
+`drive-fit` has earned a promotion *proposal*, not a promotion: rewiring the
+league's pricing is a deliberate step that needs its own verification — every
+derivative the ladder prices off the sim re-checked, not just the eight gate
+columns — and it should not ride in on the back of a lab round. `velocity/
+models/drive.py` is imported by `scripts/sim_lab.py` and by nothing else.
+
+The NFL verdict is a genuine negative and worth keeping as one: the drive sim
+is better at the thing it was built for and worse at the thing the slate
+prices most.
+
+**Next, in order of expected value:**
+
+1. **The key-number overlay.** The two sims fail in opposite directions — the
+   normal has the right spread profile and no key numbers, the drive sim the
+   reverse. Re-weighting the normal's samples toward the drive sim's
+   absolute-margin mass would take the lattice without the dispersion, and is
+   testable on this same gate.
+2. **Clock compression**, which is what reading 4 above says is missing: fewer
+   effective possessions as the margin grows. It is the mechanism that would
+   let the NFL lattice narrow, and it would move P(3) as well, since the
+   endgame is where the three-point spike is made.
+3. **The NCAAF promotion**, with the full derivative re-check.

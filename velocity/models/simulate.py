@@ -15,9 +15,16 @@ Variance is calibrated to real NFL residuals (see ``DEFAULT_SD_MARGIN`` /
 ``DEFAULT_SD_TOTAL``): the margin and total each deviate from the model's
 expectation with a standard deviation near 13 points, measured on a real
 walk-forward. Scores are rounded to integers by default so simulated margins land
-on the discrete values real games produce (this is a first-order treatment of the
-well-known mass at key numbers 3 and 7; a drive-level scoring sim is a later
-refinement).
+on the discrete values real games produce.
+
+That rounding is a first-order treatment of the well-known mass at key numbers
+3 and 7, and it remains first-order: it puts 5.4% of NFL margins on 3 where
+football puts 14.8%, and 4.9% on 7 against 8.7%. The drive-level refinement
+that docstring used to promise now exists and has been measured —
+:mod:`velocity.models.drive`, gated in ``docs/MODEL_LAB.md`` ("the drive
+round"). It is **not** promoted here: it fixes the key numbers and is more
+dispersed than NFL football actually is, which costs more on the spread ladder
+than the lattice wins. The round records what would change that.
 """
 
 from __future__ import annotations

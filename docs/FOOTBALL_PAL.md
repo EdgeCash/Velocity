@@ -219,11 +219,25 @@ schema drops it without saying so.
 
 ## Next, in order
 
-1. **The drive-level simulation** — the one structural gap against Ballpark
-   Pal's bottom-up sim: possessions and plays conditioned on unit strength,
-   pace and situation, producing team scores and player stats from one
-   draw. Unifies the game and prop sims, gives the model a per-game
-   uncertainty it does not have today (`docs/EDGE_RESEARCH.md` 6.1), and is
-   promoted only through the lab's walk-forward gate.
+1. **The drive-level simulation — built and measured, not promoted.**
+   `velocity/models/drive.py` samples a game as possessions, so scores land
+   on football's own lattice and the mass at 3, 7, 10 and 14 is a
+   consequence of the structure rather than a correction to it. The gate's
+   verdict is in `docs/MODEL_LAB.md` ("the drive round") and it is split:
+   the college variant beats the shipped sim on calibration, Brier, key
+   numbers and every totals column; the NFL one wins the key numbers and
+   loses the spread profile, because eleven independent possessions are
+   *more* dispersed than NFL football is. Nothing is wired into the live
+   slate. The next three steps — a key-number overlay on the shipped sim,
+   clock compression, then the college promotion with its full derivative
+   re-check — are listed at the end of that round.
+
+   Note what this does **not** yet do, against Ballpark Pal's bottom-up
+   sim: it samples drives, not plays, so it does not produce player stats
+   from the same draw and does not unify the game and prop sims. It does
+   give the model the per-game uncertainty estimate `docs/EDGE_RESEARCH.md`
+   §6.1 recorded as missing — that section declined to calibrate per-game
+   confidence because "the model does not produce a per-game uncertainty
+   estimate at all, so there is nothing to calibrate", and now there is.
 2. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).
