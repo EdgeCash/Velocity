@@ -93,6 +93,7 @@ knowing:
 |---|---|---|
 | `games.csv` | game on the board | Betting Card |
 | `props.csv` | staked/papered prop | Props |
+| `team_totals.csv` | **side** (2 per game) | Team Totals |
 | `dfs.csv` | DK player | DFS Pool |
 | `dfs_optimizer.csv` | DK player, one column per contest type | DFS Optimizer |
 | `plays.csv` | curated play (A+/A/B/Watch) | Curated Plays |
@@ -113,6 +114,7 @@ empty — `ownership` always, unless you supply a projection.
 * `spread_edge` positive = value on the **home** side.
 * `total_edge` positive = value on the **over**.
 * `cover_probability` = P(**home** covers `market_spread`).
+* `team_total_edge` positive = value on that side's **over**.
 
 ---
 
@@ -165,8 +167,8 @@ weather, and nothing said so.
 | **DEGRADED** | usable card, something optional missing | green |
 | **NOT READY** | a required surface missing, **or** numbers stale with too little time to redo | **red** |
 
-Required = `games`, `projections`, `market lines`. Optional = props, DFS
-pool, weather, curated plays, settled record.
+Required = `games`, `projections`, `market lines`. Optional = props, team
+totals, DFS pool, weather, curated plays, settled record.
 
 The timing distinction is the point. A five-hour-old board with ten hours to
 kickoff is DEGRADED — redo it. The same board forty minutes out is NOT
@@ -202,7 +204,7 @@ runs: **+1h48 to +3h00**. `collect-odds.yml` is hourly on paper and roughly
 |---|---|---|
 | `collect-odds.yml` | `23 * * * *` | the board archive — **the market side of the card** |
 | `collect-bettingpros.yml` | `13 */3 * * *` | line/prop snapshots |
-| `collect-football-props.yml` | `19 15,22 * * *` | prop boards |
+| `collect-football-props.yml` | `:19`, **every slate window** | prop boards |
 | `collect-fantasypros.yml` | `37 12` Tue/Thu/Sat/Sun | consensus projections |
 | `collect-dk-salaries.yml` | `31 15 * * *` | DK salaries |
 | `collect-injuries.yml` | `37 15 * * *`, `33 16 * * 0` | ESPN injuries |
@@ -211,6 +213,11 @@ runs: **+1h48 to +3h00**. `collect-odds.yml` is hourly on paper and roughly
 | **`live-slate.yml`** | `:53` Sat 11,14,17,20,23 · Sun 11,14,17,20 · Mon/Thu/Fri 17,20 · Tue/Wed 17 | **the slate, the exports, the site** |
 | `refresh-datasets.yml` | `29 9 * * *` | committed datasets |
 | `model-drift.yml` | `31 6 1,15 * *` | drift check |
+
+Props collect on the **same windows as the slate, 34 minutes ahead** —
+both queue on the same platform, so riding the same delay lands the board
+inside the 75-minute freshness bar rather than at a wall-clock time the
+slate has drifted away from ([`docs/DECISIONS.md`](DECISIONS.md) D1).
 
 `live-slate.yml` runs **last in its hour** (`:53`) because it consumes every
 other workflow's artifact. `tests/test_workflow_schedules.py` pins the
@@ -301,5 +308,7 @@ Keep the workbook local. Do not commit it; do not publish the CSVs.
 | [`EXCEL_IPAD.md`](EXCEL_IPAD.md) | tablet route |
 | [`EXCEL_SETUP.md`](EXCEL_SETUP.md) | desktop route |
 | [`LATENCY_AUDIT.md`](LATENCY_AUDIT.md) | where the 2–4 hours goes |
+| [`DECISIONS.md`](DECISIONS.md) | the owner's standing decisions, and what implements each |
+| [`PHASE13_MOBILE.md`](PHASE13_MOBILE.md) | proposal: operating from an iPad |
 | [`HYBRID_MIGRATION_PLAN.md`](HYBRID_MIGRATION_PLAN.md) | architecture, gaps, risks |
 | [`DESIGN.md`](DESIGN.md) · [`WAGERING.md`](WAGERING.md) · [`INTEL.md`](INTEL.md) | the engine |

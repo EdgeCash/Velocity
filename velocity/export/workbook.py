@@ -101,6 +101,10 @@ DISPLAY_NAMES: Mapping[str, str] = {
     "75th_percentile": "75th",
     "90th_percentile": "90th",
     "99th_percentile": "99th",
+    "market_team_total": "Mkt Team Total",
+    "model_team_total": "Model Team Total",
+    "team_total_edge": "Team Total Edge (pts)",
+    "opponent": "Opponent",
     "value_score": "Value",
     "leverage_score": "Leverage",
     "stack_rating": "Stack",
@@ -125,17 +129,18 @@ _TWO_DP = {
 _ONE_DP = {
     "market_spread", "market_total", "spread_edge", "total_edge", "line",
     "point", "confidence", "leverage_score", "stack_rating",
+    "market_team_total", "model_team_total", "team_total_edge",
 }
 # Columns read as text, left-aligned. Everything else centres.
 _LEFT = {
-    "away_team", "home_team", "player", "team", "selection", "reason",
+    "away_team", "home_team", "player", "team", "opponent", "selection", "reason",
     "weather", "market", "position", "tier", "bet_type", "section",
     "metric", "detail", "game_id",
 }
 # Wider than the header needs, because the content is prose.
 _WIDTHS = {"reason": 88, "selection": 30, "weather": 30, "player": 24,
            "detail": 96, "metric": 26, "market": 18, "away_team": 22,
-           "home_team": 22, "game_id": 16, "section": 14}
+           "home_team": 22, "game_id": 16, "section": 14, "opponent": 22}
 
 
 def header_for(column: str) -> str:
@@ -337,6 +342,7 @@ _READ_ME: tuple[tuple[str, str], ...] = (
     ("Dashboard", "Model performance, ROI, closing-line value, and the run's best calls."),
     ("Betting Card", "Every game on the board: the market's number, the model's, and the gap."),
     ("Props", "Staked player props, with the simulated distribution behind each line."),
+    ("Team Totals", "Each side's own number: the market's, the model's, and the gap."),
     ("DFS Pool", "The DraftKings slate priced: salary, projection, ceiling, value, stack."),
     ("DFS Optimizer", "One column per contest type — cash 50th, single 75th, "
                       "GPP 90th, ceiling 99th."),
@@ -412,6 +418,7 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
     dfs: pd.DataFrame | None = None,
     dfs_optimizer: pd.DataFrame | None = None,
     plays: pd.DataFrame | None = None,
+    team_totals: pd.DataFrame | None = None,
     dashboard: pd.DataFrame | None = None,
     readiness: Readiness | None = None,
 ) -> Path:
@@ -428,6 +435,7 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
     games, props = frame(games), frame(props)
     dfs, dfs_optimizer = frame(dfs), frame(dfs_optimizer)
     plays, dashboard = frame(plays), frame(dashboard)
+    team_totals = frame(team_totals)
 
     week = f"Week {meta.week}" if meta.week is not None else ""
     season = str(meta.season) if meta.season is not None else ""
@@ -437,11 +445,13 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
     counts = {
         "Betting Card": len(games), "Props": len(props), "DFS Pool": len(dfs),
         "DFS Optimizer": len(dfs_optimizer), "Curated Plays": len(plays),
+        "Team Totals": len(team_totals),
     }
     _read_me_sheet(wb, meta, counts, readiness)
     _dashboard_sheet(wb, dashboard, subtitle, readiness)
     _table_sheet(wb, "Betting Card", "Betting Card", subtitle, games)
     _table_sheet(wb, "Props", "Player Props", subtitle, props)
+    _table_sheet(wb, "Team Totals", "Team Totals", subtitle, team_totals)
     _table_sheet(wb, "DFS Pool", "DFS Pool", subtitle, dfs)
     _table_sheet(wb, "DFS Optimizer", "DFS Optimizer", subtitle, dfs_optimizer)
     _table_sheet(wb, "Curated Plays", "Curated Plays", subtitle, plays,

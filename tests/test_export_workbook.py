@@ -21,8 +21,8 @@ from velocity.export.workbook import (
     header_for,
 )
 
-TABS = ("Read Me", "Dashboard", "Betting Card", "Props", "DFS Pool",
-        "DFS Optimizer", "Curated Plays")
+TABS = ("Read Me", "Dashboard", "Betting Card", "Props", "Team Totals",
+        "DFS Pool", "DFS Optimizer", "Curated Plays")
 META = ExportMeta("2026-09-20T17:53:00Z", 2026, 3)
 
 
@@ -221,6 +221,7 @@ def _readiness(verdict: str = "DEGRADED"):  # type: ignore[no-untyped-def]
                                       "kickoff": "2026-09-20T23:30:00Z"}]),
               "projections": one, "market": one, "plays": one,
               "props": None if verdict != "READY" else one,
+              "team_totals": one,
               "dfs_pool": None if verdict != "READY" else one,
               "weather": one, "record": one}
     if verdict == "NOT READY":

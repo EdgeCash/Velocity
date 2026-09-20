@@ -546,7 +546,10 @@ def market_strip(
 def distributions_frame(projections: Mapping[str, GameProjection]) -> pd.DataFrame:
     """Tidy per-game pregame distributions: ``game_id, kind, value, prob``.
 
-    ``kind`` is ``total`` (combined points) or ``margin`` (home − away).
+    ``kind`` is ``total`` (combined points), ``margin`` (home − away), or
+    ``home_score``/``away_score`` (each side alone, for team totals).
+    Consumers look up the kinds they want by key — the Sim Check reads only
+    ``total`` and ``margin`` — so a new kind is additive.
     Persisted unfolded (full support, exact pmf) so the post-game Sim Check can
     place the actual result at its true percentile; display-side folding
     happens at render time. Every (game, kind) sums to 1.
@@ -555,8 +558,17 @@ def distributions_frame(projections: Mapping[str, GameProjection]) -> pd.DataFra
     for gid, proj in projections.items():
         total = proj.sim.total.astype(int)
         margin = proj.sim.margin.astype(int)
+        # Each side's own score, for the same reason the game total is here:
+        # team totals are a market this system prices and stakes, and without
+        # the per-team pmf nothing downstream can state a team-total
+        # probability without re-deriving one from a normal — which would be
+        # a second, quieter pricing model (velocity/export/team_totals.py).
+        home_score = proj.sim.home_score.astype(int)
+        away_score = proj.sim.away_score.astype(int)
         n = int(total.shape[0])
-        for kind, samples in (("total", total), ("margin", margin)):
+        for kind, samples in (("total", total), ("margin", margin),
+                              ("home_score", home_score),
+                              ("away_score", away_score)):
             values, counts = np.unique(samples, return_counts=True)
             rows.extend(
                 {"game_id": str(gid), "kind": kind, "value": int(v), "prob": float(c) / n}

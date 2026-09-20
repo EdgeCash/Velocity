@@ -51,6 +51,7 @@ from velocity.export.meta import EXPORT_DIR, ExportMeta
 from velocity.export.plays import export_plays
 from velocity.export.props import export_props
 from velocity.export.readiness import assess, export_readiness, utc_now_default
+from velocity.export.team_totals import export_team_totals
 from velocity.export.workbook import WORKBOOK_NAME, build_workbook
 
 STEPS: tuple[str, ...] = ("refresh", "slate", "dfs", "export")
@@ -239,6 +240,16 @@ def export_step(args: argparse.Namespace) -> StepResult:
                 frames["prop_dist"] if not frames["prop_dist"].empty else None,
                 out_dir=out_dir,
             ),
+            # Team totals are a market the owner actively bets
+            # (docs/DECISIONS.md D2), so they get a board of their own rather
+            # than appearing only where a play happened to be staked.
+            export_team_totals(
+                meta, games if not games.empty else None,
+                board=board if not board.empty else None,
+                distributions=(frames["distributions"]
+                               if not frames["distributions"].empty else None),
+                out_dir=out_dir,
+            ),
         ]
         paths.extend(export_dfs(
             meta,
@@ -261,6 +272,7 @@ def export_step(args: argparse.Namespace) -> StepResult:
         # was.
         plays_frame = pd.read_csv(out_dir / "plays.csv")
         props_frame = pd.read_csv(out_dir / "props.csv")
+        team_totals_frame = pd.read_csv(out_dir / "team_totals.csv")
         dfs_frame = pd.read_csv(out_dir / "dfs.csv")
         paths.append(export_dashboard(
             meta,
@@ -282,6 +294,7 @@ def export_step(args: argparse.Namespace) -> StepResult:
             {
                 "games": games, "projections": frames["projections"],
                 "market": board, "plays": plays_frame, "props": props_frame,
+                "team_totals": team_totals_frame,
                 "dfs_pool": frames["dfs_pool"], "weather": frames["weather"],
                 "record": frames["record"],
             },
@@ -302,6 +315,7 @@ def export_step(args: argparse.Namespace) -> StepResult:
             dfs=dfs_frame,
             dfs_optimizer=pd.read_csv(out_dir / "dfs_optimizer.csv"),
             plays=plays_frame,
+            team_totals=team_totals_frame,
             dashboard=pd.read_csv(out_dir / "dashboard.csv"),
             readiness=readiness,
         ))
