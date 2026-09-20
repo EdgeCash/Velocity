@@ -579,6 +579,19 @@ def _build_projection(
                 wet = int(pd.to_numeric(forecast["precip"], errors="coerce").ge(0.25).sum())
                 print(f"weather forecast: {len(forecast)} stadium-days fetched, {wet} wet "
                       f"(≥ 0.25 in), rain at {precip_points:g} pts a side")
+            else:
+                # Every stadium's fetch failed. forecast_frame swallows them
+                # one at a time (a stadium without a forecast simply gets no
+                # adjustment), so a TOTAL failure returns an empty frame and
+                # raises nothing — and this branch used to say nothing either.
+                # The run then banks no weather artifact, and the export's
+                # weather column is blank with no reason recorded anywhere:
+                # indistinguishable from a league that has no weather model.
+                # Measured on run #132 (2026-09-20), where the whole log
+                # contained no mention of the forecast at all.
+                print("weather forecast: no stadium-days returned — totals "
+                      "unadjusted, no weather banked (Open-Meteo unreachable "
+                      "from this runner?)")
         except Exception as exc:  # noqa: BLE001 - weather is a nicety live
             print(f"wind forecast skipped ({exc})")
 
