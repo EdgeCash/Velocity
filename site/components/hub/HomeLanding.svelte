@@ -20,6 +20,7 @@
   // — a view added to VIEWS and forgotten in GROUPS would vanish from this
   // page silently, so site/tests/hub.test.mjs pins that it cannot.
   import { GROUPS, VIEW_BLURB, VIEW_LABEL } from './nav.js';
+  import LeagueChips from './LeagueChips.svelte';
 
   /** `{ [view]: number }` — the same counts the command bar's tiles carry. */
   export let counts = {};
@@ -29,13 +30,25 @@
   export let slate = '';
   /** `[{ label, value }]` — the day in three numbers, above the tiles. */
   export let lede = [];
+  /** `[{ league, n }]` for the filter, the league in force, and the setter.
+   *
+   * The landing carries the filter rather than hiding it, because it is
+   * already APPLYING it: five of the counts below are built from the
+   * filtered games. A filter you cannot see is worse than one you cannot
+   * change. */
+  export let leagues = [];
+  export let league = 'all';
+  export let onLeague = () => {};
 </script>
 
 <div class="landing">
   <!-- The day, stated. Their front page opens by telling you what today is;
        the hub used to open by asking what you wanted to look at. -->
   <section class="head">
-    <h1>Today</h1>
+    <div class="line">
+      <h1>Today</h1>
+      <LeagueChips {leagues} active={league} onPick={onLeague} />
+    </div>
     {#if slate}<p class="when">{slate}</p>{/if}
     {#if lede.length}
       <dl class="stats">
@@ -85,6 +98,14 @@
   /* ---- the day ------------------------------------------------------- */
   .head {
     padding: 1.4rem 0 1.6rem;
+  }
+  /* The chips ride the baseline of the day, not a bar of their own: on the
+     landing the filter is context for the numbers under it, not a toolbar. */
+  .line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.6rem 1rem;
   }
   h1 {
     margin: 0;

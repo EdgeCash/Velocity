@@ -286,7 +286,16 @@ object.
 `HomeLanding.svelte` is the literal one: the view at `#`, tiles down the
 page, sections you scroll through, a page you leave to get anywhere. It runs
 full width of its own 72rem measure with no rail and no command bar, because
-a landing that still carries the switcher is a menu with a header on it. Each
+a landing that still carries the switcher is a menu with a header on it.
+
+It does carry the **league filter**, beside the day. That is not a softening
+of the rule — it is that the landing is already applying it: five of the
+twelve tile counts (Most likely, Players, Accuracy, Weather, Matchups) are
+built from the filtered games. `#league=nfl` is a shareable link and the
+wordmark keeps it, so hiding the chips meant reading NFL-only numbers with
+nothing saying so and no way to clear it without first entering a view. A
+filter you cannot see is worse than one you cannot change, so both places
+render the same `LeagueChips.svelte`. Each
 tile carries a name, the count the build gave it and one line saying what the
 view answers — a tile reading `0` is telling you not to bother, which is
 worth a glance rather than a click. A section holding a single view (Outlook,

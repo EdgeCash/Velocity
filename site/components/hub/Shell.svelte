@@ -40,6 +40,7 @@
   import MatchupsPanel from './MatchupsPanel.svelte';
   import ExportPanel from './ExportPanel.svelte';
   import HomeLanding from './HomeLanding.svelte';
+  import LeagueChips from './LeagueChips.svelte';
   import Rail from './Rail.svelte';
   import SlateStrip from './SlateStrip.svelte';
   import Stamp from './Stamp.svelte';
@@ -274,16 +275,7 @@
       {/each}
     </div>
 
-    {#if leagues.length > 1}
-      <div class="leagues" aria-label="league filter">
-        <button class:on={activeLeague === 'all'} on:click={() => setLeague('all')}>All</button>
-        {#each leagues as l}
-          <button class:on={activeLeague === l.league} on:click={() => setLeague(l.league)}>
-            {l.league.toUpperCase()}
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <LeagueChips {leagues} active={activeLeague} onPick={setLeague} />
   </nav>
   {/if}
 
@@ -310,6 +302,9 @@
       lede={homeLede}
       slate={stampLabel(stamp)}
       onOpen={setView}
+      {leagues}
+      league={activeLeague}
+      onLeague={setLeague}
     />
   {:else}
   <div class="body">
@@ -497,18 +492,6 @@
     max-width: 100%;
     min-width: 0;
   }
-  .leagues {
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--v-lvl-1);
-    border: 1px solid var(--v-line);
-    border-radius: 999px;
-    max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .leagues::-webkit-scrollbar { display: none; }
   .group {
     display: flex;
     flex-direction: column;
@@ -545,29 +528,11 @@
     cursor: pointer;
     transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
   }
-  .leagues button {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.35em;
-    flex: 0 0 auto;
-    border: 0;
-    border-radius: 999px;
-    padding: 0.3rem 0.8rem;
-    background: transparent;
-    color: var(--v-ink-2);
-    font-family: var(--v-board);
-    font-size: 0.84rem;
-    font-weight: 600;
-    letter-spacing: 0.07em;
-    cursor: pointer;
-    transition: background 130ms ease, color 130ms ease;
-  }
   .views button:hover {
     color: var(--v-ink);
     background: var(--v-lvl-2);
     border-color: var(--v-line-2);
   }
-  .leagues button:hover { color: var(--v-ink); background: var(--v-lvl-2); }
   /* The selected tile wears the park's own grass, with dark ink on it — the
      one place --v-grass is allowed, and the pair is gated at 6.2:1. */
   .views button.on {
@@ -575,11 +540,6 @@
     border-color: var(--v-grass);
     color: var(--v-ink);
     font-weight: 700;
-  }
-  .leagues button.on {
-    background: var(--v-brand-deep);
-    color: var(--v-brand);
-    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.3);
   }
   .count {
     font-size: 0.68rem;
