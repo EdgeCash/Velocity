@@ -38,7 +38,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from velocity.export.artifacts import collect, newest_stamp, stamp_to_timestamp
+from velocity.export.artifacts import (
+    collect,
+    load_board,
+    newest_stamp,
+    stamp_to_timestamp,
+)
 from velocity.export.dashboard import export_dashboard
 from velocity.export.dfs import export_dfs
 from velocity.export.games import export_games
@@ -207,11 +212,20 @@ def export_step(args: argparse.Namespace) -> StepResult:
         props = frames["props"]
         plays_frame = None
 
+        # The market side of the betting card. Without it build_games falls
+        # back to the staked slate, which carries a price only for the bets
+        # that cleared the gate — so every unbet game exports with no market
+        # spread, total or moneyline at all, and the card becomes a column of
+        # projections with nothing to compare them to. Measured on a real run:
+        # 4 of 51 games had a market total and none had a spread.
+        board = load_board(args.odds_dir, games if not games.empty else None)
+
         paths = [
             export_games(
                 meta, games if not games.empty else None,
                 projections=frames["projections"] if not frames["projections"].empty else None,
                 out_dir=out_dir,
+                board=board if not board.empty else None,
                 slate=slate if not slate.empty else None,
                 distributions=(frames["distributions"]
                                if not frames["distributions"].empty else None),
@@ -275,6 +289,13 @@ def export_step(args: argparse.Namespace) -> StepResult:
     empty = [key for key, _, _ in ARTIFACT_FAMILIES
              if frames.get(key, pd.DataFrame()).empty]
     detail = f"stamp {stamp or 'unknown'}"
+    # Say which market source the card got. "Board is empty" is the difference
+    # between a full betting card and a page of projections, and it is not
+    # visible in the CSV — every cell just reads blank.
+    detail += (f"; board {len(board)} line(s) from the odds archive"
+               if not board.empty
+               else "; NO odds archive — market numbers come from the staked "
+                    "slate only (pass --odds-dir)")
     if empty:
         detail += f"; no artifacts for: {', '.join(sorted(set(empty)))}"
     return StepResult("export", "ok", time.monotonic() - started, detail,
@@ -314,6 +335,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="committed datasets root")
     parser.add_argument("--snapshot-dir", default=None,
                         help="banked odds snapshots, for the slate's board reuse")
+    parser.add_argument("--odds-dir", default=None,
+                        help="the hourly odds archive (odds_lines_*.parquet). Without "
+                             "it games.csv can only show market numbers for games that "
+                             "earned a bet")
     parser.add_argument("--salaries", default=None,
                         help="normalized DK salaries parquet (the dfs step needs it)")
     parser.add_argument("--fp", default=None,
