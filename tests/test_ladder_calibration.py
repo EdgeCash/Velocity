@@ -8,6 +8,9 @@ table, and the gate's deliberately narrow scope (docs/BUILD_EXCHANGES.md E8).
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from velocity.eval.ladders import (
@@ -26,6 +29,13 @@ from velocity.models.game_nfl import GameProjection
 from velocity.models.simulate import SimConfig, simulate_game
 from velocity.util.seed import make_rng
 from velocity.wagering.slate import SlateConfig, _ladder_gate_blocks
+
+_CALIBRATE_SPEC = importlib.util.spec_from_file_location(
+    "calibrate_ladders",
+    Path(__file__).resolve().parents[1] / "scripts" / "calibrate_ladders.py",
+)
+_CALIBRATE = importlib.util.module_from_spec(_CALIBRATE_SPEC)
+_CALIBRATE_SPEC.loader.exec_module(_CALIBRATE)
 
 
 @pytest.fixture
@@ -65,8 +75,16 @@ def test_committed_table_matches_a_fresh_measurement(league, dataset, market) ->
     ones — because the deep rungs are where the gate's bar is tightest and a
     transcription slip there is invisible by inspection.
     ``scripts/calibrate_ladders.py`` prints the literal this compares against.
+
+    The reference comes from that same script rather than being restated
+    here: the table is a statement about a PARTICULAR sim, so a test that
+    named its own config could pass while the banked numbers described
+    something else. It also means a league whose promoted sd moves fails
+    this test until the table is regenerated, which is the point.
     """
-    fresh = residual_calibration(pd.read_parquet(dataset), market, max_offset=28.5)
+    fresh = residual_calibration(
+        pd.read_parquet(dataset), market, max_offset=28.5,
+        reference=_CALIBRATE.SIMS[league])
     committed = OFFSET_BIAS[(league, market)]
     assert set(fresh["offset"]) == set(committed)
     for row in fresh.itertuples():
@@ -76,14 +94,20 @@ def test_committed_table_matches_a_fresh_measurement(league, dataset, market) ->
 
 
 def test_nfl_spreads_fail_the_gate_where_ncaaf_spreads_pass() -> None:
-    # The headline finding: a normal misses NFL spread shape by 3+ points of
-    # probability in the shoulders, which swamps the 2-point edge we bet on.
-    assert offset_error("nfl", "spread", 4.5) > 0.03
+    """The headline finding, and it survived the reference being fixed.
+
+    Measuring the sim rather than a continuous normal takes NFL spreads from
+    3.7 points of probability in the shoulders to 2.9 — a real improvement,
+    and still past the two-point edge the slate bets on, so the rungs stay
+    refused. A change that had flipped this would have been a change worth
+    distrusting.
+    """
+    assert 0.025 < offset_error("nfl", "spread", 4.5) < 0.031
     assert not offset_is_honest("nfl", "spread", 4.5)
     # NCAAF spreads are comfortably inside tolerance at the same distance.
     assert offset_error("ncaaf", "spread", 4.5) < 0.02
     assert offset_is_honest("ncaaf", "spread", 4.5)
-    # Deep out, a normal's own mass is small and the absolute miss recovers.
+    # Deep out, the sim's own mass is small and the absolute miss recovers.
     assert offset_is_honest("nfl", "spread", 17.5)
 
 
@@ -100,18 +124,28 @@ def test_markets_without_a_number_are_never_gated() -> None:
 
 
 def test_the_deep_tail_is_measured_rather_than_assumed_innocent() -> None:
-    # The gate's original table stopped at 20.5 and waved everything past it
-    # through, on the argument that the error out there was small and
-    # shrinking. It is not shrinking: NFL totals plateau around a point of
-    # probability all the way out, more than half the tolerance, and the sign
-    # has flipped by then — the real tail is FATTER than the fitted normal, so
-    # the miss is no longer in the direction the shoulders taught us to expect.
+    """The gate's original table stopped at 20.5 and waved everything past it
+    through, on the argument that the error out there was small and shrinking.
+
+    It is small and it does shrink — but not to nothing, and not fast. NFL
+    totals still carry 1.3 points of probability at 20.5, two-thirds of the
+    tolerance, and 0.6 at 28.5. Waving that through is how the first live
+    exchange board came back entirely deep tail: the gate had blocked
+    everything nearer the line, so an EV maximizer went where nothing was
+    checked.
+    """
     deep = [OFFSET_ERROR[("nfl", "total")][off] for off in (20.5, 22.5, 24.5, 26.5, 28.5)]
-    assert min(deep) > 0.006
+    assert min(deep) > 0.005
+    assert max(deep) > 0.012
     assert max(deep) < DEFAULT_TOLERANCE
-    # NCAAF totals actually get WORSE past the old table's end.
+    # NCAAF totals no longer get WORSE past the old table's end, and that
+    # reversal is worth recording rather than quietly dropping: under the old
+    # continuous-normal stand-in the error at 25.5 was 0.0142 against 0.0080
+    # at 15.5, and measuring the sim itself makes it 0.0062 against 0.0073.
+    # The deep-tail blow-up was the stand-in's, not the sim's.
     table = OFFSET_ERROR[("ncaaf", "total")]
-    assert table[25.5] > table[15.5]
+    assert table[25.5] < table[15.5]
+    assert table[25.5] < 0.01
     # And past the end of the measurement there is no opinion to have, so the
     # rung is refused — an EV maximizer finds an ungated region precisely
     # because it is ungated.
@@ -201,15 +235,25 @@ def test_the_two_tails_are_not_the_same_error() -> None:
     trap. These are the splits that make that distinction worth having.
     """
     spread = OFFSET_BIAS[("nfl", "spread")]
-    # NFL spreads: the favourite's tail flips to an understatement past 16.5
-    # while the dog's tail stays overstated out to 24.5 — opposite signs at the
-    # same offset, so one number for both sides cannot be right.
+    # NFL spreads: the favourite's tail flips to an understatement past 15.5
+    # while the dog's tail stays overstated through 22.5 — opposite signs at
+    # the same offset, so one number for both sides cannot be right.
     assert spread[20.5][0] < 0 < spread[20.5][1]
-    # Totals are the starker case: the under tail is the overstated one from
-    # 9.5 out in both leagues, and it is the only one that needs gating there.
+    # Totals are the starker case, and measuring the sim rather than a
+    # continuous normal identified WHY: total residuals are right-skewed
+    # (+0.33 NFL, +0.34 college, against +0.10 and +0.01 on the spreads) and
+    # the sim is symmetric. So near the line it overstates the OVER tail and
+    # understates the under, in both leagues, by comparable amounts.
     for league in ("nfl", "ncaaf"):
-        totals = OFFSET_BIAS[(league, "total")]
-        assert totals[20.5][1] > 0.010 > abs(totals[20.5][0])
+        over, under = OFFSET_BIAS[(league, "total")][4.5]
+        assert over > 0.015 > 0 > under
+    # Deep out the two leagues part company, which one number for both would
+    # hide: NFL totals leave the under tail as the only overstated side worth
+    # gating, while college's deep tails are both inside a cent. Under the old
+    # stand-in college looked like the NFL here (+0.0105 at 20.5); it does not.
+    assert OFFSET_BIAS[("nfl", "total")][20.5][1] > 0.010 > abs(
+        OFFSET_BIAS[("nfl", "total")][20.5][0])
+    assert max(abs(v) for v in OFFSET_BIAS[("ncaaf", "total")][20.5]) < 0.010
     # And the symmetric view is derived from the signed one rather than banked
     # beside it, so the two can never drift apart.
     for key, table in OFFSET_BIAS.items():

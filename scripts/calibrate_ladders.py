@@ -23,6 +23,13 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.eval.ladders import residual_calibration
+from velocity.models.simulate import (
+    DEFAULT_SD_MARGIN,
+    DEFAULT_SD_TOTAL,
+    NCAAF_SD_MARGIN,
+    NCAAF_SD_TOTAL,
+    SimConfig,
+)
 
 # (league, dataset) pairs the table covers. A league whose games carry no
 # closing numbers has nothing to measure and does not belong here.
@@ -31,23 +38,39 @@ SOURCES: tuple[tuple[str, str], ...] = (
     ("ncaaf", "datasets/ncaaf/games.parquet"),
 )
 MAX_OFFSET = 28.5
+# The sims being gated, at their promoted constants. The table is a statement
+# about THESE, so a league whose sd moves needs its table regenerated — which
+# is what the freshness test enforces.
+#
+# 8,000 draws a game: the banked number is a mean over thousands of games, so
+# its Monte Carlo error is under 1e-4, well inside the 5e-4 the freshness test
+# allows. The seed is fixed inside `simulated_tails`, so two runs on the same
+# datasets agree exactly and a constant never moves for no reason.
+SIMS: dict[str, SimConfig] = {
+    "nfl": SimConfig(n_sims=8000, sd_margin=DEFAULT_SD_MARGIN,
+                     sd_total=DEFAULT_SD_TOTAL),
+    "ncaaf": SimConfig(n_sims=8000, sd_margin=NCAAF_SD_MARGIN,
+                       sd_total=NCAAF_SD_TOTAL),
+}
 
 
-def measure(path: str, market: str) -> tuple[pd.DataFrame, int, float]:
+def measure(path: str, market: str, league: str) -> tuple[pd.DataFrame, int, float]:
     """The calibration table for one dataset and market, plus its n and sd."""
     games = pd.read_parquet(path)
     column = "spread_line" if market == "spread" else "total_line"
-    frame = games.dropna(subset=["home_score", "away_score", column])
+    frame = games.dropna(
+        subset=["home_score", "away_score", "spread_line", "total_line"])
     outcome = (
         frame["home_score"] - frame["away_score"]
         if market == "spread"
         else frame["home_score"] + frame["away_score"]
     )
     residual = (outcome - frame[column]).astype(float)
-    table = residual_calibration(games, market, max_offset=MAX_OFFSET)
+    table = residual_calibration(
+        games, market, max_offset=MAX_OFFSET, reference=SIMS[league])
     # The cheaper side of the contract is the one a deep rung is priced at, so
     # it is the denominator that matters for what an error costs.
-    table["price"] = table[["normal_over", "normal_under"]].min(axis=1)
+    table["price"] = table[["model_over", "model_under"]].min(axis=1)
     table["ev_error"] = table["error"] / table["price"]
     return table, len(frame), float(residual.std(ddof=1))
 
@@ -61,7 +84,7 @@ def literal(root: Path) -> str:
     lines = [LITERAL_HEAD]
     for league, relative in SOURCES:
         for market in ("spread", "total"):
-            table, n, sd = measure(str(root / relative), market)
+            table, n, sd = measure(str(root / relative), market, league)
             lines.append(f"    # n={n} completed games, residual sd {sd:.2f}")
             lines.append(f'    ("{league}", "{market}"): {{')
             rows = list(table.itertuples())
@@ -109,7 +132,7 @@ def main() -> None:
     if args.report:
         for league, relative in SOURCES:
             for market in ("spread", "total"):
-                table, n, sd = measure(str(root / relative), market)
+                table, n, sd = measure(str(root / relative), market, league)
                 print(f"== {league} {market}  n={n}  residual sd {sd:.2f}")
                 print(
                     table[
