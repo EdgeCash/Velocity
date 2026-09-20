@@ -209,7 +209,7 @@
   input[type="search"]:focus {
     outline: none;
     border-color: var(--v-brand-dim);
-    box-shadow: 0 0 0 1px rgba(61, 218, 208, 0.25);
+    box-shadow: 0 0 0 1px rgba(47, 109, 50, 0.25);
   }
   .toggle {
     display: inline-flex;
@@ -285,7 +285,7 @@
     color: var(--v-brand);
     background: var(--v-brand-deep);
   }
-  tr.rostered td { background: rgba(61, 218, 208, 0.045); }
+  tr.rostered td { background: rgba(47, 109, 50, 0.06); }
   .dfs { color: var(--v-ink-2); }
   .note, .none p { color: var(--v-ink-2); font-size: 0.8rem; line-height: 1.5; }
   .none h3 { margin-bottom: 0.3rem; }

@@ -238,7 +238,7 @@
     display: grid;
     gap: 0.12rem;
   }
-  section.warn { border-color: rgba(245, 179, 66, 0.28); background: var(--v-warn-tint); }
+  section.warn { border-color: rgba(133, 87, 0, 0.28); background: var(--v-warn-tint); }
   .bank.halted { border-color: var(--v-alert); }
 
   .lab {
@@ -325,7 +325,7 @@
   }
 
   .cfg { margin: 0.25rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.2rem; }
-  .flagbox { border-color: rgba(245, 179, 66, 0.32); }
+  .flagbox { border-color: rgba(133, 87, 0, 0.32); }
   .flagbtn {
     display: grid;
     gap: 0.02rem;

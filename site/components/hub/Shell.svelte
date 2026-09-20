@@ -356,7 +356,7 @@
     gap: 1rem;
     min-width: 0;
     padding: 0.5rem 0 0.45rem;
-    background: linear-gradient(var(--v-bg) 78%, rgba(6, 9, 13, 0.88));
+    background: linear-gradient(var(--v-bg) 78%, rgba(236, 232, 220, 0.88));
     backdrop-filter: saturate(140%) blur(10px);
     border-bottom: 1px solid var(--v-line);
   }
@@ -388,7 +388,7 @@
   .tierpill.pub {
     color: var(--v-brand);
     background: var(--v-brand-deep);
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.3);
+    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.3);
   }
 
   /* ---- command bar --------------------------------------------------- */
@@ -459,7 +459,7 @@
   .leagues button.on {
     background: var(--v-brand-deep);
     color: var(--v-brand);
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.3);
+    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.3);
   }
   .count {
     font-size: 0.68rem;

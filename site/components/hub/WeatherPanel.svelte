@@ -208,7 +208,7 @@
   td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .strong { font-weight: 600; color: var(--v-ink); }
   .model { color: var(--v-ink-2); }
-  tr.windy td { background: rgba(224, 160, 61, 0.06); }
+  tr.windy td { background: rgba(133, 87, 0, 0.07); }
   .when {
     display: inline-block;
     margin-left: 0.45rem;
@@ -228,8 +228,8 @@
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--v-warn, #e0a03d);
-    background: rgba(224, 160, 61, 0.14);
+    color: var(--v-warn, #855700);
+    background: rgba(133, 87, 0, 0.14);
   }
   .roofed { color: var(--v-ink-2); font-size: 0.82rem; }
   .note, .none p { color: var(--v-ink-2); font-size: 0.8rem; line-height: 1.5; }

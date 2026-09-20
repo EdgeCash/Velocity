@@ -105,19 +105,19 @@
     height: 0.42em;
     border-radius: 50%;
     background: var(--v-brand);
-    box-shadow: 0 0 0 3px rgba(61, 218, 208, 0.14);
+    box-shadow: 0 0 0 3px rgba(47, 109, 50, 0.14);
   }
   .aging {
     color: var(--v-warn);
-    box-shadow: inset 0 0 0 1px rgba(245, 179, 66, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(133, 87, 0, 0.35);
   }
   .aging .dot { background: var(--v-warn); box-shadow: 0 0 0 3px var(--v-warn-tint); }
   .aging .age { color: var(--v-warn); }
   .stale {
     color: var(--v-alert);
-    box-shadow: inset 0 0 0 1px rgba(229, 72, 77, 0.42);
+    box-shadow: inset 0 0 0 1px rgba(197, 34, 31, 0.42);
   }
-  .stale .dot { background: var(--v-alert); box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.18); }
+  .stale .dot { background: var(--v-alert); box-shadow: 0 0 0 3px rgba(197, 34, 31, 0.18); }
   .stale .age { color: var(--v-alert); }
 
   /* On a phone the topbar is already carrying the wordmark, the tier pill and

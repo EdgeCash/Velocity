@@ -401,7 +401,7 @@
      Everything else the board holds is desaturated by comparison. */
   .plays { display: grid; gap: 0.4rem; }
   .play {
-    border: 1px solid rgba(61, 218, 208, 0.28);
+    border: 1px solid rgba(47, 109, 50, 0.28);
     border-radius: var(--v-radius);
     background: var(--v-brand-tint);
     overflow: hidden;
@@ -423,7 +423,7 @@
     cursor: pointer;
     transition: background 130ms ease;
   }
-  .head:hover { background: rgba(61, 218, 208, 0.12); }
+  .head:hover { background: rgba(47, 109, 50, 0.1); }
   .head:focus-visible { outline: 2px solid var(--v-brand); outline-offset: -2px; }
   .chev {
     font-family: var(--v-board);
@@ -556,7 +556,7 @@
     font-size: 0.6rem;
     font-weight: 700;
     color: var(--vc, var(--v-ink-2));
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(31, 26, 21, 0.05);
   }
   .venue.exch { box-shadow: inset 0 0 0 1px var(--vc, var(--v-line-2)); }
 
@@ -588,7 +588,7 @@
   }
   /* A near miss is the only held group worth a decision; the rest are the
      gate working as designed on rows that were never candidates. */
-  .group.near { border-color: rgba(245, 179, 66, 0.3); }
+  .group.near { border-color: rgba(133, 87, 0, 0.3); }
   .ghead {
     display: flex;
     align-items: baseline;
