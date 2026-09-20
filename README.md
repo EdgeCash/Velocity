@@ -38,9 +38,14 @@ python -m velocity.run_weekly --slate-dir artifacts/slate   # full week
 python -m velocity.run_weekly --steps export                # re-export only, seconds
 ```
 
+The same run also writes **`velocity.xlsx`** — those six tables as one
+prebuilt, formatted workbook. That is the route for Excel on an iPad, iPhone
+or Android tablet, none of which have Power Query
+([`docs/EXCEL_IPAD.md`](docs/EXCEL_IPAD.md)).
+
 The export layer re-simulates nothing: it is a read-only projection of the
 frames the pipeline already banks, so the same numbers reach the workbook, the
-site and the cards. Setup and the recommended workbook structure are in
+site and the cards. Desktop setup and the recommended workbook structure are in
 [`docs/EXCEL_SETUP.md`](docs/EXCEL_SETUP.md); the architecture and its gaps in
 [`docs/HYBRID_MIGRATION_PLAN.md`](docs/HYBRID_MIGRATION_PLAN.md).
 

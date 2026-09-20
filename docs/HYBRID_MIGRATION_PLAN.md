@@ -194,6 +194,7 @@ velocity/export/
     dfs.py        dfs.csv + dfs_optimizer.csv
     plays.py      plays.csv
     dashboard.py  dashboard.csv
+    workbook.py   velocity.xlsx — all six, prebuilt, for Excel without Power Query
 
 velocity/wagering/plays.py   curated A+/A/B/Watch engine with explanations
 velocity/run_weekly.py       the one-command orchestrator

@@ -100,3 +100,30 @@ def test_the_workflows_only_read_from_actions(path: Path) -> None:
     permissions = _load(path)["permissions"]
     assert permissions["contents"] == "read"
     assert permissions["actions"] == "read"
+
+
+def test_the_slate_artifact_carries_the_workbook() -> None:
+    """The one file a tablet can open has to leave the runner too."""
+    steps = _steps(LIVE_SLATE, "slate")
+    upload = next(s for s in steps if str(s.get("name", "")).startswith("Upload slates"))
+    assert "artifacts/exports/*.xlsx" in upload["with"]["path"]
+
+
+def test_the_email_attaches_the_whole_board_workbook() -> None:
+    """Mail is the shortest route onto a device with no Power Query.
+
+    The per-league slate workbook was already attached; the export workbook
+    is the one with every tab, and dropping it would leave the tablet
+    operator with the CSVs they cannot use.
+    """
+    steps = _steps(LIVE_SLATE, "slate")
+    send = next(s for s in steps if str(s.get("name", "")) == "Email the slate")
+    attachments = send["with"]["attachments"]
+    assert "artifacts/exports/*.xlsx" in attachments
+    assert "artifacts/slate/*.xlsx" in attachments  # the existing one survives
+
+
+def test_the_refresh_workflow_uploads_the_workbook_too() -> None:
+    steps = _steps(REFRESH_EXPORTS, "export")
+    upload = next(s for s in steps if str(s.get("name", "")).startswith("Upload"))
+    assert "artifacts/exports/*.xlsx" in upload["with"]["path"]
