@@ -50,6 +50,7 @@ from velocity.export.games import export_games
 from velocity.export.meta import EXPORT_DIR, ExportMeta
 from velocity.export.plays import export_plays
 from velocity.export.props import export_props
+from velocity.export.readiness import assess, export_readiness, utc_now_default
 from velocity.export.workbook import WORKBOOK_NAME, build_workbook
 
 STEPS: tuple[str, ...] = ("refresh", "slate", "dfs", "export")
@@ -274,6 +275,26 @@ def export_step(args: argparse.Namespace) -> StepResult:
         # the CSVs rather than rebuilt, so the file and the files cannot
         # disagree. This is the only artifact usable on a tablet: Excel for
         # iPad has no Power Query (docs/EXCEL_IPAD.md).
+        # Is the board usable, and usable in time? A run that finished is not
+        # the same claim as a board an operator can bet before kickoff, and
+        # until now only the first one was ever stated (velocity/export/readiness.py).
+        readiness = assess(
+            {
+                "games": games, "projections": frames["projections"],
+                "market": board, "plays": plays_frame, "props": props_frame,
+                "dfs_pool": frames["dfs_pool"], "weather": frames["weather"],
+                "record": frames["record"],
+            },
+            now=utc_now_default(),
+            generated_at=when,
+            details={
+                "market": (f"{len(board)} line(s) from the odds archive"
+                           if not board.empty else
+                           "no odds archive passed (--odds-dir)"),
+            },
+        )
+        paths.append(export_readiness(meta, readiness, out_dir=out_dir))
+
         paths.append(build_workbook(
             out_dir / WORKBOOK_NAME, meta,
             games=pd.read_csv(out_dir / "games.csv"),
@@ -282,6 +303,7 @@ def export_step(args: argparse.Namespace) -> StepResult:
             dfs_optimizer=pd.read_csv(out_dir / "dfs_optimizer.csv"),
             plays=plays_frame,
             dashboard=pd.read_csv(out_dir / "dashboard.csv"),
+            readiness=readiness,
         ))
     except Exception as exc:  # noqa: BLE001 - the orchestrator reports, never raises
         return StepResult("export", "failed", time.monotonic() - started, repr(exc))
@@ -298,6 +320,9 @@ def export_step(args: argparse.Namespace) -> StepResult:
                     "slate only (pass --odds-dir)")
     if empty:
         detail += f"; no artifacts for: {', '.join(sorted(set(empty)))}"
+    # The verdict leads the line: it is the one part an operator scanning a
+    # green job actually needs to see.
+    detail = f"{readiness.summary_line()} | {detail}"
     return StepResult("export", "ok", time.monotonic() - started, detail,
                       [str(p) for p in paths])
 

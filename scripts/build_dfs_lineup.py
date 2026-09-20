@@ -531,23 +531,6 @@ def main() -> None:
             slate_start=slate.start, suffix=slate.suffix, slate=label,
             game_time=rows["kickoff"].map(game_time_ct)))
         solved.append((slate, run))
-    if not solved:
-        print("no solvable lineup on any slate grouping")
-        return
-    # Today's main slate fronts the card + GPP: among the slates locking on
-    # the earliest date, the one with the most games (a bigger slate tomorrow
-    # must not outrank tonight's board).
-    first_day = min((s.start for s, _r in solved if s.start is not None),
-                    default=None)
-    todays = [pair for pair in solved
-              if first_day is None or pair[0].start is None
-              or pair[0].start.date() == first_day.date()]
-    slate, run = max(todays or solved, key=lambda pair: pair[1].n_games)
-
-    frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
-    pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
-    print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
-
     # Every priced player, not only the rostered ones — the DFS player pool
     # the site's Players view joins onto the prop board (docs/FOOTBALL_PAL.md).
     if pools:
@@ -573,6 +556,32 @@ def main() -> None:
                 print(f"wrote {len(dist)} DFS distribution row(s) to {dist_dest}")
         except Exception as exc:  # noqa: BLE001 - never breaks the lineup
             print(f"DFS distributions skipped: {exc}")
+
+    if not solved:
+        # The pool and its distributions are written ABOVE this return, not
+        # below it. They are collected whether or not a slate solved (see the
+        # loop: "an infeasible board still knows what every player is worth"),
+        # and returning first threw that away — losing the more useful output
+        # because the less useful one failed. Measured on run #132: 758 priced
+        # NFL players existed in memory and never reached disk, because the
+        # only classic group on the board was a multi-week Sit & Go the
+        # optimizer could not fill a roster from.
+        print("no solvable lineup on any slate grouping "
+              f"({len(pools)} priced pool(s) still banked)")
+        return
+    # Today's main slate fronts the card + GPP: among the slates locking on
+    # the earliest date, the one with the most games (a bigger slate tomorrow
+    # must not outrank tonight's board).
+    first_day = min((s.start for s, _r in solved if s.start is not None),
+                    default=None)
+    todays = [pair for pair in solved
+              if first_day is None or pair[0].start is None
+              or pair[0].start.date() == first_day.date()]
+    slate, run = max(todays or solved, key=lambda pair: pair[1].n_games)
+
+    frame_dest = out / f"dfs_lineup_{args.league}_{stamp}.parquet"
+    pd.concat(frames, ignore_index=True).to_parquet(frame_dest, index=False)
+    print(f"wrote {len(frames)} slate lineup(s) to {frame_dest}")
 
     if args.gpp > 0:
         # Best-effort like every surface past the cash lineup. Football stacks

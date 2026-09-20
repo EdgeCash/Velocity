@@ -38,6 +38,11 @@ python -m velocity.run_weekly --slate-dir artifacts/slate   # full week
 python -m velocity.run_weekly --steps export                # re-export only, seconds
 ```
 
+Every run also states whether the board is actually usable — `readiness.csv`,
+a colour-coded **Run status** block on the workbook's first tab, and a CI gate
+that fails the job when a surface the card needs is missing
+([`docs/GAME_DAY.md`](docs/GAME_DAY.md)).
+
 The same run also writes **`velocity.xlsx`** — those six tables as one
 prebuilt, formatted workbook. That is the route for Excel on an iPad, iPhone
 or Android tablet, none of which have Power Query

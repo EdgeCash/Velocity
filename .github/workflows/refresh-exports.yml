@@ -126,3 +126,13 @@ jobs:
           # is itself kept 60 days, so a long retention here buys nothing and
           # bills for it (docs/LAUNCH.md "What the schedule costs").
           retention-days: 14
+
+      # A run that FINISHED is not the same claim as a board you can bet
+      # before kickoff. This step is the second claim, and it runs AFTER the
+      # upload so a red gate never costs the artifact it is complaining
+      # about. NOT READY (a required surface missing) fails the job, which
+      # is what puts a notification on the operator's phone; DEGRADED (no
+      # props tonight, no DFS pool) stays green and says so in the log and
+      # on the workbook's first tab.
+      - name: Board readiness gate
+        run: python -m velocity.export.readiness --check artifacts/exports/readiness.csv

@@ -45,6 +45,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from velocity.export.meta import ExportMeta
+from velocity.export.readiness import Readiness
 
 # The file the workbook is written as. Stable, like the CSV names: an
 # operator's bookmark, an email attachment and a Files-app icon all key on it.
@@ -58,6 +59,14 @@ _HEADER_FILL = PatternFill("solid", fgColor=NAVY)
 _BAND_FILL = PatternFill("solid", fgColor="F2F5FA")
 _THIN = Side(style="thin", color="D9D9D9")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+# Verdict colours for the run-status block. Red is reserved for a board that
+# cannot be used; amber for one that is usable with something missing.
+_VERDICT_FILL = {
+    "READY": PatternFill("solid", fgColor="C6EFCE"),
+    "DEGRADED": PatternFill("solid", fgColor="FFF2CC"),
+    "NOT READY": PatternFill("solid", fgColor="FFC7CE"),
+}
 
 # Tier colours for the curated card — the one place colour carries meaning.
 _TIER_FILL = {
@@ -232,7 +241,10 @@ def _table_sheet(
     return ws
 
 
-def _dashboard_sheet(wb: Workbook, dashboard: pd.DataFrame, subtitle: str) -> Worksheet:
+def _dashboard_sheet(
+    wb: Workbook, dashboard: pd.DataFrame, subtitle: str,
+    readiness: Readiness | None = None,
+) -> Worksheet:
     """The summary tab, laid out as blocks rather than as the long frame.
 
     The CSV is long (``section``, ``metric``, ``value``, ``detail``) because
@@ -276,6 +288,38 @@ def _dashboard_sheet(wb: Workbook, dashboard: pd.DataFrame, subtitle: str) -> Wo
         return [{str(k): v for k, v in row.items()} for row in rows]
 
     row = 4
+    if readiness is not None:
+        # First thing on the first tab. An operator opening this file before
+        # kickoff is asking "can I use this?" before anything else, and the
+        # answer used to require noticing that a column was blank.
+        head = ws.cell(row=row, column=1, value="Run status")
+        head.font = Font(name=ARIAL, bold=True, size=12, color=NAVY)
+        row += 1
+        verdict = ws.cell(row=row, column=1, value=readiness.verdict)
+        verdict.font = Font(name=ARIAL, bold=True, size=11)
+        verdict.fill = _VERDICT_FILL.get(readiness.verdict, _BAND_FILL)
+        verdict.alignment = Alignment(horizontal="left")
+        line = ws.cell(row=row, column=3, value=readiness.summary_line())
+        line.font = Font(name=ARIAL, size=10, color="404040")
+        line.alignment = Alignment(horizontal="left")
+        row += 1
+        for status in readiness.surfaces:
+            label = ws.cell(row=row, column=1, value=status.label)
+            label.font = Font(name=ARIAL, size=10, color="404040")
+            state = ws.cell(row=row, column=2, value=status.status)
+            state.font = Font(name=ARIAL, size=10,
+                              color="006100" if status.ok else "9C0006")
+            state.alignment = Alignment(horizontal="left")
+            note = status.detail or (
+                f"{status.rows} row(s)" if status.ok
+                else ("required — the card needs this" if status.required
+                      else "optional — nothing banked this run"))
+            cell = ws.cell(row=row, column=3, value=note)
+            cell.font = Font(name=ARIAL, size=10, color="606060")
+            cell.alignment = Alignment(horizontal="left")
+            row += 1
+        row += 1
+
     row = block(row, "How the model is doing", section("performance"))
     row = block(row, "Return on investment", section("roi"))
     row = block(row, "Closing-line value — the durable signal", section("clv"))
@@ -314,7 +358,10 @@ _READ_ME: tuple[tuple[str, str], ...] = (
 )
 
 
-def _read_me_sheet(wb: Workbook, meta: ExportMeta, counts: Mapping[str, int]) -> Worksheet:
+def _read_me_sheet(
+    wb: Workbook, meta: ExportMeta, counts: Mapping[str, int],
+    readiness: Readiness | None = None,
+) -> Worksheet:
     ws = wb.active
     ws.title = "Read Me"
     week = f"Week {meta.week}" if meta.week is not None else "week unknown"
@@ -322,6 +369,14 @@ def _read_me_sheet(wb: Workbook, meta: ExportMeta, counts: Mapping[str, int]) ->
     _title_block(ws, "Velocity", f"{season} · {week} · generated {meta.generated_at}", 2)
 
     row = 4
+    if readiness is not None:
+        label = ws.cell(row=row, column=1, value="Run status")
+        label.font = Font(name=ARIAL, bold=True, size=10, color=NAVY)
+        cell = ws.cell(row=row, column=2, value=readiness.summary_line())
+        cell.font = Font(name=ARIAL, bold=True, size=10)
+        cell.fill = _VERDICT_FILL.get(readiness.verdict, _BAND_FILL)
+        cell.alignment = Alignment(horizontal="left")
+        row += 2
     for label, text in _READ_ME:
         lcell = ws.cell(row=row, column=1, value=label)
         lcell.font = Font(name=ARIAL, bold=bool(label), size=10, color=NAVY)
@@ -358,6 +413,7 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
     dfs_optimizer: pd.DataFrame | None = None,
     plays: pd.DataFrame | None = None,
     dashboard: pd.DataFrame | None = None,
+    readiness: Readiness | None = None,
 ) -> Path:
     """Write every export frame into one formatted workbook. Returns the path.
 
@@ -382,8 +438,8 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
         "Betting Card": len(games), "Props": len(props), "DFS Pool": len(dfs),
         "DFS Optimizer": len(dfs_optimizer), "Curated Plays": len(plays),
     }
-    _read_me_sheet(wb, meta, counts)
-    _dashboard_sheet(wb, dashboard, subtitle)
+    _read_me_sheet(wb, meta, counts, readiness)
+    _dashboard_sheet(wb, dashboard, subtitle, readiness)
     _table_sheet(wb, "Betting Card", "Betting Card", subtitle, games)
     _table_sheet(wb, "Props", "Player Props", subtitle, props)
     _table_sheet(wb, "DFS Pool", "DFS Pool", subtitle, dfs)
