@@ -2721,3 +2721,45 @@ follows), which is worth more and would move the same rungs.
 
 `--sim-skew fit` stays on the live slate as a switch, off in both leagues;
 `fit_epsilon` on the bank reads +0.18 for the NFL.
+
+## The wepa round (2026-09-20) — play-context knobs chosen inside the window
+
+nfelo's wepa fits its play-context weights to predictiveness rather than
+setting them. The lab's version (`select_by_margin`, `context_fitted`):
+inside each training window, every candidate on a seven-entry grid — the
+turnover shrink at 0.25 / 0.5 / 0.75, garbage time, the money downs
+(third and fourth) at ×1.5 and ×0.75, and combinations — is fitted on the
+window's earlier seasons and scored by margin RMSE on its last complete
+season; the argmin is refitted on the whole window, chosen once per
+season. Beside it, the new money-downs knob alone at a fixed weight. Over
+the promoted chain, 3,045 games, 2015–2026.
+
+| variant | Brier | calib. | rmse_margin | info_w_margin | ATS (flat) | ΔBrier vs promoted | seasons | Δ sq. margin error | seasons |
+|---|---|---|---|---|---|---|---|---|---|
+| promoted | 0.2197 | 0.0170 | 13.008 | 0.034 | 48.5% | — | — | — | — |
+| late1.5 | 0.2210 | 0.0171 | 13.097 | −0.004 | 48.1% | +0.00130 ± 0.00042 | 2/12 | +2.33 ± 0.44 | 1/12 |
+| late0.75 | 0.2196 | 0.0176 | **12.987** | 0.063 | 48.2% | −0.00018 ± 0.00025 | 6/12 | **−0.54 ± 0.26** | **9/12** |
+| wepa (chosen per window) | 0.2197 | 0.0178 | 12.999 | 0.049 | 48.2% | −0.00001 ± 0.00025 | 3/12 | −0.23 ± 0.25 | 7/12 |
+
+**Readings:**
+
+1. **Choosing per window adds nothing.** One check season is ~270 games,
+   and a margin RMSE on 270 games cannot tell 0.25 from 0.5 on the
+   turnover shrink or ×0.75 from ×1 on the money downs; the selector's
+   choice moves season to season and its result is the grid's average —
+   the paired difference against the promoted chain is zero to the
+   fourth decimal. The mechanism works (tested, cached, walk-forward
+   honest) and is the wrong size for this data.
+2. **Up-weighting the money downs is clearly wrong** (margin error worse in
+   eleven seasons of twelve, three standard errors on the Brier): third
+   and fourth downs are the highest-leverage and least repeatable plays,
+   which is the turnover shrink's argument again.
+3. **Down-weighting them is a small, consistent margin gain** — 0.02 of
+   margin RMSE, better in nine seasons of twelve, two standard errors —
+   and nothing the slate stakes sees it: the moneyline Brier is flat, the
+   totals untouched, the flat ATS record 48.5% → 48.2% (a loser either
+   way, and unstaked). A finer sweep (×0.5–×0.9) belongs to a round where
+   the margin is a staked market.
+
+**Not promoted.** `select_by_margin` and the `late_down` knob stay in the
+lab; the live chain is unchanged.
