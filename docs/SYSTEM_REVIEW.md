@@ -334,8 +334,8 @@ buys spread shape at the cost of NFL moneyline calibration and NCAAF totals
 shape; the slope hurts NCAAF totals in aggregate. What did clear it is the
 third shape mechanism, the margin lattice (`SimConfig.lattice`,
 `--sim-keys`, `datasets/{league}/lattice.parquet`): the normal's own draws
-resampled by football's key numbers, promoted in the NFL by the lattice,
-derivative re-check and promotion rounds. What the bank found
+resampled by football's key numbers, promoted in both leagues by the
+lattice, derivative re-check, promotion and tail rounds. What the bank found
 instead was the dominant totals error §2 had attributed to the
 distribution: **the NFL QB decomposition projected every total 2.3 points
 high** for fifteen seasons, and the lab's college blend hung from a stale

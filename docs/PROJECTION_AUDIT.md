@@ -786,10 +786,11 @@ bounded**, and each of those has its own round in `MODEL_LAB.md`:
   days);
 - the drive sim, the key-number lattice and the skew draw are built and
   measured on the walk-forward; the lattice cleared every check and is
-  **promoted in the NFL** (the promotion round: every NFL spread ladder side
-  open, 50 → 58), off in college where it closed sides; the drive sim and
-  the skew are not promoted — the skew is right about the shape and
-  dominated by the totals level.
+  **promoted in both leagues** (the promotion round opened every NFL
+  spread ladder side, 50 → 58; the tail round found college's cost was
+  the table's tail bin and, with it left alone, college opens every spread
+  side too); the drive sim and the skew are not promoted — the skew is
+  right about the shape and dominated by the totals level.
 
 ### 7.5 What to run next
 

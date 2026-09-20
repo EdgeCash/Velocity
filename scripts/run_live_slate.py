@@ -1458,14 +1458,15 @@ def live_config_rows(
 # datasets/{league}/lattice.parquet (scripts/build_lattice.py). It moves no
 # μ and no sd — a 3-point favourite's push on exactly 3 goes from 3.1% to
 # 7.7% because the normal was pricing the key numbers at 40% of their size.
-# NFL only: regenerating the ladder table with it opens every NFL spread
-# side (50 → 58 of 58) and closes eight college sides, because college's
-# table is a third tail bin and at the market's sharper numbers that tail
-# weight overstates the favourite's blowouts. The college bank stays, the
-# switch stays, and the default waits on a per-league tail sweep.
+# Both leagues, since the tail round: with the table's tail bin corrected
+# the NFL opened every spread side on the ladder gate (50 → 58 of 58) while
+# college closed eight, because a third of college margins sit in that bin
+# and its weight overstated the favourite's blowouts at the market's sharper
+# numbers. With the tail left alone (the bank's default now) both leagues
+# open every spread side and the NFL shoulder falls further, 0.019 → 0.014.
 DEFAULT_SIM_SHAPE_BY_LEAGUE = {"nfl": "normal", "ncaaf": "normal"}
 DEFAULT_SIM_DISPERSION_BY_LEAGUE = {"nfl": "constant", "ncaaf": "constant"}
-DEFAULT_SIM_KEYS_BY_LEAGUE = {"nfl": "lattice", "ncaaf": "none"}
+DEFAULT_SIM_KEYS_BY_LEAGUE = {"nfl": "lattice", "ncaaf": "lattice"}
 FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
                 "ncaaf": (NCAAF_SD_MARGIN, NCAAF_SD_TOTAL)}
 

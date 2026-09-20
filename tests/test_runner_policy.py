@@ -223,14 +223,13 @@ def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
                 == runner.DEFAULT_SIM_DISPERSION_BY_LEAGUE[league])
     assert runner.resolve_sim_shape("empirical", "nfl") == "empirical"
     assert runner.resolve_sim_shape(None, "mlb") == "normal"
-    # The promotion round: the banked margin lattice is on in the NFL, where
-    # it opened every spread side on the ladder gate, and off in college,
-    # where it closed eight.
+    # The promotion and tail rounds: the banked margin lattice is on in both
+    # leagues — with its tail bin left alone, it opens every spread side on
+    # the ladder gate in each.
     assert args.sim_keys is None
-    assert runner.resolve_sim_keys(None, "nfl") == "lattice"
-    assert runner.resolve_sim_keys(None, "ncaaf") == "none"
+    for league in ("nfl", "ncaaf"):
+        assert runner.resolve_sim_keys(None, league) == "lattice"
     assert runner.resolve_sim_keys("none", "nfl") == "none"
-    assert runner.resolve_sim_keys("lattice", "ncaaf") == "lattice"
     assert runner.resolve_sim_keys(None, "mlb") == "none"
     # The Methods row says what the sim did, in the run's own words.
     rows = dict(runner.live_config_rows(args, "QB-adjusted recency EPA", None))
@@ -243,20 +242,17 @@ def test_the_default_football_sim_carries_the_banked_lattice() -> None:
     from velocity.models.keynumbers import load_lattice_weights
 
     runner = _runner()
-    for league, default_on in (("nfl", True), ("ncaaf", False)):
+    for league in ("nfl", "ncaaf"):
         banked = load_lattice_weights(league)
         if banked is None:
             pytest.skip(f"no {league} lattice committed")
         args = runner.build_parser().parse_args(["--league", league])
         cfg = runner.football_sim_config(league, args)
-        assert cfg.residuals is None
-        assert (cfg.lattice == banked) is default_on
-        assert ("key numbers" in runner.describe_sim(cfg, league)) is default_on
-        # The switch switches both ways.
+        assert cfg.residuals is None and cfg.lattice == banked
+        assert "key numbers" in runner.describe_sim(cfg, league)
+        # The switch still switches.
         off = runner.build_parser().parse_args(["--league", league, "--sim-keys", "none"])
         assert runner.football_sim_config(league, off).lattice is None
-        on = runner.build_parser().parse_args(["--league", league, "--sim-keys", "lattice"])
-        assert runner.football_sim_config(league, on).lattice == banked
 
 
 def test_a_lattice_without_a_bank_simulates_without_it(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
