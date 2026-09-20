@@ -2640,6 +2640,28 @@ deferred runs on it below.
 College is unchanged: its level is drifting with the game, not within the
 season, and no window followed it (part one).
 
+### The wager lab on the new ledger — NFL totals go under-only
+
+The promoted ledger was rebuilt from the new chain (4,081 games), and the
+curated list's rule tiers (`velocity/wagering/tiers.py`) are pinned to it,
+so the wager lab (`scripts/wager_lab.py`) re-scored every rule:
+
+| rule | all seasons: bets · win · ROI · seasons above | 2015+: bets · win · ROI |
+|---|---|---|
+| NFL totals, unders 4+ | 299 · **56.2%** · **+9.4%** · 11 of 15 | 213 · 56.8% · +10.2% |
+| NFL totals, overs 4+ | 291 · 49.8% · −3.3% · 7 of 15 | 164 · 49.4% · −4.5% |
+| NFL totals, either 4+ | 590 · 53.1% · +3.2% · 7 of 16 | 377 · 53.6% · +3.8% |
+| NFL totals, either 6+ | 165 · 55.2% · +7.3% · 5 of 11 | 90 · 62.2% · +20.8% |
+
+Unders at 4+ improve under the new level (55.6% → 56.2%, 9 → 11 seasons
+above break-even); overs at 4+ fall from 52.8% to 49.8% — the level lifts
+the projected total in the seasons that were scoring more, so the
+disagreements that read "over" are now the ones the market already priced.
+52.8% was a coin flip against a 52.4% break-even and 49.8% is one too. The
+slate takes NFL totals on the under side only from here, as it has taken
+college's (`DEFAULT_TOTAL_SIDES_BY_LEAGUE`), and the NFL tier table has one
+row: A = unders at 4+, 56.2% over 299, 11 of 15.
+
 ## The skew re-test (2026-09-20) — the shape is right, the centre is the level's
 
 The skew round deferred the totals skew to after the level; the level round

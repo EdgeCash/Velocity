@@ -52,14 +52,16 @@ def test_cli_default_leaves_weight_to_league_policy() -> None:
     # The 2025 extension left ≥4 pts of totals disagreement at break-even
     # (52.3% on 5,657) while ≥6 still clears (53.0%) — the default moved.
     # The totals filters resolve per league from the wager lab's cuts
-    # (docs/OUTPUT_AUDIT.md §2.2): 4 points either side in the NFL, 4 on the
-    # under alone in college; the flags override.
+    # (docs/OUTPUT_AUDIT.md §2.2): 4 points on the under alone in both
+    # leagues; the flags override.
     assert args.ncaaf_total_edge is None and args.nfl_total_edge is None
     runner = _runner()
     assert runner.resolve_total_edge(args, "ncaaf") == 4.0
     assert runner.resolve_total_edge(args, "nfl") == 4.0
     assert runner.resolve_total_sides(args, "ncaaf") == frozenset({"under"})
-    assert runner.resolve_total_sides(args, "nfl") == frozenset({"over", "under"})
+    # Unders only in the NFL too since the level round's wager lab: overs at
+    # 4+ read 49.8% on the new ledger against 56.2% for the unders.
+    assert runner.resolve_total_sides(args, "nfl") == frozenset({"under"})
     custom = runner.build_parser().parse_args(
         ["--league", "ncaaf", "--ncaaf-total-edge", "6", "--ncaaf-total-sides", "over,under"])
     assert runner.resolve_total_edge(custom, "ncaaf") == 6.0

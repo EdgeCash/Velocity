@@ -1922,7 +1922,12 @@ DEFAULT_MODEL_WEIGHT_BY_MARKET: dict[str, dict[str, float]] = {
 # which is why the shipped either-side 6-point rule paid in five seasons of
 # twelve.
 DEFAULT_TOTAL_EDGE_BY_LEAGUE = {"nfl": 4.0, "ncaaf": 4.0}
-DEFAULT_TOTAL_SIDES_BY_LEAGUE = {"nfl": frozenset({"over", "under"}),
+# Unders only in both leagues. College's edge was always on the under side
+# (docs/OUTPUT_AUDIT.md §2.2); the NFL's over side at 4+ read 52.8% on the
+# previous ledger and 49.8% (−3.3% at the juice) on the level round's — a
+# coin flip either way against 56.2% and +9.4% for the unders, 11 seasons
+# of 15 above break-even (docs/MODEL_LAB.md, the level round's wager lab).
+DEFAULT_TOTAL_SIDES_BY_LEAGUE = {"nfl": frozenset({"under"}),
                                  "ncaaf": frozenset({"under"})}
 
 
