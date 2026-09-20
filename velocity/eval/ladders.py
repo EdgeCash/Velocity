@@ -83,6 +83,22 @@ the spread shoulder error by a tenth and costs moneyline calibration, so it
 is not the default and this gate stays. What that round did remove was a
 level bias worth two-thirds of the totals error — which no shape gate could
 have seen.
+
+**A known over-statement, not yet fixed** (docs/MODEL_LAB.md, the derivative
+re-check). Everything above compares the empirical tail against a CONTINUOUS
+normal fitted to the residuals, as a stand-in for the sim. The real sim
+rounds, and so does football: 52% of NFL closing spreads are whole numbers,
+which makes those games' residuals integers, so the empirical tail past a
+half-point offset is discrete and a rounded sim reproduces what a continuous
+one cannot. Measured against the sim itself rather than the stand-in, the
+bias is about 0.010 smaller at every offset on both tails — half the default
+tolerance — and the gate opens 51 of 58 NFL spread sides instead of 41, and
+58 of 58 NCAAF total sides instead of 48. Twenty sides across the two
+leagues are being refused for an error the sim does not make. The table has
+not been regenerated against the sim yet because doing so PERMITS bets,
+which is the direction that wants its own change and its own watch on the
+live ledger. Until then this gate is conservative by about a cent of
+probability, and knowingly so.
 """
 
 from __future__ import annotations

@@ -1883,3 +1883,100 @@ points moves all of them. Eight gate columns are not that check.
    the NFL gap at 3 from 0.094 to 0.027 and does not explain a point of it.
 3. **A per-league `max_abs` and prior.** Both are currently one number for
    both leagues, chosen on the NFL and never swept.
+
+## The derivative re-check (2026-09-20) — what else reads the sim
+
+The lattice round won the sim-shape gate and stopped, because eight columns
+scored on the game markets are not a licence to change a sim that props,
+ladders, DFS and the correlation model all price off. This is that wider
+check — `scripts/derivative_recheck.py`, every family scored against what
+actually happened rather than against the shipped sim.
+
+**It found something bigger than the thing it was checking, and that finding
+has nothing to do with the overlay.**
+
+### 1. The ladder gate is blocking rungs on an error the sim does not make
+
+`velocity/eval/ladders.py` is not a consumer of the sim. It is a *hardcoded
+correction for the sim's shape being wrong*: a banked table of per-offset
+probability errors, used to refuse rungs the sim cannot price honestly. The
+table compares the empirical tail past each offset against **a continuous
+normal fitted to the residuals** — a stand-in for the sim.
+
+The stand-in is wrong, in the expensive direction. The real sim **rounds**,
+and so does football: 52% of NFL closing spreads are whole numbers, which
+makes the residual at those games an integer, so the empirical tail past a
+half-point offset is discrete. A rounded sim reproduces that; a continuous
+normal cannot. Measured directly, the shipped sim's bias is about **0.010
+smaller at every offset, on both tails**, than the table charges it.
+
+| league / market | banked normal | shipped sim, measured | with the overlay |
+|---|---|---|---|
+| nfl spread | 41/58 sides open | **51/58** | 49/58 |
+| nfl total | 49/58 | 52/58 | **54/58** |
+| ncaaf spread | 58/58 | 58/58 | 58/58 |
+| ncaaf total | 48/58 | **58/58** | 58/58 |
+
+**Twenty ladder sides across the two leagues are refused because the gate is
+measuring a sim that does not exist.** With a 0.02 tolerance, a systematic
+0.010 overstatement is half the budget.
+
+That rounding is the cause is not inferred, it is tested: re-run the same
+measurement with `round_scores=False` and the error goes *up* (worst 0.0326 →
+0.0387 on NFL spreads, 44 sides open → 35). The rounding is worth about nine
+sides on its own.
+
+This is **not** fixed here. Opening ladder rungs permits bets, which is the
+dangerous direction, and doing it as a side effect of a re-check is exactly
+the sort of change that should not ride in on another's PR. It is the top of
+the backlog below.
+
+### 2. Everything else the sim feeds, graded (three seeds each)
+
+| | NFL shipped | NFL +keys | NCAAF shipped | NCAAF +keys |
+|---|---|---|---|---|
+| ladder rung calibration ↓ | 0.0249 | 0.0252 | 0.0150 | 0.0156 |
+| ladder rung Brier ↓ | 0.1926 | **0.1922** | 0.2132 | **0.2130** |
+| team totals calibration ↓ | 0.0313 | 0.0316 | 0.0191 | 0.0204 |
+| same-game parlay calibration ↓ | 0.0151 | **0.0138** | 0.0119 | 0.0119 |
+| parlay correlation error ↓ | 0.0110 | **0.0103** | 0.0106 | 0.0108 |
+| **exact-margin log score** ↑ | −4.034 | **−3.964** | −4.259 | **−4.192** |
+| **mass on the actual margin** ↑ | 0.0220 | **0.0277** | 0.0176 | **0.0223** |
+| **modal margin hit rate** ↑ | 0.034 | **0.080** | 0.024 | **0.056** |
+
+**Readings, honestly:**
+
+1. **Nothing is damaged, and the joint least of all.** The same-game parlay
+   columns were the real risk — a correction applied to the margin alone
+   could leave both legs right and the pair wrong, and no other column would
+   see it. The NFL joint calibration *improves* (0.0151 → 0.0138) and
+   college's is flat. Resampling whole `(home, away)` pairs is why.
+2. **The exact-score surfaces improve a lot, everywhere.** A quarter more
+   probability mass on the margin that actually happened, in both leagues,
+   on every seed. The modal margin — what the site's most-likely-score view
+   shows — goes from right 3.4% of the time to 8.0% in the NFL, because the
+   overlay's mode is 3 and football's is too.
+3. **College pays a small, real cost that the NFL does not.** Ladder
+   calibration is 0.0006 worse and team totals 0.0013 worse — about 7%
+   relative — and unlike the NFL, where both columns flip sign across seeds
+   and are therefore noise, college's are the same sign on all three. Not
+   large, and not nothing; it is reported rather than averaged away with the
+   NFL's.
+
+### Verdict
+
+The overlay survives the re-check. It is free in the NFL and costs college
+about 7% of its ladder and team-total calibration for a 27% gain in the mass
+it puts on the margin that happens. **`normal+keys` is cleared for promotion
+on that evidence**, and the remaining objection is no longer technical.
+
+**Next, in order of expected value:**
+
+1. **Fix the ladder gate's reference** — measure the sim rather than a
+   continuous normal fitted to residuals. Worth ~20 ladder sides across the
+   two leagues, and worth more than the overlay. Needs its own change: it
+   opens rungs, so it wants the live ledger watched after it lands, not just
+   a gate table regenerated.
+2. **Promote `normal+keys`**, now that the surface is measured.
+3. **Clock compression** (from the drive round), still the one mechanism that
+   would explain the three-point spike rather than measure it.
