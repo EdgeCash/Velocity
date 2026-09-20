@@ -988,6 +988,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="football sim key numbers: none, or the banked margin "
                              "lattice resampling the normal's draws (default: the "
                              "gate's pick per league)")
+    parser.add_argument("--sim-skew", choices=["none", "fit"], default=None,
+                        help="football sim totals skew: none, or the sinh-arcsinh "
+                             "skew fitted on the banked residuals' totals (default: "
+                             "the gate's pick per league)")
     parser.add_argument("--min-edge", type=float, default=0.02)
     # Market anchoring (docs/MODEL_LAB.md Round 3): the NFL close's Brier beats
     # every pure model in this family, so the belief used for gating and Kelly
@@ -1471,9 +1475,17 @@ def live_config_rows(
 # and its weight overstated the favourite's blowouts at the market's sharper
 # numbers. With the tail left alone (the bank's default now) both leagues
 # open every spread side and the NFL shoulder falls further, 0.019 → 0.014.
+#
+# "fit" skews the TOTAL's draw (velocity/models/skew.py) by the sinh-arcsinh
+# skew fitted on the banked residuals' totals — the one asymmetry football
+# has (a game runs away upward and not downward), on the normal path only.
+# The skew round measured it right about the shape and dominated by the
+# totals level; the level round then fixed a third of that level, and the
+# skew re-test (docs/MODEL_LAB.md) decides the default below.
 DEFAULT_SIM_SHAPE_BY_LEAGUE = {"nfl": "normal", "ncaaf": "normal"}
 DEFAULT_SIM_DISPERSION_BY_LEAGUE = {"nfl": "constant", "ncaaf": "constant"}
 DEFAULT_SIM_KEYS_BY_LEAGUE = {"nfl": "lattice", "ncaaf": "lattice"}
+DEFAULT_SIM_SKEW_BY_LEAGUE = {"nfl": "none", "ncaaf": "none"}
 FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
                 "ncaaf": (NCAAF_SD_MARGIN, NCAAF_SD_TOTAL)}
 
@@ -1699,6 +1711,10 @@ def resolve_sim_keys(explicit: str | None, league: str) -> str:
     return explicit or DEFAULT_SIM_KEYS_BY_LEAGUE.get(league, "none")
 
 
+def resolve_sim_skew(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_SIM_SKEW_BY_LEAGUE.get(league, "none")
+
+
 def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
     """The football sim for this run: league sds, shape, dispersion, size.
 
@@ -1706,9 +1722,12 @@ def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
     says so — a missing bank is a build gap, never a silent change of sim.
     The lattice is the same: it reads the banked table or says it could not.
     It corrects the normal draw only, so an empirical shape switches it off.
+    The totals skew is fitted on the bank's totals at run time (the pool's
+    own shape already carries it, so the empirical path skips it too).
     """
     from velocity.models.keynumbers import load_lattice_weights
-    from velocity.models.residuals import load_residual_pool
+    from velocity.models.residuals import load_residual_frame, load_residual_pool
+    from velocity.models.skew import fit_epsilon
 
     sd_margin, sd_total = FOOTBALL_SDS.get(league, (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL))
     kwargs: dict[str, object] = {
@@ -1732,6 +1751,13 @@ def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
             print(f"no margin lattice banked for {league}; simulating without key numbers")
         else:
             kwargs["lattice"] = lattice
+    if (resolve_sim_skew(getattr(args, "sim_skew", None), league) == "fit"
+            and "residuals" not in kwargs):
+        bank = load_residual_frame(league)
+        if bank is None:
+            print(f"no residual bank for {league}; simulating totals without skew")
+        else:
+            kwargs["total_skew"] = fit_epsilon(bank["resid_total"].to_numpy())
     return SimConfig(**kwargs)  # type: ignore[arg-type]
 
 
@@ -1741,6 +1767,8 @@ def describe_sim(config: SimConfig, league: str) -> str:
              else f"empirical ({len(config.residuals)} banked residual pairs)")
     if config.lattice is not None:
         shape += f" + key numbers (banked lattice to |margin| {config.lattice.max_abs})"
+    if config.total_skew:
+        shape += f" + totals skew ε {config.total_skew:+.2f} (fitted on the bank)"
     width = f"σ {config.sd_margin:g} margin / {config.sd_total:g} total"
     if config.sd_total_slope or config.sd_margin_slope:
         width += (f", {config.sd_total_slope:+.3f}/pt of expected total "
