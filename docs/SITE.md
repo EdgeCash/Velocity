@@ -219,14 +219,89 @@ status and never on Today's card.
 
 ## The design
 
-Dark only, on purpose: `appearance.switcher` is off and every surface is
-picked for the near-black ground. A light mode would be a second design to
-keep honest for no one.
+One theme, on purpose: `appearance.switcher` is off and every surface is
+picked for a single ground. A second mode would be a second design to keep
+honest for no one. That ground was near-black until the park re-skin
+(below); it is bone now, and everything in this section was re-derived
+against it rather than translated.
 
 The reference is the genre, not a BI tool. What follows is the short version
 of what a scouting pass across Outlier, BettorSheets, Mongoose Bets, the
 sportsbook apps and the pro odds screens found to be *shared* by all of them,
 and which of it this site adopts.
+
+### The park re-skin (2026-09-20)
+
+The surface is Ballpark Pal's now: bone page, white cards, infield dirt on
+the band, grass green on the actions. `docs/FOOTBALL_PAL.md` had already
+taken their *menu*; this takes their *room*.
+
+The palette is theirs and the luminances are not, and that is the whole
+finding. Pulled from their own stylesheets, their signature pairs are
+**cream `#DFDFD4` on dirt `#846954` at 3.79:1** and **white on grass
+`#4CAF50` at 2.78:1** — both under the 4.5:1 AA bar. They carry it because
+their headers run 75px and their buttons 28px. This surface's labels run to
+0.56rem, where the same two pairs are simply unreadable. So every hue is
+theirs, darkened until it clears the bar on every surface it can land on.
+
+That darkening is load-bearing and invisible, which is exactly what gets
+undone by a later "the green looks muddy". It is a gate:
+`scripts/check_site_contrast.py` reads the tokens straight out of
+`pages/+layout.svelte` — there is no second copy — and
+`tests/test_site_contrast.py` runs it in CI.
+
+Two consequences worth stating, because both are counter-intuitive coming
+from the dark board:
+
+- **Grass green is a fill, never an ink.** `--v-grass` is Ballpark Pal's own
+  `#4CAF50`, kept bright because a darkened one stops reading as theirs; it
+  carries `--v-ink` on top at 6.2:1 and a `color:` rule pointing at it is a
+  test failure. Type that wants to be green uses `--v-brand`.
+- **Hairlines are black-alpha now.** They were white-alpha, which is correct
+  on near-black and invisible on bone. Every one of them flipped, and the
+  test asserts they stay flipped — this is the rule most likely to be undone
+  by pasting a rule in from the dark board's history.
+- **The team-colour lift reversed.** `readable_on` searched lightness
+  *upward* — the only way out of a near-black panel. On bone the only way out
+  is down, so it takes its direction from the background's luminance now, and
+  the column it feeds is `color_ui` rather than `color_dark`. The result is
+  better than the dark board's: measured against bone, a club navy, a Ravens
+  purple and a Packers green all clear 3:1 **untouched**, where every one of
+  them had to be lifted before. Only the pale crests move, and they darken.
+
+### The masthead, and the tile bar
+
+The topbar is Ballpark Pal's dirt masthead now, full-bleed. It holds the
+ticker and the stamp — eight colour rules across two other components — and
+none of them were edited: `.topbar` re-points `--v-ink`, `--v-brand`,
+`--v-warn` and the rest at a band-scoped set, and custom properties cascade,
+so every child adapts by sitting inside it. Those band inks are solved with
+the same `readable_on` the crests use, against `#6b5442`, and the contrast
+gate checks them as their own ground.
+
+The command bar is their landing shape — a section header over a grid of
+rounded tiles, one group per heading — with one deliberate difference: it
+stays **sticky** rather than sitting down the page. Theirs is a home page you
+leave; this is one surface you never leave, so a tile grid you had to scroll
+back up to reach would be their look bought at the cost of the thing the hub
+exists for. The selected tile wears `--v-grass` with `--v-ink` on it, which
+is the one place the bright green is allowed.
+
+### The slate strip
+
+Ballpark Pal opens on the day: a row of game cards above everything, each
+with both crests, the sim's number under each and the time between them. The
+hub opened on its command bar, which is a menu — it asks what you want to
+look at before showing you there is anything to look at. `SlateStrip.svelte`
+is their answer on football's numbers, and clicking a card lands in Games
+with that game open.
+
+It is deliberately not a second game list. Four facts per card and no more;
+the Games view owns the detail. The one rule with teeth is that a **score
+beats a projection** once there is one — the live feed's `state` is
+`pre | in | post` and a `pre` game carries zeros, so reading the score
+without checking the state would put 0–0 under every crest on the morning
+slate.
 
 ### The board face
 
@@ -270,17 +345,18 @@ across four columns of market/side/line.
    digit, so a column of `−110` beside `+140` visibly fails to align. And
    American prices are never grouped: `+2400`, not `+2,400`.
 3. **Money colour is never the only channel, and red is held in reserve.**
-   Profit green and loss salmon are indistinguishable under deuteranopia, so
+   Profit green and loss red are indistinguishable under deuteranopia, so
    every number wearing them also carries a sign. The loss colour is
-   **salmon `#f97289`, not red**: it sits beside a positive on nearly every
+   **clay `#8f3a1e`, not red**: it sits beside a positive on nearly every
    row, and a fire-alarm red there makes an ordinary losing market look like
-   a fault. True red (`--v-alert`) is spent on the kill switch alone.
-4. **One lit object.** Depth is a five-step near-black ladder inside a 20-value
-   luminance range with white-alpha hairlines, so almost everything is
-   dark-on-dark; exactly one thing per list gets the inverted brand pill — the
-   best-priced venue on a market, the live game in the feed. A list where
-   every price is filled is the genre's clearest cheap tell: if everything is
-   lit, nothing is.
+   a fault. (It was salmon on the dark board, for that same reason; clay is
+   the light-ground answer to it, and the park's own material.) True red
+   (`--v-alert`) is spent on the kill switch alone.
+4. **One lit object.** Depth is a five-step bone ladder with black-alpha
+   hairlines, so almost everything is dark-on-light; exactly one thing per
+   list gets the filled brand pill — the best-priced venue on a market, the
+   live game in the feed. A list where every price is filled is the genre's
+   clearest cheap tell: if everything is lit, nothing is.
 5. **Nothing clips.** The content column and its wrapper are flex children
    with `min-width: 0`, and every table scrolls inside its own box, so a wide
    blotter never steals the page's width — which is exactly what made the old
@@ -476,7 +552,7 @@ Negating it puts the favourite on the wrong side.
 Every surface that names a team can also show its mark and wear its colour:
 the matchup sheet's two team blocks, and both ends of a play card's matchup
 line. `velocity.teams` carries one row per team on the slate —
-`code`, `color`, `color_dark`, `logo` — built by `build_teams` in
+`code`, `color`, `color_ui`, `logo` — built by `build_teams` in
 `scripts/build_site_data.py` and resolved through
 `velocity.report.assets.team_identity`, which is the card renderers' own
 resolution shared rather than copied a fourth time.

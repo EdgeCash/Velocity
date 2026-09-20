@@ -312,7 +312,7 @@
   .sorts button.on {
     background: var(--v-brand-deep);
     color: var(--v-brand);
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.3);
+    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.3);
   }
   .bar {
     display: flex;
@@ -334,7 +334,7 @@
   input[type="search"]:focus {
     outline: none;
     border-color: var(--v-brand-dim);
-    box-shadow: 0 0 0 1px rgba(61, 218, 208, 0.25);
+    box-shadow: 0 0 0 1px rgba(47, 109, 50, 0.25);
   }
   .found {
     font-family: var(--v-board);

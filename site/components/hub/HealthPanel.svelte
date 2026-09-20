@@ -257,8 +257,8 @@
     border-radius: var(--v-radius);
     background: var(--v-lvl-0);
   }
-  .tile.hot { border-color: rgba(245, 179, 66, 0.32); background: var(--v-warn-tint); }
-  .tile.bad { border-color: rgba(229, 72, 77, 0.4); }
+  .tile.hot { border-color: rgba(133, 87, 0, 0.32); background: var(--v-warn-tint); }
+  .tile.bad { border-color: rgba(197, 34, 31, 0.4); }
   .lab {
     font-size: 0.56rem;
     font-weight: 700;

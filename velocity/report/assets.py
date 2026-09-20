@@ -124,11 +124,22 @@ def readable_on(color: str, background: str, *, ratio: float = 3.0) -> str:
     only how light it is moves, and only as far as the target needs. A color
     already clear of the bar is returned untouched. 3:1 is the WCAG bar for
     non-text graphics, which is what these are — a rule, a hairline, a chip.
+
+    **Which way it moves is the background's to decide.** Against a near-black
+    panel the only way out is lighter; against the park re-skin's bone one it
+    is darker, and a search that could only lighten would hand a light surface
+    the palest version of every crest — the exact failure it was written to
+    prevent, mirrored. The direction is taken from the background's own
+    luminance, and either way the far end (white or black) clears any
+    reachable bar, so the search always terminates.
     """
     if contrast_ratio(color, background) >= ratio:
         return color
     hue, lightness, saturation = colorsys.rgb_to_hls(*_hex_to_rgb(color))
-    low, high = lightness, 1.0
+    lighten = _relative_luminance(_hex_to_rgb(background)) < 0.5
+    # `low` is the failing end and `high` the passing one, so the bisection
+    # below always walks toward the smallest change that clears the bar.
+    low, high = (lightness, 1.0) if lighten else (lightness, 0.0)
     for _ in range(32):  # ~1e-10 of lightness; far finer than 8-bit output
         mid = (low + high) / 2.0
         candidate = colorsys.hls_to_rgb(hue, mid, saturation)

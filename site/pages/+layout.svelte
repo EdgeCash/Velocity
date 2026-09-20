@@ -18,7 +18,7 @@
 </script>
 
 <svelte:head>
-  <meta name="theme-color" content="#06090d" />
+  <meta name="theme-color" content="#6b5442" />
 </svelte:head>
 
 <EvidenceDefaultLayout
@@ -73,61 +73,110 @@
   /* ------------------------------------------------------------------
      Tokens.
 
-     Depth is a five-step near-black ladder inside a 20-value luminance
-     range, not #111/#222/#333 — that narrow range is what reads as a lit
-     room rather than a theme toggle. Hairlines are white at low alpha,
-     never a solid grey, so they read as light catching an edge and
-     composite correctly over whatever sits beneath them.
+     The park palette (docs/SITE.md, "the park re-skin"). The surface was a
+     five-step near-black ladder; it is now Ballpark Pal's ballpark — bone
+     page, white cards, infield dirt on the band, grass green on the
+     actions. Hairlines are BLACK at low alpha now, not white: on a light
+     ground a white hairline is invisible, and every one of them had to
+     flip.
+
+     Taken from their stylesheets, and then darkened. Their own pairs do
+     not clear WCAG AA — cream on dirt is 3.79:1 and white on grass is
+     2.78:1 — which they get away with at 75px and this surface, at a
+     quarter that size, would not. So the hues are theirs and the
+     luminances are ours: `scripts/check_site_contrast.py` is the gate, and
+     every pair below clears 4.5:1 on every surface it lands on.
+
+     Grass green is the one color that has to be bright to read as theirs,
+     and a bright green cannot carry small text. So it is split: `--v-grass`
+     is a FILL only, always with `--v-ink` on top (6.2:1), while `--v-brand`
+     is the darkened green that text is set in. Do not set type in
+     `--v-grass`.
 
      Money colors are status, never identity: everything that wears one
-     also carries a sign, an arrow or a word (docs/SITE.md). The negative
-     is salmon rather than red, and true red is spent only on the kill
-     switch — a board where every favourite is painted red reads as
+     also carries a sign, an arrow or a word (docs/SITE.md). The negative is
+     CLAY rather than red — the same reasoning that made it salmon on the
+     dark board, in the park's own material — and true red is spent only on
+     the kill switch, a board where every favourite is painted red reads as
      broken.
      ------------------------------------------------------------------ */
   :global(:root) {
-    /* ground → surface ladder */
-    --v-bg: #06090d;
-    --v-lvl-0: #0b1017;
-    --v-lvl-1: #101822;
-    --v-lvl-2: #16202c;
-    --v-hover: #1a2531;
-    --v-chip: #131c26;
-    --v-line: rgba(255, 255, 255, 0.07);
-    --v-line-2: rgba(255, 255, 255, 0.13);
+    /* ground → surface ladder: bone page, white cards */
+    --v-bg: #f3f0e7;
+    --v-lvl-0: #ece8dc;
+    --v-lvl-1: #ffffff;
+    --v-lvl-2: #faf8f3;
+    --v-hover: #ece8dc;
+    --v-chip: #efebe0;
+    --v-line: rgba(31, 26, 21, 0.12);
+    --v-line-2: rgba(31, 26, 21, 0.22);
 
-    /* ink — primary is not pure white */
-    --v-ink: rgba(233, 241, 249, 0.92);
-    --v-ink-2: #8fa0b3;
-    --v-ink-3: #5d6b7c;
+    /* ink — primary is warm near-black, not pure black */
+    --v-ink: #1e1a15;
+    --v-ink-2: #544c42;
+    --v-ink-3: #686055;
 
-    /* brand: interactive and identity, deliberately not the money green */
-    --v-brand: #3ddad0;
-    --v-brand-dim: #2bb3ab;
-    --v-brand-deep: #14403d;
-    --v-brand-tint: rgba(61, 218, 208, 0.13);
+    /* brand: interactive and identity. On a light ground "dim" means
+       DARKER, so brand and brand-dim sit close together; brand-deep is the
+       pale fill that active chrome wears, with brand as its text. */
+    --v-brand: #2f6d32;
+    --v-brand-dim: #327335;
+    --v-brand-deep: #dfe8d9;
+    --v-brand-tint: rgba(47, 109, 50, 0.13);
+
+    /* the park's own materials. Fills only — `--v-ink` goes on top of each,
+       never `--v-grass` or `--v-band` as type. */
+    --v-grass: #4caf50;
+    --v-band: #6b5442;
+    --v-band-ink: #f3f0e7;
+    /* The band is a ground of its own, so it carries a ground's worth of ink.
+       `.topbar` re-points --v-ink and friends at these, which means every
+       component inside it adapts without knowing the band exists — the
+       alternative was editing eight components' colour rules by hand. Solved
+       with the same `readable_on` the crests use, against #6b5442. */
+    --v-band-ink-2: #d9d3c8;
+    --v-band-ink-3: #d3cec3;
+    --v-band-brand: #abdbad;
+    --v-band-warn: #f8c772;
+    --v-band-alert: #f6c2c3;
+    --v-band-pos: #80e2af;
+    --v-band-line: rgba(243, 240, 231, 0.18);
 
     /* the money axis */
-    --v-pos: #35d07f;
-    --v-pos-tint: rgba(53, 208, 127, 0.13);
-    --v-neg: #f97289;
-    --v-neg-tint: rgba(249, 114, 137, 0.13);
-    --v-warn: #f5b342;
-    --v-warn-tint: rgba(245, 179, 66, 0.13);
-    --v-info: #5b8dff;
-    --v-info-tint: rgba(91, 141, 255, 0.13);
+    --v-pos: #187034;
+    --v-pos-tint: rgba(24, 112, 52, 0.13);
+    --v-neg: #8f3a1e;
+    --v-neg-tint: rgba(143, 58, 30, 0.13);
+    --v-warn: #855700;
+    --v-warn-tint: rgba(133, 87, 0, 0.13);
+    --v-info: #1f5fae;
+    --v-info-tint: rgba(31, 95, 174, 0.13);
     /* true red, held in reserve: the kill switch and nothing else */
-    --v-alert: #e5484d;
+    --v-alert: #c5221f;
     /* the low-confidence slate: thin samples are desaturated, not hidden */
-    --v-thin: #7c8899;
-    --v-thin-tint: rgba(124, 136, 153, 0.1);
+    --v-thin: #686055;
+    --v-thin-tint: rgba(104, 96, 85, 0.1);
 
-    --v-radius: 12px;
-    --v-radius-sm: 8px;
-    --v-glow: 0 0 18px rgba(61, 218, 208, 0.22);
+    /* Flatter than the dark board's, toward Ballpark Pal's 4-5px. A 12px
+       radius on a white card over bone reads as a widget; theirs reads as a
+       sheet of paper. */
+    --v-radius: 9px;
+    --v-radius-sm: 5px;
+    --v-glow: 0 0 0 3px rgba(76, 175, 80, 0.3);
 
     --v-board: "Saira Condensed", "Inter", ui-sans-serif, system-ui, sans-serif;
     --v-num: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  /* Ballpark Pal runs a much larger type scale than a betting board does —
+     75px headers, 20-28px body. Matching it literally would be absurd on a
+     surface this dense, and the sizes in the components were measured against
+     real reference boards (see "Legibility beats density"). So the scale is
+     nudged at the root instead: every rem in the hub grows by the same 6%,
+     the measured relationships between them are preserved exactly, and it is
+     one number to turn if it goes too far. */
+  :global(html) {
+    font-size: 17px;
   }
 
   :global(body),

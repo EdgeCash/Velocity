@@ -659,7 +659,7 @@
   .flag.card {
     background: var(--v-brand-deep);
     color: var(--v-brand);
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.35);
   }
   .chev {
     font-family: var(--v-board);
@@ -860,7 +860,7 @@
     color: var(--v-ink-2);
   }
   .venue.best {
-    box-shadow: inset 0 0 0 1px rgba(61, 218, 208, 0.42);
+    box-shadow: inset 0 0 0 1px rgba(47, 109, 50, 0.42);
     background: var(--v-brand-tint);
     color: var(--v-ink);
   }
@@ -875,7 +875,7 @@
     font-weight: 700;
     letter-spacing: 0.02em;
     color: var(--vc, var(--v-ink-3));
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(31, 26, 21, 0.045);
   }
   /* An exchange contract is not a sportsbook line; the dashed edge says so
      without spending a colour on it. */

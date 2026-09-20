@@ -7,7 +7,9 @@ no public product, no picks service — a place to do the research and read
 the model's output in one surface.
 
 **Where it lives.** The hub (`docs/SITE.md`): one page, the views switched
-client-side, the joins done once in `site/components/hub/model.js`. The
+client-side, the joins done once in `site/components/hub/model.js`. Since
+2026-09-20 it also wears their *room* and not just their menu — the park
+re-skin, in `docs/SITE.md`. The
 Access-gated Cloudflare Worker stays the only host; the public-tier build
 flag is untouched (the Accuracy view carries model output and finals only,
 so it survives that tier whole).
@@ -23,6 +25,7 @@ open ledger rows settle.
 | Ballpark Pal | Football Pal view | State | Built from |
 |---|---|---|---|
 | **Today's Outlook** | | | |
+| *(the slate strip above the views)* | **Slate** — one card per game: both crests, the sim's points under each, kickoff between | **shipped 2026-09-20** | `SlateStrip.svelte` over the built games |
 | Park Factors | **Weather** — conditions per outdoor game and what the model did about them | **shipped 2026-09-19** | `weather`, with the runner's applied adjustment |
 | Game Simulations | **Games** — projection, distributions, board, moves, injuries per game | shipped | `projections`, `distributions`, `board` |
 | Today's Pitchers | QB1 and the injury list on the sheet | in the sheet; a QB view is next | ESPN depth chart, injuries |

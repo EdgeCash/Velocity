@@ -31,18 +31,28 @@ from velocity.report.assets import (
     team_identity,
 )
 
-# --v-lvl-0: the panel a matchup sheet and a play card sit on.
-PANEL = "#0b1017"
+# --v-lvl-0: the panel a matchup sheet and a play card sit on. The park
+# re-skin (docs/SITE.md) moved it from near-black to bone, and `readable_on`
+# now takes its direction from the background.
+PANEL = "#ece8dc"
+# The ground the surface used to have. The three tests below argue about why
+# `readable_on` exists at all, and that argument was made against near-black —
+# it is kept measured against near-black rather than rewritten, because a
+# historical reason restated against the wrong evidence stops being a reason.
+DARK_PANEL = "#0b1017"
 # WCAG's bar for non-text graphics, which is what these are: a rule, a hairline.
 BAR = 3.0
 
 
 def test_every_club_colour_clears_the_contrast_bar_on_the_panel() -> None:
-    lifted = {code: readable_on(meta.color, PANEL) for code, meta in TEAM_META.items()}
-    for code, colour in lifted.items():
-        assert contrast_ratio(colour, PANEL) >= BAR - 1e-9, (
-            f"{code} lifts to {colour}, only {contrast_ratio(colour, PANEL):.2f}:1"
-        )
+    """Both grounds: the lift has to work whichever way the surface goes."""
+    for ground in (PANEL, DARK_PANEL):
+        for code, meta in TEAM_META.items():
+            colour = readable_on(meta.color, ground)
+            assert contrast_ratio(colour, ground) >= BAR - 1e-9, (
+                f"{code} moves to {colour} on {ground}, only "
+                f"{contrast_ratio(colour, ground):.2f}:1"
+            )
 
 
 def test_a_lightness_floor_would_not_have_done_it() -> None:
@@ -55,23 +65,52 @@ def test_a_lightness_floor_would_not_have_done_it() -> None:
     for floor in (0.32, 0.50):
         failures = [
             code for code, meta in TEAM_META.items()
-            if contrast_ratio(lighten_for_dark(meta.color, floor), PANEL) < BAR
+            if contrast_ratio(lighten_for_dark(meta.color, floor), DARK_PANEL) < BAR
         ]
         assert failures, f"floor {floor} unexpectedly cleared {BAR}:1 for every club"
     # The worst case is the one that motivated it.
-    assert contrast_ratio(lighten_for_dark(TEAM_META["BAL"].color, 0.32), PANEL) < 1.6
+    assert contrast_ratio(lighten_for_dark(TEAM_META["BAL"].color, 0.32), DARK_PANEL) < 1.6
 
 
 def test_the_lift_keeps_the_hue_and_leaves_bright_clubs_alone() -> None:
     # Steelers gold and Chiefs red are already clear of the bar, so they are
     # returned byte-identical — a lift nobody needs is a lift that dulls a brand.
     for code in ("PIT", "KC", "CIN", "NO"):
-        assert readable_on(TEAM_META[code].color, PANEL) == TEAM_META[code].color
+        assert readable_on(TEAM_META[code].color, DARK_PANEL) == TEAM_META[code].color
     # The Ravens' purple moves, and is still purple: blue channel dominant,
     # red above green, which is what "purple" means in channel terms.
-    lifted = readable_on(TEAM_META["BAL"].color, PANEL).lstrip("#")
+    lifted = readable_on(TEAM_META["BAL"].color, DARK_PANEL).lstrip("#")
     red, green, blue = (int(lifted[i : i + 2], 16) for i in (0, 2, 4))
     assert blue > red > green
+
+
+def test_the_lift_reverses_direction_on_the_bone_ground() -> None:
+    """The park re-skin's whole team-colour story, in one test.
+
+    On near-black the only way out is lighter, and almost every crest had to
+    move. On bone it is darker — and most crests do not move at all, because a
+    club navy already contrasts with cream. A `readable_on` that could only
+    lighten would have handed the light surface the palest version of every
+    crest: the original failure, mirrored.
+    """
+    # Dark crests are already clear of bone and come through byte-identical.
+    for code in ("BAL", "NE", "GB"):
+        assert readable_on(TEAM_META[code].color, PANEL) == TEAM_META[code].color
+        # ...and every one of them had to be lifted on the old ground.
+        assert readable_on(TEAM_META[code].color, DARK_PANEL) != TEAM_META[code].color
+    # A pale crest is the one that moves now, and it moves DOWN.
+    gold = TEAM_META["NO"].color
+    moved = readable_on(gold, PANEL)
+    assert moved != gold
+    assert contrast_ratio(moved, PANEL) >= BAR - 1e-9
+    assert luminance_of(moved) < luminance_of(gold), "a pale crest must darken on bone"
+    # The direction is the background's to decide, not a flag the caller passes.
+    assert readable_on(gold, DARK_PANEL) == gold
+
+
+def luminance_of(colour: str) -> float:
+    """Relative luminance, via the module under test's own maths."""
+    return contrast_ratio(colour, "#000000")
 
 
 def test_nfl_identity_resolves_a_code_and_a_display_name_alike() -> None:
@@ -122,13 +161,13 @@ def test_build_teams_emits_one_hot_linked_row_per_team() -> None:
         "away_team": ["New England Patriots", "Seattle Seahawks"],
     })
     table = build_teams(games)
-    assert list(table.columns) == ["league", "team", "code", "color", "color_dark", "logo"]
+    assert list(table.columns) == ["league", "team", "code", "color", "color_ui", "logo"]
     assert sorted(table.team) == [
         "Kansas City Chiefs", "New England Patriots", "Seattle Seahawks",
     ], "a team on both sides of the slate is still one row"
     assert table.logo.str.startswith("https://a.espncdn.com/").all()
     for row in table.itertuples():
-        assert contrast_ratio(row.color_dark, PANEL) >= BAR - 1e-9
+        assert contrast_ratio(row.color_ui, PANEL) >= BAR - 1e-9
     # No games, no table — and still the columns, so the schema holds.
     assert list(build_teams(pd.DataFrame()).columns) == list(table.columns)
 
@@ -204,7 +243,7 @@ def test_build_teams_reads_the_cache_the_slate_run_already_warmed(tmp_path) -> N
     row = table.iloc[0]
     assert row.code == "OSU"
     assert row.logo == "https://a.espncdn.com/i/teamlogos/ncaa/500/194.png"
-    assert row.color_dark and contrast_ratio(row.color_dark, PANEL) >= BAR - 1e-9
+    assert row.color_ui and contrast_ratio(row.color_ui, PANEL) >= BAR - 1e-9
     # College names arrive as school + nickname from the odds provider, and
     # both forms have to land on the same school — including the pair the
     # prefix rule exists for, where the shorter school is a prefix of the
@@ -245,4 +284,4 @@ def test_build_teams_is_offline_for_an_uncovered_league(monkeypatch) -> None:
         "league": ["mlb"], "home_team": ["Toronto Blue Jays"], "away_team": ["Seattle Mariners"],
     }))
     assert sorted(table.code) == ["SEA", "TOR"]
-    assert (table.logo == "").all() and (table.color_dark == "").all()
+    assert (table.logo == "").all() and (table.color_ui == "").all()

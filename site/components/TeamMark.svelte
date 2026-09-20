@@ -34,7 +34,7 @@
     broken = false;
     loaded = false;
   }
-  $: accent = color || 'rgba(255, 255, 255, 0.14)';
+  $: accent = color || 'rgba(31, 26, 21, 0.16)';
 
   /** Settle an image that finished before the listeners went on.
    *
@@ -84,11 +84,11 @@
     width: var(--mark-size, 26px);
     height: var(--mark-size, 26px);
     border-radius: 7px;
-    background: rgba(255, 255, 255, 0.055);
+    background: rgba(31, 26, 21, 0.05);
     /* The club colour enters as a hairline rather than a fill: a saturated
        brand block next to a brand logo fights it, and the sheet already has
        one saturated band. */
-    box-shadow: inset 0 0 0 1px var(--mark-accent, rgba(255, 255, 255, 0.14));
+    box-shadow: inset 0 0 0 1px var(--mark-accent, rgba(31, 26, 21, 0.16));
     overflow: hidden;
   }
   .team-mark img {

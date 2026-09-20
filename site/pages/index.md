@@ -62,7 +62,7 @@ where league != '__none__'
 ```
 
 ```sql teams
-select league, team, code, color, color_dark, logo
+select league, team, code, color, color_ui, logo
 from velocity.teams
 where league != '__none__'
 ```
