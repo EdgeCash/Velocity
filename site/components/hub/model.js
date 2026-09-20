@@ -1316,3 +1316,94 @@ export function playerRatingWindow(rows) {
   }
   return '';
 }
+
+/* ---- Export --------------------------------------------------------------
+   Every table the page holds, offered as a file.
+
+   The rows are generated in the BROWSER from what the page already loaded,
+   not linked to the parquet on disk. Two reasons and both matter: Evidence
+   addresses those files by a content hash it mints at build time, which the
+   page has no honest way to know; and exporting what the page holds means
+   the file can never carry more than the tier does. A public build has
+   already emptied its private tables (scripts/build_site_data.py), so the
+   download inherits that rather than re-deciding it. */
+
+/** A value as one CSV field: quoted when it has to be, never lossy. */
+export function csvField(value) {
+  if (value === null || value === undefined) return '';
+  let text;
+  if (value instanceof Date) text = value.toISOString();
+  else if (typeof value === 'object') text = JSON.stringify(value);
+  else text = String(value);
+  // A field containing a quote, a comma, a newline or a carriage return has
+  // to be quoted, and its own quotes doubled. Skipping this is how a CSV
+  // silently gains a column halfway down a file.
+  if (/["\n\r,]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+/** Rows → CSV text, with the union of every row's keys as the header.
+ *
+ * The union rather than the first row's keys: these tables come back from
+ * DuckDB with a stable shape, but a frame assembled from several families
+ * can have a column that is absent from its first row, and taking row zero
+ * as the schema would drop it from the file without saying so.
+ */
+export function toCsv(rows) {
+  const real = realRows(rows);
+  if (!real.length) return '';
+  const columns = [];
+  const seen = new Set();
+  for (const row of real) {
+    for (const key of Object.keys(row)) {
+      if (!seen.has(key)) { seen.add(key); columns.push(key); }
+    }
+  }
+  const lines = [columns.map(csvField).join(',')];
+  for (const row of real) {
+    lines.push(columns.map((c) => csvField(row[c])).join(','));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/* What each table is, in the order a reader would look for it. The note is
+   the point of the panel: a file called `publish.csv` means nothing without
+   one, and a bare list of table names is a directory listing, not an export
+   centre. */
+const EXPORTS = [
+  ['games', 'Games', 'The board: every game with its teams and kickoff.'],
+  ['projections', 'Projections', "The model's number for each game — win probability, fair spread and total."],
+  ['distributions', 'Distributions', 'The simulated margin and total distributions behind those projections.'],
+  ['board', 'Board', 'Every market at every venue, with the model and de-vigged fair probabilities.'],
+  ['publish', 'Publish gate', 'What cleared the gate and what did not, with the reason.'],
+  ['playerProps', 'Player props', 'The prop board, priced.'],
+  ['parlays', 'Parlays', 'Correlated multi-leg candidates and their combined EV.'],
+  ['lineMoves', 'Line moves', 'Opening and current numbers for the markets that moved.'],
+  ['ratings', 'Team ratings', 'The power ratings behind every projection.'],
+  ['unitSplits', 'Unit splits', 'Pass and rush EPA per play, both sides, opponent-adjusted.'],
+  ['playerRatings', 'Player ratings', 'Per-player usage, efficiency and passer process.'],
+  ['dfsPool', 'DFS pool', 'Every priced draftable with salary, projection and value.'],
+  ['dfsLineup', 'DFS lineups', 'The solved classic lineups.'],
+  ['dfsShowdown', 'DFS showdown', 'The solved showdown lineups.'],
+  ['dfsTiered', 'DFS tiered', "The salary-free boards' entries."],
+  ['record', 'Record', 'Graded bets with their closing-line value.'],
+  ['accuracy', 'Accuracy', 'Every graded game against its pregame distribution.'],
+  ['units', 'Units', 'Settled profit per day, per league.'],
+  ['clv', 'CLV by market', 'Closing-line value and record, per market.'],
+  ['health', 'Market health', "The monitor's trailing per-market flags."],
+  ['ledgerOpen', 'Open positions', 'What is currently riding.'],
+  ['bankroll', 'Bankroll', 'Seed, current, peak, drawdown and open exposure.'],
+  ['exposure', 'Exposure', 'Staked exposure by league.'],
+  ['injuries', 'Injuries', 'The availability report the intel layer reads.'],
+  ['weather', 'Weather', 'Conditions per venue, and what the model took off each total.'],
+  ['teams', 'Teams', 'Identity: codes, colours and marks.'],
+  ['modelConfig', 'Model config', 'What the run actually did — the fit, the filters, the posture.'],
+];
+
+/** The export list: what is available, how big it is, and what it holds. */
+export function exportTables(bundle = {}) {
+  return EXPORTS.map(([key, label, note]) => {
+    const rows = realRows(bundle[key] ?? []);
+    return { key, label, note, rows, n: rows.length };
+  });
+}
