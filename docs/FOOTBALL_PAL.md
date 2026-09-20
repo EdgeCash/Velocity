@@ -40,7 +40,7 @@ open ledger rows settle.
 | Player Ratings | **Ratings → Players** — usage, efficiency, and passer process | **shipped 2026-09-19** | `player_ratings` over the weekly box scores and the play-by-play |
 | Year-Long Park Factors | the wind threshold and its measured effect, stated on **Weather** | partial | `docs/MODEL_LAB.md` Round 5 |
 | Cheat Sheets · Sim Outliers | the Card's held verdicts and Most likely together answer both | shipped | |
-| Export Center | every table is already a parquet under `/data/velocity/`; a links panel is next | partial | |
+| Export Center | **Export** — every table on the board as CSV, written in the browser | **shipped 2026-09-20** | the page's own loaded tables |
 | **The Model** | | | |
 | Methods · FAQ | `docs/MODEL_LAB.md`, `docs/BACKTEST_NFL.md`, `docs/BACKTEST_NCAAF.md`, the model-config rail block | docs | `model_config` |
 | Accuracy | **Accuracy** — bias, error, calibration deciles, every graded game | **shipped 2026-09-19** | the accuracy chain (below) |
@@ -198,14 +198,32 @@ is how a table invents a breakout. The window is the same one the unit splits
 use, so a season too thin to read reaches back a season and every row says
 which window it used.
 
+**Export (2026-09-20)** (`ExportPanel.svelte`, `toCsv`). Every table behind
+the board, offered as a file, with a line saying what each one holds — a bare
+list of table names is a directory listing, not an export centre.
+
+The rows are written **in the browser** from what the page already loaded,
+rather than linking the parquet on disk. Two reasons, and the second is the
+better one: Evidence addresses those files by a content hash it mints at
+build time, which the page has no honest way to know; and exporting what the
+page holds means a download can never carry more than the tier does. A public
+build has already emptied its private tables in the data build, so the file
+inherits that rather than re-deciding it.
+
+`csvField` quotes only when it has to and never lossily — the four characters
+that force quoting, a doubled quote inside one, a Date as an instant rather
+than a locale string. `toCsv` takes the **union** of every row's keys as the
+header rather than the first row's, because a frame assembled from several
+families can carry a column its first row lacks, and taking row zero as the
+schema drops it without saying so.
+
 ## Next, in order
 
-1. **An export panel** listing the parquets.
-2. **The drive-level simulation** — the one structural gap against Ballpark
+1. **The drive-level simulation** — the one structural gap against Ballpark
    Pal's bottom-up sim: possessions and plays conditioned on unit strength,
    pace and situation, producing team scores and player stats from one
    draw. Unifies the game and prop sims, gives the model a per-game
    uncertainty it does not have today (`docs/EDGE_RESEARCH.md` 6.1), and is
    promoted only through the lab's walk-forward gate.
-3. **Delete the non-football code behind a tag** once the MLB ledger rows
+2. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

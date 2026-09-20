@@ -24,6 +24,8 @@ import {
   buildGames,
   clvTrust,
   collapseProps,
+  csvField,
+  exportTables,
   mostLikely,
   outcomeLabel,
   playerBook,
@@ -51,6 +53,7 @@ import {
   ratingsIndex,
   realRows,
   splitCards,
+  toCsv,
   toTime,
   unitIndex,
   weatherBoard,
@@ -1364,4 +1367,54 @@ test('the window is read off the rows for the panel to state once', () => {
   assert.equal(playerRatingWindow(RATED), '2025–2026');
   assert.equal(playerRatingWindow([{ league: 'nfl', season_from: 2026, season_to: 2026 }]), '2026');
   assert.equal(playerRatingWindow([]), '');
+});
+
+/* ---- Export (docs/FOOTBALL_PAL.md) --------------------------------------- */
+
+test('a field is quoted only when it has to be, and never lossily', () => {
+  assert.equal(csvField('plain'), 'plain');
+  assert.equal(csvField(42), '42');
+  assert.equal(csvField(null), '');
+  assert.equal(csvField(undefined), '');
+  // The four characters that force quoting, and the doubling of a quote.
+  assert.equal(csvField('a,b'), '"a,b"');
+  assert.equal(csvField('a\nb'), '"a\nb"');
+  assert.equal(csvField('a\rb'), '"a\rb"');
+  assert.equal(csvField('he said "hi"'), '"he said ""hi"""');
+});
+
+test('a date exports as an instant rather than a locale string', () => {
+  assert.equal(csvField(new Date('2026-09-20T17:00:00Z')), '2026-09-20T17:00:00.000Z');
+});
+
+test('the header is the union of every row, not the first row', () => {
+  // A frame assembled from several families can have a column missing from
+  // its first row; taking row zero as the schema drops it silently.
+  const csv = toCsv([{ a: 1 }, { a: 2, b: 'x' }]);
+  assert.equal(csv, 'a,b\n1,\n2,x\n');
+});
+
+test('an empty table exports nothing at all, not a bare header', () => {
+  assert.equal(toCsv([]), '');
+  // The sentinel row every empty source carries must never reach a file.
+  assert.equal(toCsv([{ league: '__none__', a: 1 }]), '');
+});
+
+test('the export list carries a count and a note for every table', () => {
+  const tables = exportTables({
+    games: [{ game_id: 'g1' }, { game_id: 'g2' }],
+    ratings: [],
+  });
+  const games = tables.find((t) => t.key === 'games');
+  assert.equal(games.n, 2);
+  assert.ok(games.note.length > 10, 'a bare table name is a directory listing');
+  // A table the page does not hold is listed as empty rather than omitted,
+  // so the panel can say what this build is missing.
+  assert.equal(tables.find((t) => t.key === 'ratings').n, 0);
+  assert.ok(tables.every((t) => t.label && t.note));
+});
+
+test('the sentinel row is not counted as data to export', () => {
+  const tables = exportTables({ games: [{ league: '__none__' }] });
+  assert.equal(tables.find((t) => t.key === 'games').n, 0);
 });

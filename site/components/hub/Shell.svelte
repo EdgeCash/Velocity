@@ -22,7 +22,7 @@
   import {
     accuracySummary, buildCard, buildGames, buildLineups, buildParlays,
     flaggedMarkets, leagueCounts, mostLikely, playerBook, playerPool, realRows,
-    matchupBoard, splitCards, weatherBoard, weatherSummary,
+    exportTables, matchupBoard, splitCards, weatherBoard, weatherSummary,
   } from './model.js';
   import { stampLabel, stampTime, teamIndex } from '../format.js';
   import Ticker from './Ticker.svelte';
@@ -37,6 +37,7 @@
   import AccuracyPanel from './AccuracyPanel.svelte';
   import WeatherPanel from './WeatherPanel.svelte';
   import MatchupsPanel from './MatchupsPanel.svelte';
+  import ExportPanel from './ExportPanel.svelte';
   import Rail from './Rail.svelte';
   import Stamp from './Stamp.svelte';
 
@@ -148,6 +149,14 @@
   $: weatherRows = weatherBoard(visibleGames);
   $: weatherTotals = weatherSummary(weatherRows);
   $: matchupRows = matchupBoard(visibleGames);
+  // Every table the page holds, unfiltered: an export is about the data in
+  // this build, not about the league chip that happens to be selected.
+  $: exports = exportTables({
+    games, projections, distributions, board, publish, playerProps, parlays,
+    lineMoves, ratings, unitSplits, playerRatings, dfsPool, dfsLineup,
+    dfsShowdown, dfsTiered, record, accuracy, units, clv, health, ledgerOpen,
+    bankroll, exposure, injuries, weather, teams, modelConfig,
+  });
 
   let detachState;
   onMount(() => {
@@ -173,6 +182,7 @@
     card: 'Card', games: 'Games', likely: 'Most likely', players: 'Players',
     dfs: 'DFS', positions: 'Positions', record: 'Record', accuracy: 'Accuracy',
     ratings: 'Ratings', weather: 'Weather', matchups: 'Matchups',
+    export: 'Export',
   };
   // Ballpark Pal's menu, for football (docs/FOOTBALL_PAL.md): the views stay
   // one surface, and the groups say which question each answers.
@@ -182,6 +192,7 @@
     { label: 'Fantasy', views: ['dfs', 'players'] },
     { label: 'Research', views: ['ratings', 'matchups', 'weather'] },
     { label: 'Model', views: ['record', 'accuracy'] },
+    { label: 'Data', views: ['export'] },
   ].map((g) => ({ ...g, views: g.views.filter((v) => VIEWS.includes(v)) }));
   $: viewCount = {
     // The card counts what CLEARED, not what was priced — the number that
@@ -197,6 +208,7 @@
     accuracy: accuracyRows.n,
     weather: weatherTotals.outdoor,
     matchups: matchupRows.length,
+    export: exports.filter((t) => t.n > 0).length,
   };
 
   // The footer's absolute reading of the same thing the topbar chip shows as
@@ -284,6 +296,8 @@
         <WeatherPanel rows={weatherRows} summary={weatherTotals} />
       {:else if view === 'matchups'}
         <MatchupsPanel rows={matchupRows} />
+      {:else if view === 'export'}
+        <ExportPanel tables={exports} {stamp} {isPrivate} />
       {:else if view === 'dfs'}
         <DfsPanel {lineups} league={activeLeague} />
       {:else if view === 'positions'}
