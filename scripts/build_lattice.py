@@ -45,15 +45,16 @@ from velocity.models.simulate import DEFAULT_SD_MARGIN, NCAAF_SD_MARGIN
 SD_MARGIN = {"nfl": DEFAULT_SD_MARGIN, "ncaaf": NCAAF_SD_MARGIN}
 
 
-def describe(residuals: pd.DataFrame, sd_margin: float, max_abs: int, prior: float
-             ) -> pd.DataFrame:
+def describe(residuals: pd.DataFrame, sd_margin: float, max_abs: int, prior: float,
+             correct_tail: bool = False) -> pd.DataFrame:
     """One row per absolute margin: what football did, what the normal says, the ratio."""
     mu = residuals["mu_margin"].to_numpy(dtype=float)
     actual = np.abs(mu + residuals["resid_margin"].to_numpy(dtype=float))
     index = np.clip(np.rint(actual).astype(np.int64), 0, max_abs)
     observed = np.bincount(index, minlength=max_abs + 1) / float(len(residuals))
     normal = rounded_normal_mass(mu, sd_margin, max_abs=max_abs)
-    weights = fit_lattice_from_residuals(residuals, sd_margin, max_abs=max_abs, prior=prior)
+    weights = fit_lattice_from_residuals(
+        residuals, sd_margin, max_abs=max_abs, prior=prior, correct_tail=correct_tail)
     return pd.DataFrame({
         "abs_margin": np.arange(max_abs + 1),
         "games": np.bincount(index, minlength=max_abs + 1),
@@ -72,6 +73,10 @@ def main() -> None:
                         help="fit on residuals from this season on (thin early training)")
     parser.add_argument("--max-abs", type=int, default=DEFAULT_MAX_ABS)
     parser.add_argument("--prior", type=float, default=DEFAULT_PRIOR)
+    parser.add_argument("--correct-tail", action="store_true",
+                        help="also weight the tail bin (at or beyond --max-abs); off by "
+                             "default — the tail round found that a dispersion correction "
+                             "in a key-number tool, and it closed ladder sides")
     parser.add_argument("--out", default=None,
                         help="default datasets/{league}/lattice.parquet")
     args = parser.parse_args()
@@ -86,10 +91,11 @@ def main() -> None:
         raise SystemExit(f"no residuals in {source}")
 
     sd_margin = SD_MARGIN[args.league]
-    table = describe(residuals, sd_margin, args.max_abs, args.prior)
+    table = describe(residuals, sd_margin, args.max_abs, args.prior, args.correct_tail)
     print(f"{args.league}: {len(residuals)} walk-forward games, seasons "
           f"{residuals['season'].min()}–{residuals['season'].max()}, "
-          f"rounded normal at σ {sd_margin:g}, prior {args.prior:g} games a bin")
+          f"rounded normal at σ {sd_margin:g}, prior {args.prior:g} games a bin, "
+          f"tail {'corrected' if args.correct_tail else 'left alone'}")
     print(table.to_string(index=False, formatters={
         "observed": "{:.4f}".format, "normal": "{:.4f}".format, "weight": "{:.3f}".format,
     }))

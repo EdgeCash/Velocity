@@ -2421,3 +2421,111 @@ Three variants over the promoted chain — `lvlw8s-k64`, `lvlw8s-k128`
 (within the season, shrunk) and `lvlw8-k128` (crossing, shrunk) — are
 running; the verdict goes below when it lands, and the skew re-test waits
 on it.
+
+## The tail round (2026-09-20) — the college lattice's cost was its tail bin
+
+The promotion round shipped the lattice in the NFL and held it back in
+college, where regenerating the ladder table with it closed eight sides
+through a shift the table made visible: college's over-bias rose by 0.011
+at every offset while its under-bias fell. The round's first next step was
+a per-league tail. This is that sweep, run the way the gate decides —
+`residual_calibration` on the committed games at the market's numbers, 4,000
+sims — over the tail bin's treatment with the key numbers held exactly as
+banked (×2.30 at 3 and ×2.11 at 7 in college, ×2.44 and ×1.66 in the NFL).
+
+| table | NCAAF spread: open · worst | NCAAF total | NFL spread | NFL total |
+|---|---|---|---|---|
+| no lattice | 58/58 · 0.0169 | 55/58 · 0.0254 | 50/58 · 0.0292 | 49/58 · 0.0292 |
+| banked (tail ×1.20 / ×1.13) | 53/58 · 0.0214 | 51/58 · 0.0264 | 58/58 · 0.0192 | 49/58 · 0.0297 |
+| **tail held at 1** | **58/58 · 0.0151** | 52/58 · 0.0260 | **58/58 · 0.0136** | 50/58 · 0.0294 |
+| max_abs 28, tail held at 1 | 58/58 · 0.0151 | 52/58 · 0.0259 | 58/58 · 0.0140 | 49/58 · 0.0296 |
+| max_abs 35, tail held at 1 | 58/58 · 0.0157 | 53/58 · 0.0257 | — | — |
+| max_abs 28, tail ×1.35 | 40/58 · 0.0261 | 51/58 · 0.0274 | — | — |
+| prior 100 | 56/58 · 0.0205 | 52/58 · 0.0263 | — | — |
+
+**Readings:**
+
+1. **It was the tail bin, and only the tail bin.** Holding the last bin at 1
+   and changing nothing else takes college spreads from five sides closed to
+   every side open with a worst error *below* the no-lattice table's
+   (0.0151 against 0.0169), and it improves the NFL too: the shoulder the
+   promotion round brought from 0.029 to 0.019 goes to 0.014. Widening the
+   table to 28 or 35 bins with the tail still corrected makes college
+   worse (40/58 at 28), because the tail's ratio grows with the distance it
+   covers; widening it with the tail held at 1 changes nothing the twenty-two
+   bins did not already do. A bigger prior only dilutes the key numbers.
+2. **Why: the tail's ratio is dispersion, not lattice.** Football's
+   residuals are leptokurtic, so past 21 the game lands more often than a
+   normal at the promoted σ says — ×1.13 over 17% of NFL games, ×1.20 over
+   35% of college games. Around the model's own projections that ratio is
+   right, and it is still not a key-number correction: it is the tail of a
+   σ that could be re-fitted. Applied at the market's sharper numbers, as
+   the gate measures and the slate prices, it overstates the favourite's
+   blowouts by exactly the amount that closed the college sides.
+3. **Totals move by parity and by noise.** Resampling toward odd margins
+   moves totals toward odd numbers; the college totals shoulder sits within
+   0.0006 of the bar at 2.5, 4.5 and 6.5 and lands on either side of it at
+   4,000 sims. The regenerated table below is the 8,000-sim answer.
+
+### Verdict
+
+**The tail bin is left at 1 by default** (`fit_lattice_weights(...,
+correct_tail=False)`, `scripts/build_lattice.py --correct-tail` to put it
+back), both banks are rebuilt that way, and **college is switched on**
+(`DEFAULT_SIM_KEYS_BY_LEAGUE = {"nfl": "lattice", "ncaaf": "lattice"}`).
+The lattice corrects the lattice and leaves the dispersion to σ. The
+sim-shape gate's `normal+keys` variant follows the same default, so the
+gate measures what ships.
+
+### The regenerated table (8,000 sims, `scripts/calibrate_ladders.py --write`)
+
+| league / market | no lattice | promotion round (NFL, tail corrected) | **tail round (both, tail at 1)** |
+|---|---|---|---|
+| nfl spread | 50/58 · 0.0292 | 58/58 · 0.0192 | **58/58 · 0.0136** |
+| nfl total | 49/58 · 0.0293 | 49/58 · 0.0297 | 49/58 · 0.0296 |
+| ncaaf spread | 58/58 · 0.0168 | 58/58 · 0.0168 (no lattice) | **58/58 · 0.0150** |
+| ncaaf total | 55/58 · 0.0255 | 55/58 · 0.0255 (no lattice) | 52/58 · 0.0259 |
+
+The one cost, stated: college's totals shoulder sat on the bar before the
+lattice (the over side at 2.5, 4.5 and 6.5 read 0.0198–0.0200 against a
+0.02 tolerance) and the parity shift puts it a few ten-thousandths over
+(0.0202–0.0205), so three totals sides close. That is the bar being where
+that shape's error is, not a shape the lattice made worse; the sim-shape
+gate's totals columns for college were flat under the overlay (0.0221 →
+0.0225), and its key-number error fell 69%. Taken.
+
+## The situational round, part two (2026-09-20) — surface and body clock
+
+Two of nfelo's home-field findings that the schedule columns can price
+(docs/PROJECTION_AUDIT.md §7): a team a point worse on a surface unlike its
+own home's (`SurfaceMismatchModel`, grass vs turf from the games frame's
+surface strings, the away side's home surface taken as its season mode),
+and a Pacific-time team two points worse at an Eastern early kickoff
+(`BodyClockModel`, gametime hour ≤ 13). Over the full promoted chain, the
+standard NFL walk-forward (3,045 games, 2015–2026), 4,000 sims.
+
+| variant | Brier | calib. | rmse_margin | info_w_margin | games moved | margin residual on them, before → after |
+|---|---|---|---|---|---|---|
+| promoted | 0.2197 | 0.0170 | 13.008 | 0.034 | — | — |
+| surf0.5 | 0.2198 | 0.0225 | 13.012 | 0.042 | 1,538 | |
+| surf1.0 | 0.2202 | 0.0293 | 13.026 | 0.050 | 1,538 | **+0.02 → −0.98** |
+| clock1.0 | 0.2199 | 0.0180 | 13.010 | 0.036 | 253 | |
+| clock2.0 | 0.2202 | 0.0198 | 13.019 | 0.037 | 253 | **+0.07 → −1.93** |
+| surf1.0-clock2.0 | 0.2208 | 0.0336 | 13.044 | 0.052 | | |
+
+**Not promoted, and the last column says why there was nothing to promote.**
+On the games each wrapper moves, the promoted chain's margin residual is
+already centred — +0.02 across the 1,538 surface mismatches, +0.07 across
+the 253 early Pacific kickoffs — so a one-point surface term and a
+two-point body-clock term each install a bias of exactly their own size,
+and every column pays for it: Brier, calibration, margin RMSE, all worse in
+proportion to the points added. (`info_w_margin` rises because the
+residual now carries something the close does not; that is the weight
+measuring a new error, not new information.) nfelo's findings were made on
+nfelo's residuals; a ridge fitted on plays with a fitted home edge, an
+announced-starter QB term and a rest wrapper has nothing left on these two
+columns. Neither wrapper is worth a smaller size either — the bias to
+correct is a fiftieth of a point.
+
+Both wrappers stay in `velocity/backtest/lab.py` as variants and are
+applied nowhere; the live slate is unchanged.

@@ -248,11 +248,13 @@ schema drops it without saying so.
    complete seasons, and costs nothing on Brier. On a 3-point favourite it
    takes the push probability on exactly 3 from 3.1% to 7.7% — the shipped
    sim was pricing the key numbers at about 40% of their real size. See
-   `docs/MODEL_LAB.md`, "the lattice round". **Promoted in the NFL** after
-   the derivative re-check and the gate-reference round ("the promotion
-   round"): `SimConfig.lattice` reads `datasets/nfl/lattice.parquet`, and
-   regenerating the ladder table with it opened every NFL spread side.
-   College's lattice is banked and switchable (`--sim-keys lattice`) but
-   off: it closed eight college sides on the same table.
+   `docs/MODEL_LAB.md`, "the lattice round". **Promoted in both leagues**
+   after the derivative re-check, the gate-reference round and the
+   promotion round: `SimConfig.lattice` reads
+   `datasets/{league}/lattice.parquet`, and regenerating the ladder table
+   with it opens every spread side in each league. The tail round found
+   the one thing that had held college back — the table's tail bin, a
+   dispersion ratio rather than a lattice one — and the bank now leaves it
+   at 1.
 2. **Delete the non-football code behind a tag** once the MLB ledger rows
    settle (`docs/FOOTBALL_CUTOVER.md` §2).

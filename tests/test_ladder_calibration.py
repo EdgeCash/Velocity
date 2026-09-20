@@ -103,13 +103,16 @@ def test_the_lattice_opened_the_nfl_spread_shoulders() -> None:
     margin lattice, and the same measurement reads 1.9: the shoulder error
     was the normal smearing mass over 9, 11, 12 and 15 that football puts on
     3, 7 and 14, and putting it back opens every NFL spread side (50 → 58 of
-    58). Still a real error, still measured, and now inside the bar.
+    58). The tail round then left the table's tail bin alone — its ratio is
+    dispersion, not lattice — and the same shoulder reads 1.4. Still a real
+    error, still measured, and now well inside the bar.
     """
-    assert 0.015 < offset_error("nfl", "spread", 4.5) < 0.02
+    assert 0.010 < offset_error("nfl", "spread", 4.5) < 0.02
     assert offset_is_honest("nfl", "spread", 4.5)
-    # NCAAF spreads were inside tolerance before the lattice and are measured
-    # without it: college's lattice closed sides here rather than opening them.
-    assert offset_error("ncaaf", "spread", 4.5) < 0.02
+    # NCAAF spreads were inside tolerance before the lattice; with the
+    # tail-corrected table they closed five sides, and with the tail left
+    # alone they are measured with the lattice and sit lower than without it.
+    assert offset_error("ncaaf", "spread", 4.5) < 0.015
     assert offset_is_honest("ncaaf", "spread", 4.5)
     # Deep out, the sim's own mass is small and the absolute miss recovers.
     assert offset_is_honest("nfl", "spread", 17.5)

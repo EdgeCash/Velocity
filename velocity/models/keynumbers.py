@@ -202,7 +202,7 @@ class LatticeWeights:
 
 def fit_lattice_weights(
     actual_margin: np.ndarray, reference_mass: np.ndarray,
-    *, prior: float = DEFAULT_PRIOR,
+    *, prior: float = DEFAULT_PRIOR, correct_tail: bool = False,
 ) -> LatticeWeights:
     """Measure the lattice: how often football lands on each margin vs the sim.
 
@@ -218,6 +218,17 @@ def fit_lattice_weights(
     twenty-two-bin table: the 450 games that ended on a three-point margin
     move their bin almost all the way, and the eleven that ended on 20 barely
     move theirs.
+
+    The last bin — everything at or beyond ``max_abs`` — is left at 1 unless
+    ``correct_tail``. Its ratio is not a lattice measurement: football's
+    residuals are leptokurtic, so the tail is heavier than the normal's and
+    the ratio reads above 1 (×1.13 in the NFL over 17% of games, ×1.20 in
+    college over 35%), and applying that is a dispersion correction in a
+    tool built to correct key numbers. The tail round (docs/MODEL_LAB.md)
+    measured it on the ladder gate: with the tail corrected, college closed
+    eight sides and the NFL's spread shoulder sat at 0.019; with it left
+    alone, both leagues open every spread side and the NFL shoulder reads
+    0.014. A tail that needs correcting is a σ that needs re-fitting.
     """
     reference = np.asarray(reference_mass, dtype=float)
     max_abs = reference.size - 1
@@ -229,12 +240,16 @@ def fit_lattice_weights(
         0, max_abs)
     observed = np.bincount(index, minlength=max_abs + 1).astype(float)
     expected = reference * games
-    return LatticeWeights((observed + prior) / (expected + prior))
+    weights = (observed + prior) / (expected + prior)
+    if not correct_tail:
+        weights[-1] = 1.0
+    return LatticeWeights(weights)
 
 
 def fit_lattice_from_residuals(
     residuals: pd.DataFrame, sd_margin: float,
     *, max_abs: int = DEFAULT_MAX_ABS, prior: float = DEFAULT_PRIOR,
+    correct_tail: bool = False,
 ) -> LatticeWeights:
     """The lattice the shipped normal misses, measured off a residual bank.
 
@@ -251,7 +266,7 @@ def fit_lattice_from_residuals(
     keep = np.isfinite(mu) & np.isfinite(actual)
     return fit_lattice_weights(
         actual[keep], rounded_normal_mass(mu[keep], sd_margin, max_abs=max_abs),
-        prior=prior)
+        prior=prior, correct_tail=correct_tail)
 
 
 def load_lattice_weights(

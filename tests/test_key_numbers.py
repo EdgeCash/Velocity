@@ -108,7 +108,10 @@ def test_the_simulated_reference_subsamples_deterministically() -> None:
 
 def test_the_weights_find_the_lattice_they_were_shown() -> None:
     mu = _games()
-    weights = fit_lattice_weights(_lattice_actuals(mu), rounded_normal_mass(mu, SD_MARGIN))
+    # The fixture's table carries a corrected tail (1.15), so the recovery is
+    # checked with the tail corrected too; the default leaves it at 1.
+    weights = fit_lattice_weights(_lattice_actuals(mu), rounded_normal_mass(mu, SD_MARGIN),
+                                  correct_tail=True)
     # The two big ones come back clearly; 6 and 14 are smaller corrections
     # and, shrunk twice over on three thousand games, come back smaller still.
     for key in (3, 7):
@@ -148,9 +151,30 @@ def test_a_thin_bin_is_shrunk_toward_no_correction() -> None:
         np.full(int(3000 * 0.30), 2), np.full(int(3000 * 0.08), 3),
         np.full(int(3000 * 0.015 * 2.0), 4), np.full(int(3000 * 0.005 * 2.0), 5),
     ])
-    weights = fit_lattice_weights(counts, mass / mass.sum())
+    weights = fit_lattice_weights(counts, mass / mass.sum(), correct_tail=True)
     assert weights.weights[1] > weights.weights[5], (
         "the well-evidenced bin should move further than the thin one")
+
+
+def test_the_tail_bin_is_left_alone_unless_asked() -> None:
+    """The tail round: the last bin's ratio is dispersion, not lattice.
+
+    Football's residuals are heavier-tailed than the normal, so the ratio out
+    there reads above 1 — and applying it moved a college favourite's blowout
+    mass enough to close eight ladder sides. The default leaves it at 1; the
+    key numbers inside are untouched either way.
+    """
+    mu = _games()
+    actual = _lattice_actuals(mu)
+    plain = fit_lattice_weights(actual, rounded_normal_mass(mu, SD_MARGIN))
+    corrected = fit_lattice_weights(actual, rounded_normal_mass(mu, SD_MARGIN),
+                                    correct_tail=True)
+    assert plain.weights[-1] == 1.0
+    assert corrected.weights[-1] != 1.0
+    assert np.array_equal(plain.weights[:-1], corrected.weights[:-1])
+    residuals = pd.DataFrame({"mu_margin": mu, "resid_margin": actual - mu})
+    assert fit_lattice_from_residuals(residuals, SD_MARGIN) == plain
+    assert fit_lattice_from_residuals(residuals, SD_MARGIN, correct_tail=True) == corrected
 
 
 def test_the_fit_refuses_an_empty_training_set() -> None:
@@ -345,6 +369,6 @@ def test_the_committed_nfl_lattice_puts_the_key_numbers_where_football_does() ->
     w = banked.weights
     assert w[3] > 2.0 and w[7] > 1.5 and w[14] > 1.2 and w[10] > 1.0
     # 4 is not a key number, 9 and 12 are where football rarely lands, and
-    # the tail is left nearly alone.
+    # the tail is left alone.
     assert w[4] < 1.0 and w[9] < 0.6 and w[12] < 0.7
-    assert 0.9 < w[-1] < 1.3
+    assert w[-1] == 1.0
