@@ -28,9 +28,12 @@ from pathlib import Path
 LAYOUT = Path("site/pages/+layout.svelte")
 FLOOR = 4.5
 
-# Foregrounds: anything that is ever set as type.
+# Foregrounds: anything that is ever set as type. `v-band` is the dirt of the
+# masthead AND the colour of every section header on the light ground — the
+# landing's and the command bar's alike — so a "let's darken the band" that
+# only looked at the masthead would take the headers with it.
 INKS = ("v-ink", "v-ink-2", "v-ink-3", "v-brand", "v-brand-dim", "v-pos",
-        "v-neg", "v-warn", "v-info", "v-alert", "v-thin")
+        "v-neg", "v-warn", "v-info", "v-alert", "v-thin", "v-band")
 # Surfaces type can land on.
 SURFACES = (("page", "v-bg"), ("card", "v-lvl-1"), ("raised", "v-lvl-2"),
             ("well", "v-lvl-0"), ("chip", "v-chip"))

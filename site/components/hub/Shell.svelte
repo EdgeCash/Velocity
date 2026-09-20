@@ -18,7 +18,8 @@
   // matters.
   import { onMount, onDestroy } from 'svelte';
   import { live } from './liveStore.js';
-  import { hubState, VIEWS } from './state.js';
+  import { GROUPS, VIEW_LABEL } from './nav.js';
+  import { hubState } from './state.js';
   import {
     accuracySummary, buildCard, buildGames, buildLineups, buildParlays,
     flaggedMarkets, leagueCounts, mostLikely, playerBook, playerPool, realRows,
@@ -38,6 +39,7 @@
   import WeatherPanel from './WeatherPanel.svelte';
   import MatchupsPanel from './MatchupsPanel.svelte';
   import ExportPanel from './ExportPanel.svelte';
+  import HomeLanding from './HomeLanding.svelte';
   import Rail from './Rail.svelte';
   import SlateStrip from './SlateStrip.svelte';
   import Stamp from './Stamp.svelte';
@@ -179,22 +181,6 @@
     }
   }
 
-  const VIEW_LABEL = {
-    card: 'Card', games: 'Games', likely: 'Most likely', players: 'Players',
-    dfs: 'DFS', positions: 'Positions', record: 'Record', accuracy: 'Accuracy',
-    ratings: 'Ratings', weather: 'Weather', matchups: 'Matchups',
-    export: 'Export',
-  };
-  // Ballpark Pal's menu, for football (docs/FOOTBALL_PAL.md): the views stay
-  // one surface, and the groups say which question each answers.
-  const GROUPS = [
-    { label: 'Outlook', views: ['games'] },
-    { label: 'Odds', views: ['card', 'likely', 'positions'] },
-    { label: 'Fantasy', views: ['dfs', 'players'] },
-    { label: 'Research', views: ['ratings', 'matchups', 'weather'] },
-    { label: 'Model', views: ['record', 'accuracy'] },
-    { label: 'Data', views: ['export'] },
-  ].map((g) => ({ ...g, views: g.views.filter((v) => VIEWS.includes(v)) }));
   $: viewCount = {
     // The card counts what CLEARED, not what was priced — the number that
     // means something is "2", not "88".
@@ -226,6 +212,16 @@
     return `Slate ${slate} · built ${stampLabel(builtAt)}`;
   })();
 
+  // The day in three numbers, for the landing. Deliberately the three that
+  // answer "is there anything here today" — not a dashboard. `hub` rather
+  // than `visibleGames` because the landing carries no league filter: it is
+  // the whole slate or it is lying about the size of the day.
+  $: homeLede = [
+    { label: 'Games', value: hub.length },
+    { label: 'On the card', value: cardRows.plays.length },
+    { label: 'Open', value: openPositions.length },
+  ];
+
   function setView(next) { hubState.set({ view: next, game: '' }); }
   function setLeague(next) { hubState.set({ league: next }); }
 </script>
@@ -233,7 +229,16 @@
 <div class="hub">
   <header class="topbar">
     <div class="brand">
-      <span class="wordmark">VELOCITY</span>
+      <!-- The way back. On their site the logo is the only thing that returns
+           you to the front page, and a landing you cannot get back to is a
+           splash screen. `aria-current` rather than a disabled button: from
+           the landing this is still where you are, not something broken. -->
+      <button
+        type="button"
+        class="wordmark"
+        aria-current={view === 'home' ? 'page' : undefined}
+        on:click={() => setView('home')}
+      >VELOCITY</button>
       <span class="tierpill" class:pub={!isPrivate}>{isPrivate ? 'Private' : 'Public'}</span>
     </div>
     <Ticker games={$live.games} ok={$live.ok} tried={$live.tried} />
@@ -243,6 +248,10 @@
     <Stamp {stamp} {builtAt} />
   </header>
 
+  <!-- The switcher, everywhere but home. On the landing it would be the same
+       twelve tiles twice, one set sticky and one set the page itself; inside
+       a view it is the thing that keeps this a single surface. -->
+  {#if view !== 'home'}
   <nav class="cmd" aria-label="views">
     <div class="views" role="tablist">
       {#each GROUPS as g (g.label)}
@@ -276,6 +285,7 @@
       </div>
     {/if}
   </nav>
+  {/if}
 
   <!-- The slate, before the views (docs/SITE.md, the park re-skin). Ballpark
        Pal opens on the day rather than on a menu, and the command bar above
@@ -289,6 +299,19 @@
     onOpen={(id) => hubState.set({ view: 'games', game: id })}
   />
 
+  {#if view === 'home'}
+    <!-- Full width, and no rail. The rail carries what you have riding, which
+         is the thing you least want to have to ask for — so the landing's
+         lede carries the same count and the Positions tile is two rows down.
+         A landing with a sidebar is a dashboard, and a dashboard is what the
+         front page of this site was already not. -->
+    <HomeLanding
+      counts={viewCount}
+      lede={homeLede}
+      slate={stampLabel(stamp)}
+      onOpen={setView}
+    />
+  {:else}
   <div class="body">
     <main class="main">
       {#if view === 'card'}
@@ -339,6 +362,7 @@
       {builtAt}
     />
   </div>
+  {/if}
 
   <footer class="stub">
     <span>Velocity</span>
@@ -404,13 +428,30 @@
     gap: 0.5rem;
     flex: 0 0 auto;
   }
+  /* A button, not a heading: it is the way home. Everything a <button>
+     brings with it — its own font, its own box, its own background — has to
+     come back off, or the masthead grows a grey chip. */
   .wordmark {
+    padding: 0;
+    border: 0;
+    border-radius: var(--v-radius-sm);
+    background: none;
     font-family: var(--v-board);
     font-weight: 700;
     letter-spacing: 0.22em;
     font-size: 1.15rem;
     color: var(--v-band-ink);
+    cursor: pointer;
+    transition: color 130ms ease;
   }
+  .wordmark:hover { color: var(--v-band-brand); }
+  .wordmark:focus-visible {
+    outline: none;
+    box-shadow: var(--v-glow);
+  }
+  /* Already home: still the label, no longer an invitation. */
+  .wordmark[aria-current='page'] { cursor: default; }
+  .wordmark[aria-current='page']:hover { color: var(--v-band-ink); }
   .tierpill {
     font-family: var(--v-board);
     font-size: 0.58rem;
