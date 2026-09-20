@@ -1269,3 +1269,87 @@ def test_cold_bonus_is_a_step_below_the_threshold() -> None:
     assert cold_total_bonus(35.0, threshold_f=40.0, points=1.0) == -1.0
     assert cold_total_bonus(None, points=0.5) == 0.0
     assert cold_total_bonus(20.0, points=0.0) == 0.0
+
+
+def test_market_blend_sweep_can_anchor_on_the_real_moneyline_close() -> None:
+    """docs/PROJECTION_AUDIT.md §7.5 #2: the anchor chosen against the de-vigged close."""
+    import numpy as np
+    import pandas as pd
+    from velocity.backtest.lab import market_blend_sweep, moneyline_close_probability
+    from velocity.wagering.odds import prob_to_american
+
+    rng = np.random.default_rng(5)
+    n = 400
+    seasons = np.where(np.arange(n) < 200, 2018, 2022)
+    p_true = rng.uniform(0.2, 0.8, n)
+    outcome = (rng.random(n) < p_true).astype(float)
+    # The close is the truth with 4.5% of vig on each side; the model is noise.
+    home_ml = [prob_to_american(min(p * 1.045, 0.99)) for p in p_true]
+    away_ml = [prob_to_american(min((1 - p) * 1.045, 0.99)) for p in p_true]
+    projections = pd.DataFrame({
+        "season": seasons, "week": 1, "game_id": [f"g{i}" for i in range(n)],
+        "p_home_win": rng.random(n), "home_win": outcome,
+        "fair_spread": 0.0, "fair_total": 44.0,
+    })
+    games = pd.DataFrame({"game_id": [f"g{i}" for i in range(n)],
+                          "spread_line": 0.0,
+                          "home_moneyline": home_ml, "away_moneyline": away_ml})
+    # The de-vig recovers the truth to the rounding of an American price.
+    recovered = moneyline_close_probability(games)
+    assert np.abs(recovered.to_numpy() - p_true).max() < 0.01
+    sweep = market_blend_sweep(projections, games, select_through=2019, market="moneyline")
+    assert (sweep["n_select"] == 200).all() and (sweep["n_holdout"] == 200).all()
+    best = sweep.loc[sweep["brier_select"].idxmin()]
+    assert best["weight"] <= 0.2
+    # The probit on a flat spread is a coin flip and cannot see any of this.
+    probit = market_blend_sweep(projections, games, select_through=2019, market="probit")
+    assert probit.loc[probit["weight"] == 0.0, "brier_select"].iloc[0] > (
+        sweep.loc[sweep["weight"] == 0.0, "brier_select"].iloc[0])
+    # No prices, no moneyline market; an unknown market is refused.
+    assert market_blend_sweep(projections, games[["game_id", "spread_line"]],
+                              market="moneyline").empty
+    with pytest.raises(ValueError):
+        market_blend_sweep(projections, games, market="close")
+    # A missing or zero price is not a market.
+    games.loc[0, "home_moneyline"] = 0
+    games.loc[1, "away_moneyline"] = None
+    assert moneyline_close_probability(games).isna().sum() == 2
+
+
+def test_records_settle_at_the_sides_own_closing_price() -> None:
+    """The flat record says who covered; the units say what that paid."""
+    import numpy as np
+    import pandas as pd
+    from velocity.backtest.lab import ats_ou_vs_close, disagreement_sweep
+
+    # Four games: the model likes the home side (fair −3 vs a 1-point line)
+    # and the over (fair 47 vs 44) in every one. Home covers in two, pushes
+    # in one and loses one; the over pushes once and loses three.
+    projections = pd.DataFrame({
+        "season": 2024, "week": 1, "game_id": ["a", "b", "c", "d"],
+        "p_home_win": 0.6, "home_win": 1.0, "fair_spread": -3.0, "fair_total": 47.0,
+    })
+    games = pd.DataFrame({
+        "game_id": ["a", "b", "c", "d"],
+        "home_score": [24, 21, 30, 17], "away_score": [20, 20, 10, 20],  # margins +4, +1, +20, −3
+        "spread_line": [1.0, 1.0, 1.0, 1.0], "total_line": [44.0, 44.0, 44.0, 44.0],
+        "home_spread_odds": [-110, +100, -120, -105], "away_spread_odds": [-110, -120, +100, -115],
+        "over_odds": [-110, -105, +100, -115], "under_odds": [-110, -115, -120, -105],
+    })
+    spread = disagreement_sweep(projections, games, market="spread", thresholds=(0.0,)).iloc[0]
+    # Home is picked every time: wins at −110 (+0.909) and −120 (+0.833),
+    # loses at −105 (−1); the push at exactly the line is not a bet.
+    assert spread["bets"] == 3 and spread["win_rate"] == pytest.approx(2 / 3)
+    assert spread["units"] == pytest.approx((100 / 110 + 100 / 120 - 1.0) / 3)
+    total = disagreement_sweep(projections, games, market="total", thresholds=(0.0,)).iloc[0]
+    # Over is picked every time: totals 44 (push), 41, 40, 37 — the over
+    # loses the three decided games at −105, +100 and −115.
+    assert total["bets"] == 3 and total["win_rate"] == 0.0
+    assert total["units"] == pytest.approx(-1.0)
+    summary = ats_ou_vs_close(projections, games)
+    assert summary["ats_units"] == pytest.approx(spread["units"])
+    assert summary["ou_units"] == pytest.approx(-1.0)
+    # Without prices the record still settles and the units are simply absent.
+    bare = ats_ou_vs_close(projections, games.drop(columns=[
+        "home_spread_odds", "away_spread_odds", "over_odds", "under_odds"]))
+    assert bare["ats_win_rate"] == pytest.approx(2 / 3) and np.isnan(bare["ats_units"])

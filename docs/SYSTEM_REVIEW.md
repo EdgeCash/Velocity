@@ -325,13 +325,17 @@ restored from a pre-backfill checkout and the script now merges by season.
 - **Neutral flag** (3.2): join at slate time; pass through every closure.
   Test: a neutral fixture game projects with zero HFA.
 
-### M1 — The sim (lab-gated, one PR) — **measured 2026-09; the level promoted, the shape not**
+### M1 — The sim (lab-gated, one PR) — **measured 2026-09; the level promoted, the shape once**
 Both mechanisms shipped as switches (`SimConfig.residuals`, the slope
 fields; `--sim-shape`, `--sim-dispersion`), with the residual banks and the
 gate (`scripts/sim_lab.py`). Neither cleared the bar on the markets each
 league stakes (docs/MODEL_LAB.md, the sim-shape round): the empirical draw
 buys spread shape at the cost of NFL moneyline calibration and NCAAF totals
-shape; the slope hurts NCAAF totals in aggregate. What the bank found
+shape; the slope hurts NCAAF totals in aggregate. What did clear it is the
+third shape mechanism, the margin lattice (`SimConfig.lattice`,
+`--sim-keys`, `datasets/{league}/lattice.parquet`): the normal's own draws
+resampled by football's key numbers, promoted in the NFL by the lattice,
+derivative re-check and promotion rounds. What the bank found
 instead was the dominant totals error §2 had attributed to the
 distribution: **the NFL QB decomposition projected every total 2.3 points
 high** for fifteen seasons, and the lab's college blend hung from a stale

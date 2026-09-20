@@ -22,13 +22,22 @@ Measured that way, against the market's own closing number — the sharpest
 per-game expectation available, so this isolates the shape of outcomes rather
 than the model's aim — two different things are wrong, one per market.
 
-**Spreads: the sim is too fat in the shoulders.** Real spread residuals are
-leptokurtic (more mass near zero, thinner shoulders) and close to symmetric
-— skew +0.10 in the NFL, +0.01 in college. A sim matched on dispersion
-therefore overstates both tails at once, worst in the shoulders: NFL spreads
-peak at 2.9 points of probability around 4.5 out, which still swamps the
-two-point edge the slate bets on, so they are still refused near the line.
-NCAAF spreads peak at 1.7 and pass throughout.
+**Spreads: the sim was too fat in the shoulders, and the lattice fixed it.**
+Real spread residuals are leptokurtic (more mass near zero, thinner
+shoulders) and close to symmetric — skew +0.10 in the NFL, +0.01 in college.
+A normal matched on dispersion therefore overstates both tails at once,
+worst in the shoulders: NFL spreads peaked at 2.9 points of probability
+around 4.5 out, past the two-point edge the slate bets on, so they were
+refused near the line. The promotion round (docs/MODEL_LAB.md) found that
+this was never dispersion: it was the normal putting mass on 9, 11, 12 and
+15 that football puts on 3, 7 and 14. The NFL sim now resamples its draws by
+football's own margin lattice (``SimConfig.lattice``, banked in
+``datasets/nfl/lattice.parquet``), the same measurement reads 1.9, and every
+NFL spread side is open (50 → 58 of 58). NCAAF spreads peak at 1.7 and pass
+throughout without a lattice — with one they close five sides, because a
+third of college margins sit in the table's tail bin and its weight
+overstates the favourite's blowouts at the market's sharper numbers — so the
+college table is measured without it, as the college slate runs.
 
 **Totals: the sim is symmetric and football is not.** Total residuals are
 right-skewed in both leagues — +0.33 in the NFL, +0.34 in college — because a
@@ -135,29 +144,29 @@ if TYPE_CHECKING:
 OFFSET_BIAS: Mapping[tuple[str, str], Mapping[float, tuple[float, float]]] = {
     # n=4113 completed games, residual sd 12.98
     ("nfl", "spread"): {
-        0.5: (+0.0223, +0.0016), 1.5: (+0.0237, +0.0043), 2.5: (+0.0223, +0.0054),
-        3.5: (+0.0245, +0.0068), 4.5: (+0.0292, +0.0093), 5.5: (+0.0260, +0.0083),
-        6.5: (+0.0252, +0.0151), 7.5: (+0.0240, +0.0163), 8.5: (+0.0173, +0.0142),
-        9.5: (+0.0148, +0.0128), 10.5: (+0.0165, +0.0159), 11.5: (+0.0175, +0.0188),
-        12.5: (+0.0094, +0.0147), 13.5: (+0.0067, +0.0148), 14.5: (+0.0038, +0.0112),
-        15.5: (-0.0024, +0.0073), 16.5: (-0.0048, +0.0052), 17.5: (-0.0066, +0.0019),
-        18.5: (-0.0083, +0.0027), 19.5: (-0.0109, +0.0020), 20.5: (-0.0097, +0.0029),
-        21.5: (-0.0104, +0.0035), 22.5: (-0.0115, +0.0006), 23.5: (-0.0107, -0.0008),
-        24.5: (-0.0093, -0.0015), 25.5: (-0.0077, -0.0028), 26.5: (-0.0080, -0.0043),
-        27.5: (-0.0075, -0.0037), 28.5: (-0.0067, -0.0038),
+        0.5: (+0.0103, -0.0013), 1.5: (+0.0132, +0.0018), 2.5: (+0.0137, +0.0038),
+        3.5: (+0.0167, +0.0055), 4.5: (+0.0192, +0.0044), 5.5: (+0.0189, +0.0046),
+        6.5: (+0.0182, +0.0093), 7.5: (+0.0184, +0.0104), 8.5: (+0.0144, +0.0098),
+        9.5: (+0.0130, +0.0078), 10.5: (+0.0142, +0.0088), 11.5: (+0.0160, +0.0120),
+        12.5: (+0.0108, +0.0105), 13.5: (+0.0085, +0.0102), 14.5: (+0.0067, +0.0079),
+        15.5: (+0.0017, +0.0060), 16.5: (+0.0004, +0.0055), 17.5: (-0.0017, +0.0021),
+        18.5: (-0.0033, +0.0040), 19.5: (-0.0061, +0.0040), 20.5: (-0.0055, +0.0048),
+        21.5: (-0.0065, +0.0055), 22.5: (-0.0077, +0.0032), 23.5: (-0.0073, +0.0016),
+        24.5: (-0.0064, +0.0007), 25.5: (-0.0052, -0.0008), 26.5: (-0.0059, -0.0024),
+        27.5: (-0.0057, -0.0021), 28.5: (-0.0052, -0.0025),
     },
     # n=4113 completed games, residual sd 13.21
     ("nfl", "total"): {
-        0.5: (+0.0228, -0.0245), 1.5: (+0.0235, -0.0233), 2.5: (+0.0236, -0.0185),
-        3.5: (+0.0293, -0.0140), 4.5: (+0.0283, -0.0084), 5.5: (+0.0277, -0.0074),
-        6.5: (+0.0284, -0.0080), 7.5: (+0.0256, -0.0038), 8.5: (+0.0201, -0.0028),
-        9.5: (+0.0170, +0.0040), 10.5: (+0.0119, +0.0047), 11.5: (+0.0104, +0.0049),
-        12.5: (+0.0114, +0.0096), 13.5: (+0.0108, +0.0115), 14.5: (+0.0093, +0.0154),
-        15.5: (+0.0059, +0.0153), 16.5: (+0.0040, +0.0169), 17.5: (+0.0010, +0.0166),
-        18.5: (-0.0003, +0.0154), 19.5: (-0.0026, +0.0147), 20.5: (-0.0019, +0.0133),
-        21.5: (-0.0030, +0.0128), 22.5: (-0.0041, +0.0107), 23.5: (-0.0049, +0.0101),
-        24.5: (-0.0074, +0.0092), 25.5: (-0.0069, +0.0092), 26.5: (-0.0069, +0.0080),
-        27.5: (-0.0063, +0.0069), 28.5: (-0.0033, +0.0055),
+        0.5: (+0.0232, -0.0249), 1.5: (+0.0238, -0.0237), 2.5: (+0.0239, -0.0190),
+        3.5: (+0.0297, -0.0145), 4.5: (+0.0287, -0.0090), 5.5: (+0.0281, -0.0079),
+        6.5: (+0.0287, -0.0086), 7.5: (+0.0258, -0.0045), 8.5: (+0.0203, -0.0036),
+        9.5: (+0.0173, +0.0032), 10.5: (+0.0121, +0.0039), 11.5: (+0.0106, +0.0041),
+        12.5: (+0.0116, +0.0088), 13.5: (+0.0110, +0.0107), 14.5: (+0.0095, +0.0145),
+        15.5: (+0.0060, +0.0144), 16.5: (+0.0042, +0.0159), 17.5: (+0.0011, +0.0157),
+        18.5: (-0.0002, +0.0144), 19.5: (-0.0025, +0.0139), 20.5: (-0.0018, +0.0124),
+        21.5: (-0.0029, +0.0120), 22.5: (-0.0040, +0.0099), 23.5: (-0.0049, +0.0094),
+        24.5: (-0.0073, +0.0085), 25.5: (-0.0069, +0.0087), 26.5: (-0.0069, +0.0076),
+        27.5: (-0.0062, +0.0065), 28.5: (-0.0033, +0.0053),
     },
     # n=11701 completed games, residual sd 15.51
     ("ncaaf", "spread"): {

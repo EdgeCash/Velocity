@@ -262,6 +262,12 @@ def main() -> None:
     )
     blends = {name: market_blend_sweep(projections, eval_games, **blend_kwargs)
               for name, projections in ledgers.items()}
+    # The same sweep against the real moneyline close where the frame carries
+    # one (the NFL): the probit is a stand-in, and the anchor should be chosen
+    # against the number the close_brier column already grades the model by.
+    moneyline_blends = {
+        name: market_blend_sweep(projections, eval_games, market="moneyline", **blend_kwargs)
+        for name, projections in ledgers.items()}
 
     table = pd.DataFrame(rows)
     with pd.option_context("display.width", 160, "display.max_columns", None):
@@ -272,7 +278,8 @@ def main() -> None:
                 for market, sweep in by_market.items():
                     print(f"\n--- {name} · {market} disagreement sweep ---")
                     print(sweep.to_string(index=False))
-        for name, blend in blends.items():
+        for name, blend in [*blends.items(),
+                            *((f"{n} · moneyline close", b) for n, b in moneyline_blends.items())]:
             if blend.empty:
                 continue
             select_label = blend_kwargs.get("select_through", 2019)

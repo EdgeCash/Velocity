@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 from velocity.eval.ladders import residual_calibration
+from velocity.models.keynumbers import load_lattice_weights
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
     DEFAULT_SD_TOTAL,
@@ -38,9 +39,12 @@ SOURCES: tuple[tuple[str, str], ...] = (
     ("ncaaf", "datasets/ncaaf/games.parquet"),
 )
 MAX_OFFSET = 28.5
-# The sims being gated, at their promoted constants. The table is a statement
-# about THESE, so a league whose sd moves needs its table regenerated — which
-# is what the freshness test enforces.
+# The sims being gated, at their promoted constants and, where the live slate
+# applies it, with the banked margin lattice (docs/MODEL_LAB.md, the
+# promotion round: the NFL; college's lattice closed eight of its sides here
+# and is not applied). The table is a statement about THESE, so a league
+# whose sd or lattice moves needs its table regenerated — which is what the
+# freshness test enforces.
 #
 # 8,000 draws a game: the banked number is a mean over thousands of games, so
 # its Monte Carlo error is under 1e-4, well inside the 5e-4 the freshness test
@@ -48,7 +52,7 @@ MAX_OFFSET = 28.5
 # datasets agree exactly and a constant never moves for no reason.
 SIMS: dict[str, SimConfig] = {
     "nfl": SimConfig(n_sims=8000, sd_margin=DEFAULT_SD_MARGIN,
-                     sd_total=DEFAULT_SD_TOTAL),
+                     sd_total=DEFAULT_SD_TOTAL, lattice=load_lattice_weights("nfl")),
     "ncaaf": SimConfig(n_sims=8000, sd_margin=NCAAF_SD_MARGIN,
                        sd_total=NCAAF_SD_TOTAL),
 }

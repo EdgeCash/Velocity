@@ -252,13 +252,18 @@ def nfl_variants(
     # composites round).
     def levelled(
         inner: VariantFactory, seasons: int | None = None, weeks: int | None = None,
+        *, within_season: bool = False, shrink_games: float = 0.0,
     ) -> VariantFactory:
         """``inner`` with its scoring level fitted through the model on the
         training window's own games (velocity.models.level) — the totals
         bias the residual bank found, corrected where it arises. ``weeks``
         fits it on the trailing on-field weeks instead of seasons: the
         skew round found the level wandering within a season by more than
-        a two-season mean can follow."""
+        a two-season mean can follow. ``within_season`` stops the window at
+        the latest played season's first week and ``shrink_games`` blends
+        it back toward the ``seasons`` level by games — the NFL level
+        round's answer to the bare window carrying December into
+        September."""
         @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> NFLGameModel:
             from velocity.models.level import calibrate_level
@@ -268,7 +273,8 @@ def nfl_variants(
                 return model  # type: ignore[return-value]
             window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
             return calibrate_level(
-                model, window, seasons=seasons, weeks=weeks)  # type: ignore[arg-type]
+                model, window, seasons=seasons, weeks=weeks,  # type: ignore[arg-type]
+                within_season=within_season, shrink_games=shrink_games)
 
         return factory
 
@@ -581,6 +587,7 @@ def nfl_variants(
             def promoted(
                 core: VariantFactory, *, shift: bool = False, by_phase: bool = False,
                 phase_margin_only: bool = False, level_weeks: int | None = None,
+                level_within_season: bool = False, level_shrink: float = 0.0,
             ) -> VariantFactory:
                 """``core`` under the whole promoted chain — level, scale,
                 starters, rest, the injury burden, wind and rain — so a
@@ -589,8 +596,12 @@ def nfl_variants(
                 ``by_phase`` fits the scale on the projected week's phase
                 (``phase_margin_only``: the margin's slope alone);
                 ``level_weeks`` fits the level on that many trailing on-field
-                weeks in place of the trailing two seasons."""
-                level = (levelled(core, weeks=level_weeks) if level_weeks
+                weeks in place of the trailing two seasons, stopped at the
+                season boundary by ``level_within_season`` and shrunk back
+                toward the two-season level by ``level_shrink`` games."""
+                level = (levelled(core, 2, weeks=level_weeks,
+                                  within_season=level_within_season,
+                                  shrink_games=level_shrink) if level_weeks
                          else levelled(core, 2))
                 return windy(injured(rested(scaled(starters(level), shift=shift,
                                                    by_phase=by_phase,
@@ -674,6 +685,20 @@ def nfl_variants(
                 "live-nfl-promoted-lvlw34": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
                                       level_weeks=34)),
+                # The level round, part two (docs/MODEL_LAB.md): the bare
+                # 8-week window won 0.03 of totals RMSE and paid in
+                # September by carrying December across the boundary. The
+                # window stopped at the season boundary and shrunk toward the
+                # two-season level by games (an empty or one-week window is
+                # the two-season level), and the crossing window shrunk.
+                "live-nfl-promoted-lvlw8s-k64": (
+                    "plays", promoted(gap8_core, level_weeks=8, level_within_season=True,
+                                      level_shrink=64.0)),
+                "live-nfl-promoted-lvlw8s-k128": (
+                    "plays", promoted(gap8_core, level_weeks=8, level_within_season=True,
+                                      level_shrink=128.0)),
+                "live-nfl-promoted-lvlw8-k128": (
+                    "plays", promoted(gap8_core, level_weeks=8, level_shrink=128.0)),
                 # The situational round, part two (docs/MODEL_LAB.md): two
                 # of nfelo's home-field findings the schedule columns can
                 # price. Surface: the away side a point worse on a surface
@@ -2784,6 +2809,28 @@ class WeatherAdjustedModel:
         )
 
 
+def moneyline_close_probability(games: pd.DataFrame) -> pd.Series:
+    """The market's home win probability from its closing moneylines, de-vigged.
+
+    Multiplicative de-vig of the ``home_moneyline`` / ``away_moneyline`` pair
+    — the same removal :func:`score_accuracy` grades the close's Brier with,
+    so an anchor chosen against this is chosen against the number the lab
+    already calls the ceiling. NaN where either price is missing.
+    """
+    from velocity.wagering.odds import american_to_prob
+
+    if not {"home_moneyline", "away_moneyline"} <= set(games.columns):
+        return pd.Series(np.nan, index=games.index, dtype=float)
+    ml = games[["home_moneyline", "away_moneyline"]].apply(pd.to_numeric, errors="coerce")
+    priced = ml.notna().all(axis=1) & (ml != 0).all(axis=1)
+    out = pd.Series(np.nan, index=games.index, dtype=float)
+    if priced.any():
+        q_home = ml.loc[priced, "home_moneyline"].map(american_to_prob).to_numpy(dtype=float)
+        q_away = ml.loc[priced, "away_moneyline"].map(american_to_prob).to_numpy(dtype=float)
+        out[priced] = q_home / (q_home + q_away)
+    return out
+
+
 def market_blend_sweep(
     projections: pd.DataFrame,
     games: pd.DataFrame,
@@ -2791,14 +2838,21 @@ def market_blend_sweep(
     sigma: float = NFL_MARGIN_SIGMA,
     weights: tuple[float, ...] = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
     select_through: int = 2019,
+    market: str = "probit",
 ) -> pd.DataFrame:
     """Brier of market-blended win probabilities across model weights.
 
     The nfelo finding: regressing a model *toward* the market maximizes
     forecasting accuracy, because the close is the best single predictor in
     existence. This sweeps ``p_blend = w·p_model + (1−w)·p_market`` where
-    ``p_market`` is the closing spread through a fixed probit link
-    (``Φ(spread_margin/σ)`` — σ is a historical constant, nothing fit here).
+    ``p_market`` is, by ``market``, the closing spread through a fixed probit
+    link (``"probit"``: ``Φ(spread_margin/σ)`` — σ is a historical constant,
+    nothing fit here) or the closing moneyline pair de-vigged
+    (``"moneyline"``: :func:`moneyline_close_probability`). The probit is a
+    stand-in the MLB sweep found structurally invalid for a fixed run line
+    (docs/MODEL_LAB.md); where a real moneyline close is on the frame the
+    anchor should be chosen against it, and the audit (docs/PROJECTION_AUDIT.md
+    §7.5) asked for exactly that comparison.
 
     Honesty split: ``w`` must not be chosen on the games it is judged on, so
     every weight is scored separately on the **select** window (seasons ≤
@@ -2807,25 +2861,37 @@ def market_blend_sweep(
     Returns one row per weight: ``weight, brier_select, brier_holdout,
     n_select, n_holdout``.
     """
-    if "spread_line" not in games.columns:
+    empty = pd.DataFrame(columns=["weight", "brier_select", "brier_holdout",
+                                  "n_select", "n_holdout"])
+    if market not in ("probit", "moneyline"):
+        raise ValueError(f"market must be 'probit' or 'moneyline', got {market!r}")
+    if market == "probit" and "spread_line" not in games.columns:
         # No joined closes (a games-only league, or the committed public
         # frame) — there is no market to blend toward.
-        return pd.DataFrame(columns=["weight", "brier_select", "brier_holdout",
-                                     "n_select", "n_holdout"])
-    line_cols = games[["game_id", "spread_line"]].copy()
+        return empty
+    if market == "moneyline" and not {"home_moneyline", "away_moneyline"} <= set(games.columns):
+        return empty
+    line_cols = games[["game_id"]].copy()
     line_cols["game_id"] = line_cols["game_id"].astype(str)
+    if market == "probit":
+        line_cols["p_market"] = pd.to_numeric(games["spread_line"], errors="coerce")
+    else:
+        line_cols["p_market"] = moneyline_close_probability(games).to_numpy()
     df = projections.copy()
     df["game_id"] = df["game_id"].astype(str)
     df = df.merge(line_cols, on="game_id", how="inner").dropna(
-        subset=["spread_line", "p_home_win", "home_win"]
+        subset=["p_market", "p_home_win", "home_win"]
     )
     if df.empty:
-        return pd.DataFrame(columns=["weight", "brier_select", "brier_holdout",
-                                     "n_select", "n_holdout"])
-    # spread_line is positive when home is favored → it *is* the market's
-    # expected home margin in this dataset's convention. Φ via erf — no scipy.
-    z = df["spread_line"].to_numpy(dtype=float) / (sigma * math.sqrt(2.0))
-    p_market = 0.5 * (1.0 + np.vectorize(math.erf)(z))
+        return empty
+    if market == "probit":
+        # spread_line is positive when home is favored → it *is* the market's
+        # expected home margin in this dataset's convention. Φ via erf — no
+        # scipy.
+        z = df["p_market"].to_numpy(dtype=float) / (sigma * math.sqrt(2.0))
+        p_market = 0.5 * (1.0 + np.vectorize(math.erf)(z))
+    else:
+        p_market = df["p_market"].to_numpy(dtype=float)
     p_model = df["p_home_win"].to_numpy(dtype=float)
     outcome = df["home_win"].to_numpy(dtype=float)
     in_select = (df["season"].astype(int) <= select_through).to_numpy()
@@ -2862,9 +2928,13 @@ def disagreement_sweep(
     """
     line_col = "total_line" if market == "total" else "spread_line"
     if projections.empty or line_col not in games.columns:
-        return pd.DataFrame(columns=["threshold", "win_rate", "bets"])
+        return pd.DataFrame(columns=["threshold", "win_rate", "bets", "units"])
+    high_col, low_col = (("over_odds", "under_odds") if market == "total"
+                         else ("home_spread_odds", "away_spread_odds"))
+    price_cols = [c for c in (high_col, low_col) if c in games.columns]
     df = projections.merge(
-        games[["game_id", "home_score", "away_score", line_col]], on="game_id", how="inner"
+        games[["game_id", "home_score", "away_score", line_col, *price_cols]],
+        on="game_id", how="inner",
     )
     if market == "total":
         realized = df["home_score"] + df["away_score"]
@@ -2882,28 +2952,48 @@ def disagreement_sweep(
         pick_high = gap > 0  # home covers
         win = (pick_high & (diff > 0)) | (~pick_high & (diff < 0))
     decided = df[line_col].notna() & (gap != 0) & (diff != 0)
+    # Units won per unit staked at the side's own closing price — the record
+    # at the real juice rather than at a flat −110 (docs/PROJECTION_AUDIT.md
+    # §7.5 #2). NaN where the frame carries no prices.
+    units = pd.Series(np.nan, index=df.index, dtype=float)
+    if len(price_cols) == 2:
+        from velocity.wagering.odds import net_payout
+
+        price = pd.to_numeric(
+            np.where(pick_high, df[high_col], df[low_col]), errors="coerce")
+        priced = pd.Series(price, index=df.index).notna() & (price != 0)
+        payout = pd.Series(price, index=df.index)[priced].map(net_payout)
+        units[priced] = np.where(win[priced], payout, -1.0)
     rows = []
     for threshold in thresholds:
         mask = decided & (gap.abs() >= threshold)
+        priced_mask = mask & units.notna()
         rows.append({
             "threshold": threshold,
             "win_rate": float(win[mask].mean()) if mask.any() else float("nan"),
             "bets": int(mask.sum()),
+            "units": float(units[priced_mask].mean()) if priced_mask.any() else float("nan"),
         })
     return pd.DataFrame(rows)
 
 
 def ats_ou_vs_close(projections: pd.DataFrame, games: pd.DataFrame) -> dict[str, float]:
-    """Flat ATS / O/U win rates vs the closing lines (threshold 0 of the sweeps)."""
+    """Flat ATS / O/U win rates vs the closing lines (threshold 0 of the sweeps).
+
+    ``ats_units`` / ``ou_units`` are the same bets settled at the side's own
+    closing price, per unit staked — NaN on a frame without prices.
+    """
     out: dict[str, float] = {}
     for market, key in (("spread", "ats"), ("total", "ou")):
         sweep = disagreement_sweep(projections, games, market=market, thresholds=(0.0,))
         if sweep.empty or not sweep["bets"].iloc[0]:
             out[f"{key}_win_rate"] = float("nan")
             out[f"{key}_bets"] = 0.0
+            out[f"{key}_units"] = float("nan")
         else:
             out[f"{key}_win_rate"] = float(sweep["win_rate"].iloc[0])
             out[f"{key}_bets"] = float(sweep["bets"].iloc[0])
+            out[f"{key}_units"] = float(sweep["units"].iloc[0])
     return out
 
 

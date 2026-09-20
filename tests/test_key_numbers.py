@@ -13,12 +13,20 @@ correction has to be a weight on every absolute margin and not a local snap.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 import pytest
 from velocity.models.keynumbers import (
     DEFAULT_MAX_ABS,
+    LATTICE_COLUMNS,
+    LATTICE_FILE,
     LatticeWeights,
+    fit_lattice_from_residuals,
     fit_lattice_weights,
+    load_lattice_weights,
     rounded_normal_mass,
     simulated_margin_mass,
 )
@@ -245,3 +253,98 @@ def test_weights_with_no_mass_to_move_leave_the_sim_alone() -> None:
     same = LatticeWeights(np.zeros(DEFAULT_MAX_ABS + 1)).apply(base, rng)
     assert np.array_equal(same.home_score, base.home_score)
     assert np.array_equal(same.away_score, base.away_score)
+
+
+# --- the promotion: the sim reads a banked table -----------------------------
+
+def _bank_weights() -> LatticeWeights:
+    mu = _games()
+    return fit_lattice_weights(_lattice_actuals(mu), rounded_normal_mass(mu, SD_MARGIN))
+
+
+def test_the_config_path_is_the_overlay_exactly() -> None:
+    """``SimConfig.lattice`` is the lab's overlay, draw for draw.
+
+    The gate (scripts/sim_lab.py) scored ``normal+keys`` as the base sim's
+    draws resampled under the same generator; the promoted path has to be
+    that sim and not a cousin of it, or the gate's verdict is about
+    something the slate does not run.
+    """
+    weights = _bank_weights()
+    promoted = replace(CONFIG, lattice=weights)
+    a = simulate_game(3.0, 45.0, np.random.default_rng(7), promoted)
+    rng = np.random.default_rng(7)
+    b = weights.apply(simulate_game(3.0, 45.0, rng, CONFIG), rng)
+    assert np.array_equal(a.home_score, b.home_score)
+    assert np.array_equal(a.away_score, b.away_score)
+    # And it is a correction, not a re-rating: the key number lands. (The
+    # fixture's weight at 3 is 2.29 before the resample's own normalization,
+    # which for a favourite sits above 1 — so the mass roughly doubles.)
+    plain = simulate_game(3.0, 45.0, np.random.default_rng(7), CONFIG)
+    assert np.mean(a.margin == 3) > 1.7 * np.mean(plain.margin == 3)
+    assert abs(a.margin.mean() - plain.margin.mean()) < 0.5
+
+
+def test_a_lattice_beside_a_residual_pool_is_refused() -> None:
+    """The pool already carries the league's lattice; correcting it twice is a bug."""
+    from velocity.models.residuals import ResidualPool
+
+    rng = np.random.default_rng(2)
+    pool = ResidualPool.from_residuals(rng.normal(size=200), rng.normal(size=200))
+    with pytest.raises(ValueError, match="already carries"):
+        replace(CONFIG, lattice=_bank_weights(), residuals=pool)
+
+
+def test_the_banked_table_round_trips_and_loads(tmp_path: Path) -> None:
+    weights = _bank_weights()
+    frame = weights.to_frame()
+    assert list(frame.columns) == LATTICE_COLUMNS
+    assert LatticeWeights.from_frame(frame.sample(frac=1.0, random_state=1)) == weights
+    # No bank, no correction — and never an invented one.
+    assert load_lattice_weights("nfl", tmp_path) is None
+    (tmp_path / "nfl").mkdir()
+    frame.to_parquet(tmp_path / "nfl" / LATTICE_FILE, index=False)
+    loaded = load_lattice_weights("nfl", tmp_path)
+    assert loaded == weights
+    # A table with a hole in it is not a table.
+    with pytest.raises(ValueError, match="every absolute margin"):
+        LatticeWeights.from_frame(frame[frame["abs_margin"] != 5])
+
+
+def test_the_bank_fit_is_the_lab_fit() -> None:
+    """One fit for the bank, the gate and the re-check."""
+    mu = _games()
+    actual = _lattice_actuals(mu)
+    residuals = pd.DataFrame({"mu_margin": mu, "resid_margin": actual - mu})
+    assert fit_lattice_from_residuals(residuals, SD_MARGIN) == fit_lattice_weights(
+        actual, rounded_normal_mass(mu, SD_MARGIN))
+
+
+@pytest.mark.parametrize("league, sd_margin", [("nfl", 13.0), ("ncaaf", 16.2)])
+def test_the_committed_lattice_is_fresh(league: str, sd_margin: float) -> None:
+    """``datasets/{league}/lattice.parquet`` is what the residual bank says it is.
+
+    ``scripts/build_lattice.py`` is the generator; a residual bank rebuilt
+    without its lattice fails here rather than shipping a stale correction.
+    The sds are the promoted constants the script fits against.
+    """
+    from velocity.models.residuals import load_residual_frame
+
+    residuals = load_residual_frame(league)
+    banked = load_lattice_weights(league)
+    if residuals is None or banked is None:
+        pytest.skip(f"no {league} banks committed")
+    fresh = fit_lattice_from_residuals(residuals, sd_margin)
+    assert np.allclose(banked.weights, fresh.weights, atol=1e-9)
+
+
+def test_the_committed_nfl_lattice_puts_the_key_numbers_where_football_does() -> None:
+    banked = load_lattice_weights("nfl")
+    if banked is None:
+        pytest.skip("no NFL lattice committed")
+    w = banked.weights
+    assert w[3] > 2.0 and w[7] > 1.5 and w[14] > 1.2 and w[10] > 1.0
+    # 4 is not a key number, 9 and 12 are where football rarely lands, and
+    # the tail is left nearly alone.
+    assert w[4] < 1.0 and w[9] < 0.6 and w[12] < 0.7
+    assert 0.9 < w[-1] < 1.3

@@ -93,22 +93,30 @@ def test_committed_table_matches_a_fresh_measurement(league, dataset, market) ->
         assert row.under_bias == pytest.approx(under, abs=5e-4)
 
 
-def test_nfl_spreads_fail_the_gate_where_ncaaf_spreads_pass() -> None:
-    """The headline finding, and it survived the reference being fixed.
+def test_the_lattice_opened_the_nfl_spread_shoulders() -> None:
+    """The headline finding, twice revised, and the second revision is a promotion.
 
-    Measuring the sim rather than a continuous normal takes NFL spreads from
-    3.7 points of probability in the shoulders to 2.9 — a real improvement,
-    and still past the two-point edge the slate bets on, so the rungs stay
-    refused. A change that had flipped this would have been a change worth
-    distrusting.
+    Measuring the sim rather than a continuous normal took NFL spreads from
+    3.7 points of probability in the shoulders to 2.9 — still past the
+    two-point edge the slate bets on, so the rungs stayed refused. The
+    promotion round (docs/MODEL_LAB.md) then gave the NFL sim football's own
+    margin lattice, and the same measurement reads 1.9: the shoulder error
+    was the normal smearing mass over 9, 11, 12 and 15 that football puts on
+    3, 7 and 14, and putting it back opens every NFL spread side (50 → 58 of
+    58). Still a real error, still measured, and now inside the bar.
     """
-    assert 0.025 < offset_error("nfl", "spread", 4.5) < 0.031
-    assert not offset_is_honest("nfl", "spread", 4.5)
-    # NCAAF spreads are comfortably inside tolerance at the same distance.
+    assert 0.015 < offset_error("nfl", "spread", 4.5) < 0.02
+    assert offset_is_honest("nfl", "spread", 4.5)
+    # NCAAF spreads were inside tolerance before the lattice and are measured
+    # without it: college's lattice closed sides here rather than opening them.
     assert offset_error("ncaaf", "spread", 4.5) < 0.02
     assert offset_is_honest("ncaaf", "spread", 4.5)
     # Deep out, the sim's own mass is small and the absolute miss recovers.
     assert offset_is_honest("nfl", "spread", 17.5)
+    # The lattice is a margin correction and the totals table is untouched by
+    # it beyond parity: NFL totals still refuse the over shoulder.
+    assert offset_error("nfl", "total", 4.5) > 0.025
+    assert not offset_is_honest("nfl", "total", 4.5)
 
 
 def test_markets_without_a_number_are_never_gated() -> None:
@@ -156,14 +164,22 @@ def test_the_deep_tail_is_measured_rather_than_assumed_innocent() -> None:
 def test_offset_is_measured_from_the_fair_line_on_either_side(projection) -> None:
     config = SlateConfig(ladder_tolerance=0.02, league="nfl")
     assert projection.sim.fair_spread() == pytest.approx(-6.0, abs=0.5)
-    # Home -10.5 against a -6 fair line is 4.5 points of residual out, where a
-    # normal overstates the favourite's tail by 3.7pp — far past the 2pp edge
-    # the slate bets on, so the rung is refused however good the price looks.
-    assert _ladder_gate_blocks(projection, "spread", "home", -10.5, "kalshi", config)
-    # Away +10.5 is the same contract from the other side. The sim *understates*
-    # it by exactly as much, so the bias cannot have invented that edge and the
-    # rung stands — the asymmetry the symmetric gate used to flatten.
+    assert projection.sim.fair_total() == pytest.approx(45.0, abs=1.0)
+    # Home -10.5 against a -6 fair line is 4.5 points of residual out, where
+    # the normal overstated the favourite's tail by 3.7pp (2.9 measured as a
+    # sim) and the lattice-corrected sim by 1.9 — inside the 2pp bar, so the
+    # rung now stands. Away +10.5 is the same contract from the other side,
+    # which the sim *understates*, so it always stood.
+    assert not _ladder_gate_blocks(projection, "spread", "home", -10.5, "kalshi", config)
     assert not _ladder_gate_blocks(projection, "spread", "away", 10.5, "kalshi", config)
+    # Totals keep the asymmetry on show: 4.5 over the fair total is where the
+    # symmetric sim overstates the OVER tail by 2.8pp and understates the
+    # under by the same, so the over is refused however good the price looks
+    # and the under — the same number, the other side — stands. That is the
+    # asymmetry the symmetric gate used to flatten.
+    over = round(projection.sim.fair_total()) + 4.5
+    assert _ladder_gate_blocks(projection, "total", "over", over, "kalshi", config)
+    assert not _ladder_gate_blocks(projection, "total", "under", over, "kalshi", config)
     # At the fair line itself there is no threshold to be wrong about, so
     # neither side is charged the half-point-out error.
     assert not _ladder_gate_blocks(projection, "spread", "home", -6.0, "kalshi", config)
@@ -172,10 +188,11 @@ def test_offset_is_measured_from_the_fair_line_on_either_side(projection) -> Non
 
 def test_the_gate_only_touches_ladder_venues(projection) -> None:
     # A sportsbook posts one main number its own backtests validate; gating it
-    # would silently switch off ordinary spread betting.
+    # would silently switch off ordinary totals betting.
     config = SlateConfig(ladder_tolerance=0.02, league="nfl")
-    assert not _ladder_gate_blocks(projection, "spread", "home", -10.5, "bookA", config)
-    assert _ladder_gate_blocks(projection, "spread", "home", -10.5, "polymarket", config)
+    over = round(projection.sim.fair_total()) + 4.5
+    assert not _ladder_gate_blocks(projection, "total", "over", over, "bookA", config)
+    assert _ladder_gate_blocks(projection, "total", "over", over, "polymarket", config)
 
 
 def test_the_gate_is_off_unless_configured(projection) -> None:
@@ -365,9 +382,16 @@ def test_the_safe_tail_is_no_longer_charged_for_the_dangerous_one() -> None:
     near = residual_threshold("spread", -3.5, -6.0)  # -2.5: buying home short
     assert rung_bias("nfl", "spread", "home", near) < 0
     assert rung_is_honest("nfl", "spread", "home", near, price=0.64)
-    # The symmetric gate refused it, charging the favourite-tail error to a bet
-    # that is not exposed to it.
-    assert not offset_is_honest("nfl", "spread", 2.5)
+    # The symmetric gate refused it, charging the favourite-tail error to a
+    # bet that is not exposed to it. The lattice has since brought that
+    # favourite-tail error inside the bar on NFL spreads, so the sharper
+    # case is now a total: the under at 4.5 over the fair number buys the
+    # tail the sim UNDERSTATES, while the symmetric view would have charged
+    # it the 2.8pp the sim overstates the over by.
+    shoulder = residual_threshold("total", 49.5, 45.0)  # +4.5
+    assert rung_bias("nfl", "total", "under", shoulder) < 0
+    assert rung_is_honest("nfl", "total", "under", shoulder, price=0.35)
+    assert not offset_is_honest("nfl", "total", 4.5)
     # Past the table's end nothing has been checked, and an EV maximizer finds
     # an ungated region precisely because it is ungated — unchanged.
     assert not rung_is_honest("nfl", "spread", "home", 40.5, price=0.5)

@@ -39,10 +39,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import erf, sqrt
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from velocity.models.simulate import GameSim
+
+# The banked table (scripts/build_lattice.py): one row per absolute margin,
+# fitted on the league's own residual bank against the shipped normal.
+DATASETS = Path("datasets")
+LATTICE_FILE = "lattice.parquet"
+LATTICE_COLUMNS = ["abs_margin", "weight"]
 
 # How far out the lattice is corrected. Beyond this the weight is 1: the
 # structure has washed out (football's 25-point margins are not special), the
@@ -175,6 +183,22 @@ class LatticeWeights:
         return GameSim(home_score=sim.home_score[picks],
                        away_score=sim.away_score[picks])
 
+    def to_frame(self) -> pd.DataFrame:
+        """The table as it is banked (``LATTICE_COLUMNS``)."""
+        return pd.DataFrame({
+            "abs_margin": np.arange(self.weights.size, dtype=np.int64),
+            "weight": self.weights.astype(float),
+        })
+
+    @classmethod
+    def from_frame(cls, frame: pd.DataFrame) -> LatticeWeights:
+        """A table from its banked frame; the rows may arrive in any order."""
+        rows = frame[LATTICE_COLUMNS].sort_values("abs_margin")
+        expected = np.arange(len(rows))
+        if not np.array_equal(rows["abs_margin"].to_numpy(dtype=np.int64), expected):
+            raise ValueError("a banked lattice covers every absolute margin from 0 once")
+        return cls(rows["weight"].to_numpy(dtype=float))
+
 
 def fit_lattice_weights(
     actual_margin: np.ndarray, reference_mass: np.ndarray,
@@ -206,3 +230,41 @@ def fit_lattice_weights(
     observed = np.bincount(index, minlength=max_abs + 1).astype(float)
     expected = reference * games
     return LatticeWeights((observed + prior) / (expected + prior))
+
+
+def fit_lattice_from_residuals(
+    residuals: pd.DataFrame, sd_margin: float,
+    *, max_abs: int = DEFAULT_MAX_ABS, prior: float = DEFAULT_PRIOR,
+) -> LatticeWeights:
+    """The lattice the shipped normal misses, measured off a residual bank.
+
+    ``residuals`` is a banked walk-forward frame
+    (:data:`velocity.models.residuals.RESIDUAL_COLUMNS`): each game's
+    projected margin and what it missed by, so the finished margin is the
+    sum and the reference is the rounded normal at ``sd_margin`` around
+    each projection. This is the one fit every consumer shares — the bank
+    (``scripts/build_lattice.py``), the sim-shape gate and the derivative
+    re-check — so a weight seen in one is the weight the others mean.
+    """
+    mu = residuals["mu_margin"].to_numpy(dtype=float)
+    actual = mu + residuals["resid_margin"].to_numpy(dtype=float)
+    keep = np.isfinite(mu) & np.isfinite(actual)
+    return fit_lattice_weights(
+        actual[keep], rounded_normal_mass(mu[keep], sd_margin, max_abs=max_abs),
+        prior=prior)
+
+
+def load_lattice_weights(
+    league: str, datasets: Path | None = None
+) -> LatticeWeights | None:
+    """The banked lattice for ``league``, or ``None`` when none is committed.
+
+    Mirrors :func:`velocity.models.residuals.load_residual_pool`: the table
+    is data the sim reads, not a knob, and a league without one simulates
+    without a correction rather than inventing one.
+    """
+    path = (datasets or DATASETS) / league / LATTICE_FILE
+    if not path.exists():
+        return None
+    frame = pd.read_parquet(path)
+    return None if frame.empty else LatticeWeights.from_frame(frame)

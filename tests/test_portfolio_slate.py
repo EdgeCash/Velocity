@@ -17,9 +17,15 @@ SNAPSHOT = REPO / "tests" / "fixtures" / "theoddsapi_nfl.json"
 def _run(tmp_path: Path, *extra: str) -> tuple[subprocess.CompletedProcess, Path]:
     out = tmp_path / "slate"
     result = subprocess.run(
+        # Every gate that could empty the card is opened: the probability
+        # edge, and the NFL totals-disagreement bar — at 1,000 sims the
+        # fixture's one total sits a coin flip either side of that bar (its
+        # projected total is 48.98 against a 44.5 number and a 4-point bar),
+        # and this test is about sizing the card, not about which sim seed
+        # rounds the median up.
         [sys.executable, str(SCRIPT), "--league", "nfl", "--data", "datasets/nfl",
          "--offline", "--snapshot-file", str(SNAPSHOT), "--n-sims", "1000", "--max-days", "0",
-         "--min-edge", "0.0", "--no-intel", "--out", str(out), *extra],
+         "--min-edge", "0.0", "--nfl-total-edge", "0", "--no-intel", "--out", str(out), *extra],
         capture_output=True, text=True, cwd=REPO,
     )
     return result, out

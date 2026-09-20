@@ -977,6 +977,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sim-dispersion", choices=["constant", "sloped"], default=None,
                         help="football sim sd: one per league, or moving with the "
                              "expected total (default: the gate's pick per league)")
+    parser.add_argument("--sim-keys", choices=["none", "lattice"], default=None,
+                        help="football sim key numbers: none, or the banked margin "
+                             "lattice resampling the normal's draws (default: the "
+                             "gate's pick per league)")
     parser.add_argument("--min-edge", type=float, default=0.02)
     # Market anchoring (docs/MODEL_LAB.md Round 3): the NFL close's Brier beats
     # every pure model in this family, so the belief used for gating and Kelly
@@ -1446,8 +1450,22 @@ def live_config_rows(
 # calibration (NFL) or totals shape (NCAAF), and the slope hurts totals in
 # aggregate. The switches stay for the next round; the defaults are the
 # gated sim.
+#
+# "lattice" is the one sim-shape candidate that did clear the bar (the
+# lattice round, the derivative re-check and the promotion round in
+# docs/MODEL_LAB.md): the normal's own rounded draws resampled by how much
+# more often football lands on each absolute margin, banked per league in
+# datasets/{league}/lattice.parquet (scripts/build_lattice.py). It moves no
+# μ and no sd — a 3-point favourite's push on exactly 3 goes from 3.1% to
+# 7.7% because the normal was pricing the key numbers at 40% of their size.
+# NFL only: regenerating the ladder table with it opens every NFL spread
+# side (50 → 58 of 58) and closes eight college sides, because college's
+# table is a third tail bin and at the market's sharper numbers that tail
+# weight overstates the favourite's blowouts. The college bank stays, the
+# switch stays, and the default waits on a per-league tail sweep.
 DEFAULT_SIM_SHAPE_BY_LEAGUE = {"nfl": "normal", "ncaaf": "normal"}
 DEFAULT_SIM_DISPERSION_BY_LEAGUE = {"nfl": "constant", "ncaaf": "constant"}
+DEFAULT_SIM_KEYS_BY_LEAGUE = {"nfl": "lattice", "ncaaf": "none"}
 FOOTBALL_SDS = {"nfl": (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL),
                 "ncaaf": (NCAAF_SD_MARGIN, NCAAF_SD_TOTAL)}
 
@@ -1663,12 +1681,19 @@ def resolve_sim_dispersion(explicit: str | None, league: str) -> str:
     return explicit or DEFAULT_SIM_DISPERSION_BY_LEAGUE.get(league, "constant")
 
 
+def resolve_sim_keys(explicit: str | None, league: str) -> str:
+    return explicit or DEFAULT_SIM_KEYS_BY_LEAGUE.get(league, "none")
+
+
 def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
     """The football sim for this run: league sds, shape, dispersion, size.
 
     An empirical shape with no committed pool falls back to the normal and
     says so — a missing bank is a build gap, never a silent change of sim.
+    The lattice is the same: it reads the banked table or says it could not.
+    It corrects the normal draw only, so an empirical shape switches it off.
     """
+    from velocity.models.keynumbers import load_lattice_weights
     from velocity.models.residuals import load_residual_pool
 
     sd_margin, sd_total = FOOTBALL_SDS.get(league, (DEFAULT_SD_MARGIN, DEFAULT_SD_TOTAL))
@@ -1686,6 +1711,13 @@ def football_sim_config(league: str, args: argparse.Namespace) -> SimConfig:
             print(f"no residual pool banked for {league}; simulating with the normal")
         else:
             kwargs["residuals"] = pool
+    if (resolve_sim_keys(getattr(args, "sim_keys", None), league) == "lattice"
+            and "residuals" not in kwargs):
+        lattice = load_lattice_weights(league)
+        if lattice is None:
+            print(f"no margin lattice banked for {league}; simulating without key numbers")
+        else:
+            kwargs["lattice"] = lattice
     return SimConfig(**kwargs)  # type: ignore[arg-type]
 
 
@@ -1693,6 +1725,8 @@ def describe_sim(config: SimConfig, league: str) -> str:
     """The Methods row: what shape and width this run simulated with."""
     shape = ("normal" if config.residuals is None
              else f"empirical ({len(config.residuals)} banked residual pairs)")
+    if config.lattice is not None:
+        shape += f" + key numbers (banked lattice to |margin| {config.lattice.max_abs})"
     width = f"σ {config.sd_margin:g} margin / {config.sd_total:g} total"
     if config.sd_total_slope or config.sd_margin_slope:
         width += (f", {config.sd_total_slope:+.3f}/pt of expected total "
