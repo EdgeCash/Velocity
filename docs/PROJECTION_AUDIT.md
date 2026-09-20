@@ -784,9 +784,11 @@ bounded**, and each of those has its own round in `MODEL_LAB.md`:
 - the slate cap counts every open position (it had been leaking by the
   held-on-card stake; exposure sat at 27–31% against a 25% cap for eight
   days);
-- the drive sim, the key-number lattice and the skew draw are built,
-  measured on the walk-forward, and **not promoted** — the lattice cleared
-  every check and awaits promotion; the skew is right about the shape and
+- the drive sim, the key-number lattice and the skew draw are built and
+  measured on the walk-forward; the lattice cleared every check and is
+  **promoted in the NFL** (the promotion round: every NFL spread ladder side
+  open, 50 → 58), off in college where it closed sides; the drive sim and
+  the skew are not promoted — the skew is right about the shape and
   dominated by the totals level.
 
 ### 7.5 What to run next
@@ -796,9 +798,13 @@ through `model_lab.py` on the standard walk-forward, as the rule requires.
 
 1. **Success-rate / early-down EPA blend** (NFL). Two columns, on the file
    since Round 1, never scored. *Effort S.*
-2. **The real moneyline close as the anchor**, and the records at the real
-   juice. The probit leg is the one part of the anchoring sweep the lab
-   already knows is wrong. *Effort S.*
+2. ~~**The real moneyline close as the anchor**, and the records at the real
+   juice.~~ **Done** (docs/MODEL_LAB.md, the juice round): the sweep runs
+   against the de-vigged moneyline beside the probit, the two agree on the
+   NFL (select-chosen w 0.1 vs 0.2, holdout 0.2112 vs 0.2111; the probit
+   was not invalid here), and the records settle at the side's own closing
+   price — the 4-point totals bar is +5.2 units per 100 staked over 505
+   bets. Nothing promoted; the anchor stays at 0.2.
 3. **Wind on the margin by pass rate**, from the pass rate `units.py`
    already computes. *Effort S.*
 4. **`cpoe` as a passer skill term** beside the raw-EPA QB effect. *Effort S.*
@@ -820,7 +826,10 @@ through `model_lab.py` on the standard walk-forward, as the rule requires.
    scoring, kickoff-hour weather and crews are the candidates §6 named,
    and items 3, 5 and 7 are the cheap ones. *Effort M, and it gates the
    skew draw.*
-10. Housekeeping: delete `pbp-2025.zip`; add the NFL plays-coverage assertion.
+10. ~~Housekeeping: delete `pbp-2025.zip`; add the NFL plays-coverage
+    assertion.~~ **Done**: the zip is gone (the build reads `pbp-*.csv`
+    from `--src`, never the zip) and `tests/test_dataset_keys.py` refuses a
+    played NFL game with under 100 plays or a play keyed to no game.
 
 ### 7.6 What was checked and found sound this pass
 

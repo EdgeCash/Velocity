@@ -45,11 +45,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from velocity.eval.ladders import residual_calibration
-from velocity.models.keynumbers import (
-    LatticeWeights,
-    fit_lattice_weights,
-    rounded_normal_mass,
-)
+from velocity.models.keynumbers import LatticeWeights, fit_lattice_from_residuals
 from velocity.models.residuals import residuals_from_projections
 from velocity.models.simulate import (
     DEFAULT_SD_MARGIN,
@@ -79,9 +75,9 @@ def league_frames(league: str) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def fit_weights(train: pd.DataFrame, sd_margin: float) -> LatticeWeights:
-    return fit_lattice_weights(
-        (train["mu_margin"] + train["resid_margin"]).to_numpy(),
-        rounded_normal_mass(train["mu_margin"].to_numpy(), sd_margin))
+    # The bank's own fit (scripts/build_lattice.py), so the walk-forward
+    # tables here are the same measurement the live slate reads.
+    return fit_lattice_from_residuals(train, sd_margin)
 
 
 def _sim(mu_m: float, mu_t: float, config: SimConfig,

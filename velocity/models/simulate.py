@@ -30,12 +30,17 @@ than the lattice wins. The round records what would change that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from velocity.models.counts import CountSimConfig, simulate_counts
 from velocity.models.overtime import OvertimeConfig, resolve_ties
 from velocity.models.residuals import ResidualPool
+
+if TYPE_CHECKING:
+    # keynumbers reads GameSim from here, so the import is one-way at runtime.
+    from velocity.models.keynumbers import LatticeWeights
 
 # Calibrated to real NFL residuals — the standard deviation of (actual − model)
 # margin and total from a 2022–2023 walk-forward (n≈570): margin ≈ 12.8, total
@@ -115,6 +120,22 @@ class SimConfig:
     # league's own shape, skew included, so skewing it again would count the
     # same asymmetry twice.
     total_skew: float = 0.0
+    # Football's margin lattice (velocity/models/keynumbers.py), the one
+    # sim-shape candidate that cleared every gate (docs/MODEL_LAB.md, the
+    # lattice round through the promotion round). The normal has the right
+    # dispersion and no key numbers — 5.4% of NFL margins on 3 where football
+    # puts 14.8% — and this resamples its own rounded draws in proportion to
+    # how much more often football lands on each absolute margin. The μ, the
+    # sds and every pricing helper are untouched; only which of the draws
+    # are kept changes. Banked per league (datasets/{league}/lattice.parquet)
+    # from the residual bank, so like ``residuals`` it is data rather than a
+    # knob and does not take part in comparisons.
+    #
+    # Normal path only, and the config refuses the pair: a residual pool
+    # already carries the league's own lattice, and the weights are a ratio
+    # against the rounded normal specifically, so applying them to any other
+    # draw would count the key numbers twice or correct the wrong sim.
+    lattice: LatticeWeights | None = field(default=None, compare=False)
     # The discrete path (velocity/models/counts.py). When set, the game is
     # sampled as two run/goal COUNTS rather than a rounded normal on the
     # margin, and the sds, slopes, correlation and residual pool above are all
@@ -140,6 +161,10 @@ class SimConfig:
             raise ValueError("margin_total_corr must be in [-1, 1]")
         if (self.sd_margin_slope or self.sd_total_slope) and self.sd_anchor_total <= 0:
             raise ValueError("a dispersion slope needs a positive sd_anchor_total")
+        if self.lattice is not None and self.residuals is not None:
+            raise ValueError(
+                "a margin lattice corrects the normal draw; a residual pool "
+                "already carries the league's own lattice")
 
     def effective_sds(self, mu_total: float) -> tuple[float, float]:
         """The (sd_margin, sd_total) this game is simulated at.
@@ -279,4 +304,9 @@ def simulate_game(
         if config.overtime is not None:
             home, away = resolve_ties(home, away, rng, config.overtime)
 
-    return GameSim(home_score=home, away_score=away)
+    sim = GameSim(home_score=home, away_score=away)
+    if config.lattice is not None:
+        # Same generator for the draw and the resample, so the corrected sim
+        # is exactly as deterministic as the one it corrects.
+        sim = config.lattice.apply(sim, rng)
+    return sim

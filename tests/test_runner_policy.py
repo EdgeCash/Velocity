@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "run_live_slate.py"
 
 
@@ -221,10 +223,65 @@ def test_the_sim_and_level_defaults_are_the_gated_ones() -> None:
                 == runner.DEFAULT_SIM_DISPERSION_BY_LEAGUE[league])
     assert runner.resolve_sim_shape("empirical", "nfl") == "empirical"
     assert runner.resolve_sim_shape(None, "mlb") == "normal"
+    # The promotion round: the banked margin lattice is on in the NFL, where
+    # it opened every spread side on the ladder gate, and off in college,
+    # where it closed eight.
+    assert args.sim_keys is None
+    assert runner.resolve_sim_keys(None, "nfl") == "lattice"
+    assert runner.resolve_sim_keys(None, "ncaaf") == "none"
+    assert runner.resolve_sim_keys("none", "nfl") == "none"
+    assert runner.resolve_sim_keys("lattice", "ncaaf") == "lattice"
+    assert runner.resolve_sim_keys(None, "mlb") == "none"
     # The Methods row says what the sim did, in the run's own words.
     rows = dict(runner.live_config_rows(args, "QB-adjusted recency EPA", None))
     assert "Simulation" in rows and "sims" in rows["Simulation"]
     assert "σ 13 margin / 13.6 total" in rows["Simulation"]
+
+
+def test_the_default_football_sim_carries_the_banked_lattice() -> None:
+    """docs/MODEL_LAB.md, the promotion round: normal draw, resampled by the lattice."""
+    from velocity.models.keynumbers import load_lattice_weights
+
+    runner = _runner()
+    for league, default_on in (("nfl", True), ("ncaaf", False)):
+        banked = load_lattice_weights(league)
+        if banked is None:
+            pytest.skip(f"no {league} lattice committed")
+        args = runner.build_parser().parse_args(["--league", league])
+        cfg = runner.football_sim_config(league, args)
+        assert cfg.residuals is None
+        assert (cfg.lattice == banked) is default_on
+        assert ("key numbers" in runner.describe_sim(cfg, league)) is default_on
+        # The switch switches both ways.
+        off = runner.build_parser().parse_args(["--league", league, "--sim-keys", "none"])
+        assert runner.football_sim_config(league, off).lattice is None
+        on = runner.build_parser().parse_args(["--league", league, "--sim-keys", "lattice"])
+        assert runner.football_sim_config(league, on).lattice == banked
+
+
+def test_a_lattice_without_a_bank_simulates_without_it(tmp_path, monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
+    from velocity.models import keynumbers
+
+    monkeypatch.setattr(keynumbers, "DATASETS", tmp_path)
+    runner = _runner()
+    args = runner.build_parser().parse_args(["--league", "nfl", "--sim-keys", "lattice"])
+    cfg = runner.football_sim_config("nfl", args)
+    assert cfg.lattice is None
+    assert "no margin lattice banked" in capsys.readouterr().out
+    assert "key numbers" not in runner.describe_sim(cfg, "nfl")
+
+
+def test_an_empirical_sim_never_stacks_the_lattice_on_the_pool() -> None:
+    """The pool carries the league's own lattice; the config would refuse the pair."""
+    from velocity.models.residuals import load_residual_pool
+
+    if load_residual_pool("nfl") is None:
+        pytest.skip("no NFL residual bank committed")
+    runner = _runner()
+    args = runner.build_parser().parse_args(
+        ["--league", "nfl", "--sim-shape", "empirical", "--sim-keys", "lattice"])
+    cfg = runner.football_sim_config("nfl", args)
+    assert cfg.residuals is not None and cfg.lattice is None
 
 
 def test_an_empirical_sim_without_a_bank_falls_back_to_the_normal(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
