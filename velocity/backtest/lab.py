@@ -174,6 +174,7 @@ def nfl_variants(
         turnover: float | None = None, winsor: float | None = None,
         epa_col: str = "epa", home: bool = False, offseason_weeks: float = 0.0,
         phase_lambda: float | None = None,
+        success_weight: float = 0.0, explosive_weight: float = 0.0,
     ) -> VariantFactory:
         """The QB-decomposed recency fit, optionally conditioned on the play
         context the rebuilt plays carry (velocity.features.team):
@@ -181,10 +182,16 @@ def nfl_variants(
         plays; ``turnover`` scales turnover-play EPA; ``winsor`` clips EPA;
         ``epa_col`` picks the EPA column (``qb_epa`` credits the passer as
         passing yards would); ``home`` fits the home-field edge in the ridge
-        and prices it in place of the constant."""
+        and prices it in place of the constant. ``success_weight`` blends
+        the team sides toward a success-rate ridge (SP+'s efficiency
+        component, converted to EPA units by the plays' own EPA-per-success
+        gap); ``explosive_weight`` toward a ridge fitted on successful plays
+        only (SP+'s explosiveness)."""
         from velocity.features.team import (
             DEFAULT_QB_LAMBDA,
             attach_home_flag,
+            blend_team_components,
+            epa_per_success,
             fit_qb_ratings,
             garbage_time_weights,
             shrink_turnover_epa,
@@ -213,6 +220,15 @@ def nfl_variants(
                 phase_col="play_type" if phase_lambda is not None else None,
                 phase_lambda=phase_lambda if phase_lambda is not None else 1000.0,
             )
+            if success_weight > 0.0 and "success" in frame.columns:
+                efficiency = fit_ratings(frame, weights=weights, epa_col="success")
+                ratings = blend_team_components(
+                    ratings, efficiency, success_weight,
+                    scale=epa_per_success(frame, weights=weights, epa_col=epa_col))
+            if explosive_weight > 0.0 and "success" in frame.columns:
+                hit = frame["success"].astype(float) > 0.5
+                explosive = fit_ratings(frame[hit], weights=weights[hit], epa_col=epa_col)
+                ratings = blend_team_components(ratings, explosive, explosive_weight)
             config = NFLModelConfig(sim=sim)
             if home_col is not None:
                 # ±0.5 in the column, so the coefficient is the offense's
@@ -234,10 +250,15 @@ def nfl_variants(
     # through to a scaled factory further in. Without it a chain such as
     # rest-over-scale silently ran unscaled (docs/MODEL_LAB.md, the NFL
     # composites round).
-    def levelled(inner: VariantFactory, seasons: int | None = None) -> VariantFactory:
+    def levelled(
+        inner: VariantFactory, seasons: int | None = None, weeks: int | None = None,
+    ) -> VariantFactory:
         """``inner`` with its scoring level fitted through the model on the
         training window's own games (velocity.models.level) — the totals
-        bias the residual bank found, corrected where it arises."""
+        bias the residual bank found, corrected where it arises. ``weeks``
+        fits it on the trailing on-field weeks instead of seasons: the
+        skew round found the level wandering within a season by more than
+        a two-season mean can follow."""
         @functools.wraps(inner)
         def factory(train: pd.DataFrame, **kwargs: object) -> NFLGameModel:
             from velocity.models.level import calibrate_level
@@ -246,7 +267,8 @@ def nfl_variants(
             if schedule is None:
                 return model  # type: ignore[return-value]
             window = schedule[schedule["game_id"].isin(set(train["game_id"]))]
-            return calibrate_level(model, window, seasons=seasons)  # type: ignore[arg-type]
+            return calibrate_level(
+                model, window, seasons=seasons, weeks=weeks)  # type: ignore[arg-type]
 
         return factory
 
@@ -558,18 +580,40 @@ def nfl_variants(
 
             def promoted(
                 core: VariantFactory, *, shift: bool = False, by_phase: bool = False,
-                phase_margin_only: bool = False,
+                phase_margin_only: bool = False, level_weeks: int | None = None,
             ) -> VariantFactory:
                 """``core`` under the whole promoted chain — level, scale,
                 starters, rest, the injury burden, wind and rain — so a
                 change to the fit itself is scored exactly as it would run.
                 ``shift`` keeps the scale's home-margin intercept;
                 ``by_phase`` fits the scale on the projected week's phase
-                (``phase_margin_only``: the margin's slope alone)."""
-                return windy(injured(rested(scaled(starters(levelled(core, 2)), shift=shift,
+                (``phase_margin_only``: the margin's slope alone);
+                ``level_weeks`` fits the level on that many trailing on-field
+                weeks in place of the trailing two seasons."""
+                level = (levelled(core, weeks=level_weeks) if level_weeks
+                         else levelled(core, 2))
+                return windy(injured(rested(scaled(starters(level), shift=shift,
                                                    by_phase=by_phase,
                                                    phase_margin_only=phase_margin_only)), 4.0),
                              precip_points=1.0)
+
+            def surfaced(inner: VariantFactory, points: float) -> VariantFactory:
+                """``inner`` under the surface-mismatch wrapper."""
+                @functools.wraps(inner)
+                def factory(train: pd.DataFrame, **kwargs: object) -> object:
+                    return SurfaceMismatchModel(inner(train, **kwargs), schedule, points)
+                return factory
+
+            def clocked(inner: VariantFactory, points: float) -> VariantFactory:
+                """``inner`` under the body-clock wrapper."""
+                @functools.wraps(inner)
+                def factory(train: pd.DataFrame, **kwargs: object) -> object:
+                    return BodyClockModel(inner(train, **kwargs), schedule, points)
+                return factory
+
+            # The promoted core after the recency round — what the live runner
+            # fits — bound once so the situational rows read as what they are.
+            gap8_core = qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0)
 
             variants.update({
                 # The play-context round (docs/PROJECTION_AUDIT.md §2.1, the
@@ -613,6 +657,50 @@ def nfl_variants(
                 # the live runner prices.
                 "live-nfl-promoted": (
                     "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0))),
+                # The level round (docs/MODEL_LAB.md): the skew round found the
+                # model's totals level wandering −1.6 to +3.3 a season with no
+                # stable sign. The promoted level is the trailing two seasons'
+                # mean; these fit it on trailing ON-FIELD weeks instead, across
+                # the season boundary, so it can follow a within-season drift.
+                "live-nfl-promoted-lvlw8": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      level_weeks=8)),
+                "live-nfl-promoted-lvlw12": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      level_weeks=12)),
+                "live-nfl-promoted-lvlw17": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      level_weeks=17)),
+                "live-nfl-promoted-lvlw34": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0),
+                                      level_weeks=34)),
+                # The situational round, part two (docs/MODEL_LAB.md): two
+                # of nfelo's home-field findings the schedule columns can
+                # price. Surface: the away side a point worse on a surface
+                # unlike its own. Body clock: a Pacific-time team two points
+                # worse at an early Eastern kickoff. Over the promoted chain.
+                "live-nfl-promoted-surf0.5": ("plays", surfaced(promoted(gap8_core), 0.5)),
+                "live-nfl-promoted-surf1.0": ("plays", surfaced(promoted(gap8_core), 1.0)),
+                "live-nfl-promoted-clock1.0": ("plays", clocked(promoted(gap8_core), 1.0)),
+                "live-nfl-promoted-clock2.0": ("plays", clocked(promoted(gap8_core), 2.0)),
+                "live-nfl-promoted-surf1.0-clock2.0": (
+                    "plays", clocked(surfaced(promoted(gap8_core), 1.0), 2.0)),
+                # SP+'s decomposition (docs/PROJECTION_AUDIT.md §7): the team
+                # sides blended toward a success-rate ridge (efficiency) and
+                # toward a ridge on successful plays only (explosiveness),
+                # each in EPA units, over the promoted chain.
+                "live-nfl-promoted-succ0.25": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 success_weight=0.25))),
+                "live-nfl-promoted-succ0.5": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 success_weight=0.5))),
+                "live-nfl-promoted-expl0.25": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 explosive_weight=0.25))),
+                "live-nfl-promoted-succ0.25-expl0.25": (
+                    "plays", promoted(qb_recency(17.0, 300.0, turnover=0.5, offseason_weeks=8.0,
+                                                 success_weight=0.25, explosive_weight=0.25))),
                 # The joint phase ridge (docs/PROJECTION_AUDIT.md §3 #16)
                 # over the promoted chain, and the phase scale again (the
                 # bank's margin slope reads 0.80 in weeks 1–3, 0.89 in 4–6,
@@ -1123,7 +1211,7 @@ def ncaaf_variants(
                 early_weight: float | None = None, qb_lambda: float | None = None,
                 epa_prior_k: int | None = None, epa_half_life: float | None = None,
                 epa_offseason_weeks: float = 0.0, st_prior: bool = False,
-                scores_half_life: float | None = None,
+                scores_half_life: float | None = None, level_weeks: int | None = None,
             ) -> VariantFactory:
                 """``blend-level2`` with the SP+ previous-season prior in the
                 scores half, at ``k`` pseudo-games per team — what the live
@@ -1143,7 +1231,11 @@ def ncaaf_variants(
                 special-teams rating into the scores half's pseudo-games;
                 ``scores_half_life`` recency-weights the scores half's games
                 (scores_recency_weights; the pseudo-games sit at week 0 of
-                the projected season, so the prior counts as current)."""
+                the projected season, so the prior counts as current);
+                ``level_weeks`` fits the scores half's level on that many
+                trailing on-field weeks instead of the trailing two seasons
+                (the level round — the college totals level runs −0.5 to
+                −1.9 a season against the NFL's +0.6)."""
                 def factory(
                     train_games: pd.DataFrame, *, predicting: tuple[int, int] | None = None
                 ) -> BlendedGameModel:
@@ -1202,7 +1294,7 @@ def ncaaf_variants(
                     scores_model = calibrate_scores_level(
                         _model(fit_scores_ratings(
                             fit_games, ridge_lambda=10.0, weights=scores_weights)),
-                        train_games)
+                        train_games, weeks=level_weeks)
                     weight = 0.5
                     if (early_weight is not None and predicting is not None
                             and predicting[1] <= NCAAF_EARLY_WEEK):
@@ -1344,6 +1436,24 @@ def ncaaf_variants(
                     "games", college_scaled(
                         blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
                                  scores_half_life=34.0, early_weight=0.4),
+                        by_phase=True, shift=True)),
+                # The level round: the scores half's level on trailing on-field
+                # weeks in place of the trailing two seasons (see the NFL's
+                # lvlw variants). A college season is ~15 weeks.
+                "live-ncaaf-promoted-lvlw6": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.4, level_weeks=6),
+                        by_phase=True, shift=True)),
+                "live-ncaaf-promoted-lvlw12": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.4, level_weeks=12),
+                        by_phase=True, shift=True)),
+                "live-ncaaf-promoted-lvlw24": (
+                    "games", college_scaled(
+                        blend_sp(12, epa_half_life=6.0, epa_offseason_weeks=6.0, st_prior=True,
+                                 scores_half_life=34.0, early_weight=0.4, level_weeks=24),
                         by_phase=True, shift=True)),
                 # Over the promoted chain: the offseason gap in the EPA
                 # half's recency key, and SP+ special teams in the prior.
@@ -2128,6 +2238,150 @@ class ScheduleStarterModel:
             home_bonus=home_bonus, away_bonus=away_bonus,
             home_qb=home_qb, away_qb=away_qb,
         )
+
+
+# Pacific-time home bases, for the body-clock wrapper. Arizona does not
+# observe daylight time and sits on Pacific time through the season.
+# Relocations carry their old codes so the historical schedule resolves.
+PACIFIC_TEAMS = frozenset({"SF", "SEA", "LA", "LAR", "STL", "LAC", "SD", "LV", "OAK", "ARI"})
+# A kickoff at or before this ET hour is the early window nfelo measured.
+EARLY_KICKOFF_HOUR = 13
+
+
+def surface_class(surface: object) -> str | None:
+    """``"grass"``, ``"turf"`` or ``None`` from the schedule's free-text surface.
+
+    The nflverse column is dirty — ``"grass "`` with a trailing space, an
+    empty string, and six turf brands (fieldturf, sportturf, matrixturf,
+    astroturf, a_turf, astroplay). nfelo's finding is grass against turf, so
+    that is the whole taxonomy; anything else is unknown rather than guessed.
+    """
+    if surface is None or (isinstance(surface, float) and pd.isna(surface)):
+        return None
+    text = str(surface).strip().lower()
+    if not text:
+        return None
+    if "grass" in text:
+        return "grass"
+    if "turf" in text or "astroplay" in text:
+        return "turf"
+    return None
+
+
+def home_surface_by_team_season(schedule: pd.DataFrame) -> dict[tuple[str, int], str]:
+    """Each team's home surface class per season — the mode of its home games.
+
+    Per season, so a relocation or a resurfacing changes the answer the year
+    it happens rather than never.
+    """
+    if not {"home_team", "season", "surface"} <= set(schedule.columns):
+        return {}
+    frame = schedule[["home_team", "season", "surface"]].copy()
+    frame["cls"] = frame["surface"].map(surface_class)
+    frame = frame.dropna(subset=["cls"])
+    # ``cls`` is non-null after the dropna, so every group has a mode.
+    modes = (frame.groupby(["home_team", "season"])["cls"]
+             .agg(lambda s: s.mode().iloc[0]).reset_index())
+    return {(str(r["home_team"]), int(r["season"])): str(r["cls"])
+            for r in modes.to_dict("records")}
+
+
+class _KeyedSituationalModel:
+    """Shared plumbing for a wrapper keyed by (home, away, kickoff date).
+
+    Subclasses fill ``_shift`` with the games the effect applies to and the
+    signed points that come off the home side; half goes to each side so the
+    total is untouched, like the divisional wrapper.
+    """
+
+    def __init__(self, inner: object) -> None:
+        import inspect
+
+        self.inner = inner
+        self._shift: dict[tuple[str, str, pd.Timestamp], float] = {}
+        try:
+            self._inner_takes_kickoff = "kickoff" in inspect.signature(
+                inner.project).parameters  # type: ignore[attr-defined]
+        except (TypeError, ValueError):  # pragma: no cover - exotic callables
+            self._inner_takes_kickoff = False
+
+    def project(
+        self,
+        home_team: str,
+        away_team: str,
+        *,
+        neutral_site: bool = False,
+        rng: object = None,
+        kickoff: object = None,
+        home_bonus: float = 0.0,
+        away_bonus: float = 0.0,
+    ) -> object:
+        shift = 0.0
+        if kickoff is not None and not pd.isna(kickoff) and not neutral_site:  # type: ignore[call-overload]
+            date = pd.Timestamp(kickoff).normalize()  # type: ignore[arg-type]
+            shift = self._shift.get((home_team, away_team, date), 0.0) / 2.0
+        kwargs: dict[str, object] = {"kickoff": kickoff} if self._inner_takes_kickoff else {}
+        return self.inner.project(  # type: ignore[attr-defined]
+            home_team, away_team, neutral_site=neutral_site, rng=rng,
+            home_bonus=home_bonus + shift, away_bonus=away_bonus - shift, **kwargs,
+        )
+
+
+class SurfaceMismatchModel(_KeyedSituationalModel):
+    """A situational wrapper: the away team on a surface unlike its own.
+
+    nfelo (a further exploration of home field advantage): the
+    opponent-adjusted performance of away teams was a full point worse on a
+    surface that differed from their home surface — as much as a bye. The
+    surface is grass or turf (:func:`surface_class`); a team's own is the
+    mode of its home games that season. ``points`` is the margin effect,
+    split across the two sides so the total is untouched. A game with either
+    surface unknown gets nothing.
+    """
+
+    def __init__(self, inner: object, schedule: pd.DataFrame, points: float) -> None:
+        super().__init__(inner)
+        self.points = float(points)
+        own = home_surface_by_team_season(schedule)
+        keyed = schedule.dropna(subset=["kickoff"])
+        dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        for home, away, season, surface, date in zip(
+            keyed["home_team"].astype(str), keyed["away_team"].astype(str),
+            keyed["season"].astype(int), keyed["surface"], dates, strict=True,
+        ):
+            here = surface_class(surface)
+            theirs = own.get((away, season))
+            if here is not None and theirs is not None and here != theirs:
+                self._shift[(home, away, date)] = self.points
+
+
+class BodyClockModel(_KeyedSituationalModel):
+    """A situational wrapper: a Pacific-time team kicking off early in the East.
+
+    nfelo: West Coast teams travelling East performed two points worse in
+    1pm ET games than in the 4pm and primetime windows. A game qualifies
+    when the away team's home base is on Pacific time
+    (:data:`PACIFIC_TEAMS`), the home team's is not, and the scheduled
+    kickoff hour is at or before :data:`EARLY_KICKOFF_HOUR` ET. ``points``
+    is the margin effect, split across the sides so the total is untouched.
+    """
+
+    def __init__(self, inner: object, schedule: pd.DataFrame, points: float) -> None:
+        super().__init__(inner)
+        self.points = float(points)
+        if "gametime" not in schedule.columns:
+            return
+        keyed = schedule.dropna(subset=["kickoff", "gametime"])
+        dates = pd.to_datetime(keyed["kickoff"]).dt.normalize()
+        hours = pd.to_numeric(
+            keyed["gametime"].astype(str).str.split(":").str[0], errors="coerce")
+        for home, away, hour, date in zip(
+            keyed["home_team"].astype(str), keyed["away_team"].astype(str), hours, dates,
+            strict=True,
+        ):
+            if (away in PACIFIC_TEAMS and home not in PACIFIC_TEAMS
+                    and pd.notna(hour) and int(hour) <= EARLY_KICKOFF_HOUR):
+                self._shift[(home, away, date)] = self.points
 
 
 class DivisionalModel:

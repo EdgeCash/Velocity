@@ -32,7 +32,7 @@ Both are deviations from the league mean, which lives in ``league_epa``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -414,6 +414,56 @@ class QBTeamRatings:
 
     def expected_epa(self, off_team: str, def_team: str) -> float:
         return self.league_epa + self.matchup_delta(off_team, def_team)
+
+
+def epa_per_success(
+    plays: pd.DataFrame, *, weights: pd.Series | None = None,
+    success_col: str = "success", epa_col: str = "epa",
+) -> float:
+    """What a unit of success rate is worth in EPA/play, on these plays.
+
+    The gap between the mean EPA of a successful play and of a failed one
+    (about +1.11 against −0.85 in the NFL, so ≈1.96) — the scale that puts a
+    success-rate deviation on the EPA axis the game model prices from. Fitted
+    on the training frame rather than written down, so a rules era that
+    changes what a success is worth changes the scale with it.
+    """
+    df = plays.dropna(subset=[success_col, epa_col])
+    if df.empty:
+        return 0.0
+    hit = df[success_col].astype(float).to_numpy() > 0.5
+    epa = df[epa_col].to_numpy(dtype=float)
+    w = (weights.reindex(df.index).fillna(0.0).to_numpy(dtype=float)
+         if weights is not None else np.ones(len(df)))
+    if w[hit].sum() <= 0 or w[~hit].sum() <= 0:
+        return 0.0
+    return float(np.average(epa[hit], weights=w[hit]) - np.average(epa[~hit], weights=w[~hit]))
+
+
+def blend_team_components(
+    ratings: QBTeamRatings, extra: TeamRatings, weight: float, scale: float = 1.0,
+) -> QBTeamRatings:
+    """``ratings`` with its team offense/defense blended toward ``extra``.
+
+    The SP+ shape, in this model's terms: the EPA ratings keep the passer
+    decomposition (``qb``, ``starters``, ``pass_rate`` are untouched — the
+    QB is priced once, on the EPA side), and only the QB-neutral team
+    components move, ``(1 − weight)·epa + weight·scale·extra``. ``scale``
+    puts ``extra`` on the EPA axis: 1 for a rating already in EPA/play
+    (explosiveness — EPA on successful plays), :func:`epa_per_success` for
+    a success-rate rating. A team missing from ``extra`` contributes 0
+    there, league average, matching ``matchup_delta``'s own fallback.
+    """
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError("weight must be in [0, 1]")
+    if weight == 0.0:
+        return ratings
+    keep = 1.0 - weight
+    offense = {t: keep * ratings.offense.get(t, 0.0) + weight * scale * extra.offense.get(t, 0.0)
+               for t in ratings.teams}
+    defense = {t: keep * ratings.defense.get(t, 0.0) + weight * scale * extra.defense.get(t, 0.0)
+               for t in ratings.teams}
+    return replace(ratings, offense=offense, defense=defense)
 
 
 def fit_qb_ratings(

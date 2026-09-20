@@ -50,19 +50,43 @@ def mean_points_per_team(
     return float((played["home_score"] + played["away_score"]).mean()) / 2.0
 
 
+def trailing_weeks(games: pd.DataFrame, weeks: int) -> pd.DataFrame:
+    """The played games in the last ``weeks`` distinct (season, week) cells.
+
+    Counts on-field weeks, not calendar ones, and crosses the season
+    boundary: eight weeks back from Week 3 reaches into last season's
+    finish. That is the window a level needs when the thing it is chasing
+    moves *within* a season — the skew round measured the model's totals
+    level running −1.6 to +3.3 a season with no stable sign, which a
+    two-season mean cannot follow and a two-month one can.
+    """
+    played = games.dropna(subset=["home_score", "away_score"])
+    if weeks <= 0 or played.empty or not {"season", "week"} <= set(played.columns):
+        return played
+    cells = (played[["season", "week"]].astype(int).drop_duplicates()
+             .sort_values(["season", "week"]).tail(int(weeks)))
+    keep = pd.MultiIndex.from_frame(cells)
+    index = pd.MultiIndex.from_frame(played[["season", "week"]].astype(int))
+    return played[index.isin(keep)]
+
+
 def level_shift(
-    model: NFLGameModel | ScoresGameModel, games: pd.DataFrame, *, seasons: int | None = None
+    model: NFLGameModel | ScoresGameModel, games: pd.DataFrame, *,
+    seasons: int | None = None, weeks: int | None = None,
 ) -> float:
     """Points per team the model runs high (+) or low (−) on ``games``.
 
     Projects every played game in ``games`` (the trailing ``seasons`` of it
-    when given) with the model as it stands — neutral flags honoured, no
-    situational bonuses — and compares the mean projected total to the mean
-    actual one. Half that gap is the per-team shift; zero when there is
-    nothing to compare.
+    when given, or the trailing ``weeks`` — on-field weeks, across the
+    season boundary) with the model as it stands — neutral flags honoured,
+    no situational bonuses — and compares the mean projected total to the
+    mean actual one. Half that gap is the per-team shift; zero when there
+    is nothing to compare. ``weeks`` wins when both are given.
     """
     played = games.dropna(subset=["home_score", "away_score"])
-    if seasons is not None and not played.empty and "season" in played.columns:
+    if weeks is not None:
+        played = trailing_weeks(played, int(weeks))
+    elif seasons is not None and not played.empty and "season" in played.columns:
         cutoff = int(played["season"].max()) - (seasons - 1)
         played = played[played["season"] >= cutoff]
     if played.empty:
@@ -78,10 +102,11 @@ def level_shift(
 
 
 def calibrate_level(
-    model: NFLGameModel, games: pd.DataFrame, *, seasons: int | None = None
+    model: NFLGameModel, games: pd.DataFrame, *,
+    seasons: int | None = None, weeks: int | None = None,
 ) -> NFLGameModel:
     """The same model with ``base_points`` shifted so its totals center on the data."""
-    shift = level_shift(model, games, seasons=seasons)
+    shift = level_shift(model, games, seasons=seasons, weeks=weeks)
     if shift == 0.0:
         return model
     config = replace(model.config, base_points=model.config.base_points - shift)
@@ -89,7 +114,8 @@ def calibrate_level(
 
 
 def calibrate_scores_level(
-    model: ScoresGameModel, games: pd.DataFrame, *, seasons: int | None = 2
+    model: ScoresGameModel, games: pd.DataFrame, *,
+    seasons: int | None = 2, weeks: int | None = None,
 ) -> ScoresGameModel:
     """The scores model with ``base_points`` shifted so its totals center on the data.
 
@@ -98,9 +124,9 @@ def calibrate_scores_level(
     game after the 2023 clock rules) its level lags the era: the college
     blend's totals ran 1.0–2.3 points high every season from 2021 on. Same
     remedy as the NFL's: fit the level through the model on the trailing
-    ``seasons``; ratings and the home edge untouched.
+    ``seasons`` (or ``weeks``); ratings and the home edge untouched.
     """
-    shift = level_shift(model, games, seasons=seasons)
+    shift = level_shift(model, games, seasons=seasons, weeks=weeks)
     if shift == 0.0:
         return model
     ratings = replace(model.ratings, base_points=model.ratings.base_points - shift)
