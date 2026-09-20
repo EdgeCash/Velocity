@@ -38,7 +38,8 @@ def test_season_configs_fit_on_train_only_and_span_the_grid() -> None:
     drive = DriveConfig(n_sims=2000)
     configs = _MOD.season_configs(train, base, drive)
     assert list(configs) == ["normal", "normal-hetero", "empirical",
-                             "empirical-hetero", "drive", "drive-fit"]
+                             "empirical-hetero", "normal+keys", "drive",
+                             "drive-fit", "drive-fit+keys"]
     assert configs["normal"] == base
     assert configs["normal-hetero"].sd_anchor_total > 0
     assert configs["empirical"].residuals is not None
@@ -53,6 +54,10 @@ def test_season_configs_fit_on_train_only_and_span_the_grid() -> None:
     fitted = configs["drive-fit"]
     assert fitted.fg_to_td == drive.fg_to_td and fitted.drives == drive.drives
     assert fitted.strength_sd > 0
+    # An overlay corrects the sim it names and nothing else about it.
+    assert configs["normal+keys"].base == base
+    assert configs["normal+keys"].weights.weights.size > 1
+    assert configs["drive-fit+keys"].base == fitted
 
 
 def test_score_variant_returns_the_gate_columns_in_range() -> None:
