@@ -10,6 +10,13 @@
 // Scores: /api/scores fans out to ESPN's public scoreboard JSON for the five
 // leagues, trims each event to what the ticker renders, and edge-caches the
 // result for ~45s so a page full of viewers costs ESPN one request.
+//
+// Board: /board renders the private mobile board from the export CSVs parked
+// in R2 by the slate run (docs/PHASE13_STAGE2_CLOUDFLARE.md). Read-only by
+// design — GET and HEAD only, no dispatch, no secret. Runs are started from
+// the iOS Shortcut, which is the single control plane.
+
+import { BOARD_FILES, boardModel, renderBoard } from "./board.js";
 
 const SCOREBOARDS = {
   NFL: "football/nfl",
@@ -89,11 +96,55 @@ async function scoresResponse(url, ctx) {
   return response;
 }
 
+// The board's CSVs live under one R2 prefix, keyed by their export filename
+// with no stamp — the same stable-name discipline the CSVs already follow, so
+// the newest write wins and this reads a fixed key.
+const BOARD_PREFIX = "board/";
+
+async function boardResponse(request, env) {
+  // Read-only is a property to enforce, not to document. Anything that could
+  // change state is refused here rather than merely unimplemented.
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("the board is read-only", {
+      status: 405,
+      headers: { allow: "GET, HEAD" },
+    });
+  }
+  const bucket = env.BOARD ?? env.WASM;
+  const files = {};
+  await Promise.all(
+    BOARD_FILES.map(async (name) => {
+      try {
+        const object = await bucket.get(BOARD_PREFIX + name);
+        if (object) files[name] = await object.text();
+      } catch {
+        // A missing or unreadable file is an absent section, never a 500:
+        // half a board is worth more than an error page before kickoff.
+      }
+    }),
+  );
+  const html = renderBoard(boardModel(files));
+  return new Response(request.method === "HEAD" ? null : html, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      // Never cached. The page states the data's own age, and an edge copy
+      // would let a stale board answer a deliberate reload — the one failure
+      // this design must not have.
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+      "x-robots-tag": "noindex, nofollow",
+    },
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/api/scores") {
       return scoresResponse(url, ctx);
+    }
+    if (url.pathname === "/board" || url.pathname === "/board/") {
+      return boardResponse(request, env);
     }
     if (url.pathname.endsWith(".wasm")) {
       const key = url.pathname.split("/").pop();

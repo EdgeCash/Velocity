@@ -1038,3 +1038,22 @@ but it is still on disk, because `build_site_data.py` imports
 `app/format_plays.py` for the `MODEL_CONFIG` fallback used when a slate
 artifact predates the runner writing its own config frame. Deleting the app
 means moving that table first; it is not worth coupling to this change.
+
+
+## `/board` — the private mobile board
+
+A second Worker-first route beside `/api/scores`, added in Phase 13 Stage 2
+([`PHASE13_STAGE2_CLOUDFLARE.md`](PHASE13_STAGE2_CLOUDFLARE.md)).
+
+It renders the export layer's CSVs — parked in R2 under `board/` by the
+slate run — as one portrait-first HTML page: run status, the curated card,
+props, games, DFS, watch list. No JavaScript, no cache, no dispatch.
+
+Same access posture as the rest of this Worker, enforced twice: the route
+ships only with a deploy gated on `CLOUDFLARE_ACCESS_CONFIRMED`, and the
+publish step that puts the CSVs in the bucket is gated on the same variable.
+If Access is not confirmed, the data is not there to serve.
+
+`GET` and `HEAD` only; anything else is a 405. The board never starts a run
+— that is the iOS Shortcut's job ([`IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md)),
+which keeps one control plane and one place a secret lives.

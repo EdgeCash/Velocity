@@ -592,6 +592,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 60
 
+      # ---- the private mobile board -------------------------------------------
+      # Park the export CSVs the /board route reads (docs/PHASE13_STAGE2_CLOUDFLARE.md).
+      # Keyed by export filename under one prefix, no stamp: the board reads a
+      # fixed key and the newest write wins, which is the same stable-name
+      # discipline the CSVs themselves follow.
+      #
+      # Gated on CLOUDFLARE_API_TOKEN like every other Cloudflare step, and
+      # best-effort: the board is a convenience layer, and failing to publish
+      # it must never fail a run that has already delivered the artifact and
+      # the email.
+      - name: Publish the board to R2
+        # Gated on the SAME manual confirmation as the Worker deploy, not just
+        # on the token. The route that serves these files only ships when
+        # Access is confirmed, so the files themselves should not sit in the
+        # bucket ahead of it either: if the gate is ever off, the paid-feed
+        # CSVs are simply not there to serve. Defence in depth for the one
+        # failure that matters here — docs/SITE.md records an unauthenticated
+        # request reaching this Worker on 2026-09-12.
+        if: env.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCESS_CONFIRMED == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -uo pipefail
+          for f in readiness plays props games dfs; do
+            src="artifacts/exports/${f}.csv"
+            [ -f "$src" ] || { echo "no $src to publish"; continue; }
+            npx --yes wrangler@4 r2 object put \
+              "velocity-wasm/board/${f}.csv" --file "$src" --remote \
+              --content-type "text/csv" \
+              && echo "published ${f}.csv" || echo "publish failed: ${f}.csv"
+          done
+
       # ---- email delivery (optional) ------------------------------------------
       # Sends the day's plays to MAIL_TO after the artifact is safely uploaded.
       # Skipped entirely until the mail secrets are configured — see
