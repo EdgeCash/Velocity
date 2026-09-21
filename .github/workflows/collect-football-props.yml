@@ -16,10 +16,35 @@ name: Collect player-prop lines
 
 on:
   schedule:
-    # Twice daily (UTC): mid-morning ET for overnight moves, early evening ET
-    # after injury reports land. Tighten toward kickoff if closer-to-close
-    # prop CLV is wanted.
-    - cron: "19 15,22 * * *"
+    # ALIGNED TO live-slate.yml's WINDOWS, 34 minutes ahead of each.
+    #
+    # Props are a core market (docs/DECISIONS.md D1), and the old twice-daily
+    # pair kept missing the bar. Measured 2026-09-20: the 15:19 cron actually
+    # started at 18:12 — inside GitHub's normal 1h48-3h00 scheduled-run delay
+    # — so by the 22:51 slate the newest board was 279 minutes old against a
+    # 75-minute freshness bar, and the entire props surface was absent from
+    # that slate.
+    #
+    # Raising the bar was the wrong fix and is explicitly refused: a
+    # four-hour-old prop line is not a price. The right fix is to collect
+    # nearer each slate, and the way to do that under a delay you cannot
+    # control is to ride the SAME delay. Both workflows queue on the same
+    # platform under the same conditions, so a prop cron 34 minutes before a
+    # slate cron tends to land 34 minutes before that slate RUNS — inside the
+    # 75-minute bar — rather than at a fixed wall-clock time the slate has
+    # long since drifted away from.
+    #
+    # :19 keeps this workflow's minute from the map (docs/LAUNCH.md) and
+    # stays before live-slate's :53, which tests/test_workflow_schedules.py
+    # requires of everything the slate reads.
+    #
+    # Seventeen runs a week against fourteen: about 28k Odds API credits a
+    # month where the old pair spent 23k, against a 100k allowance. Fresh
+    # prop data is worth more than the 5k (docs/DECISIONS.md D1).
+    - cron: "19 11,14,17,20,23 * * 6"   # Saturday: the college slate
+    - cron: "19 11,14,17,20 * * 0"      # Sunday: the NFL slate
+    - cron: "19 17,20 * * 1,4,5"        # Mon/Thu/Fri: prime time, the weeknight card
+    - cron: "19 17 * * 2,3"             # Tue/Wed: the week's opening board
   workflow_dispatch:
     inputs:
       leagues:

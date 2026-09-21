@@ -89,6 +89,7 @@ SURFACES: tuple[Surface, ...] = (
     Surface("projections", "Model projections", True),
     Surface("market", "Market lines", True),
     Surface("plays", "Curated plays", False),
+    Surface("team_totals", "Team totals", False),
     Surface("props", "Player props", False),
     Surface("dfs_pool", "DFS pool", False),
     Surface("weather", "Weather", False),

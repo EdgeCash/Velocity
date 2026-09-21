@@ -219,10 +219,27 @@ def test_caption_states_facts_without_odds() -> None:
 
 
 def test_distributions_frame_sums_to_one_per_kind() -> None:
+    """Four kinds now: the game's total and margin, and each side's score.
+
+    The per-team scores were added for team totals (docs/DECISIONS.md D2) —
+    without them nothing downstream can price that market off the sim rather
+    than off a normal standing in for it. Consumers look kinds up by key
+    (the Sim Check reads only total and margin), so the addition is safe.
+    """
     frame = distributions_frame({"g1": _projection()})
+    kinds = set(frame["kind"])
+    assert kinds == {"margin", "total", "home_score", "away_score"}
     sums = frame.groupby(["game_id", "kind"])["prob"].sum()
-    assert sums.to_numpy() == pytest.approx([1.0, 1.0])
-    assert set(frame["kind"]) == {"margin", "total"}
+    assert sums.to_numpy() == pytest.approx([1.0] * len(kinds))
+
+
+def test_the_sim_check_still_finds_the_kinds_it_reads() -> None:
+    """The Sim Check keys by kind, so new kinds must not disturb it."""
+    from velocity.report.sim_check import _pmfs_by_game
+
+    pmfs = _pmfs_by_game(distributions_frame({"g1": _projection()}))
+    assert pmfs.get(("g1", "total"))
+    assert pmfs.get(("g1", "margin"))
 
 
 # --- NCAAF identity (logo-free) -----------------------------------------------

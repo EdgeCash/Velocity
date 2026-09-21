@@ -38,7 +38,8 @@ python -m velocity.run_weekly --slate-dir artifacts/slate   # full week
 python -m velocity.run_weekly --steps export                # re-export only, seconds
 ```
 
-[`docs/WORKFLOW.md`](docs/WORKFLOW.md) is the operating manual — how the
+[`docs/WORKFLOW.md`](docs/WORKFLOW.md) is the operating manual, and
+[`docs/DECISIONS.md`](docs/DECISIONS.md) records the standing owner decisions — how the
 system runs end to end, on whose clock, and what to do about it.
 
 Every run also states whether the board is actually usable — `readiness.csv`,

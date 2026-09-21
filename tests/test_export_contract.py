@@ -19,12 +19,14 @@ from velocity.export.games import GAMES_COLUMNS, export_games
 from velocity.export.meta import META_COLUMNS, ExportMeta
 from velocity.export.plays import PLAYS_COLUMNS, export_plays
 from velocity.export.props import PROPS_COLUMNS, export_props
+from velocity.export.team_totals import TEAM_TOTALS_COLUMNS, export_team_totals
 
 REPO = Path(__file__).resolve().parents[1]
 
 CONTRACTS = {
     "games.csv": GAMES_COLUMNS,
     "props.csv": PROPS_COLUMNS,
+    "team_totals.csv": TEAM_TOTALS_COLUMNS,
     "dfs.csv": DFS_COLUMNS,
     "dfs_optimizer.csv": DFS_OPTIMIZER_COLUMNS,
     "plays.csv": PLAYS_COLUMNS,
@@ -53,6 +55,7 @@ def test_the_six_files_are_written_even_with_nothing_to_say(tmp_path: Path) -> N
     meta = ExportMeta("2026-09-20T17:53:00Z", 2026, 3)
     export_games(meta, None, out_dir=tmp_path)
     export_props(meta, None, out_dir=tmp_path)
+    export_team_totals(meta, None, out_dir=tmp_path)
     export_dfs(meta, None, out_dir=tmp_path)
     export_plays(meta, None, out_dir=tmp_path)
     export_dashboard(meta, None, out_dir=tmp_path)

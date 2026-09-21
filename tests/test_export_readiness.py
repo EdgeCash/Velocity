@@ -39,7 +39,8 @@ def _full(**over: pd.DataFrame | None) -> dict[str, pd.DataFrame | None]:
     one = pd.DataFrame([{"x": 1}])
     frames: dict[str, pd.DataFrame | None] = {
         "games": _games(), "projections": one, "market": one, "plays": one,
-        "props": one, "dfs_pool": one, "weather": one, "record": one,
+        "props": one, "team_totals": one, "dfs_pool": one, "weather": one,
+        "record": one,
     }
     frames.update(over)
     return frames
