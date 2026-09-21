@@ -180,11 +180,19 @@ def test_export_step_writes_all_six_files_from_banked_artifacts(tmp_path: Path) 
     assert props.loc[0, "team"] == "ATL"
     assert props.loc[0, "90th_percentile"] == pytest.approx(106.0)
 
-    optimizer = pd.read_csv(out / "dfs_optimizer.csv")
-    row = optimizer[optimizer["player"] == "Bijan Robinson"].iloc[0]
+    # The per-player contest numbers now ride on the POOL. dfs_optimizer.csv
+    # is the solved rosters, and this fixture banks no lineups — so it exports
+    # with its headers and no rows, which is the honest shape for a run where
+    # the optimizer filled nothing.
+    dfs = pd.read_csv(out / "dfs.csv")
+    row = dfs[dfs["player"] == "Bijan Robinson"].iloc[0]
     assert row["cash"] == pytest.approx(16.2)
     assert row["gpp"] == pytest.approx(27.5)
     assert row["ceiling"] == pytest.approx(38.1)
+
+    optimizer = pd.read_csv(out / "dfs_optimizer.csv")
+    assert optimizer.empty
+    assert "contest" in optimizer.columns
 
     dashboard = pd.read_csv(out / "dashboard.csv")
     top = dashboard[dashboard["section"] == "top_plays"].iloc[0]

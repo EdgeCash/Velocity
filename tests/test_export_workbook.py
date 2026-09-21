@@ -223,6 +223,7 @@ def _readiness(verdict: str = "DEGRADED"):  # type: ignore[no-untyped-def]
               "props": None if verdict != "READY" else one,
               "team_totals": one,
               "dfs_pool": None if verdict != "READY" else one,
+              "dfs_lineups": None if verdict != "READY" else one,
               "weather": one, "record": one}
     if verdict == "NOT READY":
         frames["market"] = None
@@ -349,3 +350,52 @@ def test_the_two_card_tabs_are_not_confusable(tmp_path: Path) -> None:
     names = load_workbook(build_workbook(tmp_path / WORKBOOK_NAME, META)).sheetnames
     assert "Games" in names
     assert "Betting Card" not in names
+
+
+def test_the_bet_card_leads_with_the_game_not_the_market(tmp_path) -> None:
+    """The fix for "we don't know opponents".
+
+    Line 1 is the call and the stake; line 2 used to open with the market,
+    which the selection had usually already said. It now opens with the
+    matchup and the kickoff — the two things a prop row cannot tell you and
+    which decide whether the card is still worth acting on.
+    """
+    plays = pd.DataFrame([{
+        "tier": "A", "bet_type": "prop",
+        "selection": "Matthew Golden Under 4.5 receptions",
+        "matchup": "Green Bay Packers @ Atlanta Falcons",
+        "kickoff": "2026-09-22T00:15:00Z",
+        "market": "receptions", "edge": 0.0895, "confidence": 9.4,
+        "stake": 1.35, "reason": "model 64.5% · fair 55.5%",
+    }])
+    dest = build_workbook(
+        tmp_path / "velocity.xlsx",
+        ExportMeta(generated_at="2026-09-21T16:38:49Z", season=2026, week=3),
+        plays=plays,
+    )
+
+    sheet = load_workbook(dest)["Bet Card"]
+    line2 = [c for row in sheet.iter_rows(min_row=4, max_row=6, values_only=True)
+             for c in row if c and "receptions" in str(c) and "edge" in str(c)]
+    assert line2, "the card should carry a numbers line"
+    assert line2[0].startswith("Green Bay Packers @ Atlanta Falcons · Mon 7:15P CT · ")
+
+
+def test_a_kickoff_the_card_cannot_read_is_simply_absent(tmp_path) -> None:
+    """No crash, no epoch, no "Invalid Date" — the label is just dropped."""
+    plays = pd.DataFrame([{
+        "tier": "B", "bet_type": "game", "selection": "Under 59.5",
+        "matchup": "Green Bay Packers @ Atlanta Falcons", "kickoff": "not a date",
+        "market": "total", "edge": 0.044, "confidence": 5.5,
+        "stake": 1.32, "reason": "Model total 51",
+    }])
+    dest = build_workbook(
+        tmp_path / "velocity.xlsx",
+        ExportMeta(generated_at="2026-09-21T16:38:49Z", season=2026, week=3),
+        plays=plays,
+    )
+
+    sheet = load_workbook(dest)["Bet Card"]
+    line2 = [c for row in sheet.iter_rows(min_row=4, max_row=6, values_only=True)
+             for c in row if c and "edge" in str(c)]
+    assert line2[0] == "Green Bay Packers @ Atlanta Falcons · total · edge 4.4% · confidence 5.5"

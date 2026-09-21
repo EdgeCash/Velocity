@@ -51,6 +51,8 @@ PLAY_COLUMNS: tuple[str, ...] = (
     "confidence",
     "stake",
     "reason",
+    "matchup",
+    "kickoff",
     "game_id",
     "league",
     "side",
@@ -193,6 +195,19 @@ def tier_rank(tier: str) -> int:
 # --------------------------------------------------------------------------
 # Selection and reason text
 # --------------------------------------------------------------------------
+
+def matchup_text(*, home_team: str, away_team: str) -> str | None:
+    """``away @ home``, or None when the card does not know the game.
+
+    None rather than a half-filled string: "@ Falcons" reads like a road game
+    against nobody, and a blank cell is the honest way to say the game_id did
+    not join. Away first because that is how every board prints a matchup.
+    """
+    home, away = (home_team or "").strip(), (away_team or "").strip()
+    if not home or not away:
+        return None
+    return f"{away} @ {home}"
+
 
 def selection_text(
     market: str,
@@ -366,12 +381,22 @@ def build_plays(  # noqa: PLR0913, PLR0915 - the curated card takes the run's pa
     config = config or PlaysConfig()
     teams: dict[str, tuple[str, str]] = {}
     leagues: dict[str, str] = {}
+    kicks: dict[str, pd.Timestamp] = {}
     if games is not None and not games.empty and "game_id" in games.columns:
+        has_kickoff = "kickoff" in games.columns
         for row in games.drop_duplicates(subset=["game_id"]).to_dict("records"):
             gid = str(row.get("game_id"))
             teams[gid] = (str(row.get("home_team") or ""), str(row.get("away_team") or ""))
             if row.get("league") is not None:
                 leagues[gid] = str(row.get("league"))
+            # A prop names a player, never the game. Without the kickoff the
+            # reader cannot tell a card that is still bettable from one whose
+            # game has started, and without the matchup cannot tell who the
+            # player is even playing. Both are already on this frame.
+            if has_kickoff:
+                when = pd.to_datetime(str(row.get("kickoff")), errors="coerce", utc=True)
+                if not pd.isna(when):
+                    kicks[gid] = pd.Timestamp(when)
 
     fair: dict[str, tuple[float | None, float | None]] = {}
     if projections is not None and not projections.empty and "game_id" in projections.columns:
@@ -458,6 +483,8 @@ def build_plays(  # noqa: PLR0913, PLR0915 - the curated card takes the run's pa
                 "confidence": confidence,
                 "stake": round(stake, 2),
                 "reason": reason,
+                "matchup": matchup_text(home_team=home_team, away_team=away_team),
+                "kickoff": kicks.get(gid),
                 "game_id": gid,
                 "league": league,
                 "side": side,

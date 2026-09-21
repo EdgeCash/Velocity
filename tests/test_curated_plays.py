@@ -15,6 +15,7 @@ from velocity.wagering.plays import (
     confidence_score,
     edge_score,
     explain,
+    matchup_text,
     reason_text,
     rule_score,
     selection_text,
@@ -216,3 +217,61 @@ def test_intel_conviction_lifts_confidence() -> None:
     b = with_intel[with_intel["market"] == "total"].iloc[0]["confidence"]
     assert b > a
     assert "rest edge" in with_intel[with_intel["market"] == "total"].iloc[0]["reason"]
+
+
+def test_the_card_says_which_game_and_when_it_starts() -> None:
+    """A prop names a player, never the game.
+
+    "Matthew Golden Under 4.5 receptions" does not say who he is playing, nor
+    whether the game has kicked off — and the reader needs both before the
+    card is actionable. Both facts are already on the games frame the builder
+    takes; until now it read only the team names out of it, to spell a game
+    market's selection, and dropped the rest.
+    """
+    games = pd.DataFrame([{
+        "game_id": "g1", "league": "nfl",
+        "home_team": "Atlanta Falcons", "away_team": "Green Bay Packers",
+        "kickoff": "2026-09-22T00:15:00Z",
+    }])
+    props = pd.DataFrame([{
+        "game_id": "g1", "player": "Matthew Golden", "market": "receptions",
+        "side": "under", "point": 4.5, "edge": 0.0895, "stake": 1.35,
+        "price": -143, "p_model": 0.6446, "p_fair": 0.5551, "league": "nfl",
+    }])
+
+    frame = build_plays(None, props=props, games=games)
+
+    assert frame["matchup"].iloc[0] == "Green Bay Packers @ Atlanta Falcons"
+    assert frame["kickoff"].iloc[0] == pd.Timestamp("2026-09-22T00:15:00Z")
+
+
+def test_a_play_whose_game_is_not_on_the_board_keeps_its_row() -> None:
+    """Empty cells, not a dropped bet.
+
+    The game_id join is how the matchup is found; a miss says nothing about
+    whether the bet is good, so the row survives with the cells it could not
+    fill left blank rather than being silently removed from the card.
+    """
+    games = pd.DataFrame([{
+        "game_id": "g1", "league": "nfl",
+        "home_team": "Atlanta Falcons", "away_team": "Green Bay Packers",
+        "kickoff": "2026-09-22T00:15:00Z",
+    }])
+    slate = pd.DataFrame([{
+        "game_id": "somewhere-else", "market": "total", "side": "under",
+        "point": 59.5, "edge": 0.044, "stake": 1.32, "price": -110,
+        "p_model": 0.537, "p_fair": 0.494, "league": "nfl", "book": "fanduel",
+    }])
+
+    frame = build_plays(slate, games=games)
+
+    assert len(frame) == 1
+    assert frame["matchup"].iloc[0] is None
+    assert pd.isna(frame["kickoff"].iloc[0])
+
+
+def test_a_half_known_matchup_is_no_matchup() -> None:
+    """"@ Atlanta Falcons" reads like a road game against nobody."""
+    assert matchup_text(home_team="Atlanta Falcons", away_team="") is None
+    assert matchup_text(home_team="", away_team="Green Bay Packers") is None
+    assert matchup_text(home_team="  ", away_team="Green Bay Packers") is None

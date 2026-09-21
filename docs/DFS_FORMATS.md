@@ -633,3 +633,50 @@ python scripts/validate_dfs_lineups.py --format classic --lineups confirmed \
 # add --gpp 5 --sample-every 4 for the portfolio pass (it re-solves the
 # knapsack many times a board, so it samples rather than sweeping)
 ```
+
+
+## Draft-format boards are not salary boards (2026-09-21)
+
+DK posts **Snake** and **Best Ball** boards in the same lobby as the
+salary-cap ones, and normalization cannot tell them apart: both carry a
+`salary` column of plain integers. On a draft board that integer is the
+**pick order**, not dollars.
+
+`main_slate_group` picks the group spanning the most games. Best Ball's
+"W3-W17 Sit & Go" spans fifteen weeks, so on 2026-09-20 it reported 16
+competitions against the real main slate's 13 — and won. It then anchored
+`classic_slates`' contest-type filter onto itself, so every classic board the
+builder tried was a draft board.
+
+What that looked like downstream, all of it green:
+
+```
+Tiers & Go) · 16 games: no solvable lineup (1444 salaried, 758 projected)
+no solvable lineup on any slate grouping (1 priced pool(s) still banked)
+```
+
+and in the workbook, a pool whose best "value" was Bijan Robinson at a
+**salary of 1** — 23.83 projected points over $0.001 of salary reads as
+23,830 points per $1,000, which sorted him top of every value list on the
+Dashboard and the board.
+
+The snapshot itself was never wrong. `dk_salaries_nfl_20260920T181513Z`
+carried all 23 groups correctly, the real main slate (153431, Classic,
+"Afternoon Only") among them at 259 players and $2,000–$8,100.
+
+`draft_rank_groups` matches the **signature** rather than DK's format names,
+which are marketing and change: a group whose salaries run 1..N over exactly
+N players. No salary-cap board can collide with it — the cheapest player DK
+has ever posted is $200, and salaries repeat across players. On the snapshot
+above it flags exactly the five draft boards (one Best Ball, four Snake) and
+nothing else.
+
+Two things found alongside it:
+
+* `lineup_pool` joined salaries to projections **one-to-many**. A projection
+  frame listing one man twice produced two pool rows at one salary: 758 rows
+  over 499 players, Kyle Williams four times. The projections are deduped on
+  the folded name before the join now.
+* Readiness reports **DFS lineups** as its own surface. A priced pool with no
+  solvable lineup on it is exactly the state that ran for days here, and a
+  pool row count cannot catch it.

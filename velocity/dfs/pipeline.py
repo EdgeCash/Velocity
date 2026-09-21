@@ -8,6 +8,7 @@ DK points, join, and solve. Offline-testable end to end; the CLI wrapper
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -250,6 +251,49 @@ def slate_label_ct(slate: SlateInfo) -> str:
         bits.append(f"· {slate.n_games} {noun}" if bits
                     else f"{slate.n_games} {noun}")
     return " ".join(bits)
+
+
+def draft_rank_groups(salaries: pd.DataFrame) -> set[str]:
+    """Draft groups whose "salary" is a draft rank, not dollars.
+
+    DK posts Snake and Best Ball boards in the same lobby as the salary-cap
+    ones, and normalization cannot tell them apart: both carry a ``salary``
+    column of plain integers. On a draft board that integer is the pick order,
+    so the column reads 1, 2, 3 … N over exactly N players.
+
+    That signature — minimum 1, maximum equal to the row count — is what this
+    matches, rather than DK's format names, which are marketing and change.
+    No salary-cap board can collide with it: the cheapest DK has ever priced
+    a player is $200, and salaries repeat across players besides.
+
+    This matters because ``main_slate_group`` picks the group spanning the
+    most games, and Best Ball's "W3-W17 Sit & Go" spans fifteen weeks. On
+    2026-09-20 it beat the real main slate (16 competitions against 13) and
+    anchored the whole classic selection onto a board of draft ranks: every
+    lineup solve failed ("1444 salaried, 758 projected: no solvable lineup"),
+    and the pool that was banked priced Bijan Robinson at a salary of 1,
+    which made his points-per-$1,000 read 23,830 and put him top of the
+    board's "best value" list.
+    """
+    if salaries.empty or "salary" not in salaries.columns:
+        return set()
+    flagged: set[str] = set()
+    for gid, board in salaries.groupby(salaries["draft_group_id"].astype(str)):
+        values = pd.to_numeric(board["salary"], errors="coerce").dropna()
+        if values.empty:
+            continue
+        if values.min() == 1 and values.max() == len(values):
+            flagged.add(str(gid))
+    return flagged
+
+
+def drop_draft_rank_boards(salaries: pd.DataFrame) -> pd.DataFrame:
+    """``salaries`` without the Snake / Best Ball boards. See above."""
+    flagged = draft_rank_groups(salaries)
+    if not flagged:
+        return salaries
+    keep = ~salaries["draft_group_id"].astype(str).isin(flagged)
+    return salaries[keep].reset_index(drop=True)
 
 
 def main_slate_group(salaries: pd.DataFrame) -> str | None:
@@ -496,3 +540,85 @@ def lineup_frame(run: LineupRun) -> pd.DataFrame:
          "kickoff": s.kickoff}
         for s in run.lineup.slots
     ]).assign(draft_group_id=run.draft_group_id)
+
+
+# What each contest type pays for. Cash games pay the median (you need to beat
+# a line, not the field); a single-entry tournament pays a good-but-reachable
+# game; a GPP is won in the tail. Pricing all four off the mean prices them as
+# if they were one contest, which is how a cash lineup ends up full of
+# boom-or-bust tournament plays.
+CONTEST_OBJECTIVES: tuple[tuple[str, str], ...] = (
+    ("cash", "median"),
+    ("single_entry", "p75"),
+    ("gpp", "p90"),
+    ("ceiling", "p99"),
+)
+
+
+def contest_lineups(  # noqa: PLR0913 - one argument per part of a solve
+    salaries: pd.DataFrame,
+    fp: pd.DataFrame,
+    *,
+    slates: Sequence[SlateInfo],
+    spec: RosterSpec,
+    scorer: object = None,
+    distributions: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """The best lineup for each contest type, on each slate — as ROSTERS.
+
+    The DFS Optimizer surface used to be the player pool with a column per
+    contest quantile, which is the ingredients rather than the meal: it says
+    what every player is worth in a GPP without ever saying which nine to
+    play. This solves the roster the operator actually enters.
+
+    One solve per (slate, contest): the objective is that contest's quantile
+    from the banked per-sim arrays, so the cash roster maximises median points
+    and the GPP roster maximises the 90th percentile, off the SAME draws. With
+    no distribution frame the mean is the only objective available and a
+    single ``projection`` contest is returned, which is what the surface
+    showed before.
+    """
+    if distributions is None or distributions.empty or "player" not in distributions:
+        objectives: list[tuple[str, pd.DataFrame | None]] = [("projection", None)]
+    else:
+        objectives = []
+        for contest, column in CONTEST_OBJECTIVES:
+            if column not in distributions.columns:
+                continue
+            quantile = distributions[["player", column]].rename(
+                columns={"player": "player_name", column: "points"}
+            )
+            objectives.append((contest, quantile.dropna(subset=["points"])))
+        if not objectives:
+            objectives = [("projection", None)]
+
+    rows: list[pd.DataFrame] = []
+    for slate in slates:
+        board = salaries[
+            salaries["draft_group_id"].astype(str) == str(slate.draft_group_id)
+        ]
+        game_type = (str(board["game_type"].iloc[0])
+                     if "game_type" in board.columns and not board.empty else "")
+        for contest, points in objectives:
+            run = solve_slate(salaries, fp, draft_group=slate.draft_group_id,
+                              spec=spec, scorer=scorer, points=points)
+            if run.lineup is None:
+                continue
+            frame = lineup_frame(run)
+            if frame.empty:
+                continue
+            rows.append(frame.assign(
+                contest=contest,
+                slate=slate.suffix or str(slate.draft_group_id),
+                game_type=game_type,
+                n_games=slate.n_games,
+                lineup_salary=run.lineup.total_salary,
+                lineup_points=round(float(run.lineup.total_points), 2),
+            ))
+    if not rows:
+        return pd.DataFrame(columns=[
+            "contest", "slate", "game_type", "n_games", "slot", "player_name",
+            "position", "team", "salary", "points", "kickoff",
+            "lineup_salary", "lineup_points", "draft_group_id",
+        ])
+    return pd.concat(rows, ignore_index=True)

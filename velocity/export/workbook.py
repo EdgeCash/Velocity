@@ -83,6 +83,14 @@ DISPLAY_NAMES: Mapping[str, str] = {
     "game_id": "Game ID",
     "away_team": "Away",
     "home_team": "Home",
+    "matchup": "Game",
+    "kickoff": "Kickoff",
+    "contest": "Contest",
+    "slate": "Slate",
+    "game_type": "Format",
+    "slot": "Slot",
+    "lineup_salary": "Lineup $",
+    "lineup_points": "Lineup Pts",
     "market_spread": "Mkt Spread",
     "market_total": "Mkt Total",
     "moneyline": "Home ML",
@@ -146,6 +154,29 @@ _WIDTHS = {"reason": 88, "selection": 30, "weather": 30, "player": 24,
 def header_for(column: str) -> str:
     """The header this column wears in the workbook."""
     return DISPLAY_NAMES.get(column, column.replace("_", " ").title())
+
+
+def _kickoff_label(value: Any) -> str | None:
+    """A kickoff as the cards state it ("Sun 7:15P CT"), or None.
+
+    Central time to match the DFS cards, via the tz database rather than a
+    fixed offset, which would drift an hour across DST. The day is part of
+    the label because a board spans Thursday to Monday, and "7:15P" alone
+    cannot tell the reader whether the game has already been played.
+
+    Unlike :func:`velocity.dfs.pipeline.game_time_ct` this accepts an
+    already-aware stamp: the export writes kickoffs with a ``Z``, and
+    ``tz_localize`` raises on those rather than passing them through.
+    """
+    try:
+        stamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(stamp):
+        return None
+    aware = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp
+    central = aware.tz_convert("America/Chicago")
+    return central.strftime("%a %-I:%M%p CT").replace("AM", "A").replace("PM", "P")
 
 
 def _cell_value(value: Any) -> Any:
@@ -394,10 +425,20 @@ def _bet_card_sheet(wb: Workbook, plays: pd.DataFrame, subtitle: str) -> Workshe
         ws.row_dimensions[row].height = 20
         row += 1
 
-        # Line 2: the numbers, in the order a bettor checks them.
+        # Line 2: WHICH GAME first, then the numbers a bettor checks.
+        # A prop names a player and nothing else — "Matthew Golden Under 4.5
+        # receptions" does not say who he is playing or whether the game has
+        # kicked off, and both decide whether the card is still actionable.
         edge = _cell_value(play.get("edge"))
         confidence = _cell_value(play.get("confidence"))
-        bits = [str(play.get("market", ""))]
+        bits = []
+        matchup = play.get("matchup")
+        if matchup is not None and not pd.isna(matchup) and str(matchup).strip():
+            bits.append(str(matchup))
+        kickoff = _kickoff_label(play.get("kickoff"))
+        if kickoff is not None:
+            bits.append(kickoff)
+        bits.append(str(play.get("market", "")))
         if edge is not None:
             bits.append(f"edge {edge:.1%}")
         if confidence is not None:
@@ -432,8 +473,9 @@ _READ_ME: tuple[tuple[str, str], ...] = (
     ("Props", "Staked player props, with the simulated distribution behind each line."),
     ("Team Totals", "Each side's own number: the market's, the model's, and the gap."),
     ("DFS Pool", "The DraftKings slate priced: salary, projection, ceiling, value, stack."),
-    ("DFS Optimizer", "One column per contest type — cash 50th, single 75th, "
-                      "GPP 90th, ceiling 99th."),
+    ("DFS Optimizer", "The best lineup for each contest type on each slate — "
+                      "cash off the 50th percentile, single-entry the 75th, "
+                      "GPP the 90th, ceiling the 99th."),
     ("Curated Plays", "A+ / A / B / Watch, each with the argument for it."),
     ("", ""),
     ("Signs", "Spread Edge positive = value on the HOME side."),

@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 from velocity.export.dfs import (
-    CONTEST_QUANTILES,
     DFS_COLUMNS,
     DFS_OPTIMIZER_COLUMNS,
     build_dfs,
@@ -54,14 +53,53 @@ def test_distribution_frame_drops_an_empty_array() -> None:
     assert list(frame["player"]) == ["x"]
 
 
-def test_contest_columns_read_the_documented_quantiles() -> None:
-    dist = dfs_distribution_frame(_samples())
-    row = build_dfs_optimizer(_pool(), dist).set_index("player").loc["QB1"]
-    lookup = dist.set_index("player").loc["QB1"]
-    for column, quantile in CONTEST_QUANTILES:
-        assert row[column] == pytest.approx(float(lookup[quantile]), abs=1e-6)
-    # Cash is the median and a GPP is the tail; they must not be the same cell.
-    assert row["cash"] < row["gpp"] < row["ceiling"]
+def _lineups() -> pd.DataFrame:
+    """Two solved rosters, as ``contest_lineups`` banks them."""
+    rows = []
+    for contest, points, salary in (("gpp", 41.2, 34800), ("cash", 22.5, 33000)):
+        for slot, player in (("QB", "QB1"), ("RB", "RB1")):
+            rows.append({
+                "contest": contest, "slate": "Afternoon Only",
+                "game_type": "Classic", "slot": slot, "player_name": player,
+                "team": "KC", "position": slot, "salary": 7000,
+                "points": points, "lineup_salary": salary,
+                "lineup_points": points * 9,
+            })
+    return pd.DataFrame(rows)
+
+
+def test_the_optimizer_table_is_rosters_not_the_pool_again() -> None:
+    """The fix for "the DFS optimizer should show the best actual lineups".
+
+    It used to be ``dfs.csv`` with a column per contest quantile — what each
+    player is worth in a GPP, never which nine to enter. One row per roster
+    slot now, and the lineup totals ride on every row so a card can show them
+    without a second file.
+    """
+    frame = build_dfs_optimizer(_lineups())
+
+    assert list(frame.columns)[:4] == ["contest", "slate", "game_type", "slot"]
+    assert set(frame["contest"]) == {"cash", "gpp"}
+    assert "QB1" in set(frame["player"])
+    cash = frame[frame["contest"] == "cash"]
+    assert cash["lineup_salary"].nunique() == 1, "a roster has one salary total"
+
+
+def test_cash_sorts_before_the_tournament_lineups() -> None:
+    """Cash is the lineup most people enter, so it reads first.
+
+    The builder hands them back in whatever order it solved; the order a card
+    reads in is this module's business.
+    """
+    frame = build_dfs_optimizer(_lineups())
+    assert frame["contest"].iloc[0] == "cash"
+
+
+def test_no_banked_lineups_is_an_empty_table_not_a_crash() -> None:
+    """A run where nothing solved still writes the file, with its headers."""
+    frame = build_dfs_optimizer(None)
+    assert frame.empty
+    assert "contest" in frame.columns
 
 
 def test_value_score_is_points_per_thousand_and_refuses_a_free_board() -> None:

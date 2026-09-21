@@ -73,6 +73,7 @@ ARTIFACT_FAMILIES: tuple[tuple[str, str, str], ...] = (
     ("prop_dist", "prop_dist", "props.csv"),
     ("dfs_pool", "dfs_pool", "dfs.csv"),
     ("dfs_dist", "dfs_dist", "dfs.csv"),
+    ("dfs_lineups", "dfs_lineups", "dfs_optimizer.csv"),
     ("record", "record", "dashboard.csv"),
 )
 
@@ -238,6 +239,7 @@ def export_step(args: argparse.Namespace) -> StepResult:
             export_props(
                 meta, props if not props.empty else None,
                 frames["prop_dist"] if not frames["prop_dist"].empty else None,
+                games if not games.empty else None,
                 out_dir=out_dir,
             ),
             # Team totals are a market the owner actively bets
@@ -255,6 +257,8 @@ def export_step(args: argparse.Namespace) -> StepResult:
             meta,
             frames["dfs_pool"] if not frames["dfs_pool"].empty else None,
             frames["dfs_dist"] if not frames["dfs_dist"].empty else None,
+            lineups=(frames["dfs_lineups"]
+                     if not frames["dfs_lineups"].empty else None),
             out_dir=out_dir,
         ))
         paths.append(export_plays(
@@ -295,7 +299,9 @@ def export_step(args: argparse.Namespace) -> StepResult:
                 "games": games, "projections": frames["projections"],
                 "market": board, "plays": plays_frame, "props": props_frame,
                 "team_totals": team_totals_frame,
-                "dfs_pool": frames["dfs_pool"], "weather": frames["weather"],
+                "dfs_pool": frames["dfs_pool"],
+                "dfs_lineups": frames["dfs_lineups"],
+                "weather": frames["weather"],
                 "record": frames["record"],
             },
             now=utc_now_default(),

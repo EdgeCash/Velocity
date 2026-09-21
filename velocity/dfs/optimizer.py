@@ -364,6 +364,14 @@ def lineup_pool(salaries: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
     s["_key"] = s["player_name"].map(norm)
     p = points.copy()
     p["_key"] = p["player_name"].map(norm)
+    # One projection per player before the join, or the merge is one-to-many
+    # and every duplicate multiplies that player's salary row. A projection
+    # source that lists a man at two positions (or a name that folds onto
+    # another) is enough: measured on 2026-09-21, 758 pool rows covered 499
+    # players, with Kyle Williams appearing four times. The optimizer then
+    # ranks near-identical rows against each other, and the exported pool
+    # reads as though DK posted the same player twice.
+    p = p.drop_duplicates(subset=["_key"], keep="first")
     merged = s.merge(
         p[["_key", "points"]], on="_key", how="left", suffixes=("", "_proj")
     )

@@ -18,6 +18,8 @@ PLAYS_COLUMNS: tuple[str, ...] = (
     "tier",
     "bet_type",
     "selection",
+    "matchup",
+    "kickoff",
     "market",
     "edge",
     "confidence",
@@ -49,6 +51,12 @@ def build_plays_export(  # noqa: PLR0913 - mirrors the engine it wraps
         return pd.DataFrame(columns=base)
     frame = round_columns(frame, ("edge",), 4)
     frame = round_columns(frame, ("confidence", "stake"), 2)
+    # One spelling of an instant, so the CSV is byte-stable across runners and
+    # Power Query does not have to guess a locale. A game with no kickoff on
+    # the board stays empty rather than becoming the epoch.
+    if "kickoff" in frame.columns:
+        kicks = pd.to_datetime(frame["kickoff"], errors="coerce", utc=True)
+        frame["kickoff"] = kicks.dt.strftime("%Y-%m-%dT%H:%M:%SZ").where(kicks.notna())
     return frame.reindex(columns=base)
 
 

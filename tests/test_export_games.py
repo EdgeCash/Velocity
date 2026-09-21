@@ -132,3 +132,31 @@ def test_kelly_fraction_is_the_biggest_stake_over_bankroll() -> None:
     ])
     row = build_games(games, slate=slate, bankroll=100.0).iloc[0]
     assert row["kelly_fraction"] == pytest.approx(0.032)
+
+
+def test_the_games_board_carries_the_kickoff() -> None:
+    """Whether a row is still bettable is not derivable from the numbers.
+
+    The column is selected explicitly out of the banked frame, and the first
+    version of this change added it to the contract without adding it to that
+    selection — so every cell exported empty while the input had it all along.
+    """
+    games = pd.DataFrame([{
+        "game_id": "g1", "league": "nfl", "home_team": "Atlanta Falcons",
+        "away_team": "Green Bay Packers", "kickoff": "2026-09-22T00:15:00Z",
+        "mu_home": 24.0, "mu_away": 21.0,
+    }])
+
+    assert build_games(games)["kickoff"].iloc[0] == "2026-09-22T00:15:00Z"
+
+
+def test_a_frame_with_no_kickoff_still_exports() -> None:
+    """Older banked frames predate the column; the board is not worth losing."""
+    games = pd.DataFrame([{
+        "game_id": "g1", "league": "nfl", "home_team": "Atlanta Falcons",
+        "away_team": "Green Bay Packers", "mu_home": 24.0, "mu_away": 21.0,
+    }])
+
+    out = build_games(games)
+    assert len(out) == 1
+    assert pd.isna(out["kickoff"].iloc[0])

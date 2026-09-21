@@ -92,6 +92,11 @@ SURFACES: tuple[Surface, ...] = (
     Surface("team_totals", "Team totals", False),
     Surface("props", "Player props", False),
     Surface("dfs_pool", "DFS pool", False),
+    # Reported separately from the pool because the two fail separately, and
+    # did: a priced pool with no solvable lineup on it ran for days without
+    # anything saying so (the main-slate pick had landed on a Best Ball board,
+    # whose "salary" is a draft pick). A pool row count cannot catch that.
+    Surface("dfs_lineups", "DFS lineups", False),
     Surface("weather", "Weather", False),
     Surface("record", "Settled record", False),
 )

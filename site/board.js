@@ -253,6 +253,29 @@ function kv(pairs) {
     .join('')}</div>`;
 }
 
+// Which game, and when it starts. A prop names a player and nothing else, so
+// without this the reader cannot tell who Matthew Golden is playing, nor
+// whether the game has already kicked off. Both decide whether the card is
+// still actionable. Central time, to match the workbook and the DFS cards.
+export function kickoffLabel(value) {
+  if (!value) return '';
+  const when = new Date(value);
+  if (Number.isNaN(when.getTime())) return '';
+  return when.toLocaleString('en-US', {
+    timeZone: 'America/Chicago', weekday: 'short',
+    hour: 'numeric', minute: '2-digit',
+  }) + ' CT';
+}
+
+export function gameLine(play) {
+  const bits = [];
+  if (play.matchup) bits.push(String(play.matchup));
+  const kick = kickoffLabel(play.kickoff);
+  if (kick) bits.push(kick);
+  if (play.market) bits.push(String(play.market));
+  return bits.length ? bits.join(' · ') + ' · ' : '';
+}
+
 function playCard(play, extra = []) {
   const reason = String(play.reason || '');
   const body = reason.includes(' — ') ? reason.split(' — ').slice(1).join(' — ') : reason;
@@ -263,7 +286,7 @@ function playCard(play, extra = []) {
     <span class="grow call">${escapeHtml(play.selection || '')}</span>
     <span class="money">${escapeHtml(money(play.stake))}</span>
   </div>
-  <div class="meta">${escapeHtml(play.market || '')} · edge ${escapeHtml(pct(play.edge))} · confidence ${escapeHtml(fixed(play.confidence, 1))}</div>
+  <div class="meta">${escapeHtml(gameLine(play))}edge ${escapeHtml(pct(play.edge))} · confidence ${escapeHtml(fixed(play.confidence, 1))}</div>
   ${kv(extra)}
   ${body ? `<details><summary>Why</summary><div class="why">${escapeHtml(body)}</div></details>` : ''}
 </article>`;

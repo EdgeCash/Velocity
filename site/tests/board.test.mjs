@@ -18,8 +18,7 @@ import { readFileSync } from 'node:fs';
 
 import {
   BOARD_FILES, ageLabel, boardModel, escapeHtml, money, num, parseCsv, pct,
-  renderBoard, signedPoints,
-} from '../board.js';
+  renderBoard, signedPoints, gameLine, kickoffLabel } from '../board.js';
 
 const NOW = new Date('2026-09-20T23:03:53Z');
 const STAMP = '2026-09-20T22:51:53Z';
@@ -254,4 +253,31 @@ test('the board is published only when Access is confirmed', () => {
     const condition = step.slice(0, step.indexOf('\n        run:'));
     assert.match(condition, /CLOUDFLARE_ACCESS_CONFIRMED == 'true'/, name);
   }
+});
+
+test('a play card names the game and the kickoff before the market', () => {
+  // "We don't know opponents" — a prop names a player and nothing else, so
+  // the board could not say who Matthew Golden was playing or whether the
+  // game had started. Both come from plays.csv now.
+  assert.equal(
+    gameLine({
+      matchup: 'Green Bay Packers @ Atlanta Falcons',
+      kickoff: '2026-09-22T00:15:00Z',
+      market: 'receptions',
+    }),
+    'Green Bay Packers @ Atlanta Falcons · Mon 7:15 PM CT · receptions · ',
+  );
+});
+
+test('a card with no game falls back to the market alone', () => {
+  // An export written before this column existed, or a game_id that did not
+  // join: the card still renders, it just says less.
+  assert.equal(gameLine({ market: 'total' }), 'total · ');
+  assert.equal(gameLine({}), '');
+});
+
+test('an unreadable kickoff is dropped, never printed as Invalid Date', () => {
+  assert.equal(kickoffLabel('not a date'), '');
+  assert.equal(kickoffLabel(''), '');
+  assert.equal(kickoffLabel(undefined), '');
 });

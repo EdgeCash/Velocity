@@ -92,11 +92,11 @@ knowing:
 | File | One row per | Feeds |
 |---|---|---|
 | `games.csv` | game on the board | Games |
-| `props.csv` | staked/papered prop | Props |
+| `props.csv` | staked/papered prop, with its matchup and kickoff | Props |
 | `team_totals.csv` | **side** (2 per game) | Team Totals |
 | `dfs.csv` | DK player | DFS Pool |
-| `dfs_optimizer.csv` | DK player, one column per contest type | DFS Optimizer |
-| `plays.csv` | curated play (A+/A/B/Watch) | Curated Plays |
+| `dfs_optimizer.csv` | One row per roster slot: the best lineup per contest type, per slate | DFS Optimizer |
+| `plays.csv` | curated play (A+/A/B/Watch), with its matchup and kickoff | Curated Plays / Bet Card |
 | `dashboard.csv` | one metric (long format) | Dashboard |
 | `readiness.csv` | one surface | the run's verdict |
 | `velocity.xlsx` | — | **all of the above, prebuilt** |

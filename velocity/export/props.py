@@ -30,10 +30,13 @@ from velocity.export.meta import (
     write_csv,
 )
 from velocity.util.names import fold_name
+from velocity.wagering.plays import matchup_text
 
 PROPS_COLUMNS: tuple[str, ...] = (
     "player",
     "team",
+    "matchup",
+    "kickoff",
     "market",
     "line",
     "projection",
@@ -170,9 +173,35 @@ def _fair_price(p_fair: object) -> float | None:
     return float(prob_to_american(float(value)))
 
 
+def game_index(games: pd.DataFrame | None) -> dict[str, tuple[str | None, str | None]]:
+    """``game_id`` → (matchup, kickoff), for boards that name a player not a game.
+
+    Built here rather than joined so a prop whose ``game_id`` is absent from
+    the board keeps its row with empty cells, instead of being dropped by a
+    merge for a reason that has nothing to do with the bet.
+    """
+    out: dict[str, tuple[str | None, str | None]] = {}
+    if games is None or games.empty or "game_id" not in games.columns:
+        return out
+    has_kickoff = "kickoff" in games.columns
+    for row in games.drop_duplicates(subset=["game_id"]).to_dict("records"):
+        kickoff: str | None = None
+        if has_kickoff:
+            when = pd.to_datetime(str(row.get("kickoff")), errors="coerce", utc=True)
+            if not pd.isna(when):
+                kickoff = pd.Timestamp(when).strftime("%Y-%m-%dT%H:%M:%SZ")
+        out[str(row.get("game_id"))] = (
+            matchup_text(home_team=str(row.get("home_team") or ""),
+                         away_team=str(row.get("away_team") or "")),
+            kickoff,
+        )
+    return out
+
+
 def build_props(
     props: pd.DataFrame | None,
     distributions: pd.DataFrame | None = None,
+    games: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """The props table, before metadata is stamped on it.
 
@@ -198,6 +227,8 @@ def build_props(
     )
     out["fair_price"] = [_fair_price(v) for v in props.get("p_fair", pd.Series(dtype=float))]
     out["team"] = ""
+    out["matchup"] = None
+    out["kickoff"] = None
     for name in ("projection", *(_DIST_TO_EXPORT[k] for k in _DIST_TO_EXPORT)):
         out[name] = np.nan
 
@@ -228,6 +259,15 @@ def build_props(
             out["team"] = [
                 str(team.loc[key]) if key in team.index else "" for key in pairs
             ]
+        by_game = game_index(games)
+        gids = keyed["game_id"] if "game_id" in keyed.columns else None
+        if gids is not None and by_game:
+            found = [
+                by_game.get(str(gids.loc[key])) if key in gids.index else None
+                for key in pairs
+            ]
+            out["matchup"] = [None if f is None else f[0] for f in found]
+            out["kickoff"] = [None if f is None else f[1] for f in found]
         out["projection"] = pull("projection")
         for source, target in _DIST_TO_EXPORT.items():
             out[target] = pull(source)
@@ -243,10 +283,12 @@ def export_props(
     meta: ExportMeta,
     props: pd.DataFrame | None,
     distributions: pd.DataFrame | None = None,
+    games: pd.DataFrame | None = None,
     *,
     out_dir: str | Path = EXPORT_DIR,
 ) -> Path:
     """Build and write ``props.csv``. Returns the path."""
     return write_csv(
-        build_props(props, distributions), Path(out_dir) / "props.csv", PROPS_COLUMNS, meta
+        build_props(props, distributions, games),
+        Path(out_dir) / "props.csv", PROPS_COLUMNS, meta,
     )

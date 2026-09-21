@@ -170,10 +170,18 @@ def test_ownership_and_leverage_are_blank_without_a_source() -> None:
         {"player_name": "B", "position": "WR", "team": "KC",
          "salary": 6100, "points": 13.1},
     ])
-    for builder in (build_dfs, build_dfs_optimizer):
-        out = builder(pool)
-        assert out["ownership"].isna().all()
-        assert out["leverage_score"].isna().all()
+    out = build_dfs(pool)
+    assert out["ownership"].isna().all()
+    assert out["leverage_score"].isna().all()
+
+    # The optimizer table is the solved ROSTERS now, and carries neither
+    # column at all — which honours D6 more strongly than a blank cell does,
+    # because there is nowhere for a fabricated number to be written.
+    from velocity.export.dfs import DFS_OPTIMIZER_COLUMNS
+
+    assert "ownership" not in DFS_OPTIMIZER_COLUMNS
+    assert "leverage_score" not in DFS_OPTIMIZER_COLUMNS
+    assert build_dfs_optimizer(None).empty
 
 
 def test_a_supplied_projection_is_still_honoured() -> None:

@@ -49,22 +49,10 @@ DFS_COLUMNS: tuple[str, ...] = (
     "salary",
     "projection",
     "median",
-    "ceiling",
-    "ownership",
-    "value_score",
-    "leverage_score",
-    "stack_rating",
-    "generated_at",
-    "season",
-    "week",
-)
-
-DFS_OPTIMIZER_COLUMNS: tuple[str, ...] = (
-    "player",
-    "team",
-    "position",
-    "salary",
-    "projection",
+    # What each contest type pays this player. They used to live on
+    # dfs_optimizer.csv, which is now the solved ROSTERS; the per-player view
+    # they gave is still the right question for the pool, so it moved here
+    # rather than being dropped.
     "cash",
     "single_entry",
     "gpp",
@@ -78,6 +66,28 @@ DFS_OPTIMIZER_COLUMNS: tuple[str, ...] = (
     "week",
 )
 
+# The ROSTERS, not the ingredients. This table used to be the pool again with
+# a column per contest quantile, which says what every player is worth in a
+# GPP without ever saying which nine to enter — and the pool is already
+# ``dfs.csv``. One row per lineup slot now, grouped by contest and slate.
+DFS_OPTIMIZER_COLUMNS: tuple[str, ...] = (
+    "contest",
+    "slate",
+    "game_type",
+    "slot",
+    "player",
+    "team",
+    "position",
+    "salary",
+    "projection",
+    "lineup_salary",
+    "lineup_points",
+    "generated_at",
+    "season",
+    "week",
+)
+
+
 DFS_DIST_COLUMNS: tuple[str, ...] = (
     "player", "projection", "median", "p75", "p90", "p99", "n_sims",
 )
@@ -90,6 +100,10 @@ CONTEST_QUANTILES: tuple[tuple[str, str], ...] = (
     ("gpp", "p90"),
     ("ceiling", "p99"),
 )
+
+# The order a card reads in: cash first (the lineup most people enter), the
+# tail last. Anything the builder invents beyond these sorts after them.
+_CONTEST_ORDER = {name: i for i, (name, _) in enumerate(CONTEST_QUANTILES)}
 
 _QUANTILES: tuple[tuple[str, float], ...] = (
     ("median", 50.0), ("p75", 75.0), ("p90", 90.0), ("p99", 99.0),
@@ -259,23 +273,35 @@ def build_dfs(
     spine = _base_pool(pool, distribution, ownership)
     if spine.empty:
         return pd.DataFrame(columns=base)
-    return spine.reindex(columns=base)
-
-
-def build_dfs_optimizer(
-    pool: pd.DataFrame | None,
-    distribution: pd.DataFrame | None = None,
-    *,
-    ownership: Mapping[str, float] | pd.Series | None = None,
-) -> pd.DataFrame:
-    """The optimizer table: one row per player, one column per contest type."""
-    base = [c for c in DFS_OPTIMIZER_COLUMNS if c not in ("generated_at", "season", "week")]
-    spine = _base_pool(pool, distribution, ownership)
-    if spine.empty:
-        return pd.DataFrame(columns=base)
     for column, quantile in CONTEST_QUANTILES:
-        spine[column] = spine[quantile]
+        if quantile in spine.columns:
+            spine[column] = spine[quantile]
     return spine.reindex(columns=base)
+
+
+def build_dfs_optimizer(lineups: pd.DataFrame | None) -> pd.DataFrame:
+    """The best lineup per contest type per slate, one row per roster slot.
+
+    ``lineups`` is the banked ``dfs_lineups_{league}_{stamp}.parquet`` that
+    :func:`velocity.dfs.pipeline.contest_lineups` writes. Solved there, where
+    the optimizer lives; projected here. Nothing in this module builds a
+    roster, so the workbook and the board can never show a lineup the run did
+    not actually produce.
+    """
+    base = [c for c in DFS_OPTIMIZER_COLUMNS if c not in ("generated_at", "season", "week")]
+    if lineups is None or lineups.empty:
+        return pd.DataFrame(columns=base)
+    out = lineups.rename(columns={"player_name": "player", "points": "projection"}).copy()
+    for column in base:
+        if column not in out.columns:
+            out[column] = None
+    out["_contest"] = out["contest"].astype(str).map(
+        lambda c: _CONTEST_ORDER.get(c, len(_CONTEST_ORDER))
+    )
+    out = out.sort_values(["_contest", "slate", "salary"],
+                          ascending=[True, True, False], kind="stable")
+    out = round_columns(out, ("projection", "lineup_points"), 2)
+    return out.reindex(columns=base).reset_index(drop=True)
 
 
 def export_dfs(
@@ -283,6 +309,7 @@ def export_dfs(
     pool: pd.DataFrame | None,
     distribution: pd.DataFrame | None = None,
     *,
+    lineups: pd.DataFrame | None = None,
     out_dir: str | Path = EXPORT_DIR,
     ownership: Mapping[str, float] | pd.Series | None = None,
 ) -> tuple[Path, Path]:
@@ -293,7 +320,7 @@ def export_dfs(
         folder / "dfs.csv", DFS_COLUMNS, meta,
     )
     opt_path = write_csv(
-        build_dfs_optimizer(pool, distribution, ownership=ownership),
+        build_dfs_optimizer(lineups),
         folder / "dfs_optimizer.csv", DFS_OPTIMIZER_COLUMNS, meta,
     )
     return pool_path, opt_path

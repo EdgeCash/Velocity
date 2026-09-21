@@ -210,3 +210,31 @@ def test_lineup_pool_join_rules() -> None:
     assert by_name.loc["Josh Allen", "points"] == pytest.approx(24.7)  # name-normalized
     assert "Unknown Guy" not in by_name.index  # unprojected skill player dropped
     assert by_name.loc["Bills", "points"] == 0.0  # projectionless DST is a legal punt
+
+
+def test_one_projection_per_player_however_many_the_source_lists() -> None:
+    """A duplicated projection used to duplicate the player on the board.
+
+    The join is salaries LEFT JOIN points on the folded name, so two rows for
+    one man in the projection frame produce two pool rows at the same salary.
+    Measured on 2026-09-21: 758 pool rows covering 499 players, with Kyle
+    Williams four times. The optimizer then ranks near-identical rows against
+    each other and the exported pool reads as though DK posted him twice.
+    """
+    salaries = pd.DataFrame({
+        "player_name": ["Josh Allen", "Bijan Robinson"],
+        "position": ["QB", "RB"],
+        "salary": [8000, 7600],
+        "team": ["BUF", "ATL"],
+    })
+    points = pd.DataFrame({
+        "player_name": ["Josh Allen", "Josh Allen", "Bijan Robinson"],
+        "points": [24.52, 24.42, 23.83],
+    })
+
+    pool = lineup_pool(salaries, points)
+
+    assert len(pool) == 2
+    assert list(pool["player_name"]) == ["Josh Allen", "Bijan Robinson"]
+    # First wins, deterministically — not a silent average of the two.
+    assert pool.set_index("player_name").loc["Josh Allen", "points"] == 24.52

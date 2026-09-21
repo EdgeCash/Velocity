@@ -36,6 +36,7 @@ GAMES_COLUMNS: tuple[str, ...] = (
     "league",
     "away_team",
     "home_team",
+    "kickoff",
     "market_spread",
     "market_total",
     "moneyline",
@@ -251,10 +252,10 @@ def build_games(  # noqa: PLR0913 - one row per game, assembled from the run's f
 
     out = games.drop_duplicates(subset=["game_id"]).copy()
     out["game_id"] = out["game_id"].astype(str)
-    for col in ("league", "home_team", "away_team"):
+    for col in ("league", "home_team", "away_team", "kickoff"):
         if col not in out.columns:
             out[col] = None
-    out = out[["game_id", "league", "away_team", "home_team"]]
+    out = out[["game_id", "league", "away_team", "home_team", "kickoff"]]
 
     market = market_numbers(board if board is not None and not board.empty else slate)
     out = out.merge(market, on="game_id", how="left")
@@ -309,6 +310,13 @@ def build_games(  # noqa: PLR0913 - one row per game, assembled from the run's f
     else:
         notes = {}
     out["weather"] = [notes.get(g, "") for g in out["game_id"]]
+    # The one column that says whether this row is still bettable. Same
+    # spelling as plays.csv and props.csv so the three boards sort together.
+    if "kickoff" in out.columns:
+        kicks = pd.to_datetime(out["kickoff"], errors="coerce", utc=True)
+        out["kickoff"] = kicks.dt.strftime("%Y-%m-%dT%H:%M:%SZ").where(kicks.notna())
+    else:
+        out["kickoff"] = None
 
     out = round_columns(out, ("model_away_score", "model_home_score", "model_total"), 2)
     out = round_columns(

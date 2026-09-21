@@ -9,6 +9,8 @@ import pandas as pd
 import pytest
 from velocity.dfs.pipeline import (
     POOL_COLUMNS,
+    draft_rank_groups,
+    drop_draft_rank_boards,
     lineup_frame,
     main_slate_group,
     pool_frame,
@@ -493,3 +495,54 @@ def test_eligible_board_drops_out_players_and_non_probable_pitchers() -> None:
     # Pre-flag snapshots (no status/probable columns) pass through untouched.
     old = pd.DataFrame([{"player_name": "P Old", "position": "P"}])
     assert len(eligible_board(old, MLB_CLASSIC)) == 1
+
+
+def test_a_best_ball_board_is_not_a_salary_board() -> None:
+    """The bug that made Bijan Robinson the board's best value at a salary of 1.
+
+    DK posts Snake and Best Ball boards in the same lobby as the salary-cap
+    ones. Their "salary" is the draft pick order — 1..N over N players — and
+    ``main_slate_group`` prefers whichever group spans the most games, which
+    on 2026-09-20 was Best Ball's "W3-W17 Sit & Go" at fifteen weeks. It beat
+    the real main slate, every lineup solve failed against it, and the pool
+    that got banked priced a $7,600 running back at 1.
+    """
+    classic = pd.DataFrame({
+        "draft_group_id": ["153431"] * 4,
+        "player_id": list("abcd"),
+        "player_name": ["A", "B", "C", "D"],
+        "position": ["QB", "RB", "WR", "TE"],
+        "salary": [8100, 7000, 5200, 3000],
+        "competition": ["SEA @ ARI", "MIA @ SF", "WAS @ DAL", "LV @ LAC"],
+    })
+    best_ball = pd.DataFrame({
+        "draft_group_id": ["153694"] * 5,
+        "player_id": list("vwxyz"),
+        "player_name": ["V", "W", "X", "Y", "Z"],
+        "position": ["QB", "RB", "WR", "TE", "WR"],
+        "salary": [1, 2, 3, 4, 5],  # pick order, not dollars
+        "competition": ["W3", "W4", "W5", "W6", "W7"],
+    })
+    board = pd.concat([classic, best_ball], ignore_index=True)
+
+    assert main_slate_group(board) == "153694", "the bug, pinned"
+    assert draft_rank_groups(board) == {"153694"}
+    assert main_slate_group(drop_draft_rank_boards(board)) == "153431"
+
+
+def test_a_real_salary_board_is_never_mistaken_for_a_draft_board() -> None:
+    """The signature is min 1 AND max == row count. Real boards match neither.
+
+    The cheapest player DK has ever posted is $200, and salaries repeat across
+    players, so a priced board cannot be a permutation of 1..N.
+    """
+    showdown = pd.DataFrame({
+        "draft_group_id": ["153445"] * 4,
+        "player_id": list("abcd"),
+        "player_name": ["A", "B", "C", "D"],
+        "position": ["CPT", "FLEX", "FLEX", "FLEX"],
+        "salary": [12000, 200, 200, 4400],  # a real showdown: cheap, but not 1
+        "competition": ["MIA @ SF"] * 4,
+    })
+    assert draft_rank_groups(showdown) == set()
+    assert len(drop_draft_rank_boards(showdown)) == 4

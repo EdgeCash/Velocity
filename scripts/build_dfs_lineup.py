@@ -421,6 +421,8 @@ def main() -> None:
 
     from velocity.dfs.pipeline import (
         LEAGUE_SPECS,
+        draft_rank_groups,
+        drop_draft_rank_boards,
         is_season_long,
         lineup_frame,
         pool_frame,
@@ -435,6 +437,15 @@ def main() -> None:
     salaries = pd.read_parquet(args.salaries)
     if "league" in salaries.columns:
         salaries = salaries[salaries["league"] == args.league]
+    # Snake and Best Ball boards price in draft picks, not dollars, and the
+    # main-slate heuristic (most games wins) prefers them — Best Ball's
+    # "W3-W17 Sit & Go" spans fifteen weeks. Dropped here, once, so nothing
+    # downstream has to know the difference.
+    dropped = draft_rank_groups(salaries)
+    if dropped:
+        salaries = drop_draft_rank_boards(salaries)
+        print(f"ignored {len(dropped)} draft-rank board(s) "
+              f"(Snake/Best Ball price in picks, not salary)")
     fp = pd.read_parquet(args.fp)
     if "league" in fp.columns:
         fp = fp[fp["league"] == args.league]
@@ -545,6 +556,7 @@ def main() -> None:
     # tournament is won in the tail, so a pool that carries only the mean
     # prices all four contest types as if they were one
     # (velocity/export/dfs.py).
+    dist = None
     if samples:
         try:
             from velocity.export.dfs import dfs_distribution_frame
@@ -556,6 +568,26 @@ def main() -> None:
                 print(f"wrote {len(dist)} DFS distribution row(s) to {dist_dest}")
         except Exception as exc:  # noqa: BLE001 - never breaks the lineup
             print(f"DFS distributions skipped: {exc}")
+            dist = None
+
+    # The ROSTERS, one per contest type per slate — not the pool the operator
+    # would have to assemble a lineup from by hand. Solved here, where the
+    # optimizer lives, and banked; the export layer only projects them.
+    try:
+        from velocity.dfs.pipeline import contest_lineups
+
+        lineups = contest_lineups(
+            salaries, fp, slates=slates, spec=spec, scorer=scorer,
+            distributions=dist if dist is not None and not dist.empty else None,
+        )
+        if not lineups.empty:
+            lineups_dest = out / f"dfs_lineups_{args.league}_{stamp}.parquet"
+            lineups.assign(league=args.league).to_parquet(lineups_dest, index=False)
+            n = lineups.groupby(["contest", "slate"]).ngroups
+            print(f"wrote {n} contest lineup(s) "
+                  f"({', '.join(sorted(set(lineups['contest'])))}) to {lineups_dest}")
+    except Exception as exc:  # noqa: BLE001 - never breaks the lineup
+        print(f"contest lineups skipped: {exc}")
 
     if not solved:
         # The pool and its distributions are written ABOVE this return, not
