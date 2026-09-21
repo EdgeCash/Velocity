@@ -46,7 +46,8 @@ new infrastructure.
 
 **About three hours before the first kickoff you care about**, on the iPad:
 
-1. **Actions → Live slate → Run workflow.** A dispatched run starts within a
+1. **Tap "Velocity — Run"** ([`IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md)), or
+   Actions → Live slate → Run workflow. A dispatched run starts within a
    minute; a *scheduled* one starts **1h48–3h00** late
    ([`docs/LATENCY_AUDIT.md`](LATENCY_AUDIT.md)). This is the single most
    effective thing you can do, and it is two taps.

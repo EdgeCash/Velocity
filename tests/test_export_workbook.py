@@ -21,8 +21,8 @@ from velocity.export.workbook import (
     header_for,
 )
 
-TABS = ("Read Me", "Dashboard", "Betting Card", "Props", "Team Totals",
-        "DFS Pool", "DFS Optimizer", "Curated Plays")
+TABS = ("Read Me", "Dashboard", "Bet Card", "Games", "Props",
+        "Team Totals", "DFS Pool", "DFS Optimizer", "Curated Plays")
 META = ExportMeta("2026-09-20T17:53:00Z", 2026, 3)
 
 
@@ -96,7 +96,7 @@ def test_tab_order_matches_the_documented_workbook(tmp_path: Path) -> None:
 def test_headers_are_frozen_and_filterable(tmp_path: Path) -> None:
     """No mouse and no second window: tap to sort, and keep the header on screen."""
     wb = load_workbook(_build(tmp_path, games=_games()))
-    ws = wb["Betting Card"]
+    ws = wb["Games"]
     assert ws.freeze_panes == "A5"
     assert ws.auto_filter.ref is not None
     assert ws.auto_filter.ref.startswith("A4:")
@@ -105,7 +105,7 @@ def test_headers_are_frozen_and_filterable(tmp_path: Path) -> None:
 def test_the_metadata_columns_move_to_the_subtitle(tmp_path: Path) -> None:
     """Three constants repeated down every row is not information, it is width."""
     wb = load_workbook(_build(tmp_path, games=_games()))
-    ws = wb["Betting Card"]
+    ws = wb["Games"]
     headers = [c.value for c in ws[4]]
     for gone in ("Generated At", "Season", "Week"):
         assert gone not in headers
@@ -115,7 +115,7 @@ def test_the_metadata_columns_move_to_the_subtitle(tmp_path: Path) -> None:
 
 def test_headers_are_readable_not_machine_names(tmp_path: Path) -> None:
     wb = load_workbook(_build(tmp_path, games=_games()))
-    headers = [c.value for c in wb["Betting Card"][4]]
+    headers = [c.value for c in wb["Games"][4]]
     assert "Home Cover %" in headers
     assert "cover_probability" not in headers
     # A column with no entry in the table still reads sensibly.
@@ -135,7 +135,7 @@ def test_a_blank_export_cell_stays_blank(tmp_path: Path) -> None:
 
 def test_percentages_are_formatted_as_percentages(tmp_path: Path) -> None:
     wb = load_workbook(_build(tmp_path, games=_games()))
-    ws = wb["Betting Card"]
+    ws = wb["Games"]
     headers = [c.value for c in ws[4]]
     cover = ws.cell(row=5, column=headers.index("Home Cover %") + 1)
     assert cover.number_format == "0.0%"
@@ -191,7 +191,7 @@ def test_read_me_counts_the_rows_in_the_file(tmp_path: Path) -> None:
         str(row[0].value): row[1].value
         for row in wb["Read Me"].iter_rows(min_col=1, max_col=2)
     }
-    assert rows.get("Betting Card") == 1
+    assert rows.get("Games") == 1
     assert rows.get("Curated Plays") == 2
 
 
@@ -202,7 +202,7 @@ def test_the_workbook_opens_after_a_round_trip_through_csv(tmp_path: Path) -> No
     _games().to_csv(csv_dir / "games.csv", index=False, encoding="utf-8-sig")
     path = build_workbook(tmp_path / WORKBOOK_NAME, META,
                           games=pd.read_csv(csv_dir / "games.csv"))
-    ws = load_workbook(path)["Betting Card"]
+    ws = load_workbook(path)["Games"]
     headers = [c.value for c in ws[4]]
     assert ws.cell(row=5, column=headers.index("Away") + 1).value == "Atlanta"
     assert ws.cell(row=5, column=headers.index("Proj Total") + 1) \
@@ -279,3 +279,73 @@ def test_a_workbook_without_readiness_still_builds(tmp_path: Path) -> None:
     col_a = [str(r[0].value or "") for r in ws.iter_rows(min_col=1, max_col=1)]
     assert "Run status" not in col_a
     assert "How the model is doing" in col_a
+
+
+# ---------------------------------------------------------------------------
+# Bet Card — the one tab built for a phone held upright (Phase 13 Stage 1).
+# ---------------------------------------------------------------------------
+
+def _card_plays() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"tier": "B", "bet_type": "prop", "selection": "Bijan Over 64.5 rush_yds",
+         "market": "rush_yds", "edge": 0.031, "confidence": 3.7, "stake": 0.93,
+         "reason": "Bijan Over 64.5 rush_yds — model 60.0% · fair 53.0%"},
+        {"tier": "Watch", "bet_type": "game", "selection": "Miami TT Over 16.5",
+         "market": "team_total_away", "edge": 0.034, "confidence": 4.3,
+         "stake": 0.0, "reason": "Miami TT Over 16.5 — VETOED by the intel layer"},
+        {"tier": "A+", "bet_type": "game", "selection": "Under 41.5",
+         "market": "total", "edge": 0.053, "confidence": 5.8, "stake": 1.69,
+         "reason": "Under 41.5 — Model total 37 · rule A (unders 4+)"},
+    ])
+
+
+def _card_text(path: Path) -> list[str]:
+    ws = load_workbook(path)["Bet Card"]
+    return [str(c.value) for row in ws.iter_rows(min_col=1, max_col=3)
+            for c in row if c.value not in (None, "")]
+
+
+def test_the_bet_card_leads_with_the_plays_that_get_bet(tmp_path: Path) -> None:
+    """A+ before A before B, and Watch last under its own heading."""
+    text = _card_text(build_workbook(tmp_path / WORKBOOK_NAME, META,
+                                     plays=_card_plays()))
+    assert text.index("A+") < text.index("B") < text.index("Watch")
+    assert any("Watch — seen, not bet" in t for t in text)
+
+
+def test_the_bet_card_keeps_the_declined_plays(tmp_path: Path) -> None:
+    """A card that silently drops them reads like a system that never looked."""
+    text = _card_text(build_workbook(tmp_path / WORKBOOK_NAME, META,
+                                     plays=_card_plays()))
+    assert any("Miami TT Over 16.5" in t for t in text)
+
+
+def test_the_bet_card_does_not_repeat_the_selection_in_the_reason(tmp_path: Path) -> None:
+    """Line 1 is the call; line 3 is the argument, not the call again."""
+    ws = load_workbook(build_workbook(tmp_path / WORKBOOK_NAME, META,
+                                      plays=_card_plays()))["Bet Card"]
+    reasons = [str(c.value) for row in ws.iter_rows(min_col=2, max_col=2)
+               for c in row if c.value and "rule A" in str(c.value)]
+    assert reasons and not reasons[0].startswith("Under 41.5")
+
+
+def test_the_bet_card_wraps_its_argument(tmp_path: Path) -> None:
+    """Portrait: the reason wraps rather than running off the screen."""
+    ws = load_workbook(build_workbook(tmp_path / WORKBOOK_NAME, META,
+                                      plays=_card_plays()))["Bet Card"]
+    wrapped = [c for row in ws.iter_rows(min_col=2, max_col=2) for c in row
+               if c.value and c.alignment and c.alignment.wrap_text]
+    assert wrapped, "no wrapped reason cell"
+
+
+def test_the_bet_card_says_so_when_there_is_nothing(tmp_path: Path) -> None:
+    text = _card_text(build_workbook(tmp_path / WORKBOOK_NAME, META))
+    assert any("No plays" in t for t in text)
+
+
+def test_the_two_card_tabs_are_not_confusable(tmp_path: Path) -> None:
+    """'Bet Card' and 'Betting Card' side by side was a trap; the wide
+    one-row-per-game table is now named for what it is."""
+    names = load_workbook(build_workbook(tmp_path / WORKBOOK_NAME, META)).sheetnames
+    assert "Games" in names
+    assert "Betting Card" not in names

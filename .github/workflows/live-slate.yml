@@ -603,7 +603,8 @@ jobs:
         id: email
         run: |
           python scripts/render_slate_email.py \
-            --slate-dir artifacts/slate --out-dir artifacts/email --league nfl
+            --slate-dir artifacts/slate --out-dir artifacts/email --league nfl \
+            --readiness artifacts/exports/readiness.csv
           echo "subject=$(cat artifacts/email/subject.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Email the slate

@@ -70,6 +70,7 @@ def render_slate_email(
     league: str = "nfl",
     generated_at: object = None,
     record: pd.DataFrame | None = None,
+    readiness: str | None = None,
 ) -> tuple[str, str]:
     """Render the day's slate as ``(subject, html_body)``.
 
@@ -80,6 +81,13 @@ def render_slate_email(
     ``record`` (the graded previous slate, ``daily_record.RECORD_COLUMNS``) leads
     the body as the model-status section; ``None`` — grading unavailable — omits
     the section rather than implying an empty record.
+
+    ``readiness`` is the run's verdict (velocity.export.readiness). Anything
+    other than ``READY`` is put at the FRONT of the subject, because a phone's
+    lock screen truncates after roughly forty characters and "this board is
+    missing something" is the one thing worth spending those characters on. A
+    READY board says nothing extra: a prefix on every message is a prefix
+    nobody reads.
     """
     matchups = _matchup_map(games_map)
     n_plays = 0 if plays is None else len(plays)
@@ -97,8 +105,17 @@ def render_slate_email(
         )
     else:
         subject = f"MatchUp Labs {tag}: no plays today{date_tag}"
+    if readiness and readiness.upper() != "READY":
+        subject = f"{readiness.upper()} · {subject}"
 
     sections = []
+    if readiness and readiness.upper() != "READY":
+        sections.append(
+            f'<p style="margin:0 0 14px;padding:10px 12px;border-radius:6px;'
+            f'background:#FFF2CC;color:#7F6000;font:600 14px/1.4 Arial,sans-serif">'
+            f'Board status: {readiness.upper()} — see Run status on the '
+            f'workbook\'s Dashboard tab.</p>'
+        )
     if record is not None:
         from velocity.report.daily_record import record_headline
 

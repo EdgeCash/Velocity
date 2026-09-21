@@ -24,7 +24,7 @@ python -m velocity.run_weekly   →   datasets/exports/*.csv   →   Refresh All
 
 | File | One row per | Feeds the tab |
 |---|---|---|
-| `games.csv` | game on the board | Betting Card |
+| `games.csv` | game on the board | Games |
 | `props.csv` | staked or papered player prop | Props |
 | `dfs.csv` | player on the DK slate | DFS Pool |
 | `dfs_optimizer.csv` | player, with one column per contest type | DFS Optimizer |
@@ -168,7 +168,7 @@ Long format is the one shape Power Query pivots into any tile without a
 transformation step. Six separate tables would each need their own query and
 would drift apart on the first schema change.
 
-### Betting Card
+### Games
 Source: `games.csv`. Suggested columns left to right:
 
 `away_team`, `home_team`, `market_spread`, `model_home_score`,
