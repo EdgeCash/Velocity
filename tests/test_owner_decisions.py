@@ -194,3 +194,46 @@ def test_a_supplied_projection_is_still_honoured() -> None:
 @pytest.mark.parametrize("decision", ["D1", "D2", "D3", "D4", "D5", "D6"])
 def test_every_decision_is_written_down(decision: str) -> None:
     assert f"## {decision} —" in (REPO / "docs" / "DECISIONS.md").read_text()
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 Stage 1 — the mobile path
+# ---------------------------------------------------------------------------
+
+def test_the_email_subject_leads_with_a_bad_verdict() -> None:
+    """A lock screen truncates near forty characters.
+
+    "this board is missing something" is the one thing worth spending those
+    characters on — and a READY board says nothing extra, because a prefix on
+    every message is a prefix nobody reads.
+    """
+    from velocity.report.email_html import render_slate_email
+
+    plays = pd.DataFrame([{
+        "game_id": "g1", "market": "total", "side": "under", "point": 41.5,
+        "book": "dk", "price": -110, "p_model": 0.58, "p_fair": 0.52,
+        "edge": 0.06, "stake": 1.7, "note": None,
+    }])
+
+    def subject(verdict: str | None) -> str:
+        return render_slate_email(plays, None, None, league="nfl",
+                                  generated_at="2026-09-20T22:51:00Z",
+                                  readiness=verdict)[0]
+
+    assert subject("NOT READY").startswith("NOT READY · ")
+    assert subject("DEGRADED").startswith("DEGRADED · ")
+    assert subject("READY") == subject(None)
+    assert not subject("READY").startswith("READY")
+
+
+def test_the_email_workflow_passes_the_readiness_file() -> None:
+    steps = yaml.safe_load((WORKFLOWS / "live-slate.yml").read_text())["jobs"]["slate"]["steps"]
+    render = next(s for s in steps if s.get("name") == "Render slate email")
+    assert "--readiness artifacts/exports/readiness.csv" in render["run"]
+
+
+def test_the_dispatchable_workflows_the_shortcut_targets_exist() -> None:
+    """docs/IOS_SHORTCUTS.md posts to these two by filename."""
+    for name in ("live-slate.yml", "refresh-exports.yml"):
+        triggers = yaml.safe_load((WORKFLOWS / name).read_text())[True]
+        assert "workflow_dispatch" in triggers, name

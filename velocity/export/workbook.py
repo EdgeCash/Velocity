@@ -338,9 +338,97 @@ def _dashboard_sheet(
     return ws
 
 
+def _bet_card_sheet(wb: Workbook, plays: pd.DataFrame, subtitle: str) -> Worksheet:
+    """The plays as CARDS, not as a table — the one tab built for portrait.
+
+    Curated Plays is a table: eight columns, a long Reason, and on a tablet
+    held upright it is mostly off-screen. This is the same rows laid out
+    three deep instead of eight wide, so the call, its numbers and its
+    argument all fit a narrow screen without rotating or scrolling sideways.
+
+    A+/A/B lead, because they are what gets bet. Watch follows under its own
+    heading rather than being dropped: "seen and not bet" is information, and
+    a card that silently omits the declined plays reads like a system that
+    never considered them.
+    """
+    ws = wb.create_sheet("Bet Card")
+    _title_block(ws, "Bet Card", subtitle, 3)
+
+    if plays.empty:
+        note = ws.cell(row=4, column=1, value="No plays on this board.")
+        note.font = Font(name=ARIAL, italic=True, size=11, color="808080")
+        ws.column_dimensions["A"].width = 12
+        ws.column_dimensions["B"].width = 46
+        ws.column_dimensions["C"].width = 18
+        return ws
+
+    order = {tier: i for i, tier in enumerate(("A+", "A", "B", "Watch"))}
+    rows = plays.copy()
+    rows["_rank"] = rows["tier"].astype(str).map(lambda t: order.get(t, 99))
+    rows = rows.sort_values(["_rank"], kind="stable")
+
+    row = 4
+    seen_watch = False
+    for play in rows.to_dict("records"):
+        tier = str(play.get("tier", ""))
+        if tier == "Watch" and not seen_watch:
+            seen_watch = True
+            row += 1
+            head = ws.cell(row=row, column=1, value="Watch — seen, not bet")
+            head.font = Font(name=ARIAL, bold=True, size=11, color="808080")
+            row += 1
+
+        # Line 1: the tier chip, the call, and what it costs.
+        chip = ws.cell(row=row, column=1, value=tier)
+        chip.font = Font(name=ARIAL, bold=True, size=12)
+        chip.fill = _TIER_FILL.get(tier, _BAND_FILL)
+        chip.alignment = Alignment(horizontal="center", vertical="center")
+        call = ws.cell(row=row, column=2, value=str(play.get("selection", "")))
+        call.font = Font(name=ARIAL, bold=True, size=12, color=NAVY)
+        call.alignment = Alignment(horizontal="left", vertical="center")
+        stake = _cell_value(play.get("stake"))
+        money = ws.cell(row=row, column=3, value=stake)
+        money.font = Font(name=ARIAL, bold=True, size=12)
+        money.number_format = "$#,##0.00"
+        money.alignment = Alignment(horizontal="right", vertical="center")
+        ws.row_dimensions[row].height = 20
+        row += 1
+
+        # Line 2: the numbers, in the order a bettor checks them.
+        edge = _cell_value(play.get("edge"))
+        confidence = _cell_value(play.get("confidence"))
+        bits = [str(play.get("market", ""))]
+        if edge is not None:
+            bits.append(f"edge {edge:.1%}")
+        if confidence is not None:
+            bits.append(f"confidence {confidence:.1f}")
+        meta = ws.cell(row=row, column=2, value=" · ".join(b for b in bits if b))
+        meta.font = Font(name=ARIAL, size=10, color="404040")
+        meta.alignment = Alignment(horizontal="left")
+        row += 1
+
+        # Line 3: the argument, wrapped rather than run off the edge.
+        reason = str(play.get("reason", ""))
+        if " — " in reason:  # the selection already led line 1
+            reason = reason.split(" — ", 1)[1]
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+        why = ws.cell(row=row, column=2, value=reason)
+        why.font = Font(name=ARIAL, size=9, color="606060")
+        why.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        ws.row_dimensions[row].height = 42
+        row += 2
+
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 44
+    ws.column_dimensions["C"].width = 14
+    ws.sheet_view.showGridLines = False
+    return ws
+
+
 _READ_ME: tuple[tuple[str, str], ...] = (
     ("Dashboard", "Model performance, ROI, closing-line value, and the run's best calls."),
-    ("Betting Card", "Every game on the board: the market's number, the model's, and the gap."),
+    ("Bet Card", "The plays as cards, built to read on a phone held upright."),
+    ("Games", "Every game on the board: the market's number, the model's, and the gap."),
     ("Props", "Staked player props, with the simulated distribution behind each line."),
     ("Team Totals", "Each side's own number: the market's, the model's, and the gap."),
     ("DFS Pool", "The DraftKings slate priced: salary, projection, ceiling, value, stack."),
@@ -443,13 +531,16 @@ def build_workbook(  # noqa: PLR0913 - one sheet per export, plus where to write
 
     wb = Workbook()
     counts = {
-        "Betting Card": len(games), "Props": len(props), "DFS Pool": len(dfs),
+        "Games": len(games), "Props": len(props), "DFS Pool": len(dfs),
         "DFS Optimizer": len(dfs_optimizer), "Curated Plays": len(plays),
         "Team Totals": len(team_totals),
+        "Bet Card": int((plays["tier"].astype(str) != "Watch").sum())
+        if not plays.empty and "tier" in plays.columns else 0,
     }
     _read_me_sheet(wb, meta, counts, readiness)
     _dashboard_sheet(wb, dashboard, subtitle, readiness)
-    _table_sheet(wb, "Betting Card", "Betting Card", subtitle, games)
+    _bet_card_sheet(wb, plays, subtitle)
+    _table_sheet(wb, "Games", "Games — market against model", subtitle, games)
     _table_sheet(wb, "Props", "Player Props", subtitle, props)
     _table_sheet(wb, "Team Totals", "Team Totals", subtitle, team_totals)
     _table_sheet(wb, "DFS Pool", "DFS Pool", subtitle, dfs)

@@ -29,7 +29,7 @@ finished file instead.
 tables, in one workbook, already populated, formatted, filterable:
 
 ```
-Read Me · Dashboard · Betting Card · Props · DFS Pool · DFS Optimizer · Curated Plays
+Read Me · Dashboard · Games · Props · DFS Pool · DFS Optimizer · Curated Plays
 ```
 
 It is built by the same pipeline run that writes the CSVs, from the same
@@ -93,7 +93,14 @@ In **Safari** (Chrome on iOS handles the unzip step less well):
 Steps 4–6 are the only awkward part, and only the first time — after that the
 muscle memory is about fifteen seconds.
 
-### Route C — force a fresh build from the iPad
+### Route C — one tap, from the home screen (best)
+
+An iOS Shortcut posting to GitHub's `workflow_dispatch` endpoint turns the
+whole dispatch dance into a single tap, and needs no change to this
+repository. Setup, with the exact URL, headers and body:
+[`docs/IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md).
+
+### Route D — force a fresh build from the Actions tab
 
 If the latest run is stale and you want one now, without waiting for the next
 scheduled window:
@@ -128,7 +135,7 @@ subscription is needed to *edit*, but not to open, view, sort or filter).
 
 * **Sort / filter** — every table has a filter row and a frozen header. Tap
   the arrow in a header cell.
-* **Rotate to landscape** for the Betting Card and DFS Optimizer. They are
+* **Rotate to landscape** for the Games and DFS Optimizer. They are
   wide by nature.
 * **The Reason column on Curated Plays** is long prose. Tap the cell and read
   it in the formula bar rather than widening the column.

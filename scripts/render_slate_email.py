@@ -34,6 +34,9 @@ def main() -> None:
     parser.add_argument("--slate-dir", required=True, help="folder the runner wrote (--out)")
     parser.add_argument("--out-dir", required=True,
                         help="folder for slate_email.html + subject.txt")
+    parser.add_argument("--readiness", default=None,
+                        help="readiness.csv from the export; its verdict leads "
+                             "the subject when the board is not READY")
     parser.add_argument("--league", default="nfl")
     args = parser.parse_args()
 
@@ -56,10 +59,23 @@ def main() -> None:
             generated_at = frame["generated_at"].iloc[0]
             break
 
+    verdict = None
+    if args.readiness:
+        from pathlib import Path as _Path
+
+        from velocity.export.readiness import verdict_of
+
+        source = _Path(args.readiness)
+        if source.exists():
+            try:
+                verdict = verdict_of(source)
+            except Exception as exc:  # noqa: BLE001 - a subject line, never fatal
+                print(f"readiness verdict skipped: {exc}")
+
     subject, html = render_slate_email(
         plays, props, parlays,
         games_map=games_map, league=args.league, generated_at=generated_at,
-        record=record,
+        record=record, readiness=verdict,
     )
 
     out = Path(args.out_dir)

@@ -91,7 +91,7 @@ knowing:
 
 | File | One row per | Feeds |
 |---|---|---|
-| `games.csv` | game on the board | Betting Card |
+| `games.csv` | game on the board | Games |
 | `props.csv` | staked/papered prop | Props |
 | `team_totals.csv` | **side** (2 per game) | Team Totals |
 | `dfs.csv` | DK player | DFS Pool |
@@ -235,8 +235,9 @@ are `workflow_dispatch` and `workflow_run` on the DFS build.
 
 **~3 hours before the first kickoff you care about:**
 
-1. **Actions → Live slate → Run workflow.** Two taps. Dispatched runs start
-   within a minute; scheduled ones do not.
+1. **Tap the "Velocity — Run" shortcut** (or Actions → Live slate → Run
+   workflow). Dispatched runs start within a minute; scheduled ones do not.
+   Shortcut setup: [`IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md).
 2. Wait ~10–15 minutes.
 3. Check the **Board readiness gate** step: green means usable.
 4. Download the artifact → open `velocity.xlsx` → read **Run status** at the
@@ -309,6 +310,8 @@ Keep the workbook local. Do not commit it; do not publish the CSVs.
 | [`EXCEL_SETUP.md`](EXCEL_SETUP.md) | desktop route |
 | [`LATENCY_AUDIT.md`](LATENCY_AUDIT.md) | where the 2–4 hours goes |
 | [`DECISIONS.md`](DECISIONS.md) | the owner's standing decisions, and what implements each |
+| [`IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md) | one-tap run and status, from the home screen |
 | [`PHASE13_MOBILE.md`](PHASE13_MOBILE.md) | proposal: operating from an iPad |
+| [`PHASE13_STAGE2_CLOUDFLARE.md`](PHASE13_STAGE2_CLOUDFLARE.md) | design: the private dashboard (not built) |
 | [`HYBRID_MIGRATION_PLAN.md`](HYBRID_MIGRATION_PLAN.md) | architecture, gaps, risks |
 | [`DESIGN.md`](DESIGN.md) · [`WAGERING.md`](WAGERING.md) · [`INTEL.md`](INTEL.md) | the engine |

@@ -7,7 +7,7 @@ ingest → ratings → Monte Carlo sim → wagering/DFS/intel
                                           ↓
                             velocity/export  →  datasets/exports/*.csv
                                           ↓
-                          Excel Power Query → Dashboard · Betting Card ·
+                          Excel Power Query → Dashboard · Bet Card · Games ·
                           Props · DFS Pool · DFS Optimizer · Curated Plays
 ```
 
