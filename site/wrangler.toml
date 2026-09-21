@@ -17,8 +17,17 @@ compatibility_date = "2026-08-01"
 directory = "./build"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/_app/immutable/assets/*.wasm", "/api/scores"]
+run_worker_first = ["/_app/immutable/assets/*.wasm", "/api/scores", "/board"]
 
 [[r2_buckets]]
 binding = "WASM"
+bucket_name = "velocity-wasm"
+
+# The same bucket under a second name, because the two uses have nothing to do
+# with each other: WASM serves Evidence's oversized binaries, BOARD serves the
+# export CSVs the mobile board reads from the `board/` prefix
+# (docs/PHASE13_STAGE2_CLOUDFLARE.md). One bucket, two bindings, so a future
+# split needs a config change and not a code change.
+[[r2_buckets]]
+binding = "BOARD"
 bucket_name = "velocity-wasm"

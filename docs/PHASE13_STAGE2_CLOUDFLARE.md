@@ -1,10 +1,14 @@
 # Phase 13 Stage 2 — private mobile dashboard: architecture plan
 
-**Status: design only. Nothing here is implemented, and nothing should be
-until this plan is approved.** Per the owner's Phase 13 directive: Option C
-hybrid, Cloudflare-hosted, **not** GitHub Pages, with the workbook remaining
-the authoritative research surface and any dashboard a convenience layer
-over workbook exports rather than a replacement for Velocity outputs.
+**Status: BUILT.** Approved and implemented per the owner's Stage 2
+decision. This page is kept as the design record; §8 below is what actually
+shipped and where it lives.
+
+The decisions taken, all three as directed: **`/board` on the existing
+Worker** (no subdomain), **no refresh button** (the page is completely
+read-only; the iOS Shortcut is the single control plane), and **props
+included** (A+/A/B, with player, market, line, projection, edge, confidence,
+stake).
 
 ---
 
@@ -203,3 +207,63 @@ verification.
    workbook, and props are arguably research — but they are also a core
    market you bet (D1). My inclination is a count and the top three by edge,
    with the full board staying in the workbook.
+
+
+---
+
+## 8. What shipped
+
+| Piece | Where |
+|---|---|
+| The view — parse, select, sort, format, render | `site/board.js` |
+| The route — `GET`/`HEAD` only | `site/worker.js` |
+| Bindings — `BOARD` → `velocity-wasm`, `/board` runs Worker-first | `site/wrangler.toml` |
+| Publish — five CSVs to `velocity-wasm/board/` | both slate workflows |
+| Tests | `site/tests/board.test.mjs` (28) |
+
+### The page
+
+Eight sections, in the order directed: **Run Status** (verdict, last updated,
+time to kickoff, and the missing surfaces behind a tap), **A+ Plays**, **A
+Plays**, **Props**, **Betting Card**, **DFS Core**, **Top DFS Values**,
+**Watch List**.
+
+Mobile-first as specified: cards rather than tables, stacked sections, and
+tap-to-expand via native `<details>`. **The page ships no JavaScript at
+all** — nothing to misbehave on a tablet browser and nothing to keep current.
+Dark mode follows the system. Long values wrap; there is no horizontal
+scroll anywhere.
+
+### How the constraints are enforced, not just documented
+
+* **Read-only.** Anything but `GET`/`HEAD` returns **405** with an `Allow`
+  header. There is no form, no button, no `workflow_dispatch` call and no
+  secret in the Worker. Tests assert all of it, including that the rendered
+  HTML contains no `<form>`, `<button>` or `api.github.com`.
+* **Consumer of exports only.** `board.js` parses, selects, sorts and
+  formats. It derives no quantity. Sorting a column the export already wrote
+  states no new fact; looking up `props.csv`'s projection by (player, market)
+  is a display join, not a computation.
+* **Never stale-but-live.** `cache-control: no-store`, and the page reports
+  the **data's own** `generated_at` and age — never the request time. Missing
+  R2 objects render a page that says so rather than an empty board or a 500.
+* **Private.** The route ships with the Worker deploy, which is gated on the
+  manual `CLOUDFLARE_ACCESS_CONFIRMED` variable. The **publish step is gated
+  on the same variable**, so if Access is ever unconfirmed the CSVs are not
+  in the bucket to be served at all. `docs/SITE.md` records an
+  unauthenticated request reaching this Worker on 2026-09-12; this is the
+  cheap half of not repeating it.
+
+### The CSV parser, and why it is a real one
+
+`reason` is prose containing commas and the occasional quote. A naive
+`split(',')` shifts every column after it — putting a stake where a
+confidence belongs, and looking entirely plausible while doing it. The
+parser is a small state machine handling quoting, doubled quotes, CRLF and
+the UTF-8 BOM the exports carry, with a test for each.
+
+### What it still does not fix
+
+No front end changes the scheduling delay. The board is exactly as fresh as
+the run that published it, and runs are dispatched from the Shortcut. That
+remains the control plane, by design and by the owner's decision.

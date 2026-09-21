@@ -263,6 +263,12 @@ already populated. Three routes — email (set `MAIL_USERNAME`,
 Actions artifact download, or a dispatched refresh.
 [`docs/EXCEL_IPAD.md`](EXCEL_IPAD.md).
 
+**The `/board` page** — the same run, rendered for a phone held upright:
+run status, A+/A plays, props, games, DFS, watch list. Behind Cloudflare
+Access, read-only, no JavaScript. It is a convenience layer over the
+exports; the workbook stays the research surface
+([`PHASE13_STAGE2_CLOUDFLARE.md`](PHASE13_STAGE2_CLOUDFLARE.md)).
+
 **Desktop Excel** — connect the six CSVs once via Power Query; every later
 refresh is a button. [`docs/EXCEL_SETUP.md`](EXCEL_SETUP.md).
 
@@ -312,6 +318,6 @@ Keep the workbook local. Do not commit it; do not publish the CSVs.
 | [`DECISIONS.md`](DECISIONS.md) | the owner's standing decisions, and what implements each |
 | [`IOS_SHORTCUTS.md`](IOS_SHORTCUTS.md) | one-tap run and status, from the home screen |
 | [`PHASE13_MOBILE.md`](PHASE13_MOBILE.md) | proposal: operating from an iPad |
-| [`PHASE13_STAGE2_CLOUDFLARE.md`](PHASE13_STAGE2_CLOUDFLARE.md) | design: the private dashboard (not built) |
+| [`PHASE13_STAGE2_CLOUDFLARE.md`](PHASE13_STAGE2_CLOUDFLARE.md) | the private `/board` dashboard: design and what shipped |
 | [`HYBRID_MIGRATION_PLAN.md`](HYBRID_MIGRATION_PLAN.md) | architecture, gaps, risks |
 | [`DESIGN.md`](DESIGN.md) · [`WAGERING.md`](WAGERING.md) · [`INTEL.md`](INTEL.md) | the engine |
